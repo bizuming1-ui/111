@@ -1,90 +1,87 @@
 # =============================================================================
-#  克隆语音 · Kaggle 实时流式合成与播放  —— 一体化脚本
-#  (Coqui XTTS v2 · WebSocket 流式 · ngrok 隧道 · Web Audio 无缝播放)
+#  Voice Clone Studio · Kaggle 一体化脚本
+#  Qwen3-TTS-12Hz-1.7B-Base 声音克隆(流式 · 双 T4 并行)  ×  DeepSeek 流式长文本  ×  零停顿播放
 #
-#  用法:
-#    1. 右侧 Settings:Accelerator 选 GPU T4,Internet 选 On
-#    2. 右侧 Add Data:添加包含 reference.wav(你要克隆的声音,6~30 秒)的 Dataset
-#    3. 顶部 Add-ons -> Secrets:添加名为 NGROK_TOKEN 的 Secret(你的 ngrok authtoken),并勾选 Attached
-#    4. 把「整个文件」粘贴进一个代码单元格,改下面的 DATASET_PATH,Shift+Enter 运行
-#    5. 等输出里出现「🌐 网页地址」,点开即用。这个单元格会一直运行 = 服务在线,请不要停止它
+#  使用方法(只需 3 步):
+#    1. 右侧 Settings:Accelerator 选 "GPU T4 x2",Internet 打开 On。
+#    2. 顶部 Add-ons → Secrets 添加(并勾选 Attached):
+#         DEEPSEEK_API_KEY   你的 DeepSeek API Key            (必需)
+#         NGROK_TOKEN        你的 ngrok authtoken              (可选;没有就自动用 Cloudflare 免费隧道)
+#         HF_TOKEN           HuggingFace Token                 (可选;下载模型被限速时才需要)
+#    3. 把「整个文件」粘贴进一个代码单元格,Shift+Enter 运行。
+#       等到输出出现「🌐 网页地址」,点开即可:在网页里录音/上传参考语音 → 开始克隆 → 对话。
+#       这个单元格会一直运行 = 服务在线,请不要停止它。
 #
-#  本脚本做的事: 写出 app.py / index.html / start.ipynb / README.md 到 /kaggle/working/,
-#                然后按顺序执行 5 个步骤(安装依赖 -> 参考音频 -> 启动后端 -> ngrok 打洞 -> 保活)
+#  这个脚本会自动: 写出服务文件 → 建独立 Python 环境并安装依赖 → 预下载模型 →
+#                 启动网关 + 每张 GPU 一个 TTS 进程 → 打开公网隧道 → 保活并自动拉起崩溃的服务
 # =============================================================================
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
+import threading
+import time
+import urllib.request
+from collections import deque
 from pathlib import Path
 
-# ╔═══════════════════════════ 只需要改这里 ═══════════════════════════╗
-DATASET_PATH = "/kaggle/input/your-dataset-name"   # ① 你的 Dataset 路径(目录或 reference.wav 文件均可;填错了也会自动在 /kaggle/input 里搜)
-NGROK_TOKEN = ""                                   # ② 选填:留空则从 Kaggle Secrets 读取 NGROK_TOKEN(推荐)。⚠ 填了就别公开分享笔记本
-# ╚════════════════════════════════════════════════════════════════════╝
+# ╔═══════════════════════════ 只需要改这里(都可以不改) ═══════════════════════════╗
+DEEPSEEK_API_KEY = ""        # 留空 = 从 Kaggle Secrets 读取 DEEPSEEK_API_KEY(推荐)。⚠ 填了就别公开分享笔记本
+NGROK_TOKEN = ""             # 留空 = 从 Kaggle Secrets 读取 NGROK_TOKEN;都没有 = 自动用 cloudflared 免费隧道
+REFERENCE_AUDIO = ""         # 可选:默认参考音频(例如 /kaggle/input/你的数据集/reference.wav)。留空 = 在网页里录制/上传
+REFERENCE_TEXT = ""          # 可选:默认参考音频里说的文字(填了相似度更高;留空会自动识别)
+DEEPSEEK_MODEL = "deepseek-chat"
+TTS_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+PORT = 8000
+# ╚════════════════════════════════════════════════════════════════════════════════╝
 
-# ───────────────────────────── 内嵌文件 ─────────────────────────────
-APP_PY = r'''# -*- coding: utf-8 -*-
+WORK = Path(os.environ.get("VC_WORK") or "/kaggle/working/vc")
+VENV = WORK.parent / "vc_env"
+TEST = os.environ.get("VC_LAUNCH_TEST") == "1"          # 本地自检用(跳过安装/隧道)
+
+SERVER_PY = r'''# -*- coding: utf-8 -*-
 """
-克隆语音实时流式合成后端  (FastAPI + WebSocket + Coqui XTTS v2)
+Voice Clone Studio 服务端
+  网关进程 : FastAPI + WebSocket。负责网页、DeepSeek 流式对话、按标点切句、按顺序把音频推给浏览器。不碰 GPU。
+  TTS 进程 : 每张 GPU 一个独立进程(互不抢 GIL、互不影响 CUDA Graph),运行 Qwen3-TTS-12Hz-1.7B-Base 流式克隆合成。
 
-  GET  /         返回 index.html(每次请求都重新读文件,改完 HTML 不用重启)
-  GET  /health   健康检查 / 性能指标(模型是否就绪、实时率 RTF、首包延迟)
-  WS   /stream   流式合成:收 JSON 请求 -> 回 PCM 二进制帧 + JSON 事件
-
-协议(WebSocket):
-  客户端 -> 服务端 (JSON 文本)
-      {"id": 3, "text": "要合成的文字", "start_sentence": 0}    合成请求(start_sentence 用于断线后按句续传)
-      {"stop": true}                                           打断当前合成
-      {"ping": 1699999999}                                     心跳,服务端直接忽略
-  服务端 -> 客户端
-      二进制帧: 16-bit 有符号小端 PCM, 单声道, 24000Hz, 每帧最多 CHUNK_SIZE(4096) 字节
-      JSON 文本: {"event":"start","id":3,"sentences":5,"sample_rate":24000,"voice":"clone"}
-                 {"event":"sentence_done","id":3,"index":0}
-                 {"event":"done","id":3}                              全部发送完毕
-                 {"event":"error","id":3,"message":"错误信息"}
-
-稳定性要点:
-  1. TTS 模型在程序启动(import 本文件)时就加载并预热,不会在第一次请求时才加载
-  2. 同步的 TTS 流式生成放进线程池 run_in_executor,绝不阻塞 asyncio 事件循环
-  3. 音频以 4096 字节为单位分块发送,每块之后 await asyncio.sleep(0) 让出事件循环
-  4. 同一时刻只允许一个合成任务占用 GPU(GPU_LOCK);新请求/断线会立刻取消旧任务
+  数据流:  浏览器 --文字--> 网关 --DeepSeek 流式--> 切句 --> 多卡并行合成 --> 去静音/拼接/插入停顿 --> 24kHz PCM 二进制帧 --> 浏览器 AudioWorklet
+  二进制帧格式: [uint32 小端 turn 编号][int16 小端 PCM...]  (24000Hz 单声道)
 """
 import asyncio
 import json
 import logging
+import multiprocessing as mp
 import os
+import queue as _queue
 import re
+import struct
+import subprocess
 import sys
 import threading
 import time
+import traceback
+import wave
 from pathlib import Path
 
 import numpy as np
-import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-# =============================================================================
-#  配置(可用环境变量覆盖)
-# =============================================================================
-_KAGGLE_DIR = Path("/kaggle/working")
-WORK_DIR = Path(os.environ.get("CLONE_WORKDIR") or (_KAGGLE_DIR if _KAGGLE_DIR.exists() else Path.cwd()))
-REFERENCE_WAV = Path(os.environ.get("CLONE_REFERENCE") or (WORK_DIR / "reference.wav"))  # 克隆声音的参考音频
-INDEX_HTML = WORK_DIR / "index.html"
+SR = 24000
+WORK = Path(os.environ.get("VC_WORK") or "/kaggle/working/vc")
+PORT = int(os.environ.get("VC_PORT", "8000"))
+MODEL = os.environ.get("VC_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+MOCK = os.environ.get("VC_MOCK") == "1"
+MOCK_LLM = os.environ.get("VC_MOCK_LLM") == "1"
+DS_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+DS_BASE = os.environ.get("DEEPSEEK_BASE", "https://api.deepseek.com").rstrip("/")
+DS_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+CHUNK_FIRST = int(os.environ.get("VC_CHUNK_FIRST", "4"))     # 首句每块 4 个 codec 帧(≈333ms),首声最快
+CHUNK_REST = int(os.environ.get("VC_CHUNK_REST", "6"))       # 后续句每块 6 帧(≈500ms)
+VOICE_DIR = WORK / "voice"
 
-PORT = int(os.environ.get("CLONE_PORT", "8000"))
-LANGUAGE = "zh-cn"                 # 合成语言
-SAMPLE_RATE = 24000                # XTTS v2 输出采样率,前端 AudioContext 必须与它一致
-CHUNK_SIZE = 4096                  # 每个 WebSocket 二进制帧的字节数(调小 = 更细腻;调大 = 更省包)
-STREAM_CHUNK_TOKENS = int(os.environ.get("CLONE_STREAM_TOKENS", "20"))  # XTTS 每生成多少 token 解码一次(越小首包越快、接缝越多)
-MAX_TEXT_CHARS = 2000              # 单次请求最长字数
-MAX_SEG_CHARS = 60                 # 单段最长字数(XTTS 中文上限 82,超过会被截断/吞字)
-MIN_SEG_CHARS = 12                 # 小于该字数的短句会和后一句合并(太短的句子韵律差,而且每句有固定开销)
-MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
-FALLBACK_SPEAKER = "Claribel Dervla"   # 找不到 reference.wav 时使用的内置音色(保证系统随时可用)
-USE_MOCK = os.environ.get("CLONE_MOCK") == "1"   # 本地自检用:不加载模型,合成正弦波
-
-log = logging.getLogger("clone")
+log = logging.getLogger("vc")
 if not log.handlers:
     _h = logging.StreamHandler(sys.stdout)
     _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S"))
@@ -93,239 +90,942 @@ if not log.handlers:
     log.propagate = False
 
 
-# =============================================================================
-#  文本切句:把长文本切成 <= MAX_SEG_CHARS 的段,保证 XTTS 不截断,并让第一句尽快出声
-# =============================================================================
-_SENT_END = re.compile(r"(?<=[。！？!?；;…])|(?<=\n)|(?<=[.])(?=\s|$)")
-_SUB_END = re.compile(r"(?<=[，,、：:])")
-_HAS_SPEECH = re.compile(r"\w", re.UNICODE)   # 至少含一个字母/数字/汉字,否则 XTTS 会因空 token 报错
+# ════════════════════════════════════════════════════════════════
+#  文本工具
+# ════════════════════════════════════════════════════════════════
+_MD = re.compile(r"[*_`#>~|]+|^\s*[-+•·]\s+|^\s*\d{1,2}[.、)]\s+", re.M)
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200d\u2B50\u2B06\u2194-\u21AA]")
+_URL = re.compile(r"https?://\S+")
+_SPEECH = re.compile(r"\w", re.UNICODE)
+_LEAD = re.compile(r"^[\s，,、。.！!？?；;：:…”’\"'」』)）\]】]+")
 
 
-def _join(a, b):
-    """拼接两段文字:两侧都是英文/数字时补一个空格,中文直接相连"""
-    if a[-1:].isascii() and a[-1:].isalnum() and b[:1].isascii() and b[:1].isalnum():
-        return a + " " + b
-    return a + b
+def tts_clean(t):
+    t = _URL.sub("", t or "")
+    t = _EMOJI.sub("", t)
+    t = _MD.sub("", t)
+    t = re.sub(r"\s*\n+\s*", "，", t)
+    t = re.sub(r"[ \t\u3000]+", " ", t)
+    t = _LEAD.sub("", t).strip()
+    return t
 
 
-def split_text(text, max_len=MAX_SEG_CHARS, min_len=MIN_SEG_CHARS):
-    text = re.sub(r"[ \t\r\u3000]+", " ", text or "").strip()
-    pieces = []
-    for sent in _SENT_END.split(text):
-        sent = sent.strip()
-        if not sent:
-            continue
-        if len(sent) <= max_len:
-            pieces.append(sent)
-            continue
-        cur = ""
-        for part in _SUB_END.split(sent):          # 句子太长:按逗号再切并贪心合并
-            while len(part) > max_len:             # 仍然太长:硬切
-                if cur:
-                    pieces.append(cur)
-                    cur = ""
-                pieces.append(part[:max_len])
-                part = part[max_len:]
-            if len(cur) + len(part) <= max_len:
-                cur += part
-            else:
-                if cur:
-                    pieces.append(cur)
-                cur = part
-        if cur:
-            pieces.append(cur)
-    segs, buf = [], ""                              # 合并过短的句子
-    for p in pieces:
-        if buf and len(buf) >= min_len:
-            segs.append(buf)
-            buf = ""
-        if buf and len(buf) + len(p) > max_len:
-            segs.append(buf)
-            buf = ""
-        buf = _join(buf, p) if buf else p
-    if buf:
-        segs.append(buf)
-    return [s.strip() for s in segs if _HAS_SPEECH.search(s)]
+def has_speech(t):
+    return bool(_SPEECH.search(t or ""))
 
 
-def to_pcm16(chunk):
-    """XTTS 输出的 float(-1..1) 张量/数组 -> 16-bit 小端 PCM 字节"""
-    if hasattr(chunk, "detach"):
-        chunk = chunk.detach().float().cpu().numpy()
-    a = np.nan_to_num(np.asarray(chunk, dtype=np.float32).reshape(-1))
-    return (np.clip(a, -1.0, 1.0) * 32767.0).round().astype("<i2").tobytes()
+def detect_lang(t):
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
+    if re.search(r"[\u3040-\u30ff]", t):
+        return "Japanese"
+    if re.search(r"[\uac00-\ud7af]", t):
+        return "Korean"
+    if cjk >= 1:
+        return "Chinese"
+    return "English"
 
 
-# =============================================================================
-#  TTS 引擎
-# =============================================================================
-def find_reference():
-    """reference.wav 的查找顺序: 配置路径 -> /kaggle/input 下任意位置的 reference.wav -> None"""
-    if REFERENCE_WAV.exists():
-        return REFERENCE_WAV
-    inp = Path("/kaggle/input")
-    if inp.exists():
-        for p in inp.rglob("reference.wav"):
-            return p
-    return None
+STRONG = set("。！？!?；;\n…")
+WEAK = set("，,、：:")
+# (最短长度, 逗号处可切的长度, 强制切断长度)  —— 第 1 句极短(抢首声),越往后越长(韵律更自然,且有前面的播放时间掩护)
+LIMITS = [(3, 3, 16), (6, 10, 26), (8, 16, 36), (10, 24, 50)]
 
 
-def _patch_load_audio():
-    """XTTS 用 torchaudio.load 读参考音频。torchaudio >= 2.9 起它依赖 torchcodec + 系统 FFmpeg,
-    Kaggle 上常常装不上/加载失败。这里换成 soundfile 读取(不依赖 torchcodec),失败时才回退原函数。"""
-    import soundfile as sf
-    import torch
-    import torchaudio
-    import TTS.tts.models.xtts as xtts_mod
-
-    original = xtts_mod.load_audio
-
-    def safe_load_audio(path, sampling_rate):
-        try:
-            data, sr = sf.read(str(path), dtype="float32", always_2d=True)   # (n, ch)
-            audio = torch.from_numpy(np.ascontiguousarray(data.T))             # (ch, n)
-            if audio.size(0) != 1:
-                audio = audio.mean(dim=0, keepdim=True)
-            if sr != sampling_rate:
-                audio = torchaudio.functional.resample(audio, sr, sampling_rate)
-            return audio.clamp_(-1, 1)
-        except Exception as e:  # noqa: BLE001
-            log.warning("soundfile 读取参考音频失败(%s),回退 torchaudio", e)
-            return original(path, sampling_rate)
-
-    xtts_mod.load_audio = safe_load_audio
-
-
-class XttsEngine:
-    name = "xtts_v2"
+class Segmenter:
+    """把 DeepSeek 流式吐出的文字按标点切成适合 TTS 的片段。"""
 
     def __init__(self):
-        import torch
+        self.buf = ""
+        self.n = 0
 
-        os.environ.setdefault("COQUI_TOS_AGREED", "1")     # 免交互同意 CPML 许可,否则首次下载会卡在 input()
-        _patch_load_audio()
-        from TTS.api import TTS
+    def push(self, t):
+        self.buf += t
+        return self._drain()
 
-        self.torch = torch
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        if self.device == "cpu":
-            log.warning("⚠ 没有检测到 GPU!XTTS 在 CPU 上远慢于实时,会严重卡顿。请在 Kaggle 右侧 Settings -> Accelerator 选 GPU T4。")
-        log.info("正在加载 XTTS v2 模型(首次需下载约 1.8GB,请耐心等待)... device=%s", self.device)
-        t0 = time.time()
-        tts = TTS(MODEL_NAME, progress_bar=False)
-        tts.to(self.device)
-        self.model = tts.synthesizer.tts_model
-        log.info("模型加载完成,用时 %.1fs", time.time() - t0)
-        self._voice = None          # (key, gpt_cond_latent, speaker_embedding, source)
-        self._voice_lock = threading.Lock()
+    def finish(self):
+        out = self._drain()
+        rest = self.buf.strip()
+        self.buf = ""
+        if rest:
+            out.append(rest)
+            self.n += 1
+        return out
 
-    def voice(self):
-        """返回当前克隆音色(参考音频被替换后自动重新计算;缺失则使用内置音色)"""
-        with self._voice_lock:
-            ref = find_reference()
-            key = (str(ref), ref.stat().st_mtime if ref else None)
-            if self._voice and self._voice[0] == key:
-                return self._voice
-            with self.torch.inference_mode():
-                if ref is not None:
-                    t0 = time.time()
-                    gpt, spk = self.model.get_conditioning_latents(audio_path=[str(ref)])
-                    log.info("已从参考音频提取声音特征: %s (%.1fs)", ref, time.time() - t0)
-                    self._voice = (key, gpt, spk, "clone")
-                else:
-                    sm = self.model.speaker_manager
-                    names = list(sm.speakers.keys())
-                    name = FALLBACK_SPEAKER if FALLBACK_SPEAKER in sm.speakers else names[0]
-                    log.warning("⚠ 未找到 %s,临时使用内置音色「%s」(把 reference.wav 放好后无需重启,下次请求自动切换为克隆音色)", REFERENCE_WAV, name)
-                    gpt, spk = list(sm.speakers[name].values())[:2]       # 与 XTTS 官方 synthesize() 的取法一致
-                    self._voice = (key, gpt, spk, "builtin")
-            return self._voice
+    def _drain(self):
+        out = []
+        while True:
+            mn, soft, hard = LIMITS[min(self.n, len(LIMITS) - 1)]
+            cut = self._find(mn, soft, hard)
+            if cut is None:
+                break
+            seg, self.buf = self.buf[:cut], self.buf[cut:]
+            if seg.strip():
+                out.append(seg.strip())
+                self.n += 1
+        return out
 
-    def stream(self, text):
-        """同步生成器:逐块产出 float 音频(24kHz)。必须在线程里调用。"""
-        _, gpt, spk, _ = self.voice()
-        with self.torch.inference_mode():
-            for chunk in self.model.inference_stream(
-                text, LANGUAGE, gpt, spk,
-                stream_chunk_size=STREAM_CHUNK_TOKENS,
-                temperature=0.75, enable_text_splitting=False,
-            ):
-                yield chunk
+    def _find(self, mn, soft, hard):
+        b = self.buf
+        L = len(b)
+        for i, ch in enumerate(b):
+            ln = i + 1
+            if ch in STRONG and ln >= mn:
+                return ln
+            if ch == "." and ln >= mn and i + 1 < L and b[i + 1] in " \n":
+                return ln
+            if ch in WEAK and ln >= soft:
+                return ln
+            if ln >= hard:
+                j = max(b.rfind(c, hard // 2, ln) for c in "，,、 ")
+                return (j + 1) if j > 0 else ln
+        return None
+
+
+_PAUSE_MS = [("。！？!?…\n", 260), ("；;：:", 190), ("，,、", 110)]
+
+
+def pause_ms(end_char, scale):
+    base = 60
+    for chars, ms in _PAUSE_MS:
+        if end_char and end_char in chars:
+            base = ms
+            break
+    return int(base * max(0.0, min(2.5, scale)))
+
+
+# ════════════════════════════════════════════════════════════════
+#  去静音器: 每段 TTS 开头/结尾的静音都会变成"停顿感",在这里统一去掉,再由网关按标点插入自然停顿
+# ════════════════════════════════════════════════════════════════
+class Trimmer:
+    F = SR // 100            # 10ms 一帧
+    THR = 110.0              # RMS 低于它视为静音
+    MAX_INNER = 40           # 句中静音最长保留 400ms
+
+    def __init__(self):
+        self.carry = np.zeros(0, np.int16)
+        self.started = False
+        self.pending = []    # 暂存的静音帧(等到后面有声音才决定要不要放出)
+        self.held = None     # 最后一个有声帧(留着,结束时做淡出)
+        self.total = 0
+
+    def _emit(self, out, fr):
+        if self.held is not None:
+            out.append(self.held)
+        self.held = fr
+
+    def feed(self, x):
+        buf = np.concatenate([self.carry, x]) if self.carry.size else x
+        n = len(buf) // self.F
+        self.carry = buf[n * self.F:].copy()
+        out = []
+        if n:
+            fr = buf[:n * self.F].reshape(n, self.F)
+            rms = np.sqrt((fr.astype(np.float32) ** 2).mean(axis=1))
+            for k in range(n):
+                f = fr[k]
+                if rms[k] >= self.THR:
+                    if not self.started:
+                        self.started = True
+                        f = f.copy()
+                        m = min(len(f), SR // 200)                      # 开头 5ms 淡入
+                        f[:m] = (f[:m] * np.linspace(0, 1, m, dtype=np.float32)).astype(np.int16)
+                    else:
+                        for p in self.pending[: self.MAX_INNER]:
+                            self._emit(out, p)
+                    self.pending = []
+                    self._emit(out, f)
+                elif self.started:
+                    self.pending.append(f)
+        return self._join(out)
+
+    def flush(self):
+        out = []
+        if self.carry.size and self.started and np.sqrt((self.carry.astype(np.float32) ** 2).mean()) >= self.THR:
+            for p in self.pending[: self.MAX_INNER]:
+                self._emit(out, p)
+            self.pending = []
+            self._emit(out, self.carry)
+        self.carry = np.zeros(0, np.int16)
+        self.pending = []                                              # 结尾静音直接丢弃
+        if self.held is not None:
+            h = self.held.copy()
+            m = min(len(h), SR // 125)                                 # 结尾 8ms 淡出
+            h[-m:] = (h[-m:] * np.linspace(1, 0, m, dtype=np.float32)).astype(np.int16)
+            out.append(h)
+            self.held = None
+        return self._join(out)
+
+    def _join(self, out):
+        if not out:
+            return np.zeros(0, np.int16)
+        a = np.concatenate(out)
+        self.total += len(a)
+        return a
+
+
+# ════════════════════════════════════════════════════════════════
+#  TTS 引擎(运行在各自的 GPU 进程里)
+# ════════════════════════════════════════════════════════════════
+def _f2pcm(a):
+    if hasattr(a, "detach"):
+        a = a.detach().float().cpu().numpy()
+    a = np.nan_to_num(np.asarray(a, dtype=np.float32).reshape(-1))
+    return (np.clip(a, -1, 1) * 32767.0).round().astype("<i2")
+
 
 class MockEngine:
-    """本地自检引擎:不需要 GPU/模型,按"约 0.4 倍实时"的速度吐出正弦波。"""
     name = "mock"
-    device = "cpu"
 
-    def __init__(self):
-        log.info("使用 MockEngine(CLONE_MOCK=1),不加载真实模型")
+    def __init__(self, idx, send):
+        self.idx, self.send = idx, send
+        self.dtype = "mock"
 
-    def stream(self, text):
-        n = max(1, len(text)) * 0.18                       # 每个字约 0.18s
-        t_total, freq = 0.0, 220.0 + (sum(map(ord, text)) % 5) * 60
-        while t_total < n:
-            time.sleep(0.12)
-            dur = min(0.4, n - t_total)
-            t = np.arange(int(SAMPLE_RATE * dur)) / SAMPLE_RATE + t_total
-            yield (0.3 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
-            t_total += dur
+    def load(self):
+        time.sleep(0.5)
+
+    def set_voice(self, path, text, xvec):
+        time.sleep(0.4)
+        return {"rtf": 0.4, "ttfa": 0.2, "dtype": "mock", "sr": SR, "mode": "mock"}
+
+    def stream(self, text, chunk_size):
+        speed = float(os.environ.get("VC_MOCK_SPEED", "0.45"))      # 合成耗时 / 音频时长
+        dur = max(0.6, len(text) * 0.2)
+        f0 = 140 + (sum(map(ord, text)) % 5) * 25
+        lead, tail = 0.18, 0.22
+        total = lead + dur + tail
+        step = chunk_size / 12.0
+        t0 = 0.0
+        time.sleep(0.25)
+        while t0 < total:
+            d = min(step, total - t0)
+            time.sleep(d * speed)
+            t = np.arange(int(SR * d)) / SR + t0
+            sig = sum(np.sin(2 * np.pi * f0 * h * t) / h for h in range(1, 6))
+            env = ((t > lead) & (t < lead + dur)) * (0.6 + 0.4 * np.sin(2 * np.pi * 3 * t))
+            yield (0.25 * sig * env).astype(np.float32), SR
+            t0 += d
+
+    def asr(self, path):
+        return "这是一段模拟识别的参考文本"
 
 
-def voice_label():
-    """当前会使用的音色类型(只看文件是否存在,不触发 GPU 计算,可在事件循环里安全调用)"""
-    if USE_MOCK:
-        return "mock"
-    return "clone" if find_reference() else "builtin"
+class RealEngine:
+    """Qwen3-TTS-12Hz-1.7B-Base。优先用 faster-qwen3-tts(CUDA Graph + 流式);失败则回退到官方 qwen-tts(整句合成)。"""
+    name = "qwen3-tts"
 
+    def __init__(self, idx, send):
+        self.idx, self.send = idx, send
+        self.fast = None
+        self.slow = None
+        self.dtype = None
+        self.ref = None
+        self.prompt = None
+        self._asr = None
+        self.sr = SR
+        self.mode = ""
+        self.order = []
 
-STATS = {"rtf": None, "first_chunk_ms": None, "requests": 0, "last_error": None}
-GPU_LOCK = threading.Lock()   # 一张卡同一时刻只跑一个合成
+    def say(self, stage, msg):
+        self.send("status", self.idx, stage, msg)
+        log.info("[GPU%d] %s", self.idx, msg)
 
+    def load(self, force_dtype=None):
+        import torch
+        if not torch.cuda.is_available():
+            raise RuntimeError("PyTorch 看不到 GPU(请在 Kaggle 右侧 Settings 里把 Accelerator 选成 GPU T4 x2)")
+        major = torch.cuda.get_device_capability(0)[0]
+        order = ["bfloat16", "float16"] if major >= 8 else ["float16", "bfloat16"]     # T4(sm75) 没有 bf16 张量核,优先 fp16
+        self.order = order
+        self.dtype = force_dtype or order[0]
+        dt = getattr(torch, self.dtype)
+        self.say("loading", "加载 %s (%s)…" % (MODEL.split("/")[-1], self.dtype))
+        t0 = time.time()
+        try:
+            from faster_qwen3_tts import FasterQwen3TTS
+            self.fast = FasterQwen3TTS.from_pretrained(MODEL, device="cuda", dtype=dt, attn_implementation="sdpa", max_seq_len=2048)
+            self.say("loading", "捕获 CUDA Graph…")
+            try:
+                self.fast.warmup()
+            except Exception as e:  # noqa: BLE001
+                log.warning("[GPU%d] warmup 失败(首次合成时会自动捕获): %s", self.idx, e)
+            self.sr = int(getattr(self.fast, "sample_rate", SR) or SR)
+            self.slow = None
+            mode = "CUDA Graph 流式"
+        except Exception as e:  # noqa: BLE001
+            log.warning("[GPU%d] faster-qwen3-tts 不可用,回退官方 qwen-tts 整句模式: %s", self.idx, e)
+            log.warning(traceback.format_exc())
+            self.fast = None
+            from qwen_tts import Qwen3TTSModel
+            try:
+                self.slow = Qwen3TTSModel.from_pretrained(MODEL, device_map="cuda:0", dtype=dt, attn_implementation="sdpa")
+            except TypeError:
+                self.slow = Qwen3TTSModel.from_pretrained(MODEL, device_map="cuda:0", torch_dtype=dt, attn_implementation="sdpa")
+            mode = "官方整句模式(较慢)"
+        self.mode = mode
+        self.say("loaded", "模型就绪 · %s · %.0fs" % (mode, time.time() - t0))
 
-def warmup(engine):
-    """预热两次:第一次触发 CUDA kernel 编译,第二次测量真实的首包延迟与实时率(RTF = 合成耗时 / 音频时长)"""
-    try:
-        for i in range(2):
-            t0, first, samples = time.time(), None, 0
-            for ch in engine.stream("你好，语音系统已经准备就绪。"):
+    def _free(self):
+        import gc
+        import torch
+        self.fast = None
+        self.slow = None
+        self.prompt = None
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def _make_prompt(self, path, text, xvec):
+        self.ref = (path, text, bool(xvec))
+        self.prompt = None
+        if self.fast is None and self.slow is not None:
+            self.prompt = self.slow.create_voice_clone_prompt(ref_audio=path, ref_text=("" if xvec else text), x_vector_only_mode=bool(xvec))
+
+    def set_voice(self, path, text, xvec):
+        self._make_prompt(path, text, xvec)
+        bad = None
+        for attempt in range(2):
+            t0 = time.time()
+            first, parts = None, []
+            for a, sr in self.stream("你好，我已经准备好了。", 8):
                 if first is None:
                     first = time.time() - t0
-                samples += len(to_pcm16(ch)) // 2
-            total = time.time() - t0
-            dur = samples / SAMPLE_RATE
-            if i == 1 and dur > 0:
-                STATS["rtf"] = round(total / dur, 3)
-                STATS["first_chunk_ms"] = round(first * 1000)
-                log.info("预热完成: 首包 %d ms, 实时率 RTF=%.2f (%s)", STATS["first_chunk_ms"], STATS["rtf"],
-                         "快于实时 ✓" if STATS["rtf"] < 1 else "⚠ 慢于实时,会卡顿,请确认已开启 GPU")
+                parts.append(_f2pcm(a))
+            wall = time.time() - t0
+            pcm = np.concatenate(parts) if parts else np.zeros(0, np.int16)
+            dur = len(pcm) / SR
+            ok = len(pcm) > SR * 0.3 and float(np.sqrt((pcm.astype(np.float32) ** 2).mean())) > 90
+            if ok:
+                return {"rtf": round(wall / max(dur, 1e-3), 2), "ttfa": round(first or wall, 2), "dtype": self.dtype, "mode": self.mode, "sr": self.sr}
+            bad = "试合成的声音是空的/无声(精度 %s)" % self.dtype
+            alt = [d for d in self.order if d != self.dtype]
+            if attempt == 0 and alt:
+                self.say("loading", "%s 精度输出异常,改用 %s 重新加载…" % (self.dtype, alt[0]))
+                self._free()
+                self.load(force_dtype=alt[0])
+                self._make_prompt(path, text, xvec)
+        raise RuntimeError(bad or "试合成失败")
+
+    def stream(self, text, chunk_size):
+        path, ref_text, xvec = self.ref
+        lang = detect_lang(text)
+        max_new = max(120, int(len(text) * 7))
+        if self.fast is not None:
+            for a, sr, _timing in self.fast.generate_voice_clone_streaming(
+                    text=text, language=lang, ref_audio=path, ref_text=ref_text, chunk_size=chunk_size,
+                    xvec_only=xvec, temperature=0.8, top_k=50, repetition_penalty=1.05, max_new_tokens=max_new):
+                yield a, sr
+        else:
+            wavs, sr = self.slow.generate_voice_clone(text=text, language=lang, voice_clone_prompt=self.prompt, max_new_tokens=max_new)
+            yield wavs[0], sr
+
+    def asr(self, path):
+        import soundfile as sf
+        import torch
+        if self._asr is None:
+            from transformers import pipeline
+            self.say("loading", "加载语音识别模型 whisper-small…")
+            try:
+                self._asr = pipeline("automatic-speech-recognition", model="openai/whisper-small", device=0, dtype=torch.float16)
+            except TypeError:
+                self._asr = pipeline("automatic-speech-recognition", model="openai/whisper-small", device=0, torch_dtype=torch.float16)
+        a, sr = sf.read(path, dtype="float32", always_2d=False)
+        if a.ndim > 1:
+            a = a.mean(axis=1)
+        if sr != 16000:
+            n = int(len(a) * 16000 / sr)
+            a = np.interp(np.linspace(0, len(a) - 1, n), np.arange(len(a)), a).astype(np.float32)
+        out = self._asr({"raw": a, "sampling_rate": 16000})
+        return (out.get("text") or "").strip()
+
+
+def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
+    """每张 GPU 一个进程。必须在 import torch 之前设置 CUDA_VISIBLE_DEVICES。"""
+    if not cfg.get("mock"):
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+    def send(*m):
+        res_q.put(m)
+
+    try:
+        eng = MockEngine(idx, send) if cfg.get("mock") else RealEngine(idx, send)
+        send("status", idx, "loading", "启动中…")
+        eng.load()
+        send("status", idx, "ready", "就绪")
     except Exception as e:  # noqa: BLE001
-        log.exception("预热失败(不影响启动): %s", e)
+        log.error("[GPU%d] 引擎加载失败:\n%s", idx, traceback.format_exc())
+        send("status", idx, "error", "%s: %s" % (type(e).__name__, e))
+        return
+    parent = mp.parent_process()
+    while True:
+        try:
+            job = job_q.get(timeout=2)
+        except _queue.Empty:
+            if parent is not None and not parent.is_alive():
+                return
+            continue
+        kind = job[0]
+        if kind == "quit":
+            return
+        try:
+            if kind == "voice":
+                _, vid, path, text, xvec = job
+                send("status", idx, "voice", "提取声音特征并试合成…")
+                info = eng.set_voice(path, text, xvec)
+                send("voice_ok", idx, vid, info)
+                send("status", idx, "ready", "就绪")
+            elif kind == "asr":
+                _, rid, path = job
+                send("status", idx, "voice", "识别参考音频文字…")
+                try:
+                    txt = eng.asr(path)
+                    send("asr", rid, txt, "")
+                except Exception as e:  # noqa: BLE001
+                    log.error("[GPU%d] 识别失败: %s", idx, e)
+                    send("asr", rid, "", "%s: %s" % (type(e).__name__, e))
+                send("status", idx, "ready", "就绪")
+            elif kind == "tts":
+                _, tuid, ep, seg, text, cs = job
+                if epoch.value != ep:
+                    send("seg_done", tuid, seg, idx, {"skipped": True})
+                    continue
+                t0, first, nsamp = time.time(), None, 0
+                gen = eng.stream(text, cs)
+                try:
+                    for a, sr in gen:
+                        if epoch.value != ep:
+                            break
+                        pcm = _f2pcm(a)
+                        if first is None:
+                            first = time.time() - t0
+                        nsamp += len(pcm)
+                        send("chunk", tuid, seg, pcm.tobytes())
+                finally:
+                    try:
+                        gen.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                wall = time.time() - t0
+                send("seg_done", tuid, seg, idx, {"first": first, "wall": wall, "audio": nsamp / SR})
+        except Exception as e:  # noqa: BLE001
+            log.error("[GPU%d] 任务出错:\n%s", idx, traceback.format_exc())
+            if kind == "voice":
+                send("voice_err", idx, job[1], "%s: %s" % (type(e).__name__, e))
+                send("status", idx, "ready", "就绪(声音设置失败)")
+            elif kind == "tts":
+                send("seg_err", job[1], job[3], idx, "%s: %s" % (type(e).__name__, e))
+            elif kind == "asr":
+                send("asr", job[1], "", str(e))
 
 
-# ★ 程序启动(import/exec 本文件)时就加载模型,不等第一次请求
-ENGINE = MockEngine() if USE_MOCK else XttsEngine()
-warmup(ENGINE)
+# ════════════════════════════════════════════════════════════════
+#  网关
+# ════════════════════════════════════════════════════════════════
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi.responses import HTMLResponse, JSONResponse, Response  # noqa: E402
 
-# =============================================================================
-#  FastAPI
-# =============================================================================
-app = FastAPI(title="Clone Voice Streaming")
+SRC_DIR = Path(__file__).resolve().parent
+app = FastAPI(title="Voice Clone Studio")
+LOOP = None
+POOL = None
+SESSIONS = set()
+ACTIVE = {}          # turn uid -> Turn
+VOICE = {"vid": 0, "state": "none", "mode": "", "text": "", "path": None, "pending": set(), "info": {}, "err": "", "msg": ""}
+ASR_WAIT = {}
+_uid = [0]
+
+
+class Worker:
+    def __init__(self, idx, gpu, proc, q):
+        self.idx, self.gpu, self.proc, self.q = idx, gpu, proc, q
+        self.status, self.msg = "loading", "启动中…"
+        self.voice_vid = None
+        self.voice_info = {}
+        self.pending = 0
+        self.mem = (0.0, 0.0, 0)
+
+    def ready(self):
+        return self.status in ("ready", "voice") and self.proc.is_alive()
+
+
+class Pool:
+    def __init__(self, ctx, gpus, cfg):
+        self.ctx = ctx
+        self.epoch = ctx.Value("i", 0)
+        self.res_q = ctx.Queue()
+        self.workers = []
+        for i, g in enumerate(gpus):
+            q = ctx.Queue()
+            p = ctx.Process(target=worker_main, args=(i, g, q, self.res_q, self.epoch, cfg), daemon=True, name="tts-gpu%s" % g)
+            p.start()
+            self.workers.append(Worker(i, g, p, q))
+
+    def pick(self):
+        cand = [w for w in self.workers if w.ready() and w.voice_vid == VOICE["vid"] and VOICE["vid"] > 0]
+        if not cand:
+            return None
+        return min(cand, key=lambda w: (w.pending, w.idx))
+
+    def bump(self):
+        with self.epoch.get_lock():
+            self.epoch.value += 1
+
+    def stop(self):
+        for w in self.workers:
+            try:
+                w.q.put(("quit",))
+            except Exception:  # noqa: BLE001
+                pass
+
+
+class Session:
+    def __init__(self, ws):
+        self.ws = ws
+        self.q = asyncio.Queue()
+        self.history = []
+        self.task = None
+        self.turn = None
+
+    def send(self, obj):
+        self.q.put_nowait(json.dumps(obj, ensure_ascii=False))
+
+    def send_bin(self, b):
+        self.q.put_nowait(b)
+
+
+def broadcast(obj):
+    for s in list(SESSIONS):
+        s.send(obj)
+
+
+class Seg:
+    def __init__(self, idx, text, end_char):
+        self.idx, self.text, self.end = idx, text, end_char
+        self.out = []
+        self.done = False
+        self.err = ""
+        self.trim = Trimmer()
+        self.worker = -1
+        self.had_audio = False
+        self.stats = {}
+
+
+class Turn:
+    def __init__(self, sess, ref, breath):
+        _uid[0] += 1
+        self.uid = _uid[0]
+        self.sess, self.ref, self.breath = sess, ref, breath
+        self.segs = []
+        self.cur = 0
+        self.text_done = False
+        self.closed = False
+        self.pending_pause = 0
+        self.t0 = time.time()
+        self.first_audio = None
+        self.samples = 0
+        self.full_text = ""
+        self.gpu_segs = {}
+        self.tts = True
+        self.warned = False
+
+
+def voice_public():
+    return {"state": VOICE["state"], "mode": VOICE["mode"], "text": VOICE["text"], "vid": VOICE["vid"],
+            "info": VOICE["info"], "err": VOICE["err"], "msg": VOICE["msg"]}
+
+
+def state_public():
+    ws = []
+    for w in POOL.workers if POOL else []:
+        ws.append({"idx": w.idx, "gpu": w.gpu, "status": w.status, "msg": w.msg, "voice": (w.voice_vid == VOICE["vid"] and VOICE["vid"] > 0),
+                   "mem": [round(w.mem[0], 1), round(w.mem[1], 1)], "util": w.mem[2], "info": w.voice_info, "alive": w.proc.is_alive()})
+    return {"type": "state", "workers": ws, "voice": voice_public(), "deepseek": bool(DS_KEY or MOCK_LLM), "mock": MOCK, "model": MODEL}
+
+
+def pump(turn):
+    """按句子顺序把已就绪的音频推给浏览器。第 k 句的音频只有在前 k-1 句全部发完之后才会发出。"""
+    if turn.closed:
+        return
+    sess = turn.sess
+    head = struct.pack("<I", turn.uid)
+    while turn.cur < len(turn.segs):
+        seg = turn.segs[turn.cur]
+        if seg.out:
+            parts = [head]
+            if turn.pending_pause > 0:
+                parts.append(np.zeros(int(SR * turn.pending_pause / 1000), "<i2").tobytes())
+                turn.pending_pause = 0
+            for a in seg.out:
+                parts.append(a.astype("<i2").tobytes())
+                turn.samples += len(a)
+            seg.out = []
+            if turn.first_audio is None:
+                turn.first_audio = time.time() - turn.t0
+            seg.had_audio = True
+            sess.send_bin(b"".join(parts))
+        if seg.done:
+            if seg.had_audio:
+                turn.pending_pause = pause_ms(seg.end, turn.breath)
+            turn.cur += 1
+            continue
+        break
+    if turn.text_done and turn.cur >= len(turn.segs):
+        turn.closed = True
+        ACTIVE.pop(turn.uid, None)
+        sess.send({"type": "turn_done", "turn": turn.uid, "audio_s": round(turn.samples / SR, 2),
+                   "first_ms": int(turn.first_audio * 1000) if turn.first_audio is not None else None,
+                   "gpu_segs": turn.gpu_segs, "segs": len(turn.segs),
+                   "chars": len(turn.full_text)})
+
+
+def dispatch(turn, text):
+    clean = tts_clean(text)
+    if not turn.tts or not has_speech(clean):
+        return
+    seg = Seg(len(turn.segs), clean, text.strip()[-1:])
+    turn.segs.append(seg)
+    w = POOL.pick() if POOL else None
+    if w is None:
+        seg.done = True
+        seg.err = "没有可用的 GPU 进程或声音还没克隆好"
+        if not turn.warned:
+            turn.warned = True
+            turn.sess.send({"type": "warn", "msg": "无法朗读: " + seg.err})
+        return
+    seg.worker = w.idx
+    w.pending += len(clean)
+    turn.gpu_segs[str(w.idx)] = turn.gpu_segs.get(str(w.idx), 0) + 1
+    w.q.put(("tts", turn.uid, POOL.epoch.value, seg.idx, clean, CHUNK_FIRST if seg.idx == 0 else CHUNK_REST))
+
+
+def on_worker_msg(msg):
+    k = msg[0]
+    if k == "status":
+        _, idx, stage, text = msg
+        w = POOL.workers[idx]
+        w.status, w.msg = stage, text
+        broadcast(state_public())
+    elif k == "voice_ok":
+        _, idx, vid, info = msg
+        w = POOL.workers[idx]
+        if vid == VOICE["vid"]:
+            w.voice_vid, w.voice_info = vid, info
+            VOICE["pending"].discard(idx)
+            VOICE["info"][str(idx)] = info
+            log.info("[GPU%d] 声音就绪: %s", idx, info)
+            _voice_progress()
+    elif k == "voice_err":
+        _, idx, vid, err = msg
+        if vid == VOICE["vid"]:
+            VOICE["pending"].discard(idx)
+            VOICE["err"] = err
+            log.error("[GPU%d] 声音设置失败: %s", idx, err)
+            _voice_progress()
+    elif k == "asr":
+        _, rid, text, err = msg
+        fut = ASR_WAIT.pop(rid, None)
+        if fut and not fut.done():
+            fut.set_result((text, err))
+    elif k == "chunk":
+        _, tuid, seg_i, data = msg
+        t = ACTIVE.get(tuid)
+        if t is None or t.closed or seg_i >= len(t.segs):
+            return
+        seg = t.segs[seg_i]
+        a = seg.trim.feed(np.frombuffer(data, dtype="<i2"))
+        if a.size:
+            seg.out.append(a)
+            pump(t)
+    elif k in ("seg_done", "seg_err"):
+        if k == "seg_done":
+            _, tuid, seg_i, idx, stats = msg
+            err = ""
+        else:
+            _, tuid, seg_i, idx, err = msg
+            stats = {}
+        w = POOL.workers[idx]
+        t = ACTIVE.get(tuid)
+        if t is None or t.closed or seg_i >= len(t.segs):
+            return
+        seg = t.segs[seg_i]
+        w.pending = max(0, w.pending - len(seg.text))
+        a = seg.trim.flush()
+        if a.size:
+            seg.out.append(a)
+        seg.done, seg.err, seg.stats = True, err, stats
+        if err:
+            t.sess.send({"type": "warn", "msg": "第 %d 句合成失败: %s" % (seg_i + 1, err)})
+        elif stats.get("audio"):
+            log.info("[#%d] 第%d句 GPU%d: %d字 → 音频 %.1fs, 首包 %.2fs, 耗时 %.1fs (RTF %.2f)", t.uid, seg_i, idx, len(seg.text),
+                     stats["audio"], stats.get("first") or 0, stats.get("wall") or 0, (stats.get("wall") or 0) / max(stats["audio"], 1e-3))
+        pump(t)
+
+
+def _voice_progress():
+    if not VOICE["pending"]:
+        ok = [w for w in POOL.workers if w.voice_vid == VOICE["vid"]]
+        VOICE["state"] = "ready" if ok else "error"
+        if ok:
+            VOICE["err"] = ""
+        else:
+            VOICE["err"] = VOICE["err"] or "所有 GPU 都没能完成声音设置"
+    broadcast(state_public())
+
+
+def reader_thread(loop):
+    while True:
+        try:
+            msg = POOL.res_q.get()
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            loop.call_soon_threadsafe(on_worker_msg, msg)
+        except RuntimeError:
+            return
+
+
+# ───────── 声音克隆 ─────────
+def read_wav(data):
+    import io
+    with wave.open(io.BytesIO(data), "rb") as w:
+        ch, sw, sr, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+        raw = w.readframes(n)
+    if sw != 2:
+        raise ValueError("需要 16-bit WAV")
+    a = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    if ch > 1:
+        a = a.reshape(-1, ch).mean(axis=1)
+    return a, sr
+
+
+def prepare_reference(a, sr):
+    """清理参考音频: 去直流、去首尾静音、归一化到 -3dBFS。"""
+    a = a - float(a.mean())
+    fr = max(1, sr // 100)
+    n = len(a) // fr
+    if n > 10:
+        e = np.sqrt((a[: n * fr].reshape(n, fr) ** 2).mean(axis=1))
+        thr = max(0.004, float(np.percentile(e, 95)) * 0.06)
+        idx = np.where(e > thr)[0]
+        if idx.size:
+            s = max(0, idx[0] - 15) * fr
+            t = min(n, idx[-1] + 20) * fr
+            a = a[s:t]
+    pk = float(np.abs(a).max()) if a.size else 0
+    if pk > 1e-4:
+        a = a * (0.7 / pk)
+    return a.astype(np.float32), sr
+
+
+async def clone_job(vid, path, text, xvec):
+    try:
+        if not xvec and not text:
+            w0 = next((w for w in POOL.workers if w.ready()), None)
+            VOICE["msg"] = "正在自动识别参考音频里说了什么…"
+            broadcast(state_public())
+            if w0 is not None:
+                rid = "asr%d" % vid
+                fut = LOOP.create_future()
+                ASR_WAIT[rid] = fut
+                w0.q.put(("asr", rid, path))
+                try:
+                    text, err = await asyncio.wait_for(fut, 240)
+                except asyncio.TimeoutError:
+                    text, err = "", "识别超时"
+                if err:
+                    log.warning("自动识别失败: %s", err)
+            if not text:
+                xvec = True
+        if vid != VOICE["vid"]:
+            return
+        VOICE.update(text=text, mode=("xvec" if xvec else "icl"), msg="", info={}, err="")
+        (VOICE_DIR / "current.json").write_text(json.dumps({"path": path, "text": text, "xvec": xvec}, ensure_ascii=False), encoding="utf-8")
+        alive = [w for w in POOL.workers if w.proc.is_alive() and w.status != "error"]
+        VOICE["pending"] = set(w.idx for w in alive)
+        for w in POOL.workers:
+            w.voice_vid = None
+        if not alive:
+            VOICE.update(state="error", err="没有可用的 GPU 进程")
+            broadcast(state_public())
+            return
+        for w in alive:
+            w.q.put(("voice", vid, path, text, xvec))
+        broadcast(state_public())
+    except Exception as e:  # noqa: BLE001
+        log.exception("clone_job")
+        VOICE.update(state="error", err="%s: %s" % (type(e).__name__, e))
+        broadcast(state_public())
+
+
+def start_clone(path, text, xvec):
+    VOICE["vid"] += 1
+    VOICE.update(state="cloning", path=path, text=text, mode="", pending=set(), info={}, err="", msg="准备中…")
+    asyncio.get_running_loop().create_task(clone_job(VOICE["vid"], path, text, xvec))
+
+
+@app.post("/api/voice")
+async def api_voice(request: Request):
+    data = await request.body()
+    text = (request.query_params.get("text") or "").strip()
+    try:
+        a, sr = read_wav(data)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "音频无法解析: %s" % e}, status_code=400)
+    if len(a) / sr < 2.0:
+        return JSONResponse({"ok": False, "error": "参考音频太短(<2 秒)"}, status_code=400)
+    if len(a) / sr > 40:
+        return JSONResponse({"ok": False, "error": "参考音频太长(>40 秒)"}, status_code=400)
+    a, sr = prepare_reference(a, sr)
+    import soundfile as sf
+    VOICE_DIR.mkdir(parents=True, exist_ok=True)
+    path = str(VOICE_DIR / ("ref_%d.wav" % int(time.time() * 1000)))      # 每次用新文件名: 引擎按路径缓存声音特征
+    sf.write(path, a, sr, subtype="PCM_16")
+    for old in VOICE_DIR.glob("ref_*.wav"):
+        if str(old) != path and time.time() - old.stat().st_mtime > 600:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    start_clone(path, text, False)
+    return {"ok": True, "vid": VOICE["vid"], "seconds": round(len(a) / sr, 1)}
+
+
+@app.delete("/api/voice")
+async def api_voice_clear():
+    VOICE["vid"] += 1
+    VOICE.update(state="none", mode="", text="", path=None, pending=set(), info={}, err="", msg="")
+    for w in POOL.workers:
+        w.voice_vid = None
+    try:
+        (VOICE_DIR / "current.json").unlink()
+    except OSError:
+        pass
+    broadcast(state_public())
+    return {"ok": True}
+
+
+# ───────── DeepSeek ─────────
+SYS_BASE = ("你是一个自然、亲切、有温度的中文语音聊天助手。你的回答会被直接用语音朗读出来,所以必须遵守:"
+            "1)只用口语化的纯文本,不要用 Markdown、列表符号、标题、表情符号、括号注释、网址;"
+            "2)多用逗号和句号断句,每个短句尽量不超过 25 个字;"
+            "3)阿拉伯数字和英文缩写要写成容易读出来的样子;"
+            "4)像真人聊天一样回应,不要说“作为AI”。")
+SYS_SHORT = "默认回答简短,通常 1 到 3 句话,除非用户明确要求详细内容。"
+SYS_LONG = "用户可能要求讲故事、做讲解等长内容:请连贯、有画面感、有起承转合地完整讲完,按自然段落推进,不要出现标题和序号。"
+SYS_FILLER = "回答的第一个短句请先用一个很短的口语开头,例如“嗯,”“好的,”“哈,”“让我想想,”,然后再接正文。"
+
+
+async def deepseek_stream(messages, long_mode):
+    if MOCK_LLM:
+        txt = ("嗯，好的。这是一个用来测试的回答。我会先说一小句，然后再慢慢往下讲。" * (6 if long_mode else 1)) + "好啦，就说到这里。"
+        for i in range(0, len(txt), 3):
+            await asyncio.sleep(0.05)
+            yield txt[i:i + 3]
+        return
+    if not DS_KEY:
+        raise RuntimeError("没有配置 DEEPSEEK_API_KEY(在 Kaggle Secrets 里添加,或填到脚本顶部的 DEEPSEEK_API_KEY)")
+    import httpx
+    payload = {"model": DS_MODEL, "messages": messages, "stream": True, "temperature": 1.1,
+               "max_tokens": 8000 if long_mode else 1200}
+    headers = {"Authorization": "Bearer " + DS_KEY, "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as cli:
+        async with cli.stream("POST", DS_BASE + "/chat/completions", headers=headers, json=payload) as r:
+            if r.status_code != 200:
+                body = (await r.aread()).decode("utf-8", "ignore")[:300]
+                raise RuntimeError("DeepSeek 返回 %d: %s" % (r.status_code, body))
+            async for line in r.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                d = line[5:].strip()
+                if d == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(d)
+                    t = obj["choices"][0]["delta"].get("content")
+                except Exception:  # noqa: BLE001
+                    continue
+                if t:
+                    yield t
+
+
+async def run_turn(sess, turn, user_text, opts, say_only):
+    seg = Segmenter()
+    try:
+        sess.send({"type": "turn_start", "turn": turn.uid, "ref": turn.ref, "sr": SR, "tts": turn.tts})
+        if say_only:
+            turn.full_text = user_text
+            for s in seg.push(user_text) + seg.finish():
+                dispatch(turn, s)
+        else:
+            sysmsg = SYS_BASE + (SYS_LONG if opts.get("long") else SYS_SHORT) + (SYS_FILLER if opts.get("filler") else "")
+            sess.history.append({"role": "user", "content": user_text})
+            sess.history = sess.history[-24:]
+            msgs = [{"role": "system", "content": sysmsg}] + sess.history
+            first = True
+            async for delta in deepseek_stream(msgs, bool(opts.get("long"))):
+                if first:
+                    first = False
+                    sess.send({"type": "llm_first", "turn": turn.uid, "ms": int((time.time() - turn.t0) * 1000)})
+                turn.full_text += delta
+                sess.send({"type": "delta", "turn": turn.uid, "t": delta})
+                for s in seg.push(delta):
+                    dispatch(turn, s)
+            for s in seg.finish():
+                dispatch(turn, s)
+        turn.text_done = True
+        pump(turn)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.error("对话出错: %s", e)
+        sess.send({"type": "error", "turn": turn.uid, "msg": str(e)})
+        for s in seg.finish():
+            dispatch(turn, s)
+        turn.text_done = True
+        pump(turn)
+    finally:
+        if turn.full_text and not say_only:
+            sess.history.append({"role": "assistant", "content": turn.full_text})
+
+
+def cancel_turn(sess):
+    if sess.task is not None and not sess.task.done():
+        sess.task.cancel()
+    if sess.turn is not None:
+        sess.turn.closed = True
+        ACTIVE.pop(sess.turn.uid, None)
+    sess.task, sess.turn = None, None
+    if POOL:
+        POOL.bump()
+        for w in POOL.workers:
+            w.pending = 0
+
+
+def start_turn(sess, text, opts, ref, say_only=False):
+    cancel_turn(sess)
+    t = Turn(sess, ref, float(opts.get("breath", 1.0)))
+    t.tts = bool(opts.get("tts", True))
+    ACTIVE[t.uid] = t
+    sess.turn = t
+    sess.task = asyncio.get_running_loop().create_task(run_turn(sess, t, text, opts, say_only))
+
+
+# ───────── 路由 ─────────
+def read_src(name):
+    p = SRC_DIR / name
+    return p.read_text(encoding="utf-8") if p.exists() else None
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    if not INDEX_HTML.exists():
-        return HTMLResponse("<h3>index.html 不存在: %s</h3>" % INDEX_HTML, status_code=500)
-    return HTMLResponse(INDEX_HTML.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+    h = read_src("index.html")
+    if h is None:
+        return HTMLResponse("index.html 不存在", status_code=500)
+    return HTMLResponse(h, headers={"Cache-Control": "no-store"})
 
 
-@app.get("/health")
-async def health():
-    return JSONResponse({
-        "ok": True, "engine": ENGINE.name, "device": getattr(ENGINE, "device", "?"),
-        "voice": voice_label(),
-        "reference": str(REFERENCE_WAV), "sample_rate": SAMPLE_RATE, **STATS,
-    })
+@app.get("/worklet.js")
+async def worklet():
+    return Response(read_src("worklet.js") or "", media_type="text/javascript", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/favicon.ico")
@@ -333,1064 +1033,1246 @@ async def favicon():
     return Response(status_code=204)
 
 
-async def send_event(ws, **payload):
-    await ws.send_text(json.dumps(payload, ensure_ascii=False))
+@app.get("/health")
+async def health():
+    return {"ok": True, "workers": [{"idx": w.idx, "status": w.status, "msg": w.msg, "alive": w.proc.is_alive()} for w in POOL.workers] if POOL else [],
+            "voice": VOICE["state"], "mock": MOCK, "deepseek": bool(DS_KEY or MOCK_LLM)}
 
 
-def synth_blocking(segments, first_index, loop, queue, cancel):
-    """【在线程池里运行】逐句调用 XTTS 流式合成,把结果经 queue 交还给事件循环。"""
-    def put(item):
+@app.get("/api/state")
+async def api_state():
+    return state_public()
+
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    await ws.accept()
+    sess = Session(ws)
+    SESSIONS.add(sess)
+
+    async def sender():
         try:
-            loop.call_soon_threadsafe(queue.put_nowait, item)
-        except RuntimeError:        # 事件循环已关闭
-            cancel.set()
-
-    try:
-        while not GPU_LOCK.acquire(timeout=0.2):      # 等待上一个任务释放 GPU,同时响应取消
-            if cancel.is_set():
-                return
-        try:
-            for idx in range(first_index, len(segments)):
-                if cancel.is_set():
-                    break
-                t0, first = time.time(), None
-                for chunk in ENGINE.stream(segments[idx]):
-                    if cancel.is_set():
-                        break
-                    if first is None:
-                        first = time.time() - t0
-                        if idx == first_index:
-                            STATS["first_chunk_ms"] = round(first * 1000)
-                    pcm = to_pcm16(chunk)
-                    if pcm:
-                        put(("pcm", pcm))
+            while True:
+                m = await sess.q.get()
+                if isinstance(m, (bytes, bytearray)):
+                    await ws.send_bytes(m)
                 else:
-                    put(("sentence_done", idx))
-        finally:
-            GPU_LOCK.release()
-    except Exception as e:  # noqa: BLE001
-        log.exception("合成出错")
-        STATS["last_error"] = str(e)
-        put(("error", "%s: %s" % (type(e).__name__, e)))
-    finally:
-        put(("end", None))
-
-
-async def run_request(ws, req_id, text, start_sentence, cancel):
-    """处理一次合成请求:线程池合成 -> 4096 字节分块发送 -> 发送结束标记"""
-    loop = asyncio.get_running_loop()
-    queue = asyncio.Queue()
-    future = None
-    try:
-        segments = split_text(text)
-        if not segments:
-            await send_event(ws, event="error", id=req_id, message="文本里没有可朗读的内容")
-            return
-        start_sentence = max(0, min(int(start_sentence or 0), len(segments)))
-        await send_event(ws, event="start", id=req_id, sentences=len(segments),
-                         sample_rate=SAMPLE_RATE, voice=voice_label())
-        STATS["requests"] += 1
-        log.info("[#%s] 开始合成: %d 字 / %d 句 (从第 %d 句)", req_id, len(text), len(segments), start_sentence)
-        # ★ 同步 TTS 放进线程池,不阻塞事件循环
-        future = loop.run_in_executor(None, synth_blocking, segments, start_sentence, loop, queue, cancel)
-        failed, sent_bytes = False, 0
-        while True:
-            kind, payload = await queue.get()
-            if kind == "pcm":
-                for off in range(0, len(payload), CHUNK_SIZE):           # ★ 4096 字节分块
-                    await ws.send_bytes(payload[off:off + CHUNK_SIZE])
-                    await asyncio.sleep(0)                               # ★ 让出事件循环(心跳/取消消息才能被处理)
-                sent_bytes += len(payload)
-            elif kind == "sentence_done":
-                await send_event(ws, event="sentence_done", id=req_id, index=payload)
-            elif kind == "error":
-                failed = True
-                await send_event(ws, event="error", id=req_id, message=payload)
-            elif kind == "end":
-                break
-        if not failed and not cancel.is_set():
-            await send_event(ws, event="done", id=req_id)                # ★ 结束标记
-            log.info("[#%s] 完成: 音频 %.1fs", req_id, sent_bytes / 2 / SAMPLE_RATE)
-        elif cancel.is_set():
-            log.info("[#%s] 已取消", req_id)
-    except (WebSocketDisconnect, RuntimeError):
-        cancel.set()
-        log.info("[#%s] 客户端已断开,合成中止", req_id)
-    except asyncio.CancelledError:
-        cancel.set()
-        raise
-    except Exception as e:  # noqa: BLE001
-        cancel.set()
-        log.exception("请求处理异常")
-        try:
-            await send_event(ws, event="error", id=req_id, message="%s: %s" % (type(e).__name__, e))
+                    await ws.send_text(m)
         except Exception:  # noqa: BLE001
             pass
-    finally:
-        cancel.set()            # 保证线程里的生成循环会退出
-        if future is not None:
-            try:
-                await future
-            except Exception:  # noqa: BLE001
-                pass
 
-
-@app.websocket("/stream")
-async def stream(ws: WebSocket):
-    await ws.accept()
-    peer = "%s:%s" % (ws.client.host, ws.client.port) if ws.client else "?"
-    log.info("WebSocket 已连接: %s", peer)
-    task, cancel = None, None
-
-    async def abort_current():
-        nonlocal task, cancel
-        if task is not None:
-            cancel.set()
-            try:
-                await task
-            except Exception:  # noqa: BLE001
-                pass
-            task = None
-
+    st = asyncio.get_running_loop().create_task(sender())
+    sess.send(state_public())
     try:
         while True:
-            message = await ws.receive()
-            if message["type"] == "websocket.disconnect":
-                raise WebSocketDisconnect(message.get("code", 1000))
-            raw = message.get("text")
-            if raw is None:
-                continue                                    # 忽略客户端发来的二进制
+            raw = await ws.receive_text()
             try:
-                msg = json.loads(raw)
+                m = json.loads(raw)
             except ValueError:
-                await send_event(ws, event="error", message="请求不是合法的 JSON")
                 continue
-            if not isinstance(msg, dict) or "ping" in msg:  # ★ 心跳包:直接忽略
-                continue
-            if msg.get("stop"):
-                await abort_current()
-                continue
-            text = str(msg.get("text") or "").strip()
-            req_id = msg.get("id")
-            if not text:
-                await send_event(ws, event="error", id=req_id, message="文本为空")
-                continue
-            if len(text) > MAX_TEXT_CHARS:
-                await send_event(ws, event="error", id=req_id, message="文本太长(最多 %d 字)" % MAX_TEXT_CHARS)
-                continue
-            await abort_current()                           # 新请求打断旧请求;旧帧一定先于新的 start 事件发完
-            cancel = threading.Event()
-            task = asyncio.create_task(run_request(ws, req_id, text, msg.get("start_sentence", 0), cancel))
+            k = m.get("type")
+            if k == "ping":
+                sess.send({"type": "pong", "t": m.get("t")})
+            elif k == "chat":
+                txt = str(m.get("text") or "").strip()
+                if txt:
+                    start_turn(sess, txt[:4000], m.get("opts") or {}, m.get("ref"))
+            elif k == "say":
+                txt = str(m.get("text") or "").strip()
+                if txt:
+                    o = dict(m.get("opts") or {})
+                    o["tts"] = True
+                    start_turn(sess, txt[:3000], o, m.get("ref"), say_only=True)
+            elif k == "stop":
+                cancel_turn(sess)
+                sess.send({"type": "stopped"})
+            elif k == "reset":
+                cancel_turn(sess)
+                sess.history = []
+                sess.send({"type": "reset_ok"})
     except WebSocketDisconnect:
-        log.info("WebSocket 已断开: %s", peer)               # ★ 断开时打印日志
-    except Exception as e:  # noqa: BLE001
-        log.warning("WebSocket 异常: %s: %s", type(e).__name__, e)
-    finally:
-        await abort_current()
-
-
-# =============================================================================
-#  后台线程启动 uvicorn(端口 8000)
-# =============================================================================
-SERVER = None
-SERVER_THREAD = None
-
-
-def start_server(host="0.0.0.0", port=PORT, wait=30):
-    global SERVER, SERVER_THREAD
-    if SERVER_THREAD is not None and SERVER_THREAD.is_alive():
-        log.info("服务已在运行,跳过重复启动")
-        return SERVER
-    config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False,
-                            loop="asyncio", ws_ping_interval=20, ws_ping_timeout=60, timeout_keep_alive=75)
-    SERVER = uvicorn.Server(config)
-    SERVER_THREAD = threading.Thread(target=SERVER.run, name="uvicorn", daemon=True)
-    SERVER_THREAD.start()
-    t0 = time.time()
-    while not SERVER.started:
-        if not SERVER_THREAD.is_alive() or time.time() - t0 > wait:
-            raise RuntimeError("uvicorn 启动失败(端口 %d 被占用?)。请 Restart Session 后重试" % port)
-        time.sleep(0.1)
-    log.info("服务已启动: http://127.0.0.1:%d", port)
-    return SERVER
-
-
-if __name__ == "__main__":      # 命令行直接运行: python app.py
-    start_server()
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
         pass
-'''
+    except Exception as e:  # noqa: BLE001
+        log.info("ws 结束: %s", e)
+    finally:
+        cancel_turn(sess)
+        SESSIONS.discard(sess)
+        st.cancel()
 
+
+async def gpu_loop():
+    while True:
+        await asyncio.sleep(2.0)
+        if not SESSIONS or POOL is None:
+            continue
+        try:
+            if not MOCK:
+                p = await asyncio.create_subprocess_exec("nvidia-smi", "--query-gpu=index,memory.used,memory.total,utilization.gpu",
+                                                         "--format=csv,noheader,nounits", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                out, _ = await asyncio.wait_for(p.communicate(), 5)
+                rows = {}
+                for line in out.decode().strip().splitlines():
+                    f = [x.strip() for x in line.split(",")]
+                    if len(f) >= 4:
+                        rows[int(f[0])] = (float(f[1]) / 1024, float(f[2]) / 1024, int(float(f[3])))
+                for w in POOL.workers:
+                    if int(w.gpu) in rows:
+                        w.mem = rows[int(w.gpu)]
+            else:
+                for w in POOL.workers:
+                    w.mem = (5.5 + w.idx, 15.0, 40 + 20 * w.idx)
+        except Exception:  # noqa: BLE001
+            pass
+        broadcast(state_public())
+
+
+def restore_voice():
+    """重启后自动恢复上一次克隆的声音;或使用脚本里指定的默认参考音频。"""
+    try:
+        f = VOICE_DIR / "current.json"
+        if f.exists():
+            j = json.loads(f.read_text(encoding="utf-8"))
+            if Path(j["path"]).exists():
+                log.info("恢复上一次的克隆声音: %s", j["path"])
+                start_clone(j["path"], j.get("text", ""), bool(j.get("xvec")))
+                return
+        ra = os.environ.get("VC_REF_AUDIO")
+        if ra and Path(ra).exists():
+            log.info("使用默认参考音频: %s", ra)
+            start_clone(ra, os.environ.get("VC_REF_TEXT", "").strip(), False)
+    except Exception as e:  # noqa: BLE001
+        log.warning("恢复声音失败: %s", e)
+
+
+@app.on_event("startup")
+async def _startup():
+    global LOOP
+    LOOP = asyncio.get_running_loop()
+    if POOL is not None:
+        threading.Thread(target=reader_thread, args=(LOOP,), daemon=True).start()
+        LOOP.create_task(gpu_loop())
+        restore_voice()
+
+
+def detect_gpus():
+    env = os.environ.get("VC_GPUS")
+    if env:
+        return [x.strip() for x in env.split(",") if x.strip()]
+    if MOCK:
+        return ["0", "1"]
+    try:
+        out = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=15).stdout
+        n = len([ln for ln in out.splitlines() if ln.startswith("GPU ")])
+        return [str(i) for i in range(n)]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def main():
+    global POOL
+    VOICE_DIR.mkdir(parents=True, exist_ok=True)
+    gpus = detect_gpus()
+    log.info("检测到 GPU: %s | 模型: %s | mock=%s", gpus or "无", MODEL, MOCK)
+    if not gpus:
+        log.error("⚠ 没有检测到 GPU,语音合成不可用(聊天文字仍可用)。请在 Kaggle 右侧 Settings → Accelerator 选择 GPU T4 x2")
+    ctx = mp.get_context("spawn")
+    POOL = Pool(ctx, gpus, {"mock": MOCK})
+    import uvicorn
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning", ws_ping_interval=20, ws_ping_timeout=60)
+    finally:
+        POOL.stop()
+
+
+if __name__ == "__main__":
+    main()
+'''
 INDEX_HTML = r'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>克隆语音 · 实时流式合成</title>
+<title>Voice Clone Studio · Qwen3-TTS × DeepSeek</title>
 <style>
-  :root {
-    --bg: #0a0e1a; --card: #121a2e; --card2: #0d1424; --line: #243252;
-    --text: #e6ecff; --muted: #8a97b8; --accent: #4f8cff; --accent2: #7c5cff;
-    --green: #22c55e; --yellow: #facc15; --red: #ef4444; --idle: #64748b;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; min-height: 100%; }
-  body {
-    background: radial-gradient(1200px 600px at 50% -10%, #17224a 0%, var(--bg) 60%) no-repeat, var(--bg);
-    color: var(--text); font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
-    display: flex; align-items: center; justify-content: center; padding: 24px 16px; min-height: 100vh;
-  }
-  .card {
-    width: 100%; max-width: 680px; background: var(--card); border: 1px solid var(--line);
-    border-radius: 20px; padding: 28px; box-shadow: 0 20px 60px rgba(0, 0, 0, .45);
-  }
-  h1 { margin: 0 0 4px; font-size: 24px; letter-spacing: .5px; }
-  .sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.6; }
-  textarea {
-    width: 100%; min-height: 150px; resize: vertical; background: var(--card2); color: var(--text);
-    border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 16px; line-height: 1.7;
-    font-family: inherit; outline: none; transition: border-color .15s, box-shadow .15s;
-  }
-  textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 140, 255, .18); }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; color: var(--muted); font-size: 12px; }
-  .btns { display: flex; gap: 10px; margin-top: 16px; }
-  button {
-    font-family: inherit; font-size: 16px; font-weight: 600; border: 0; border-radius: 12px; cursor: pointer;
-    padding: 14px 18px; color: #fff; transition: transform .08s, filter .15s, opacity .15s;
-  }
-  #speak { flex: 1; background: linear-gradient(135deg, var(--accent), var(--accent2)); }
-  #stop { background: #26334f; color: var(--text); min-width: 90px; }
-  button:hover:not(:disabled) { filter: brightness(1.12); }
-  button:active:not(:disabled) { transform: scale(.985); }
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  .status { display: flex; align-items: center; gap: 10px; margin-top: 22px; font-size: 15px; min-height: 24px; }
-  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--idle); flex: none; }
-  .dot.play { background: var(--green); animation: pulse 1.1s ease-out infinite; }
-  .dot.proc { background: var(--yellow); }
-  .dot.err  { background: var(--red); }
-  @keyframes pulse {
-    0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .65); }
-    70% { box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
-  }
-  .buf { margin-top: 14px; }
-  .buf-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
-  .bar { height: 10px; background: var(--card2); border: 1px solid var(--line); border-radius: 99px; overflow: hidden; }
-  .fill { height: 100%; width: 0; background: var(--green); border-radius: 99px; transition: width .12s linear, background .2s; }
-  .fill.low { background: var(--yellow); }
-  .fill.danger { background: var(--red); }
-  .fill.idle { background: var(--idle); }
-  .foot { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--line); display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 12px; }
-  .foot b { color: var(--text); font-weight: 600; }
-  #conn.ok { color: var(--green); } #conn.wait { color: var(--yellow); } #conn.bad { color: var(--red); }
-  @media (max-width: 520px) {
-    body { padding: 12px 10px; align-items: flex-start; }
-    .card { padding: 20px 16px; border-radius: 16px; }
-    h1 { font-size: 20px; }
-    button { padding: 13px 14px; }
-  }
+:root{
+  --bg:#070b17; --bg2:#0b1226; --panel:rgba(18,25,48,.72); --panel2:rgba(11,17,36,.8); --line:rgba(120,140,220,.16);
+  --text:#e8ecff; --muted:#8e9bc4; --a1:#7c6cff; --a2:#22d3ee; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+  --r:18px;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(1100px 600px at 12% -10%,#1b2352 0%,transparent 60%),radial-gradient(900px 520px at 100% 0%,#0c3550 0%,transparent 55%),var(--bg);
+  color:var(--text);font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",Roboto,sans-serif;overflow:hidden}
+button{font-family:inherit;color:inherit;cursor:pointer;border:0}
+button:disabled{opacity:.45;cursor:not-allowed}
+.app{height:100%;display:flex;flex-direction:column;padding:14px;gap:12px;max-width:1700px;margin:0 auto}
+
+/* header */
+header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);backdrop-filter:blur(14px);flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px}
+.logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--a1),var(--a2));display:grid;place-items:center;font-size:20px;box-shadow:0 6px 22px rgba(124,108,255,.45)}
+.brand b{font-size:20px;letter-spacing:.3px}
+.btn-ghost{background:rgba(124,108,255,.14);border:1px solid rgba(124,108,255,.35);padding:7px 12px;border-radius:12px;font-size:13px}
+.btn-ghost:hover{background:rgba(124,108,255,.25)}
+.pills{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pill{display:flex;align-items:center;gap:7px;padding:7px 12px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-size:12.5px;color:var(--muted);white-space:nowrap}
+.pill b{color:var(--text);font-weight:600}
+.dot{width:8px;height:8px;border-radius:50%;background:#64748b;flex:none}
+.dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)} .dot.wait{background:var(--warn)} .dot.bad{background:var(--bad)}
+.mini{width:62px;height:6px;border-radius:9px;background:rgba(255,255,255,.08);overflow:hidden}
+.mini i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--a1),var(--a2));transition:width .6s}
+
+/* layout */
+main{flex:1;min-height:0;display:grid;grid-template-columns:392px 1fr;gap:12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);backdrop-filter:blur(14px);display:flex;flex-direction:column;min-height:0}
+.ph{display:flex;align-items:center;gap:10px;padding:14px 16px 6px;font-weight:700;font-size:15px}
+.num{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,var(--a1),var(--a2));display:grid;place-items:center;font-size:12px}
+.ph .r{margin-left:auto;color:var(--muted);font-weight:400;font-size:13px;font-variant-numeric:tabular-nums}
+.scroll{overflow:auto;min-height:0;scrollbar-width:thin;scrollbar-color:#2a3763 transparent}
+.left .scroll{flex:1}
+.recrow .wave{min-width:0}
+
+/* left */
+.left .body{padding:6px 16px 16px;display:flex;flex-direction:column;gap:11px}
+.script{position:relative;background:var(--panel2);border:1px dashed rgba(124,108,255,.35);border-radius:14px;padding:11px 13px 12px}
+.script small{display:block;color:var(--muted);font-size:12px;line-height:1.5;padding-right:46px}
+.script p{margin:6px 0 0;line-height:1.75;font-size:14.5px}
+.script .swap{position:absolute;right:11px;top:9px;background:none;color:var(--a2);font-size:12.5px;padding:0}
+.recrow{display:flex;gap:12px;align-items:center}
+.rec{width:68px;height:68px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 30%,#ff7a8a,#e11d48);font-size:26px;box-shadow:0 8px 26px rgba(225,29,72,.45);transition:transform .15s}
+.rec:hover{transform:scale(1.05)}
+.rec.on{animation:pulse 1.2s infinite;background:radial-gradient(circle at 35% 30%,#ff9aa6,#be123c)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(244,63,94,.7)}70%{box-shadow:0 0 0 16px rgba(244,63,94,0)}100%{box-shadow:0 0 0 0 rgba(244,63,94,0)}}
+.wave{flex:1;height:68px;border-radius:14px;background:var(--panel2);border:1px solid var(--line);width:100%}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.btn{padding:11px 12px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid var(--line);font-size:14px;font-weight:600}
+.btn:hover:not(:disabled){background:rgba(255,255,255,.1)}
+.btn.main{background:linear-gradient(135deg,var(--a1),var(--a2));border:0;color:#fff;font-size:15.5px;padding:14px;box-shadow:0 8px 26px rgba(80,120,255,.35)}
+.btn.main:hover:not(:disabled){filter:brightness(1.1)}
+textarea.ref,input.in{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:12px;color:var(--text);font:inherit;outline:none;padding:10px 12px;font-size:13.5px}
+textarea.ref{height:64px;resize:vertical;line-height:1.55}
+textarea.ref:focus,input.in:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(124,108,255,.18)}
+audio{width:100%;height:34px;filter:invert(.9) hue-rotate(180deg) saturate(.6)}
+.hint{font-size:12px;color:var(--muted);line-height:1.55}
+.gpu{display:grid;grid-template-columns:44px 1fr;gap:2px 10px;align-items:center;font-size:13px}
+.gpu b{font-size:13px}
+.bar{height:9px;border-radius:9px;background:rgba(255,255,255,.08);overflow:hidden}
+.bar i{display:block;height:100%;width:0;border-radius:9px;background:linear-gradient(90deg,var(--a1),var(--a2));transition:width .5s}
+.bar.run i{background-size:200% 100%;background-image:linear-gradient(90deg,var(--a1),var(--a2),var(--a1));animation:slide 1.4s linear infinite}
+.bar.err i{background:var(--bad)} .bar.done i{background:linear-gradient(90deg,#10b981,var(--a2))}
+@keyframes slide{to{background-position:-200% 0}}
+.gpu .st{grid-column:2;color:var(--muted);font-size:12px;margin-top:-1px;min-height:16px}
+.card{display:flex;gap:14px;background:rgba(16,185,129,.07);border:1px solid rgba(16,185,129,.28);border-radius:14px;padding:13px}
+.card.bad{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.35)}
+.card.wait{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.3)}
+.card.none{background:var(--panel2);border-color:var(--line)}
+.ring{width:54px;height:54px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:22px;background:conic-gradient(var(--ok) 0 100%,rgba(255,255,255,.08) 0);position:relative}
+.ring::after{content:"";position:absolute;inset:5px;border-radius:50%;background:#0b1428}
+.ring span{position:relative;z-index:1}
+.card.bad .ring{background:conic-gradient(var(--bad) 0 100%,rgba(255,255,255,.08) 0)}
+.card.wait .ring{background:conic-gradient(var(--warn) 0 30%,rgba(255,255,255,.08) 0)}
+.card.none .ring{background:conic-gradient(#475569 0 100%,rgba(255,255,255,.08) 0)}
+.card h4{margin:0 0 4px;font-size:14px}
+.card div{font-size:12.5px;line-height:1.6;color:#b7c3e8;word-break:break-all}
+
+/* right */
+.right .head{display:flex;align-items:center;gap:10px;padding:14px 18px 6px}
+.right .head h3{margin:0;font-size:15px}
+.live{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:13px}
+.meter{width:150px;height:8px;border-radius:9px;background:rgba(255,255,255,.08);overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:var(--ok);transition:width .12s linear,background .2s}
+.meter.low i{background:var(--warn)} .meter.danger i{background:var(--bad)}
+.live .tag{min-width:92px;text-align:right;font-weight:700}
+.tag.idle{color:var(--muted)} .tag.think{color:var(--a2)} .tag.buf{color:var(--warn)} .tag.play{color:var(--ok)}
+.chat{flex:1;padding:8px 20px 14px;display:flex;flex-direction:column;gap:14px}
+.msg{max-width:min(78%,900px);padding:12px 16px;border-radius:16px;line-height:1.8;font-size:15.5px;white-space:pre-wrap;word-break:break-word;animation:in .25s ease}
+@keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.msg.u{align-self:flex-end;background:linear-gradient(135deg,#6a5cff,#4b7bff);border-bottom-right-radius:5px}
+.msg.a{align-self:flex-start;background:rgba(255,255,255,.07);border:1px solid var(--line);border-bottom-left-radius:5px}
+.msg.a.typing::after{content:"";display:inline-block;width:3px;height:1.05em;margin-left:3px;background:var(--a2);vertical-align:-3px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.msg.sys{align-self:center;background:none;color:var(--muted);font-size:13px;text-align:center}
+.msg.err{align-self:center;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.4);color:#fecaca;font-size:13.5px}
+.meta{align-self:flex-start;margin-top:-8px;color:var(--muted);font-size:12px;padding-left:6px}
+.empty{margin:auto;text-align:center;color:var(--muted);line-height:2}
+.empty .big{font-size:44px}
+.tools{display:flex;gap:8px;padding:0 18px 8px;flex-wrap:wrap;align-items:center}
+.chip{padding:7px 13px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-size:13px;color:var(--muted);user-select:none}
+.chip.on{color:#fff;background:rgba(124,108,255,.25);border-color:rgba(124,108,255,.6)}
+.slide{display:flex;align-items:center;gap:8px;padding:5px 13px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-size:13px;color:var(--muted)}
+.slide input{width:92px;accent-color:var(--a1)}
+.inputrow{display:flex;gap:10px;padding:2px 18px 18px}
+.mic{width:48px;border-radius:14px;background:var(--panel2);border:1px solid var(--line);font-size:20px}
+.mic.on{background:rgba(244,63,94,.25);border-color:#f43f5e;animation:pulse 1.2s infinite}
+input.in{flex:1;font-size:15px;padding:13px 16px;border-radius:14px;border-color:rgba(124,108,255,.45)}
+.send{padding:0 24px;border-radius:14px;background:linear-gradient(135deg,var(--a1),#38bdf8);font-weight:700;font-size:15px;color:#fff}
+.stop{padding:0 20px;border-radius:14px;background:rgba(244,63,94,.14);border:1px solid rgba(244,63,94,.4);color:#fecdd3;font-weight:700}
+
+/* log drawer */
+#logd{position:fixed;top:0;right:0;height:100%;width:min(520px,100%);background:#060a15f2;border-left:1px solid var(--line);transform:translateX(100%);transition:transform .25s;z-index:10;display:flex;flex-direction:column}
+#logd.open{transform:none}
+#logd .lh{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;font-weight:700}
+#logs{flex:1;overflow:auto;padding:0 16px 16px;font:12px/1.65 ui-monospace,Menlo,Consolas,monospace;color:#aab6dd}
+#logs .e{color:#fca5a5} #logs .w{color:#fde68a} #logs .o{color:#86efac}
+
+@media(max-width:1000px){
+  body{overflow:auto} .app{height:auto;min-height:100%} main{grid-template-columns:1fr} .pills{margin-left:0}
+  .chat{min-height:52vh} .msg{max-width:92%}
+}
 </style>
 </head>
 <body>
-<main class="card">
-  <h1>🎙️ 克隆语音 · 实时流式合成</h1>
-  <p class="sub">输入文字，点击按钮，边合成边播放。Coqui XTTS v2 · WebSocket 流式传输 · Web Audio 无缝排队播放</p>
+<div class="app">
+  <header>
+    <div class="brand"><div class="logo">🎙️</div><b>Voice Clone Studio</b><button class="btn-ghost" id="btnLog">📜 运行日志</button></div>
+    <div class="pills">
+      <div class="pill"><span class="dot wait" id="dConn"></span>连接 <b id="tConn">连接中…</b></div>
+      <div class="pill"><span class="dot wait" id="dLlm"></span>对话 <b id="tLlm">—</b></div>
+      <div class="pill"><span class="dot wait" id="dTts"></span>语音 <b id="tTts">—</b></div>
+      <div class="pill" id="pg0" style="display:none">GPU0 <span class="mini"><i id="g0b"></i></span><span id="g0t">—</span></div>
+      <div class="pill" id="pg1" style="display:none">GPU1 <span class="mini"><i id="g1b"></i></span><span id="g1t">—</span></div>
+      <div class="pill">首声 <b id="tFirst" style="color:var(--warn)">—</b></div>
+      <div class="pill">声音 <b id="tVoice">未克隆</b></div>
+    </div>
+  </header>
 
-  <textarea id="text" maxlength="2000" placeholder="在这里输入要朗读的文字…">你好，欢迎使用克隆语音实时合成系统。现在你听到的声音，是在 Kaggle 的显卡上一边合成、一边通过网络传回来播放的，中间不会有停顿。</textarea>
-  <div class="row"><span>Ctrl / ⌘ + Enter 快速合成</span><span id="count">0 / 2000</span></div>
+  <main>
+    <section class="panel left">
+      <div class="ph"><span class="num">1</span>录制 / 上传参考语音<span class="r" id="recTime">00:00</span></div>
+      <div class="scroll"><div class="body">
+        <div class="script">
+          <small id="scriptTip">请用自然的语气朗读(包含停顿、呼吸与情绪),10~15 秒最佳,读完点停止:</small>
+          <button class="swap" id="btnSwap">换一段</button>
+          <p id="scriptTxt"></p>
+        </div>
+        <div class="recrow"><button class="rec" id="btnRec" title="开始/停止录音">🎤</button><canvas class="wave" id="wave" width="600" height="120"></canvas></div>
+        <div class="row2"><button class="btn" id="btnUp">⬆ 上传音频</button><button class="btn" id="btnClear">清除</button></div>
+        <input type="file" id="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.aac,.webm" hidden>
+        <audio id="prev" controls style="display:none"></audio>
+        <textarea class="ref" id="refText" placeholder="参考文字:与录音/音频里说的内容一致(录制时会自动填入;上传音频可留空,系统会自动识别)"></textarea>
+        <button class="btn main" id="btnClone" disabled>🚀 开始克隆(双卡同时)</button>
+        <div id="gpus" style="display:flex;flex-direction:column;gap:7px"></div>
+        <div class="card none" id="vcard"><div class="ring"><span>🎙️</span></div><div><h4 id="vh">还没有克隆声音</h4><div id="vb">录制或上传 5~20 秒清晰的人声,点击「开始克隆」。Qwen3-TTS 是零样本克隆,不需要训练,通常几十秒内完成。</div></div></div>
+        <button class="btn" id="btnTry" disabled>🔊 试听克隆声音</button>
+        <div class="hint">小技巧:安静环境、离麦克风 15~20cm、语速自然、不要有背景音乐/混响;有"参考文字"时用 ICL 模式,相似度明显更高。</div>
+      </div></div>
+    </section>
 
-  <div class="btns">
-    <button id="speak" type="button">🔊 合成并播放</button>
-    <button id="stop" type="button" disabled>■ 停止</button>
-  </div>
+    <section class="panel right">
+      <div class="head"><span class="num">2</span><h3>语音对话 · 克隆声音自动朗读</h3>
+        <div class="live"><span class="hint" id="rateTx"></span><div class="meter" id="meter"><i id="meterI"></i></div><span class="tag idle" id="tag">空闲</span></div>
+      </div>
+      <div class="chat scroll" id="chat"><div class="empty" id="empty"><div class="big">🎧</div>先在左侧克隆你的声音<br>然后在下面输入或语音说话,DeepSeek 边想边说,你的声音边合成边播放</div></div>
+      <div class="tools">
+        <button class="chip on" id="oAuto">🔊 自动播放</button>
+        <button class="chip on" id="oSmooth">🧵 无停顿优先</button>
+        <button class="chip" id="oFiller">💬 语气词先行</button>
+        <button class="chip" id="oLong">📖 长文模式</button>
+        <label class="slide">🌬 呼吸<input type="range" id="breath" min="0" max="2" step="0.1" value="1"></label>
+        <button class="chip" id="oNew">🧹 新对话</button>
+      </div>
+      <div class="inputrow">
+        <button class="mic" id="btnMic" title="语音输入(Chrome)">🎙</button>
+        <input class="in" id="inp" placeholder="输入消息,回车发送 …" autocomplete="off">
+        <button class="send" id="btnSend">发送</button>
+        <button class="stop" id="btnStop">停止</button>
+      </div>
+    </section>
+  </main>
+</div>
 
-  <div class="status"><span id="dot" class="dot"></span><span id="status">正在连接服务器…</span></div>
-
-  <div class="buf">
-    <div class="buf-head"><span>缓冲区</span><span id="bufText">0 ms</span></div>
-    <div class="bar"><div id="fill" class="fill idle"></div></div>
-  </div>
-
-  <div class="foot">
-    <span>连接：<b id="conn" class="wait">连接中</b></span>
-    <span>首声延迟：<b id="first">—</b></span>
-    <span>自适应起播缓冲：<b id="pre">—</b></span>
-    <span>断流次数：<b id="under">0</b></span>
-  </div>
-</main>
+<div id="logd"><div class="lh"><span>运行日志</span><button class="btn-ghost" id="logClose">关闭</button></div><div id="logs"></div></div>
 
 <script>
 "use strict";
-/* ======================= 配置参数(方便调整) ======================= */
-const WS_URL = "{{WS_URL}}";                          // 由 Notebook Cell 4 自动替换成 wss://xxx.ngrok-free.app/stream
-const SAMPLE_RATE = 24000;                            // 与 XTTS 输出一致,AudioContext 不再重采样
-const START_THRESHOLD_BYTES = SAMPLE_RATE * 2 * 0.2;  // 收到 200ms 音频(16bit 单声道)后开始播放;调小=更快出声,调大=更不易断
-const TARGET_BUFFER_MS = 500;                         // 目标缓冲区大小(进度条 100% = 500ms)
-const LOW_WATER_MS = 50;                              // 低水位阈值:低于它视为"缓冲偏低",立刻不攒批地逐帧送入
-const HEARTBEAT_INTERVAL = 20000;                     // 心跳间隔(ms),防止 ngrok 空闲断开
-const RECONNECT_DELAY = 3000;                         // 断线后等待多久自动重连(ms)
-/* —— 下面是稳定性增强参数(一般不用动) —— */
-const MAX_RETRIES = 10;                               // 一次合成中最多自动重连次数
-const MAX_PREBUFFER_MS = 1500;                        // 自适应起播缓冲的上限
-const REBUFFER_TIMEOUT_MS = 2000;                     // 断流后重新攒缓冲最多等多久,超时就先播
-const CONNECT_TIMEOUT_MS = 15000;                     // WebSocket 握手超时
-
-/* ======================= DOM ======================= */
+/* ═════════ 工具 ═════════ */
 const $ = (id) => document.getElementById(id);
-const el = { text: $("text"), speak: $("speak"), stop: $("stop"), dot: $("dot"), status: $("status"),
-  fill: $("fill"), bufText: $("bufText"), conn: $("conn"), first: $("first"), pre: $("pre"),
-  under: $("under"), count: $("count") };
-
-/* ======================= 状态 ======================= */
-let audioCtx = null;
-let nextPlayTime = 0;                 // ★ 下一块音频应该开始播放的时刻(AudioContext 时间轴),保持连续
-const sources = new Set();            // 已排队/正在播放的 BufferSource
-let accChunks = [], accBytes = 0;     // ★ accBuffer:累积区
-let ws = null, hbTimer = null, reconnectTimer = null, connectTimer = null;
-let session = null, seq = 0;
-let prebufferMs = loadPrebuffer();    // 自适应起播缓冲(起播时需要攒够的毫秒数)
-
-function loadPrebuffer() {
-  try { const v = +localStorage.getItem("vc_prebuffer"); if (v >= 200 && v <= MAX_PREBUFFER_MS) return v; } catch (e) {}
-  return START_THRESHOLD_BYTES / (SAMPLE_RATE * 2) * 1000;
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const ls = { get(k, d) { try { const v = localStorage.getItem("vc_" + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem("vc_" + k, JSON.stringify(v)); } catch (e) {} } };
+const logs = [];
+function log(msg, kind) {
+  const t = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  logs.push({ t, msg, kind }); if (logs.length > 400) logs.shift();
+  const el = $("logs"); const d = document.createElement("div"); d.className = kind || ""; d.textContent = t + "  " + msg; el.appendChild(d);
+  if (el.children.length > 400) el.removeChild(el.firstChild);
+  if ($("logd").classList.contains("open")) el.scrollTop = el.scrollHeight;
 }
-function savePrebuffer() { try { localStorage.setItem("vc_prebuffer", String(Math.round(prebufferMs))); } catch (e) {} }
-const baseMs = START_THRESHOLD_BYTES / (SAMPLE_RATE * 2) * 1000;
+$("btnLog").onclick = () => { $("logd").classList.add("open"); $("logs").scrollTop = 1e9; };
+$("logClose").onclick = () => $("logd").classList.remove("open");
 
-/* ======================= UI ======================= */
-function setStatus(kind, text) { el.dot.className = "dot " + kind; el.status.textContent = text; }
-function setConn(kind, text) { el.conn.className = kind; el.conn.textContent = text; }
-function busy() { return !!(session && !session.finished); }
-function refreshButtons() { el.speak.disabled = busy(); el.stop.disabled = !busy(); }
-el.text.addEventListener("input", () => { el.count.textContent = el.text.value.length + " / 2000"; });
-el.count.textContent = el.text.value.length + " / 2000";
-el.text.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") speak(); });
+/* ═════════ 全局状态 ═════════ */
+const S = {
+  ws: null, wsOk: false, state: null, uid: null, turnDone: true, t0: 0, firstMs: null, underruns: 0, minRho: 1, llmMs: null,
+  startMs: ls.get("startMs", 300), opts: { auto: ls.get("auto", true), smooth: ls.get("smooth", true), filler: ls.get("filler", false), long: ls.get("long", false), breath: ls.get("breath", 1) },
+  bubble: null, metaEl: null, ref: null, retry: 0, pingT: null, lastLat: null, phase: "idle",
+};
 
-/* ======================= AudioContext 管理 ======================= */
-function ensureCtx() {                // 每次操作前调用:closed 就重建,suspended 就 resume
-  if (!audioCtx || audioCtx.state === "closed") {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    try { audioCtx = new AC({ sampleRate: SAMPLE_RATE }); } catch (e) { audioCtx = new AC(); }
-    nextPlayTime = 0; sources.clear();
-  }
-  if (audioCtx.state === "suspended") { audioCtx.resume().catch(() => {}); }
-  return audioCtx;
-}
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    if (audioCtx) ensureCtx();
-    if (!ws && !reconnectTimer) connect();
-  }
-});
-
-/* ======================= 音频排队播放(零停顿核心) ======================= */
-function takeAcc() {                  // 取出累积区(偶数字节),奇数多出的 1 字节留到下次
-  const merged = new Uint8Array(accBytes);
-  let o = 0;
-  for (const c of accChunks) { merged.set(c, o); o += c.length; }
-  accChunks = []; accBytes = 0;
-  const even = merged.length & ~1;
-  if (even !== merged.length) { accChunks = [merged.slice(even)]; accBytes = 1; }
-  return new Int16Array(merged.buffer.slice(0, even));
-}
-function dropAcc() { accChunks = []; accBytes = 0; }
-function leadMs() { return audioCtx ? Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) : 0; }
-
-/* 把一段 16bit PCM 精确排到时间轴上。
-   注: 服务端发的是裸 PCM(没有文件头),decodeAudioData 无法解码裸 PCM,所以这里直接把 Int16 转成 Float32 AudioBuffer。 */
-function schedule(int16) {
-  const n = int16.length;
-  if (!n) return;
-  const ctx = ensureCtx();
-  const buf = ctx.createBuffer(1, n, SAMPLE_RATE);
-  const ch = buf.getChannelData(0);
-  for (let i = 0; i < n; i++) ch[i] = int16[i] / 32768;
-
-  const now = ctx.currentTime;
-  const remaining = nextPlayTime - now;           // 当前缓冲区剩余量(秒)
-  let restart = false;
-  if (remaining <= 0) {                           // 缓冲已经耗尽(或首次播放):把时间线拉回当前,防止在过去的时刻排队造成抢播/撕裂
-    nextPlayTime = now + 0.01; restart = true;
-  } else if (remaining < LOW_WATER_MS / 1000) {   // 低水位:缓冲偏低但时间线仍连续 → 保持连续,绝不重叠/跳音
-    if (session) session.lowWater++;
-  }
-  if (restart) {                                  // 重新起播的第一块做 4ms 淡入,消除"咔"声
-    const f = Math.min(n, Math.round(SAMPLE_RATE * 0.004));
-    for (let i = 0; i < f; i++) ch[i] *= i / f;
-  }
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(ctx.destination);
-  src.start(nextPlayTime);                        // ★ 精确排队,不是 start(0)
-  nextPlayTime += buf.duration;                   // ★ 时间线连续推进
-  sources.add(src);
-  src.onended = () => sources.delete(src);
-
-  if (session) {
-    const wasDry = session.dry;
-    session.dry = false;
-    if (!session.played) {
-      session.played = true;
-      session.firstMs = Math.round(performance.now() - session.t0);
-      el.first.textContent = session.firstMs + " ms";
-      setStatus("play", "播放中…");
-    } else if (wasDry) {
-      setStatus("play", "播放中…");
+/* ═════════ 播放器(AudioWorklet 无缝 + 弹性放慢) ═════════ */
+const P = {
+  ctx: null, node: null, p: null, rate: 24000,
+  init() {
+    if (this.p) { if (this.ctx.state === "suspended") this.ctx.resume(); return this.p; }
+    this.p = (async () => {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      let ctx; try { ctx = new AC({ sampleRate: 24000, latencyHint: "interactive" }); } catch (e) { ctx = new AC(); }
+      ctx.resume();
+      await ctx.audioWorklet.addModule("/worklet.js?v=" + Date.now());
+      const node = new AudioWorkletNode(ctx, "vc-player", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
+      node.connect(ctx.destination);
+      node.port.onmessage = (e) => P.onmsg(e.data);
+      this.ctx = ctx; this.node = node; this.rate = ctx.sampleRate;
+      log("音频引擎就绪 · 采样率 " + ctx.sampleRate + "Hz" + (ctx.sampleRate !== 24000 ? "(与 TTS 不同,已启用重采样)" : ""), "o");
+    })();
+    return this.p;
+  },
+  open() { this.node.port.postMessage({ t: "open", cfg: { startMs: S.startMs, hiMs: Math.max(300, S.startMs), loMs: 110, rebufMs: Math.max(700, S.startMs * 2), rhoMin: 0.62, stretch: S.opts.smooth } }); },
+  end() { if (this.node) this.node.port.postMessage({ t: "end" }); },
+  flush() { if (this.node) this.node.port.postMessage({ t: "flush" }); },
+  push(buf) {                                    // buf: ArrayBuffer(含 4 字节 turn 头)
+    const i16 = new Int16Array(buf, 4, (buf.byteLength - 4) >> 1);
+    let f = new Float32Array(i16.length);
+    for (let i = 0; i < i16.length; i++) f[i] = i16[i] / 32768;
+    if (this.rate !== 24000) f = resample(f, 24000, this.rate);
+    this.node.port.postMessage({ t: "pcm", d: f }, [f.buffer]);
+  },
+  onmsg(m) {
+    if (m.t === "started") {
+      S.firstMs = Math.round(performance.now() - S.t0);
+      $("tFirst").textContent = (S.firstMs / 1000).toFixed(2) + "s";
+      setPhase("play"); log("首声 " + S.firstMs + "ms", "o");
+    } else if (m.t === "stat") {
+      const ms = m.ms; const pct = Math.min(100, ms / 800 * 100);
+      $("meterI").style.width = pct + "%";
+      $("meter").className = "meter" + (pct < 15 ? " danger" : pct < 35 ? " low" : "");
+      if (m.rho < 0.995) { S.minRho = Math.min(S.minRho, m.rho); $("rateTx").textContent = "弹性放慢 ×" + m.rho.toFixed(2); } else $("rateTx").textContent = "";
+      if (m.mode === "rebuffer") setPhase("buf"); else if (m.mode === "playing" && S.phase === "buf") setPhase("play");
+    } else if (m.t === "underrun") {
+      S.underruns++; S.startMs = Math.min(1500, Math.round(S.startMs * 1.4)); ls.set("startMs", S.startMs);
+      setPhase("buf"); log("缓冲耗尽(第 " + S.underruns + " 次),已自动加大起播缓冲到 " + S.startMs + "ms", "w");
+    } else if (m.t === "drained") {
+      $("meterI").style.width = "0%"; $("rateTx").textContent = "";
+      if (S.turnDone) { setPhase("idle"); finishMeta(); if (S.underruns === 0 && S.startMs > 300) { S.startMs = Math.max(300, Math.round(S.startMs * 0.9)); ls.set("startMs", S.startMs); } }
     }
-  }
+  },
+};
+function resample(f, a, b) {
+  const n = Math.round(f.length * b / a), o = new Float32Array(n), r = a / b;
+  for (let i = 0; i < n; i++) { const x = i * r, k = Math.floor(x), t = x - k; o[i] = (f[k] || 0) * (1 - t) + (f[k + 1] || f[k] || 0) * t; }
+  return o;
+}
+function setPhase(p) {
+  S.phase = p;
+  const m = { idle: ["空闲", "idle"], think: ["思考中…", "think"], buf: ["缓冲中…", "buf"], play: ["播放中", "play"] }[p];
+  $("tag").textContent = m[0]; $("tag").className = "tag " + m[1];
 }
 
-/* 是否把累积区送去播放。force=true 用于句末/结束时清空尾巴 */
-function tryFlush(force) {
-  if (!session || !session.armed || accBytes < 2) return;
-  const ctx = ensureCtx();
-  const remaining = (nextPlayTime - ctx.currentTime) * 1000;
-  if (!force) {
-    if (remaining <= 0) {                         // 还没开播,或刚断流:攒够起播量再开(断流后用更大的缓冲重新起播,避免"播-停-播")
-      if (accBytes < SAMPLE_RATE * 2 * prebufferMs / 1000) {
-        if (!session.waitSince) session.waitSince = performance.now();
-        return;
-      }
-    } else if (accBytes < START_THRESHOLD_BYTES && remaining >= TARGET_BUFFER_MS) {
-      return;                                     // 缓冲充足:继续攒到阈值再一起排队
-    }                                             // 缓冲不足目标值:逐帧立刻送入
-  }
-  session.waitSince = 0;
-  schedule(takeAcc());
-}
-
-function stopPlayback() {
-  for (const s of sources) { try { s.stop(); } catch (e) {} }
-  sources.clear();
-  nextPlayTime = 0;
-  dropAcc();
-}
-
-/* ======================= WebSocket ======================= */
-function resolveWsUrl() {
-  // 页面由同一个 ngrok 隧道提供时,直接用当前地址推导,不会因为隧道换地址而失效;
-  // 只有用 file:// 等方式本地打开时,才使用 Notebook 替换进来的 WS_URL。
-  if (/^https?:$/.test(location.protocol) && location.host) {
-    return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/stream";
-  }
-  return WS_URL;
-}
-function clearHeartbeat() { if (hbTimer) { clearInterval(hbTimer); hbTimer = null; } }
-function startHeartbeat() {
-  clearHeartbeat();
-  hbTimer = setInterval(() => {
-    if (ws && ws.readyState === WebSocket.OPEN) { try { ws.send(JSON.stringify({ ping: Date.now() })); } catch (e) {} }
-  }, HEARTBEAT_INTERVAL);
-}
-
+/* ═════════ WebSocket ═════════ */
+function wsUrl() { return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"; }
 function connect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  const url = resolveWsUrl();
-  if (!url || url.indexOf("{{") !== -1) { setConn("bad", "地址无效"); setStatus("err", "WebSocket 地址无效,请重新运行 Notebook 的 Cell 4"); return; }
-  setConn("wait", "连接中");
-  let sock;
-  try { sock = new WebSocket(url); } catch (e) { setConn("bad", "失败"); scheduleReconnect(); return; }
-  ws = sock;
-  sock.binaryType = "arraybuffer";
-  clearTimeout(connectTimer);
-  connectTimer = setTimeout(() => { if (ws === sock && sock.readyState === WebSocket.CONNECTING) { try { sock.close(); } catch (e) {} } }, CONNECT_TIMEOUT_MS);
-
-  sock.onopen = () => {
-    if (ws !== sock) return;
-    clearTimeout(connectTimer);
-    setConn("ok", "已连接");
-    startHeartbeat();
-    if (session && !session.finished && !session.sent) sendRequest();          // ★ 连接成功后立即发送合成请求
-    else if (!busy()) setStatus("idle", "就绪,输入文字后点击「合成并播放」");
-  };
-  sock.onmessage = (ev) => {
-    if (ws !== sock) return;
-    if (typeof ev.data === "string") { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } onJson(m); }
-    else onBinary(ev.data);
-  };
-  sock.onerror = () => { /* 浏览器随后一定会触发 onclose,在那里统一处理重连 */ };
-  sock.onclose = () => {
-    clearTimeout(connectTimer);
-    clearHeartbeat();                                                           // ★ 关闭前先清心跳
-    if (ws !== sock) return;
-    ws = null;
-    setConn("bad", "已断开");
-    if (session && !session.finished) scheduleResume(); else scheduleReconnect();
-  };
+  let ws; try { ws = new WebSocket(wsUrl()); } catch (e) { return retry(); }
+  ws.binaryType = "arraybuffer"; S.ws = ws;
+  ws.onopen = () => { S.wsOk = true; S.retry = 0; $("dConn").className = "dot ok"; $("tConn").textContent = "已连接"; log("WebSocket 已连接", "o"); ping(); clearInterval(S.pingT); S.pingT = setInterval(ping, 15000); };
+  ws.onmessage = (e) => { if (typeof e.data === "string") onJson(JSON.parse(e.data)); else onBin(e.data); };
+  ws.onclose = () => { S.wsOk = false; clearInterval(S.pingT); $("dConn").className = "dot bad"; $("tConn").textContent = "已断开,重连中…"; retry(); };
+  ws.onerror = () => {};
 }
+function retry() { const d = Math.min(8000, 800 * Math.pow(1.6, S.retry++)); setTimeout(connect, d); }
+function ping() { if (S.wsOk) S.ws.send(JSON.stringify({ type: "ping", t: performance.now() })); }
+function send(o) { if (S.wsOk) { S.ws.send(JSON.stringify(o)); return true; } return false; }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { if (P.ctx && P.ctx.state === "suspended") P.ctx.resume(); if (!S.wsOk && (!S.ws || S.ws.readyState > 1)) connect(); } });
 
-function scheduleReconnect() {          // 空闲时的静默重连,保证随时可用
-  if (reconnectTimer) return;
-  reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, RECONNECT_DELAY);
-}
-function scheduleResume() {             // 合成过程中断线:等 RECONNECT_DELAY 后自动重新 speak(从未播完的那一句续传)
-  if (reconnectTimer) return;
-  if (session.retries >= MAX_RETRIES) { failSession("多次重连失败,请检查网络或 Notebook 是否仍在运行"); scheduleReconnect(); return; }
-  session.retries++; session.armed = false; session.sent = false; dropAcc();
-  setStatus("proc", "连接中断," + (RECONNECT_DELAY / 1000) + " 秒后自动重连(第 " + session.retries + "/" + MAX_RETRIES + " 次)…");
-  reconnectTimer = setTimeout(() => { reconnectTimer = null; speak({ resume: true }); }, RECONNECT_DELAY);
-}
-
-function sendRequest() {
-  session.id = ++seq; session.sent = true; session.armed = false;
-  ws.send(JSON.stringify({ id: session.id, text: session.text, start_sentence: session.resumeFrom }));
-}
-
-function onBinary(data) {
-  if (!session || !session.armed || session.streamDone || session.finished) return;   // 过期/无主的帧直接丢弃
-  const u8 = new Uint8Array(data);
-  accChunks.push(u8); accBytes += u8.length;
-  tryFlush(false);
+function onBin(buf) {
+  const uid = new DataView(buf).getUint32(0, true);
+  if (uid !== S.uid || !P.node) return;
+  P.push(buf);
 }
 
 function onJson(m) {
-  if (m.event === "start") {
-    if (session && !session.finished && m.id === session.id) {
-      session.armed = true; session.retries = 0;
-      if (!session.played) setStatus("proc", "合成中…");
-    }
-    return;
+  switch (m.type) {
+    case "pong": S.lastLat = Math.round(performance.now() - m.t); $("tConn").textContent = "已连接 · " + S.lastLat + "ms"; break;
+    case "state": S.state = m; renderState(); break;
+    case "turn_start":
+      S.uid = m.turn; S.turnDone = false; S.llmMs = null;
+      if (m.tts && P.node) P.open();
+      break;
+    case "llm_first": S.llmMs = m.ms; break;
+    case "delta": if (S.bubble) { S.bubble.textContent += m.t; scrollChat(); } break;
+    case "turn_done": onTurnDone(m); break;
+    case "warn": log("⚠ " + m.msg, "w"); addSys("⚠ " + m.msg); break;
+    case "error": log("❌ " + m.msg, "e"); addErr(m.msg); break;
+    case "stopped": break;
+    case "reset_ok": break;
   }
-  if (!session || session.finished) return;
-  if (m.event === "error") {
-    if (m.id === undefined || m.id === null || m.id === session.id) { tryFlush(true); failSession(m.message || "服务端合成出错"); }
-    return;
-  }
-  if (!session.armed || (m.id !== undefined && m.id !== session.id)) return;
-  if (m.event === "sentence_done") { tryFlush(true); session.resumeFrom = m.index + 1; }   // 句末把尾巴也送出去,避免句间空隙
-  else if (m.event === "done") { tryFlush(true); session.streamDone = true; }
+}
+function onTurnDone(m) {
+  S.turnDone = true;
+  if (S.bubble) S.bubble.classList.remove("typing");
+  S.turnInfo = m;
+  if (m.audio_s > 0) P.end(); else { setPhase("idle"); finishMeta(); }
+  log("本轮完成: " + m.chars + " 字 · " + m.segs + " 句 · 音频 " + m.audio_s + "s", "o");
+}
+function finishMeta() {
+  const m = S.turnInfo; if (!m || !S.metaEl || S.metaEl.dataset.done) return;
+  S.metaEl.dataset.done = 1;
+  const g = Object.keys(m.gpu_segs || {}).map((k) => "GPU" + k + "×" + m.gpu_segs[k]).join(" ");
+  const parts = [];
+  if (m.audio_s) parts.push("音频 " + m.audio_s.toFixed(2) + "s");
+  if (S.firstMs != null) parts.push("首声 " + (S.firstMs / 1000).toFixed(2) + "s");
+  if (S.llmMs != null) parts.push("DeepSeek 首字 " + (S.llmMs / 1000).toFixed(2) + "s");
+  if (m.first_ms != null) parts.push("服务端首包 " + (m.first_ms / 1000).toFixed(2) + "s");
+  if (g) parts.push(g);
+  if (m.audio_s) parts.push(S.underruns ? "断流 " + S.underruns + " 次(已自适应加大缓冲)" : "零断流");
+  if (S.minRho < 0.995) parts.push("弹性放慢最低 ×" + S.minRho.toFixed(2));
+  S.metaEl.textContent = parts.join(" · ");
 }
 
-/* ======================= 合成入口 ======================= */
-function speak(opts) {
-  opts = opts || {};
-  ensureCtx();                                                                  // 必须在用户点击的同一调用栈里创建/恢复 AudioContext
-  if (!opts.resume) {
-    const text = el.text.value.trim();
-    if (!text) { setStatus("err", "请先输入要朗读的文字"); return; }
-    if (busy()) return;
-    stopPlayback();
-    session = { text, resumeFrom: 0, retries: 0, id: 0, armed: false, sent: false, played: false, streamDone: false,
-      finished: false, underruns: 0, lowWater: 0, dry: false, waitSince: 0, firstMs: null, t0: performance.now() };
-    el.first.textContent = "—"; el.under.textContent = "0";
-    setStatus("proc", "正在合成…");
+/* ═════════ 状态渲染 ═════════ */
+function renderState() {
+  const st = S.state; if (!st) return;
+  $("dLlm").className = "dot " + (st.deepseek ? "ok" : "bad"); $("tLlm").textContent = st.deepseek ? "DeepSeek 就绪" : "未配置 Key";
+  const ws = st.workers || [], total = ws.length, ready = ws.filter((w) => w.status === "ready" || w.status === "voice").length;
+  const err = ws.filter((w) => w.status === "error").length;
+  $("dTts").className = "dot " + (ready === total && total ? "ok" : err === total && total ? "bad" : "wait");
+  $("tTts").textContent = total ? ready + "/" + total + " 卡" : "无 GPU";
+  [0, 1].forEach((i) => {
+    const w = ws[i], pill = $("pg" + i);
+    if (!w) { pill.style.display = "none"; return; }
+    pill.style.display = ""; $("g" + i + "b").style.width = (w.mem[1] ? w.mem[0] / w.mem[1] * 100 : 0) + "%";
+    $("g" + i + "t").textContent = w.mem[0].toFixed(1) + "G " + w.util + "%";
+  });
+  const v = st.voice, ok = v.state === "ready";
+  $("tVoice").textContent = ok ? "已克隆" : v.state === "cloning" ? "克隆中…" : v.state === "error" ? "失败" : "未克隆";
+  $("tVoice").style.color = ok ? "var(--ok)" : v.state === "error" ? "var(--bad)" : "";
+  /* 每卡进度 */
+  const box = $("gpus"); box.innerHTML = "";
+  ws.forEach((w) => {
+    let pct = 8, cls = "run", txt = w.msg;
+    if (w.status === "error") { pct = 100; cls = "err"; }
+    else if (w.status === "loading") { pct = 35; }
+    else if (w.status === "voice") { pct = 75; }
+    else if (w.status === "loaded") { pct = 60; }
+    else if (w.status === "ready") { if (w.voice) { pct = 100; cls = "done"; const i = w.info || {}; txt = "声音就绪" + (i.rtf != null ? " · 试合成 RTF " + i.rtf + " · 首包 " + i.ttfa + "s · " + i.dtype : ""); } else { pct = v.state === "cloning" ? 85 : 100; cls = v.state === "cloning" ? "run" : "done"; txt = v.state === "cloning" ? "等待声音设置…" : "模型就绪,等待参考语音"; } }
+    const d = document.createElement("div"); d.className = "gpu";
+    d.innerHTML = "<b>GPU" + w.gpu + "</b><div class='bar " + cls + "'><i style='width:" + pct + "%'></i></div><div class='st'>" + esc(txt) + "</div>";
+    box.appendChild(d);
+  });
+  /* 结果卡 */
+  const c = $("vcard"), h = $("vh"), b = $("vb"), ring = c.querySelector(".ring span");
+  if (v.state === "ready") {
+    c.className = "card"; ring.textContent = "✓"; h.textContent = "克隆完成 · 模式 " + (v.mode === "icl" ? "ICL 上下文克隆" : "x-vector 声纹");
+    const infos = Object.values(v.info || {}); const slow = infos.some((i) => i.rtf >= 1);
+    let t = "参考文字: " + (v.text ? "「" + esc(v.text.slice(0, 60)) + (v.text.length > 60 ? "…" : "") + "」" : "无(仅声纹,相似度会低一些,建议补上文字重新克隆)");
+    if (infos.length) t += "<br>每卡试合成速度 RTF " + infos.map((i) => i.rtf).join(" / ") + "(<1 即快于实时)";
+    if (slow) t += "<br>⚠ 有显卡慢于实时,已用「弹性放慢」保证不停顿;双卡并行可进一步提速。";
+    b.innerHTML = t;
+  } else if (v.state === "cloning") {
+    c.className = "card wait"; ring.textContent = "⏳"; h.textContent = "正在克隆…"; b.textContent = v.msg || "两张显卡同时提取声音特征并试合成,请稍候。";
+  } else if (v.state === "error") {
+    c.className = "card bad"; ring.textContent = "!"; h.textContent = "克隆失败"; b.textContent = v.err || "未知错误";
   } else {
-    if (!session || session.finished) return;
-    setStatus("proc", "正在重新连接并续传…");
+    c.className = "card none"; ring.textContent = "🎙️"; h.textContent = "还没有克隆声音"; b.textContent = "录制或上传 5~20 秒清晰的人声,点击「开始克隆」。Qwen3-TTS 是零样本克隆,不需要训练,通常几十秒内完成。";
   }
-  refreshButtons();
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  if (ws && ws.readyState === WebSocket.OPEN) sendRequest();
-  else if (!ws) connect();                                                       // 连上后由 onopen 发送请求
+  $("btnTry").disabled = !ok;
+  $("btnClone").disabled = !S.ref || v.state === "cloning";
+  if (v.state === "ready" && !renderState.vdone) { renderState.vdone = v.vid; log("声音克隆完成 · " + (v.mode === "icl" ? "ICL" : "x-vector"), "o"); }
+  if (v.state !== "ready") renderState.vdone = 0;
 }
 
-function failSession(msg) {
-  if (!session) return;
-  session.finished = true;
-  setStatus("err", "出错:" + msg);
-  refreshButtons();
+/* ═════════ 聊天 ═════════ */
+function scrollChat() { const c = $("chat"); c.scrollTop = c.scrollHeight; }
+function addMsg(cls, text) { const e = $("empty"); if (e) e.remove(); const d = document.createElement("div"); d.className = "msg " + cls; d.textContent = text; $("chat").appendChild(d); scrollChat(); return d; }
+function addSys(t) { addMsg("sys", t); }
+function addErr(t) { addMsg("err", t); }
+async function sendChat(text, say) {
+  text = (text || "").trim(); if (!text) return;
+  if (!S.wsOk) { addErr("还没连上服务器,请稍等…"); return; }
+  try { await P.init(); } catch (e) { addErr("音频引擎启动失败: " + e.message); log("音频引擎失败: " + e, "e"); }
+  P.flush();
+  if (S.bubble) S.bubble.classList.remove("typing");
+  if (!say) addMsg("u", text);
+  S.bubble = addMsg("a typing", ""); S.metaEl = document.createElement("div"); S.metaEl.className = "meta"; $("chat").appendChild(S.metaEl);
+  S.t0 = performance.now(); S.firstMs = null; S.underruns = 0; S.minRho = 1; S.turnInfo = null; S.uid = null;
+  const v = S.state && S.state.voice;
+  const tts = S.opts.auto && v && v.state === "ready";
+  if (S.opts.auto && !tts) addSys("还没有克隆好声音,本轮只显示文字。先在左侧完成克隆即可朗读。");
+  setPhase("think");
+  send({ type: say ? "say" : "chat", text, opts: { tts, long: S.opts.long, filler: S.opts.filler, breath: S.opts.breath } });
 }
-function finishSession() {
-  session.finished = true;
-  if (session.underruns === 0) { prebufferMs = Math.max(baseMs, prebufferMs * 0.9); savePrebuffer(); }   // 顺畅就慢慢回落
-  el.pre.textContent = Math.round(prebufferMs) + " ms";
-  setStatus("idle", "播放完成" + (session.underruns ? "(中途断流 " + session.underruns + " 次,已自动加大缓冲)" : "") + ",可以再次合成");
-  refreshButtons();
+function doStop() {
+  send({ type: "stop" }); P.flush(); S.uid = null; S.turnDone = true;
+  if (S.bubble) S.bubble.classList.remove("typing"); setPhase("idle"); $("rateTx").textContent = "";
 }
+$("btnSend").onclick = () => { const v = $("inp").value; $("inp").value = ""; sendChat(v); };
+$("inp").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("btnSend").click(); } });
+$("btnStop").onclick = doStop;
+$("btnTry").onclick = () => sendChat("你好呀，这是我的克隆声音。你觉得，听起来像我吗？", true);
+function chip(id, key) { const el = $(id); const sync = () => el.classList.toggle("on", !!S.opts[key]); sync(); el.onclick = () => { S.opts[key] = !S.opts[key]; ls.set(key, S.opts[key]); sync(); if (key === "smooth" && P.node) P.node.port.postMessage({ t: "cfg", cfg: { stretch: S.opts.smooth } }); }; }
+chip("oAuto", "auto"); chip("oSmooth", "smooth"); chip("oFiller", "filler"); chip("oLong", "long");
+$("breath").value = S.opts.breath; $("breath").oninput = (e) => { S.opts.breath = +e.target.value; ls.set("breath", S.opts.breath); };
+$("oNew").onclick = () => { doStop(); send({ type: "reset" }); $("chat").innerHTML = ""; S.bubble = null; addSys("— 新对话 —"); };
 
-el.speak.addEventListener("click", () => speak());
-el.stop.addEventListener("click", () => {
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  if (ws && ws.readyState === WebSocket.OPEN) { try { ws.send(JSON.stringify({ stop: true })); } catch (e) {} }
-  stopPlayback();
-  if (session) session.finished = true;
-  session = null;
-  setStatus("idle", "已停止");
-  refreshButtons();
-  if (!ws) scheduleReconnect();
-});
+/* 语音输入(浏览器自带识别,Chrome/Edge) */
+(function () {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; const b = $("btnMic");
+  if (!SR) { b.disabled = true; b.title = "当前浏览器不支持语音输入,请用 Chrome/Edge"; return; }
+  let rec = null, on = false;
+  b.onclick = () => {
+    if (on) { rec.stop(); return; }
+    rec = new SR(); rec.lang = "zh-CN"; rec.interimResults = true; rec.continuous = false;
+    rec.onstart = () => { on = true; b.classList.add("on"); P.init().catch(() => {}); };
+    rec.onresult = (e) => { let t = ""; for (const r of e.results) t += r[0].transcript; $("inp").value = t; if (e.results[e.results.length - 1].isFinal) { const v = t; $("inp").value = ""; setTimeout(() => sendChat(v), 50); } };
+    rec.onerror = (e) => log("语音输入错误: " + e.error, "w");
+    rec.onend = () => { on = false; b.classList.remove("on"); };
+    rec.start();
+  };
+})();
 
-/* ======================= 100ms 巡检:进度条 / 断流检测 / 结束判定 ======================= */
-setInterval(() => {
-  const lead = leadMs();
-  const pct = Math.min(100, lead / TARGET_BUFFER_MS * 100);
-  el.fill.style.width = pct + "%";
-  el.bufText.textContent = Math.round(lead) + " ms";
-  let cls = "fill";
-  if (!busy() || !session.played) cls += " idle";
-  else if (session.streamDone) cls += (pct < 20 ? " idle" : "");
-  else if (pct < 20) cls += " danger";
-  else if (pct < 50) cls += " low";
-  el.fill.className = cls;
+/* ═════════ 参考语音: 录制 / 上传 / 编码 ═════════ */
+const SCRIPTS = [
+  "你好呀，今天过得怎么样？我最近发现了一件特别有趣的事情……嗯，让我慢慢讲给你听。先深呼吸，别着急。",
+  "清晨的阳光照进窗台，我泡了一杯热茶，翻开那本看了一半的书。窗外有鸟在叫，一切都那么安静。",
+  "说起来你可能不信，上个周末我一个人去爬山。刚开始真的好累啊，可是到了山顶，我突然觉得都值得了。",
+  "各位朋友大家好，欢迎收听今天的节目。今天我们要聊的话题，是怎么养成一个好习惯，别担心，不会很复杂。",
+];
+let scriptIdx = ls.get("script", 0) % SCRIPTS.length;
+function showScript() { $("scriptTxt").textContent = SCRIPTS[scriptIdx]; }
+showScript();
+$("btnSwap").onclick = () => { scriptIdx = (scriptIdx + 1) % SCRIPTS.length; ls.set("script", scriptIdx); showScript(); };
 
-  if (!session || session.finished) return;
-  const now = audioCtx ? audioCtx.currentTime : 0;
-  const dry = session.played && nextPlayTime <= now;
-  if (session.streamDone) {                       // 数据全部到齐:等排队的音频播完就算结束
-    if (!session.played) { if (accBytes >= 2) tryFlush(true); else finishSession(); }   // 全程没有任何音频
-    else if (dry && accBytes < 2) finishSession();
-    return;
-  }
-  if (dry && !session.dry) {                      // 播放途中数据没跟上 → 记录一次断流并自动加大起播缓冲
-    session.dry = true; session.underruns++;
-    prebufferMs = Math.min(MAX_PREBUFFER_MS, Math.max(prebufferMs * 1.5, prebufferMs + 100)); savePrebuffer();
-    el.under.textContent = String(session.underruns);
-    el.pre.textContent = Math.round(prebufferMs) + " ms";
-    if (session.armed) setStatus("proc", "缓冲中…(数据没跟上,正在重新攒缓冲)");   // 断线重连期间保留"连接中断"提示
-  }
-  if (session.waitSince && performance.now() - session.waitSince > REBUFFER_TIMEOUT_MS) tryFlush(true);   // 不能一直等
-}, 100);
+const Rec = { on: false, chunks: [], sr: 48000, stream: null, ctx: null, node: null, an: null, t0: 0, tm: null, raf: 0 };
+const cv = $("wave"), cx = cv.getContext("2d");
+function drawIdle() { cx.clearRect(0, 0, cv.width, cv.height); cx.strokeStyle = "rgba(140,160,230,.35)"; cx.beginPath(); cx.moveTo(0, cv.height / 2); cx.lineTo(cv.width, cv.height / 2); cx.stroke(); }
+drawIdle();
+function drawLoop() {
+  if (!Rec.on) return;
+  const a = new Uint8Array(Rec.an.fftSize); Rec.an.getByteTimeDomainData(a);
+  cx.clearRect(0, 0, cv.width, cv.height);
+  const g = cx.createLinearGradient(0, 0, cv.width, 0); g.addColorStop(0, "#7c6cff"); g.addColorStop(1, "#22d3ee");
+  cx.strokeStyle = g; cx.lineWidth = 2.5; cx.beginPath();
+  for (let i = 0; i < a.length; i++) { const x = i / a.length * cv.width, y = a[i] / 255 * cv.height; i ? cx.lineTo(x, y) : cx.moveTo(x, y); }
+  cx.stroke(); Rec.raf = requestAnimationFrame(drawLoop);
+}
+function fmt(s) { s = Math.floor(s); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); }
+async function recStart() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { addErr("浏览器不允许录音:需要 https 地址(ngrok/cloudflared 提供的地址即可)"); return; }
+  try {
+    Rec.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: true, autoGainControl: false } });
+  } catch (e) { addErr("无法使用麦克风: " + e.message); return; }
+  const AC = window.AudioContext || window.webkitAudioContext; Rec.ctx = new AC(); Rec.sr = Rec.ctx.sampleRate; await Rec.ctx.resume();
+  await Rec.ctx.audioWorklet.addModule("/worklet.js?v=" + Date.now());
+  const src = Rec.ctx.createMediaStreamSource(Rec.stream);
+  Rec.node = new AudioWorkletNode(Rec.ctx, "vc-rec"); Rec.chunks = [];
+  Rec.node.port.onmessage = (e) => Rec.chunks.push(e.data);
+  Rec.an = Rec.ctx.createAnalyser(); Rec.an.fftSize = 1024;
+  const mute = Rec.ctx.createGain(); mute.gain.value = 0;
+  src.connect(Rec.node); src.connect(Rec.an); Rec.node.connect(mute); mute.connect(Rec.ctx.destination);
+  Rec.on = true; Rec.t0 = performance.now(); $("btnRec").classList.add("on"); $("btnRec").textContent = "⏹";
+  Rec.tm = setInterval(() => { const s = (performance.now() - Rec.t0) / 1000; $("recTime").textContent = fmt(s); if (s >= 20) recStop(); }, 200);
+  drawLoop(); log("开始录音(最长 20 秒)");
+}
+async function recStop() {
+  if (!Rec.on) return; Rec.on = false; clearInterval(Rec.tm); cancelAnimationFrame(Rec.raf); drawIdle();
+  $("btnRec").classList.remove("on"); $("btnRec").textContent = "🎤";
+  Rec.node.port.postMessage("stop"); Rec.stream.getTracks().forEach((t) => t.stop());
+  const n = Rec.chunks.reduce((s, c) => s + c.length, 0), f = new Float32Array(n); let o = 0; for (const c of Rec.chunks) { f.set(c, o); o += c.length; }
+  const sr = Rec.sr; try { await Rec.ctx.close(); } catch (e) {}
+  if (n / sr < 2) { addErr("录音太短(不足 2 秒),请重新录制"); return; }
+  const f24 = await resample24(f, sr);
+  setRef(f24, "rec", SCRIPTS[scriptIdx]);
+}
+$("btnRec").onclick = () => (Rec.on ? recStop() : recStart());
+async function resample24(f, sr) {
+  if (sr === 24000) return f;
+  const len = Math.ceil(f.length * 24000 / sr), oc = new OfflineAudioContext(1, len, 24000), b = oc.createBuffer(1, f.length, sr);
+  b.copyToChannel(f, 0); const s = oc.createBufferSource(); s.buffer = b; s.connect(oc.destination); s.start();
+  return (await oc.startRendering()).getChannelData(0).slice();
+}
+$("btnUp").onclick = () => $("file").click();
+$("file").onchange = async (e) => {
+  const file = e.target.files[0]; e.target.value = ""; if (!file) return;
+  try {
+    const ab = await file.arrayBuffer();
+    const buf = await new OfflineAudioContext(1, 1, 24000).decodeAudioData(ab);       // 解码时自动重采样到 24kHz
+    const ch = buf.numberOfChannels, n = buf.length, f = new Float32Array(n);
+    for (let c = 0; c < ch; c++) { const d = buf.getChannelData(c); for (let i = 0; i < n; i++) f[i] += d[i] / ch; }
+    let out = f, cropped = false; if (n > 24000 * 20) { out = f.slice(0, 24000 * 20); cropped = true; }
+    setRef(out, "upload", "", cropped, file.name);
+  } catch (err) { addErr("无法解码这个音频文件: " + err.message + "(请换成 wav/mp3/m4a)"); }
+};
+function wavBlob(f, sr) {
+  const n = f.length, b = new ArrayBuffer(44 + n * 2), v = new DataView(b), w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) { const s = Math.max(-1, Math.min(1, f[i])); v.setInt16(44 + i * 2, s < 0 ? s * 32768 : s * 32767, true); }
+  return new Blob([b], { type: "audio/wav" });
+}
+function setRef(f, src, text, cropped, name) {
+  let pk = 0, e = 0; for (let i = 0; i < f.length; i++) { const a = Math.abs(f[i]); if (a > pk) pk = a; e += f[i] * f[i]; }
+  const dur = f.length / 24000, rms = Math.sqrt(e / f.length);
+  const tips = [];
+  if (dur < 5) tips.push("时长偏短(建议 ≥ 8 秒)"); if (rms < 0.01) tips.push("音量偏小"); if (pk >= 0.99) tips.push("有爆音/削波,请离麦克风远一点");
+  S.ref = { blob: wavBlob(f, 24000), dur, src };
+  const au = $("prev"); au.src = URL.createObjectURL(S.ref.blob); au.style.display = "block";
+  $("refText").value = text || "";
+  $("refText").placeholder = src === "upload" ? "上传的音频没有文字:留空 = 自动识别(推荐);也可以手动填写它说的内容" : "参考文字:与录音内容一致";
+  $("recTime").textContent = fmt(dur);
+  addSys("参考语音已就绪 · " + dur.toFixed(1) + " 秒" + (name ? " · " + name : "") + (cropped ? " · 已截取前 20 秒(文字请留空以自动识别)" : "") + (tips.length ? " · ⚠ " + tips.join(",") : ""));
+  log("参考语音 " + dur.toFixed(1) + "s rms=" + rms.toFixed(3) + " peak=" + pk.toFixed(2));
+  renderState();
+}
+$("btnClear").onclick = async () => {
+  S.ref = null; $("prev").style.display = "none"; $("prev").removeAttribute("src"); $("refText").value = ""; $("recTime").textContent = "00:00";
+  try { await fetch("/api/voice", { method: "DELETE" }); } catch (e) {} renderState();
+};
+$("btnClone").onclick = async () => {
+  if (!S.ref) return;
+  const text = $("refText").value.trim();
+  $("btnClone").disabled = true;
+  try {
+    const r = await fetch("/api/voice?text=" + encodeURIComponent(text), { method: "POST", headers: { "Content-Type": "audio/wav" }, body: S.ref.blob });
+    const j = await r.json(); if (!j.ok) throw new Error(j.error || "上传失败");
+    log("参考语音已上传(" + j.seconds + "s),开始克隆", "o");
+  } catch (e) { addErr("克隆请求失败: " + e.message); $("btnClone").disabled = false; }
+};
 
-window.addEventListener("beforeunload", () => { clearHeartbeat(); try { if (ws) ws.close(); } catch (e) {} });
-
-el.pre.textContent = Math.round(prebufferMs) + " ms";
-setStatus("proc", "正在连接服务器…");
-connect();                                        // 打开页面就先连好,点击后无需再等握手
+/* ═════════ 启动 ═════════ */
+setPhase("idle");
+function demo() {                                  // ?demo=1 : 离线界面预览(不连接服务器)
+  $("dConn").className = "dot ok"; $("tConn").textContent = "已连接 · 42ms"; $("tFirst").textContent = "1.38s";
+  S.state = { type: "state", deepseek: true, mock: false, model: "Qwen3-TTS-12Hz-1.7B-Base",
+    workers: [0, 1].map((i) => ({ idx: i, gpu: String(i), status: "ready", msg: "就绪", voice: true, mem: [6.1 + i, 15, 1], util: 38 + i * 21, info: { rtf: 0.86 + i * 0.05, ttfa: 1.02, dtype: "float16" }, alive: true })),
+    voice: { state: "ready", mode: "icl", text: SCRIPTS[0], vid: 1, info: { 0: { rtf: 0.86 }, 1: { rtf: 0.91 } }, err: "", msg: "" } };
+  renderState();
+  const e = $("empty"); if (e) e.remove();
+  addMsg("u", "给我讲一个故事");
+  addMsg("a", "好呀，我给你讲一个故事。从前有个小村庄，村口住着一位老木匠，手艺特别好，可他有个怪毛病，就是从来不肯给自己做一件家具。村里人都觉得奇怪，问他为什么，他总是笑呵呵地说，我的木头都留给别人啦。");
+  const m = document.createElement("div"); m.className = "meta"; m.textContent = "音频 14.73s · 首声 1.38s · DeepSeek 首字 0.52s · GPU0×3 GPU1×3 · 零断流"; $("chat").appendChild(m);
+  setPhase("play"); $("meterI").style.width = "62%";
+}
+if (/[?&]demo\b/.test(location.search)) demo(); else { connect(); window.addEventListener("pointerdown", () => { P.init().catch(() => {}); }, { once: true }); }
 </script>
 </body>
 </html>
 '''
+WORKLET_JS = r'''/* Voice Clone Studio - AudioWorklet
+ *  - vc-player : 无缝流式播放器(抖动缓冲 + 保音高弹性放慢 WSOLA)。缓冲吃紧时"放慢"而不是"停住"。
+ *  - vc-rec    : 麦克风录音(把 Float32 帧发回主线程)
+ * PlayerCore 不依赖 Web Audio, 可以在 Node 里单元测试。
+ */
+"use strict";
 
-README_MD = r'''# 🎙️ 克隆语音 · Kaggle 实时流式合成与播放
+class PlayerCore {
+  constructor(sr, post) {
+    this.sr = sr;
+    this.post = post || function () {};
+    this.N = 2 * Math.round(sr * 0.020);        // WSOLA 窗口 40ms
+    this.Hs = this.N >> 1;                      // 合成步长 20ms
+    this.D = Math.round(sr * 0.012);            // 相似度搜索半径 ±12ms
+    this.win = new Float32Array(this.N);
+    for (let i = 0; i < this.N; i++) this.win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / this.N);  // 周期 Hann: 50% 重叠和恒为 1
+    this.data = new Float32Array(sr * 20);
+    this.ola = new Float32Array(this.Hs);
+    this.outBuf = new Float32Array(this.Hs);
+    this.cfg = { startMs: 300, hiMs: 300, loMs: 110, rebufMs: 700, rhoMin: 0.62, stretch: true };
+    this.reset();
+  }
 
-在 Kaggle 免费 T4 GPU 上跑 Coqui XTTS v2,用你自己的参考声音克隆,浏览器里输入文字,**一边合成、一边播放**。
-通信只用 WebSocket,公网隧道只用 ngrok,播放用浏览器原生 Web Audio(零第三方库)。
+  reset() {
+    this.data.fill(0);
+    this.wr = 0; this.prevS = 0; this.a = 0; this.resumePos = 0; this.primed = false;
+    this.outPos = 0; this.outLen = 0; this.finishing = false;
+    this.mode = "idle"; this.ended = false; this.rho = 1;
+    this.rebufNow = this.cfg.rebufMs;
+    this.fadeIn = 0; this.flushing = false; this.fadeLeft = 0; this.statCnt = 0; this.started = false;
+  }
 
-## 一、快速开始清单
+  open(cfg) { if (cfg) Object.assign(this.cfg, cfg); this.reset(); this.mode = "buffering"; }
+  end() { this.ended = true; }
 
-- [ ] **1. 开 GPU 和网络**:笔记本右侧 Settings → Accelerator 选 **GPU T4**,Internet 选 **On**
-- [ ] **2. 准备参考声音**:录一段 6~30 秒、单人、清晰无噪音的朗读,命名为 `reference.wav`,上传成一个 Kaggle Dataset
-- [ ] **3. 添加 Dataset**:笔记本右侧 Add Data → 选中刚才的 Dataset;复制路径填到 Cell 2 的 `DATASET_PATH`
-- [ ] **4. 设置 ngrok 令牌**:到 <https://dashboard.ngrok.com/get-started/your-authtoken> 复制 authtoken;笔记本顶部 Add-ons → Secrets → Add Secret,名称 **`NGROK_TOKEN`**,填入令牌并勾选 **Attached**
-- [ ] **5. 运行 Cell 1 → 2 → 3**:安装依赖 → 复制参考音频 → 加载模型并启动服务(首次下载模型约 1.8GB,需几分钟)
-- [ ] **6. 运行 Cell 4**:拿到公网网址(首次打开 ngrok 免费版的提示页,点 *Visit Site*)
-- [ ] **7. 运行 Cell 5 保持在线**:不要停止它。输入中文、点击「合成并播放」,约 0.5 秒内出声
+  push(f32) {
+    if (this.mode === "idle" || this.flushing) return;
+    const n = f32.length;
+    if (!n) return;
+    if (this.wr + n + 4 * this.N > this.data.length) {
+      const nd = new Float32Array(Math.max(this.data.length * 2, this.wr + n + 4 * this.N + this.sr));
+      nd.set(this.data.subarray(0, this.wr));
+      this.data = nd;
+    }
+    this.data.set(f32, this.wr);
+    this.wr += n;
+  }
 
-> 只想要最省事的方式:把 `kaggle_all_in_one.py` 整个粘贴进**一个**代码单元格,改好 `DATASET_PATH`,Shift+Enter 即可,效果等同于依次运行 5 个 Cell。
+  flush() {
+    if (this.mode === "idle") return;
+    if (this.mode !== "playing" || this.outPos >= this.outLen) { this.reset(); this.post({ t: "flushed" }); return; }
+    this.flushing = true; this.fadeLeft = 480;     // 10ms 淡出再清空,避免"啪"声
+  }
 
-## 二、文件说明(都在 `/kaggle/working/`)
+  level() {                                          // 尚未消耗的输入量(ms)
+    const p = this.primed ? this.prevS + this.Hs : this.resumePos;
+    return Math.max(0, this.wr - p) * 1000 / this.sr;
+  }
 
-| 文件 | 作用 |
-|---|---|
-| `app.py` | FastAPI + WebSocket 后端:启动即加载 XTTS,流式合成,4096 字节分块推送 |
-| `index.html` | 前端播放器:Web Audio 无缝排队、缓冲进度条、心跳、断线自动续传 |
-| `index.template.html` | Cell 4 自动生成的模板备份(含 `{{WS_URL}}` 占位符),保证 Cell 4 可重复运行 |
-| `start.ipynb` | 5 个 Cell 的 Notebook 入口 |
-| `reference.wav` | 克隆声音的参考音频(Cell 2 复制过来;**随时替换,无需重启**,下次合成自动生效) |
+  updateRate() {
+    const c = this.cfg;
+    let t = 1;
+    if (c.stretch && !this.ended) {
+      const lv = this.level();
+      if (lv >= c.hiMs) t = 1;
+      else if (lv <= c.loMs) t = c.rhoMin;
+      else t = c.rhoMin + (1 - c.rhoMin) * (lv - c.loMs) / (c.hiMs - c.loMs);
+    }
+    const step = 0.03;
+    if (this.rho < t) this.rho = Math.min(t, this.rho + step);
+    else if (this.rho > t) this.rho = Math.max(t, this.rho - step);
+  }
 
-## 三、稳定性参数速查表
+  // 产出下一个 20ms 的输出块。返回 0=成功 1=数据不足 2=已全部播完
+  hop() {
+    const N = this.N, Hs = this.Hs, D = this.D, w = this.win, d = this.data;
+    if (!this.primed) {
+      const p = this.resumePos;
+      if (this.ended && p >= this.wr) return 2;
+      if (!this.ended && this.wr - p < N) return 1;
+      this.prevS = p - Hs; this.a = p;
+      for (let i = 0; i < Hs; i++) this.ola[i] = w[Hs + i] * d[p + i];
+      this.primed = true;
+      this.fadeIn = Math.round(0.004 * this.sr);
+    }
+    this.updateRate();
+    const sNat = this.prevS + Hs;                    // 上一帧的"自然延续"位置
+    let s;
+    if (this.rho >= 0.999) {
+      s = sNat; this.a = s;
+      if (!this.ended && s + N > this.wr) return 1;
+    } else {
+      const a2 = this.a + Hs * this.rho;
+      const c = Math.round(a2);
+      const lo = Math.max(c - D, 0);
+      let hi = c + D;
+      if (!this.ended) hi = Math.min(hi, this.wr - N);
+      if (hi < lo) return 1;
+      this.a = a2;
+      let best = Infinity; s = lo;
+      for (let c2 = lo; c2 <= hi; c2++) {            // 在 ±D 内找与"自然延续"最像的起点(绝对差之和最小)
+        let sad = 0;
+        for (let k = 0; k < Hs; k += 2) { const df = d[c2 + k] - d[sNat + k]; sad += df < 0 ? -df : df; }
+        if (sad < best) { best = sad; s = c2; }
+      }
+    }
+    const ob = this.outBuf;
+    if (this.ended && s >= this.wr) {                // 输入耗尽: 把残留的淡出尾巴送出去
+      ob.set(this.ola); this.outPos = 0; this.outLen = Hs;
+      this.finishing = true; this.primed = false; this.resumePos = this.wr;
+      return 0;
+    }
+    for (let i = 0; i < Hs; i++) {
+      ob[i] = this.ola[i] + w[i] * d[s + i];
+      this.ola[i] = w[Hs + i] * d[s + Hs + i];
+    }
+    this.prevS = s; this.outPos = 0; this.outLen = Hs;
+    if (this.prevS > 8 * this.sr) {                  // 回收已播放部分的内存
+      const sh = this.prevS - this.sr;
+      d.copyWithin(0, sh, this.wr);
+      d.fill(0, this.wr - sh, this.wr);
+      this.wr -= sh; this.prevS -= sh; this.a -= sh; this.resumePos -= sh;
+    }
+    return 0;
+  }
 
-前端参数在 `index.html` 的 `<script>` 顶部,后端参数在 `app.py` 顶部。
+  starve() {                                         // 数据真的不够了: 淡出 -> 重新缓冲(绝不在半途硬切)
+    if (this.primed) {
+      this.outBuf.set(this.ola); this.outPos = 0; this.outLen = this.Hs;
+      this.primed = false; this.resumePos = this.prevS + this.Hs;
+    }
+    this.mode = "rebuffer";
+    this.rho = 1;
+    this.rebufNow = Math.min(8000, this.rebufNow * 1.6);     // 每断一次就把重新起播的缓冲加大,断流会越来越少
+    if (this.started) this.post({ t: "underrun" });
+  }
 
-| 参数 | 位置 | 默认值 | 调大的效果 | 调小的效果 |
-|---|---|---|---|---|
-| `START_THRESHOLD_BYTES` | index.html | 9600(200ms) | 起播更晚,更不容易中途停顿 | 起播更快,但网络/合成抖动时更容易停顿 |
-| `TARGET_BUFFER_MS` | index.html | 500 | 进度条以更大的缓冲为满格;缓冲不足 500ms 时逐帧立即送入 | 更早进入"攒批"省资源 |
-| `LOW_WATER_MS` | index.html | 50 | 更早判定"缓冲偏低",结尾更不易撕裂/爆音 | 判定更宽松 |
-| `HEARTBEAT_INTERVAL` | index.html | 20000 | 少发心跳,但 ngrok 更可能空闲断线 | 心跳更密,ngrok 更不易断线 |
-| `RECONNECT_DELAY` | index.html | 3000 | 断线后等更久才重连 | 重连更快,服务端没起来时会频繁重试 |
-| `MAX_RETRIES` | index.html | 10 | 容忍更长时间的断网 | 更快放弃并提示错误 |
-| `MAX_PREBUFFER_MS` | index.html | 1500 | 自适应缓冲可涨得更高(更稳,首声更晚) | 限制首声延迟 |
-| `CHUNK_SIZE` | app.py | 4096 | 每个 WebSocket 帧更大、包数更少,延迟更粗 | 帧更小更细腻,包数变多 |
-| `STREAM_CHUNK_TOKENS` | app.py | 20 | 每块音频更长、接缝更少,首包更慢 | 首包更快,块更碎 |
-| `MAX_SEG_CHARS` | app.py | 60 | 每句更长,句间停顿更少,但超过 82 字 XTTS 会吞字 | 句子更短,首句更快出声 |
+  finishNow() {
+    this.reset();
+    this.post({ t: "drained" });
+  }
 
-## 四、常见问题排查表
+  render(out) {
+    const n = out.length;
+    let i = 0;
+    if (this.mode === "buffering") {
+      if (this.level() >= this.cfg.startMs || (this.ended && this.wr > 0)) this.mode = "playing";
+      else if (this.ended) { this.finishNow(); }
+    } else if (this.mode === "rebuffer") {
+      if (this.level() >= this.rebufNow || (this.ended && this.wr > this.resumePos)) this.mode = "playing";
+      else if (this.ended && this.outPos >= this.outLen) this.finishNow();
+    }
+    while (i < n) {
+      if (this.outPos < this.outLen) {
+        const m = Math.min(n - i, this.outLen - this.outPos);
+        const ob = this.outBuf;
+        for (let k = 0; k < m; k++) {
+          let v = ob[this.outPos++];
+          if (this.fadeIn > 0) { v *= 1 - this.fadeIn / (0.004 * this.sr); this.fadeIn--; }
+          if (this.flushing) {
+            v *= this.fadeLeft / 480;
+            if (--this.fadeLeft <= 0) { out[i + k] = v; i += k + 1; this.reset(); this.post({ t: "flushed" }); out.fill(0, i); return; }
+          }
+          out[i + k] = v;
+        }
+        i += m;
+      } else if (this.mode === "playing") {
+        if (this.finishing) { this.finishNow(); continue; }
+        const r = this.hop();
+        if (r === 1) { this.starve(); if (this.outPos >= this.outLen) { out.fill(0, i); i = n; } continue; }
+        if (r === 2) { this.finishNow(); continue; }
+        if (!this.started) { this.started = true; this.post({ t: "started" }); }
+      } else {
+        out.fill(0, i); i = n;
+      }
+    }
+    this.statCnt += n;
+    if (this.statCnt >= this.sr / 10) {
+      this.statCnt = 0;
+      const rem = (this.outLen - this.outPos) * 1000 / this.sr;
+      this.post({ t: "stat", ms: this.level() + rem, rho: this.rho, mode: this.mode });
+    }
+  }
+}
 
-| 症状 | 原因 | 解决方法 |
-|---|---|---|
-| 点按钮后很久才出声 | 起播缓冲被自适应加大了;或 GPU 没开(CPU 合成极慢) | 确认 Accelerator = GPU T4;调小 `START_THRESHOLD_BYTES`;页面底部看"首声延迟" |
-| 播放中途有停顿 | 合成速度跟不上播放(RTF≥1)或网络抖动 | 看 Cell 3 打印的 RTF,应 < 1;调大 `START_THRESHOLD_BYTES`(播放器本身也会自动加大缓冲并记住) |
-| 结尾有"咔"声/撕裂 | 缓冲在结尾耗尽 | 调大 `LOW_WATER_MS`(如 100) |
-| ngrok 频繁断线 | 空闲超时 | 调小 `HEARTBEAT_INTERVAL`(如 10000) |
-| 页面出现 ngrok 的 "You are about to visit…" | ngrok 免费版的浏览器提示页 | 点 *Visit Site*,同一浏览器之后不再出现 |
-| Cell 4 报 `ERR_NGROK_108` | 免费账号同时只能有 1 个 ngrok 会话 | 到 <https://dashboard.ngrok.com/agents> 停掉其它会话后重跑 Cell 4 |
-| Cell 4 报找不到 `NGROK_TOKEN` | Secret 没添加或没勾选 Attached | Add-ons → Secrets,名称必须是 `NGROK_TOKEN`,勾选 Attached |
-| 用的不是我的声音 | 没找到 `reference.wav`,在用内置音色 | Cell 3 会提示;把文件放到 `/kaggle/working/reference.wav`(无需重启) |
-| 克隆声音像"另一个人" | 参考音频太短/有噪音/有背景音乐 | 换成 10~30 秒的干净单人朗读 |
-| 一听就有重复一句 | 断线重连时,被打断的那一句会从头重说 | 正常现象(只重说被打断的那一句,不会从整段开头重来) |
-| Cell 1 报依赖自检失败 | 版本冲突 | 点 Run → Restart Session,从 Cell 1 重新运行 |
-| 页面显示"已断开"并一直重连 | Notebook 被回收或 Cell 5 被停止 | 回到 Kaggle 重新运行 Cell 3 → 4 → 5,网址会变 |
-| 关闭网页再打开 | — | 直接用原网址即可,服务在 Notebook 里一直运行,无需重启 |
+if (typeof AudioWorkletProcessor !== "undefined") {
+  class PlayerProcessor extends AudioWorkletProcessor {
+    constructor() {
+      super();
+      this.core = new PlayerCore(sampleRate, (m) => this.port.postMessage(m));
+      this.port.onmessage = (e) => {
+        const m = e.data;
+        if (m.t === "pcm") this.core.push(m.d);
+        else if (m.t === "open") this.core.open(m.cfg);
+        else if (m.t === "end") this.core.end();
+        else if (m.t === "flush") this.core.flush();
+        else if (m.t === "cfg") Object.assign(this.core.cfg, m.cfg);
+      };
+    }
+    process(inputs, outputs) {
+      const o = outputs[0];
+      if (o && o[0]) {
+        this.core.render(o[0]);
+        for (let c = 1; c < o.length; c++) o[c].set(o[0]);
+      }
+      return true;
+    }
+  }
+  registerProcessor("vc-player", PlayerProcessor);
 
-## 五、架构示意图
-
-```mermaid
-flowchart LR
-    B["浏览器<br/>index.html<br/>Web Audio 24kHz"] <-->|"wss:// (JSON 请求 / PCM 二进制帧 / 心跳)"| N["ngrok 隧道<br/>(不缓冲)"]
-    N <-->|"ws:// :8000"| S["Kaggle · uvicorn 线程<br/>FastAPI · /stream"]
-    S -->|"run_in_executor"| T["线程池<br/>XTTS v2 inference_stream<br/>GPU T4"]
-    T -->|"float 音频块 → int16 PCM"| S
-    R[("reference.wav")] --> T
-```
-
-```
- 浏览器                                  Kaggle Notebook (T4 GPU)
-┌──────────────────┐   wss://xxx.ngrok…/stream   ┌─────────────────────────────────────┐
-│ 文本 → JSON 请求 │ ──────────────────────────▶ │ FastAPI WebSocket (事件循环,不阻塞)  │
-│ 心跳 ping/20s    │                             │   │ run_in_executor                 │
-│                  │ ◀── 二进制 PCM(≤4096B/帧) ─ │   ▼                                 │
-│ accBuffer 累积   │ ◀── {"event":"sentence_done"}│ 线程池: XTTS 逐句流式合成 (GPU_LOCK)│
-│  ↓ 达到 200ms    │ ◀── {"event":"done"}        │   ▲ 启动时已加载并预热模型          │
-│ Int16→Float32    │                             │ reference.wav → 声音特征(缓存)      │
-│ start(nextPlayTime)                            └─────────────────────────────────────┘
-│ 时间线连续排队   │
-└──────────────────┘
-```
-
-## 六、相对原始提示词的 4 处修正(以及为什么)
-
-原提示词的方向完全保留(ngrok + WebSocket + XTTS v2 + Web Audio + 启动即加载模型 + 线程池 + 心跳 + 自动重连)。但其中有 4 个设计按字面实现会**直接不能用**或者达不到目标,所以做了修正:
-
-1. **`decodeAudioData` 解不了裸 PCM。** 它只能解码带文件头的 WAV/MP3。服务端发的是裸 PCM,逐块 `decodeAudioData` 会全部失败 → 全部被"跳过" → 一片寂静。
-   **改为**:前端直接把 Int16 转成 Float32 `AudioBuffer`,仍然用 `start(nextPlayTime)` 精确排队,效果更好(没有解码延迟、不会产生块边缘的重采样误差)。
-2. **"合成完成后再分块发送"做不到"500ms 内开始出声"。** 整句合成完才开始发,延迟至少是整句合成时长。
-   **改为**:用 XTTS 的 `inference_stream` **边合成边发送**;长文本先按标点切句(每句 ≤60 字,避免 XTTS 对中文 82 字截断),逐句流式合成。分块 4096 字节 + `await asyncio.sleep(0)` + 线程池 `run_in_executor` 全部保留。
-3. **"剩余量 < LOW_WATER 就把 `nextPlayTime` 重置为现在+0.01"会制造爆音。** 比如剩余 30ms 时重置,新块会和还没播完的旧块重叠 20ms。
-   **改为**:仅当缓冲**真正耗尽**(`nextPlayTime ≤ currentTime`)才重置并做 4ms 淡入;缓冲偏低但时间线仍连续时保持连续,只作为"缓冲偏低"信号(进度条变黄)。同时,断流后不再"播 200ms 就停、再播 200ms 再停",而是用更大的缓冲重新攒够再播,并把学到的缓冲值记在浏览器里(自适应)。
-4. **"连接错误时重新调用 speak"会从头重说整段。** 
-   **改为**:服务端每句结束发 `sentence_done`,客户端记住进度,断线重连后带上 `start_sentence` 从被打断的那一句继续,不会从整段开头重来。
-
-此外的增强:同一连接复用(页面一打开就连好,点击后省掉握手时间)、新请求自动打断旧请求并用 `id` 隔离过期音频、停止按钮、`/health` 健康检查与 RTF 自检、找不到 `reference.wav` 时自动降级用内置音色(不至于整个系统不可用)、读参考音频改用 soundfile(绕开 torchaudio≥2.9 对 torchcodec/FFmpeg 的依赖)、补装 coqui-tts 漏声明的 `six`、Cell 4 可重复运行。
-
-## 七、关于"启动延迟 < 500ms、绝不卡顿"的诚实说明
-
-这两个目标取决于 GPU 合成速度:T4 上 XTTS v2 通常快于实时(RTF < 1),满足条件时首声一般在 0.3~0.8 秒,且之后不会断。如果 Cell 3 打印的 RTF ≥ 1,说明合成比播放慢,任何前端技巧都无法完全消除停顿——请确认 GPU 已开启。公网链路(Kaggle → ngrok → 你的网络)的延迟与抖动也会计入,所以播放器带有自适应缓冲。
+  class RecProcessor extends AudioWorkletProcessor {
+    constructor() { super(); this.on = true; this.port.onmessage = (e) => { if (e.data === "stop") this.on = false; }; }
+    process(inputs) {
+      const ch = inputs[0] && inputs[0][0];
+      if (ch && this.on) this.port.postMessage(ch.slice(0));
+      return this.on;
+    }
+  }
+  registerProcessor("vc-rec", RecProcessor);
+}
+if (typeof module !== "undefined") module.exports = { PlayerCore };
 '''
 
-CELL1 = r'''# ═══════════════════════════════════════════════════════════════════════════
-# Cell 1 / 5 — 安装依赖: fastapi · uvicorn · pyngrok · TTS(Coqui XTTS v2)
-#   · 锁定 Kaggle 自带的 torch / torchaudio / torchvision,pip 不会把它们升级到和 GPU 驱动不匹配的版本
-#   · 用维护中的 coqui-tts(idiap 分支);原版 `pip install TTS` 已停更,在新版 Python / torch 上装不上或加载模型就报错
-#   · 额外补装 six(coqui-tts 漏声明的依赖)、pypinyin(中文拼音转换,XTTS 合成中文必需)
-# ═══════════════════════════════════════════════════════════════════════════
-import importlib.metadata as md
-import re
-import subprocess
-import sys
+
+def banner(t):
+    print("\n" + "═" * 70 + "\n  " + t + "\n" + "═" * 70, flush=True)
 
 
-def sh(cmd, check=True):
-    p = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    if check and p.returncode != 0:
-        tail = "\n".join((p.stdout + p.stderr).strip().splitlines()[-25:])
-        raise RuntimeError("命令失败: %s\n%s" % (cmd, tail))
+def secret(name):
+    try:
+        from kaggle_secrets import UserSecretsClient
+        v = UserSecretsClient().get_secret(name)
+        return (v or "").strip()
+    except Exception:
+        return (os.environ.get(name) or "").strip()
+
+
+def run(cmd, tail=25, env=None, show=None):
+    """运行命令,流式打印关键行;失败时抛出带日志尾部的错误。"""
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    last = deque(maxlen=tail)
+    n = 0
+    for line in p.stdout:
+        line = line.rstrip()
+        last.append(line)
+        n += 1
+        if show and re.search(show, line):
+            print("   " + line[:150], flush=True)
+        elif n % 15 == 0:
+            print(".", end="", flush=True)
+    p.wait()
+    if p.returncode != 0:
+        raise RuntimeError("命令失败(%s):\n%s" % (" ".join(map(str, cmd[:6])), "\n".join(last)))
+    return list(last)
+
+
+# ───────────────────────── 0. 环境检查 ─────────────────────────
+banner("0/6  环境检查")
+gpus = []
+try:
+    out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], capture_output=True, text=True, timeout=20).stdout
+    gpus = [l.strip() for l in out.strip().splitlines() if l.strip()]
+except Exception:
+    pass
+if gpus:
+    for i, g in enumerate(gpus):
+        print("  GPU%d: %s" % (i, g))
+    if len(gpus) == 1:
+        print("  ℹ 只有 1 张 GPU:单卡 T4 合成速度≈实时,系统会靠「弹性放慢」保证不停顿;选 GPU T4 x2 体验最佳。")
+elif not TEST:
+    raise RuntimeError("没有检测到 GPU!请在右侧 Settings → Accelerator 选择 GPU T4 x2,然后重新运行。")
+try:
+    urllib.request.urlopen("https://huggingface.co", timeout=10)
+    print("  ✅ 网络正常")
+except Exception as e:
+    if not TEST:
+        raise RuntimeError("无法访问外网(%s)。请在右侧 Settings 里把 Internet 打开为 On。" % e)
+
+ds_key = (DEEPSEEK_API_KEY or secret("DEEPSEEK_API_KEY")).strip()
+print("  DeepSeek Key: %s" % ("✅ 已找到" if ds_key else "❌ 未找到(网页里仍可克隆/试听,但对话需要它。请在 Secrets 添加 DEEPSEEK_API_KEY 后重跑)"))
+
+# ───────────────────────── 1. 写出文件 ─────────────────────────
+banner("1/6  写出服务文件 → %s" % WORK)
+WORK.mkdir(parents=True, exist_ok=True)
+for name, content in (("server.py", SERVER_PY), ("index.html", INDEX_HTML), ("worklet.js", WORKLET_JS)):
+    (WORK / name).write_text(content, encoding="utf-8")
+    print("  ✅ %-11s %6.1f KB" % (name, len(content.encode("utf-8")) / 1024))
+
+# ───────────────────────── 2. 依赖 ─────────────────────────
+banner("2/6  安装依赖(独立环境,不会破坏 Kaggle 自带的 PyTorch;首次约 3~6 分钟)")
+PY = sys.executable
+if not TEST:
+    ok_marker = VENV / ".ok_v3"
+    venv_py = VENV / "bin" / "python"
+    if not ok_marker.exists():
+        shutil.rmtree(VENV, ignore_errors=True)
+        try:
+            subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(VENV)], check=True, capture_output=True)
+            subprocess.run([str(venv_py), "-m", "pip", "--version"], check=True, capture_output=True)
+        except Exception:
+            shutil.rmtree(VENV, ignore_errors=True)
+            try:
+                subprocess.run([sys.executable, "-m", "pip", "install", "-q", "virtualenv"], check=True, capture_output=True)
+                subprocess.run([sys.executable, "-m", "virtualenv", "--system-site-packages", str(VENV)], check=True, capture_output=True)
+            except Exception:
+                print("  ⚠ 无法创建独立环境,改为直接安装到当前环境(装完如提示需要重启内核,请 Run → Restart Session 后重新运行)")
+                shutil.rmtree(VENV, ignore_errors=True)
+    PY = str(venv_py) if venv_py.exists() else sys.executable
+    pkgs = ["faster-qwen3-tts", "fastapi", "uvicorn[standard]", "httpx", "soundfile", "huggingface_hub"]
+    need = True
+    try:
+        r = subprocess.run([PY, "-c", "import faster_qwen3_tts, fastapi, uvicorn, httpx, soundfile, websockets; print('SMOKE_OK')"], capture_output=True, text=True, timeout=180)
+        need = "SMOKE_OK" not in r.stdout
+    except Exception:
+        need = True
+    if need:
+        print("  正在安装: " + " ".join(pkgs), flush=True)
+        run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check"] + pkgs, show=r"(?i)^(error|successfully)")
+        print()
+    smoke = ("import torch, transformers, fastapi, uvicorn, httpx, soundfile, websockets\n"
+             "print('torch', torch.__version__, '| transformers', transformers.__version__, '| cuda', torch.cuda.is_available(), torch.cuda.device_count())\n"
+             "try:\n    import faster_qwen3_tts; print('ENGINE faster-qwen3-tts OK')\nexcept Exception as e:\n    print('ENGINE faster-qwen3-tts FAIL', repr(e))\n"
+             "try:\n    import qwen_tts; print('ENGINE qwen-tts OK')\nexcept Exception as e:\n    print('ENGINE qwen-tts FAIL', repr(e))\n"
+             "print('SMOKE_OK')")
+    r = subprocess.run([PY, "-c", smoke], capture_output=True, text=True, timeout=300)
+    print("\n".join("  " + l for l in r.stdout.strip().splitlines()))
+    if "SMOKE_OK" not in r.stdout or "ENGINE faster-qwen3-tts OK" not in r.stdout and "ENGINE qwen-tts OK" not in r.stdout:
+        raise RuntimeError("依赖自检失败,请把下面的报错发给我:\n" + "\n".join((r.stderr or r.stdout).strip().splitlines()[-25:]))
+    if VENV.exists():
+        ok_marker.write_text("ok")
+    print("  ✅ 依赖就绪")
+
+# ───────────────────────── 3. 预下载模型 ─────────────────────────
+banner("3/6  下载模型 %s(首次约 5GB,之后秒开)" % TTS_MODEL)
+hf = secret("HF_TOKEN")
+env_dl = dict(os.environ, HF_HUB_DISABLE_PROGRESS_BARS="1", PYTHONUNBUFFERED="1")
+if hf:
+    env_dl["HF_TOKEN"] = hf
+if not TEST:
+    t0 = time.time()
+    dl = "from huggingface_hub import snapshot_download as s; print('PATH', s(%r))" % TTS_MODEL
+    last = run([PY, "-c", dl], env=env_dl, show=r"^PATH")
+    print("  ✅ 模型已缓存 (%.0fs)" % (time.time() - t0))
+
+# ───────────────────────── 4. 启动服务 ─────────────────────────
+banner("4/6  启动服务(网关 + 每张 GPU 一个 TTS 进程)")
+SRV = globals().get("_VC_SRV")
+if SRV and SRV.get("proc") and SRV["proc"].poll() is None:
+    print("  停掉上一次运行的服务…")
+    try:
+        os.killpg(os.getpgid(SRV["proc"].pid), 15)
+        SRV["proc"].wait(15)
+    except Exception:
+        pass
+subprocess.run(["bash", "-lc", "fuser -k %d/tcp >/dev/null 2>&1 || true" % PORT])
+time.sleep(1)
+
+senv = dict(os.environ, PYTHONUNBUFFERED="1", VC_WORK=str(WORK), VC_PORT=str(PORT), VC_MODEL=TTS_MODEL, DEEPSEEK_API_KEY=ds_key,
+            DEEPSEEK_MODEL=DEEPSEEK_MODEL, COQUI_TOS_AGREED="1", TOKENIZERS_PARALLELISM="false", HF_HUB_DISABLE_PROGRESS_BARS="1")
+if hf:
+    senv["HF_TOKEN"] = hf
+if REFERENCE_AUDIO and Path(REFERENCE_AUDIO).exists():
+    senv["VC_REF_AUDIO"], senv["VC_REF_TEXT"] = REFERENCE_AUDIO, REFERENCE_TEXT
+    print("  使用默认参考音频:", REFERENCE_AUDIO)
+elif REFERENCE_AUDIO:
+    print("  ⚠ 找不到 REFERENCE_AUDIO:", REFERENCE_AUDIO, "(将在网页里录制/上传)")
+if TEST:
+    senv.update(VC_MOCK="1", VC_MOCK_LLM="1")
+
+_VC_SRV = {"proc": None, "tail": deque(maxlen=60)}
+
+
+def start_server():
+    p = subprocess.Popen([PY, str(WORK / "server.py")], cwd=str(WORK), env=senv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    _VC_SRV["proc"] = p
+
+    def pump():
+        for line in p.stdout:
+            line = line.rstrip()
+            _VC_SRV["tail"].append(line)
+            if re.search(r"Traceback|Error|error|ERROR|⚠|声音|首包|RTF|就绪|加载|捕获|检测到|模型|对话出错|合成失败|Warning|WARNING", line) and "DeprecationWarning" not in line:
+                print("  [server] " + line[:200], flush=True)
+    threading.Thread(target=pump, daemon=True).start()
     return p
 
 
-print("Python", sys.version.split()[0])
-gpus = sh("nvidia-smi -L", check=False).stdout.strip()
-print(gpus if gpus else "⚠ 没检测到 GPU!请在右侧 Settings → Accelerator 选择 GPU T4,否则 XTTS 慢得无法实时播放")
-
-# 1) 锁定 torch 系列版本
-pins = []
-for name in ("torch", "torchaudio", "torchvision"):
+def health():
     try:
-        pins.append("%s==%s" % (name, md.version(name)))
-    except md.PackageNotFoundError:
-        pass
-open("/tmp/torch_constraints.txt", "w").write("\n".join(pins) + "\n")
-print("锁定:", ", ".join(pins) or "(未安装 torch)")
-
-# 2) 安装主要依赖
-PKGS = ["coqui-tts", "transformers>=4.57,<5", "fastapi", "uvicorn[standard]", "websockets",
-        "pyngrok", "pypinyin", "six", "soundfile", "requests"]
-print("正在安装依赖(约 1~3 分钟)...")
-sh("%s -m pip install -q -c /tmp/torch_constraints.txt %s" % (sys.executable, " ".join("'%s'" % p for p in PKGS)))
-
-# 3) torch >= 2.9 时 coqui-tts 要求环境里存在 torchcodec(我们读参考音频用 soundfile,不会真正用到它)
-m = re.match(r"(\d+)\.(\d+)", md.version("torch")) if pins else None
-if m and (int(m.group(1)), int(m.group(2))) >= (2, 9):
-    r = sh("%s -m pip install -q -c /tmp/torch_constraints.txt torchcodec" % sys.executable, check=False)
-    print("torchcodec:", "已安装" if r.returncode == 0 else "安装失败(%s)" % (r.stderr.strip().splitlines() or ["?"])[-1])
-
-# 4) 冒烟测试:在全新子进程里真实 import 一遍,问题现在就暴露,不要等到加载模型才报错
-import importlib
-importlib.invalidate_caches()
-smoke = ("import TTS, fastapi, uvicorn, pyngrok, pypinyin, soundfile, websockets;"
-         "from TTS.api import TTS as _T; from TTS.tts.models.xtts import Xtts;"
-         "print('SMOKE_OK', TTS.__version__)")
-p = subprocess.run([sys.executable, "-c", smoke], capture_output=True, text=True)
-if "SMOKE_OK" not in p.stdout:
-    raise RuntimeError("依赖自检失败,请把下面的报错发给我:\n" + "\n".join((p.stderr or p.stdout).strip().splitlines()[-20:]))
-print("✅ 依赖安装完成 ·", p.stdout.strip())
-
-# 5) 如果本 Session 之前已经 import 过旧版本的包,当前内核里仍是旧代码,需要重启后再运行
-for mod, pkg in (("transformers", "transformers"), ("TTS", "coqui-tts")):
-    if mod in sys.modules:
-        loaded, installed = getattr(sys.modules[mod], "__version__", "?"), md.version(pkg)
-        if loaded != installed:
-            print("⚠ %s 当前内核加载的是 %s,磁盘上是 %s → 请点 Run → Restart Session,然后从头重新运行" % (mod, loaded, installed))
-'''
-
-CELL2 = r'''# ═══════════════════════════════════════════════════════════════════════════
-# Cell 2 / 5 — 准备参考音频: 把 reference.wav 复制到 /kaggle/working/
-#
-#   ★ 需要提前在 Kaggle 右侧面板 Add Data(+ Add Input)添加一个包含 reference.wav 的 Dataset ★
-#     reference.wav = 你要克隆的那个人的声音,建议 6~30 秒、单人、安静无背景音乐的清晰朗读
-#     添加后,在右侧 Input 里点文件旁边的复制路径按钮,把路径填到下面的 DATASET_PATH
-#     (可以是 Dataset 目录,也可以直接是 wav 文件;留着默认值也行,下面会自动在 /kaggle/input 里搜索)
-# ═══════════════════════════════════════════════════════════════════════════
-import os
-import shutil
-from pathlib import Path
-
-DATASET_PATH = "/kaggle/input/your-dataset-name"      # ← 改成你自己的 Dataset 路径
-
-WORK = Path(os.environ.get("CLONE_WORKDIR", "/kaggle/working"))
-WORK.mkdir(parents=True, exist_ok=True)
-DST = WORK / "reference.wav"
-
-
-def find_reference_wav():
-    p = Path(DATASET_PATH)
-    if p.is_file():
-        return p
-    if (p / "reference.wav").exists():
-        return p / "reference.wav"
-    inp = Path("/kaggle/input")
-    if inp.exists():                                   # 路径填错了也不怕:全盘搜 reference.wav
-        for q in sorted(inp.rglob("reference.wav")):
-            return q
-        for q in sorted(inp.rglob("*.wav")):           # 退一步:任意 wav
-            print("⚠ 没找到名为 reference.wav 的文件,改用:", q)
-            return q
-    return None
-
-
-src = find_reference_wav()
-if src is not None:
-    if not DST.exists() or src.resolve() != DST.resolve():
-        shutil.copy(src, DST)
-    print("✅ 参考音频已就绪:", src, "→", DST)
-elif DST.exists():
-    print("✅ 使用 /kaggle/working 里已有的 reference.wav")
-else:
-    print("⚠⚠⚠ 没找到参考音频!系统仍会启动,但会先用内置的默认音色,而不是克隆声音。")
-    print("    补救: 1) 右侧 Add Data 添加含 reference.wav 的 Dataset,重跑本 Cell;")
-    print("          2) 或直接把 reference.wav 上传/复制到 /kaggle/working/ ——无需重启,下一次合成自动生效。")
-
-if DST.exists():                                       # 体检一下音频质量,问题提前提示
-    try:
-        import soundfile as sf
-        info = sf.info(str(DST))
-        print("   时长 %.1fs · %dHz · %d 声道" % (info.duration, info.samplerate, info.channels))
-        if info.duration < 3:
-            print("   ⚠ 音频太短(<3 秒),克隆效果会很差,建议 6~30 秒")
-        elif info.duration > 60:
-            print("   ℹ 音频较长,XTTS 只会取前 30 秒左右,建议裁剪成最清晰的 10~30 秒")
-        if info.samplerate < 16000:
-            print("   ⚠ 采样率偏低(<16kHz),音质会受影响")
-    except Exception as e:
-        print("   ⚠ 无法读取这个音频文件(%s) —— 请确认它是真正的 wav,而不是改了后缀的 mp3" % e)
-'''
-
-CELL3 = r'''# ═══════════════════════════════════════════════════════════════════════════
-# Cell 3 / 5 — 启动后端服务: 读取并执行 app.py
-#   · 执行 app.py 时会立刻加载 XTTS 模型并预热(首次要下载约 1.8GB,需要几分钟,请耐心等待)
-#   · 加载完成后,uvicorn 在后台线程里监听 8000 端口,本 Cell 随即结束(服务继续在后台运行)
-# ═══════════════════════════════════════════════════════════════════════════
-import json
-import os
-import urllib.request
-
-WORK = os.environ.get("CLONE_WORKDIR", "/kaggle/working")
-APP_PY = os.path.join(WORK, "app.py")
-os.chdir(WORK)
-os.environ.setdefault("COQUI_TOS_AGREED", "1")        # 同意 Coqui 模型许可(CPML),否则下载模型时会等待键盘输入
-
-_old = globals().get("APP_NS")
-if _old and _old.get("SERVER_THREAD") is not None and _old["SERVER_THREAD"].is_alive():
-    print("服务已经在运行,跳过重复启动。(要重新加载 app.py,请 Run → Restart Session 后重跑)")
-else:
-    APP_NS = {"__name__": "app_kaggle", "__file__": APP_PY}
-    with open(APP_PY, encoding="utf-8") as f:
-        exec(compile(f.read(), APP_PY, "exec"), APP_NS)   # ← 这里加载模型 + 预热
-    APP_NS["start_server"]()                              # ← 后台线程启动 uvicorn (端口 8000)
-
-h = json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=10))
-print("✅ 后端已就绪:", json.dumps(h, ensure_ascii=False))
-if h.get("rtf") and h["rtf"] >= 1:
-    print("⚠ 实时率 RTF=%.2f ≥ 1:合成速度慢于播放速度,会卡顿。请确认 Accelerator 是 GPU T4" % h["rtf"])
-if h.get("voice") != "clone" and h.get("engine") != "mock":
-    print("⚠ 当前用的是内置音色,不是克隆声音(没找到 reference.wav)。放好文件即可,无需重启。")
-'''
-
-CELL4 = r'''# ═══════════════════════════════════════════════════════════════════════════
-# Cell 4 / 5 — ngrok 打洞,并把 index.html 里的 {{WS_URL}} 替换成真实地址
-#   · 必须用 ngrok(Cloudflare Tunnel 会缓冲流式响应)
-#   · Token 从 Kaggle Secrets 读取,名称: NGROK_TOKEN
-#       设置方法: 笔记本顶部菜单 Add-ons → Secrets → Add Secret → Label 填 NGROK_TOKEN,Value 填你的 authtoken,
-#                并勾选 Attached(令牌在 https://dashboard.ngrok.com/get-started/your-authtoken 获取,免费账号即可)
-#   · 本 Cell 可以重复运行:每次都从模板 index.template.html 重新生成,不会因为占位符被替换掉而失效
-# ═══════════════════════════════════════════════════════════════════════════
-import os
-import re
-import urllib.request
-from pathlib import Path
-
-from pyngrok import conf, ngrok
-
-NGROK_TOKEN_FALLBACK = ""     # 不想用 Secrets 时可以临时填这里。⚠ 千万别把填了真实 token 的笔记本公开分享
-WORK = Path(os.environ.get("CLONE_WORKDIR", "/kaggle/working"))
-PORT = 8000
-
-# 1) 读取 token: Kaggle Secrets → 环境变量 → 上面的变量
-token = None
-try:
-    from kaggle_secrets import UserSecretsClient
-    token = UserSecretsClient().get_secret("NGROK_TOKEN")
-except Exception as e:
-    print("(未能从 Kaggle Secrets 读取 NGROK_TOKEN: %s)" % type(e).__name__)
-token = (token or os.environ.get("NGROK_TOKEN") or NGROK_TOKEN_FALLBACK or "").strip()
-if not token:
-    raise RuntimeError("没有找到 NGROK_TOKEN!请在 Add-ons → Secrets 里添加名为 NGROK_TOKEN 的 Secret 并勾选 Attached,然后重跑本 Cell")
-
-# 2) 建立 HTTP 隧道到 8000 端口(重跑时先清掉旧隧道)
-conf.get_default().auth_token = token
-for t in ngrok.get_tunnels():
-    try:
-        ngrok.disconnect(t.public_url)
-    except Exception:
-        pass
-try:
-    tunnel = ngrok.connect(PORT, "http")
-except Exception as e:
-    msg = str(e)
-    if "ERR_NGROK_108" in msg or "simultaneous" in msg:
-        msg += "\n→ 免费账号同时只能有 1 个 ngrok 会话:请到 https://dashboard.ngrok.com/agents 停掉其它会话(比如旧的 Notebook 或本机的 ngrok),再重跑本 Cell"
-    elif "ERR_NGROK_105" in msg or "authtoken" in msg.lower():
-        msg += "\n→ NGROK_TOKEN 不正确,请重新复制 authtoken"
-    raise RuntimeError("ngrok 打洞失败: " + msg)
-public_url = tunnel.public_url.replace("http://", "https://")
-
-# 3) public_url → wss:// 格式的 WebSocket 地址
-ws_url = public_url.replace("https://", "wss://") + "/stream"
-
-# 4) 读取 index.html,把 {{WS_URL}} 换成真实地址再写回文件
-html_path, tpl_path = WORK / "index.html", WORK / "index.template.html"
-cur = html_path.read_text(encoding="utf-8")
-if "{{WS_URL}}" in cur:
-    tpl_path.write_text(cur, encoding="utf-8")         # 第一次:先备份带占位符的模板
-if tpl_path.exists():
-    rendered = tpl_path.read_text(encoding="utf-8").replace("{{WS_URL}}", ws_url)
-else:                                                   # 没有模板:直接改写旧地址
-    rendered = re.sub(r'const WS_URL = ".*?";', lambda _: 'const WS_URL = "%s";' % ws_url, cur, count=1)
-html_path.write_text(rendered, encoding="utf-8")
-
-# 5) 不需要重启 uvicorn: app.py 的 GET / 每次请求都重新读取 index.html,新地址立即生效
-try:
-    page = urllib.request.urlopen("http://127.0.0.1:%d/" % PORT, timeout=10).read().decode("utf-8")
-    assert ws_url in page
-    print("✅ index.html 已写入真实 WebSocket 地址")
-except Exception as e:
-    print("⚠ 本地校验 index.html 失败:", e)
-try:                                                    # 从公网真的访问一次,确认隧道是通的
-    req = urllib.request.Request(public_url + "/health", headers={"ngrok-skip-browser-warning": "1"})
-    urllib.request.urlopen(req, timeout=20).read()
-    print("✅ 公网隧道连通性检查通过")
-except Exception as e:
-    print("⚠ 公网检查暂未通过(%s),稍等几秒再打开网页;若持续失败请重跑本 Cell" % e)
-
-print("\n" + "=" * 64)
-print("🌐 网页地址:      ", public_url)
-print("🔌 WebSocket 地址:", ws_url)
-print("=" * 64)
-print("提示: ngrok 免费版首次访问会出现一个提示页,点 \"Visit Site\" 即可进入;之后这个浏览器不会再提示。")
-try:
-    from IPython.display import HTML, display
-    display(HTML('<a href="%s" target="_blank" style="font-size:18px">👉 点击打开克隆语音网页</a>' % public_url))
-except Exception:
-    pass
-'''
-
-CELL5 = r'''# ═══════════════════════════════════════════════════════════════════════════
-# Cell 5 / 5 — 保活循环: 每 300 秒打印一次心跳日志,防止 Kaggle 因长时间没有输出而回收 Session
-#   · 这个 Cell 会一直运行,这就是"服务在线"的状态,不要点停止
-#   · 顺便做健康巡检: 后端线程挂了自动拉起;隧道丢了会提示你重跑 Cell 4
-# ═══════════════════════════════════════════════════════════════════════════
-import datetime
-import json
-import time
-import urllib.request
-
-INTERVAL = 300      # 秒
-
-
-def _health():
-    try:
-        return json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=10))
+        return json.load(urllib.request.urlopen("http://127.0.0.1:%d/health" % PORT, timeout=4))
     except Exception:
         return None
 
 
-def _tunnels():
-    try:
-        from pyngrok import ngrok
-        return [t.public_url for t in ngrok.get_tunnels()]
-    except Exception:
-        return []
+start_server()
+t0, seen = time.time(), {}
+print("  等待 TTS 进程加载模型(首次需要几分钟:加载权重 + 捕获 CUDA Graph)…", flush=True)
+while True:
+    h = health()
+    if _VC_SRV["proc"].poll() is not None:
+        raise RuntimeError("服务进程异常退出:\n" + "\n".join(_VC_SRV["tail"]))
+    if h:
+        ws = h.get("workers", [])
+        for w in ws:
+            k = (w["idx"], w["status"], w["msg"])
+            if seen.get(w["idx"]) != k:
+                seen[w["idx"]] = k
+                print("  GPU%d · %s · %s" % (w["idx"], w["status"], w["msg"]), flush=True)
+        if ws and all(w["status"] in ("ready", "error") for w in ws):
+            break
+        if not ws:
+            print("  ⚠ 没有 GPU 进程,语音合成不可用")
+            break
+    if time.time() - t0 > 1500:
+        raise RuntimeError("等待模型加载超时(25 分钟)。最近日志:\n" + "\n".join(_VC_SRV["tail"]))
+    time.sleep(3)
+h = health() or {}
+bad = [w for w in h.get("workers", []) if w["status"] == "error"]
+for w in bad:
+    print("  ❌ GPU%d 加载失败: %s" % (w["idx"], w["msg"]))
+if bad and len(bad) == len(h.get("workers", [])):
+    raise RuntimeError("所有 GPU 进程都加载失败,见上方 ❌ 信息与 [server] 日志。")
+print("  ✅ 服务已就绪 (%.0fs) · 可用 GPU 进程: %d" % (time.time() - t0, len(h.get("workers", [])) - len(bad)))
 
+# ───────────────────────── 5. 公网隧道 ─────────────────────────
+banner("5/6  打开公网隧道(WebSocket 直连,不缓冲)")
+public_url = None
+tunnel_proc = None
+if TEST:
+    public_url = "http://127.0.0.1:%d" % PORT
+else:
+    token = (NGROK_TOKEN or secret("NGROK_TOKEN")).strip()
+    if token:
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pyngrok"], check=True, capture_output=True)
+            from pyngrok import conf, ngrok
+            conf.get_default().auth_token = token
+            for t in ngrok.get_tunnels():
+                try:
+                    ngrok.disconnect(t.public_url)
+                except Exception:
+                    pass
+            public_url = ngrok.connect(PORT, "http").public_url.replace("http://", "https://")
+            print("  ✅ ngrok 隧道已建立")
+        except Exception as e:
+            msg = str(e)
+            if "ERR_NGROK_108" in msg or "simultaneous" in msg:
+                msg += "\n    → 免费账号同时只能有 1 个 ngrok 会话,请到 https://dashboard.ngrok.com/agents 停掉旧会话"
+            print("  ⚠ ngrok 失败: %s\n  → 自动改用 cloudflared 免费隧道" % msg)
+    if not public_url:
+        try:
+            cf = Path("/kaggle/working/cloudflared")
+            if not cf.exists():
+                urllib.request.urlretrieve("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64", str(cf))
+                cf.chmod(0o755)
+            tunnel_proc = subprocess.Popen([str(cf), "tunnel", "--url", "http://127.0.0.1:%d" % PORT, "--no-autoupdate"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            found = {}
 
-print("保活循环已启动,每 %d 秒打印一次心跳。(停止服务: 点本 Cell 的停止按钮)" % INTERVAL)
-n = 0
+            def cf_pump():
+                for line in tunnel_proc.stdout:
+                    m = re.search(r"https://[-a-z0-9]+\.trycloudflare\.com", line)
+                    if m and "url" not in found:
+                        found["url"] = m.group(0)
+            threading.Thread(target=cf_pump, daemon=True).start()
+            for _ in range(60):
+                if "url" in found:
+                    break
+                time.sleep(1)
+            public_url = found.get("url")
+            if public_url:
+                print("  ✅ cloudflared 隧道已建立(WebSocket 可正常穿透;每次运行地址会变)")
+        except Exception as e:
+            print("  ❌ cloudflared 也失败了:", e)
+if not public_url:
+    raise RuntimeError("没能建立公网隧道。请在 Secrets 里添加 NGROK_TOKEN(https://dashboard.ngrok.com/get-started/your-authtoken)后重跑。")
+try:
+    req = urllib.request.Request(public_url + "/health", headers={"ngrok-skip-browser-warning": "1", "User-Agent": "vc"})
+    urllib.request.urlopen(req, timeout=25).read()
+    print("  ✅ 公网连通性检查通过")
+except Exception as e:
+    print("  ⚠ 公网检查暂未通过(%s),稍等几秒再打开网页" % e)
+
+banner("6/6  完成")
+print("🌐 网页地址:  " + public_url)
+print("   · 左侧:录音/上传参考语音 → 开始克隆(双卡同时) → 「试听」确认是你的声音")
+print("   · 右侧:输入文字或点麦克风说话,DeepSeek 边想边说,你的克隆声音边合成边播放")
+print("   · ngrok 免费版首次打开会有提示页,点 Visit Site 即可")
+print("   · 本单元格会一直运行 = 服务在线,请不要停止它;日志可在网页右上角「运行日志」查看\n", flush=True)
+try:
+    from IPython.display import HTML, display
+    display(HTML('<a href="%s" target="_blank" style="font-size:20px;font-weight:700">👉 点击打开 Voice Clone Studio</a>' % public_url))
+except Exception:
+    pass
+
+# ───────────────────────── 保活 ─────────────────────────
+n, last_beat = 0, 0
 try:
     while True:
-        n += 1
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        h = _health()
-        if h is None:
-            ns = globals().get("APP_NS") or {}
-            th = ns.get("SERVER_THREAD")
-            if ns and (th is None or not th.is_alive()):
-                try:
-                    ns["start_server"]()
-                    h = _health()
-                    print("[%s] ⚠ 后端线程已退出,已自动重新拉起" % now)
-                except Exception as e:
-                    print("[%s] ❌ 后端重启失败: %s" % (now, e))
-        tun = _tunnels()
-        print("[%s] 💓 心跳 #%d | 后端: %s | 隧道: %s | 已合成请求: %s" % (
-            now, n, "正常" if h else "❌ 异常", tun[0] if tun else "❌ 已断开(请重跑 Cell 4)",
-            h.get("requests") if h else "?"), flush=True)
-        time.sleep(INTERVAL)
+        time.sleep(15)
+        if TEST and os.environ.get("VC_TEST_EXIT") == "1":
+            break
+        if _VC_SRV["proc"].poll() is not None:
+            print("[%s] ⚠ 服务进程退出,正在自动拉起…" % time.strftime("%H:%M:%S"), flush=True)
+            print("\n".join("   " + l for l in list(_VC_SRV["tail"])[-8:]))
+            subprocess.run(["bash", "-lc", "pkill -f %s || true" % (WORK / "server.py")])
+            time.sleep(3)
+            start_server()
+            continue
+        if time.time() - last_beat >= 300:
+            last_beat = time.time()
+            n += 1
+            h = health() or {}
+            print("[%s] 💓 心跳 #%d · 服务 %s · GPU进程 %s · 声音 %s" % (time.strftime("%H:%M:%S"), n, "正常" if h else "❌无响应",
+                  "/".join(w["status"] for w in h.get("workers", [])), h.get("voice", "?")), flush=True)
 except KeyboardInterrupt:
-    print("已手动停止保活循环(后端服务仍在后台线程运行,直到 Session 结束)")
-'''
-
-# ───────────────────────────── 运行器 ─────────────────────────────
-WORK = Path(os.environ.get("CLONE_WORKDIR", "/kaggle/working"))
-WORK.mkdir(parents=True, exist_ok=True)
-(WORK / "app.py").write_text(APP_PY, encoding="utf-8")
-(WORK / "index.html").write_text(INDEX_HTML, encoding="utf-8")          # 含 {{WS_URL}} 占位符,Cell 4 会替换
-(WORK / "README.md").write_text(README_MD, encoding="utf-8")
-if (WORK / "index.template.html").exists():
-    (WORK / "index.template.html").unlink()                              # 清掉旧模板,保证用的是本文件里的最新 HTML
-
-CELLS = [CELL1, CELL2, CELL3, CELL4, CELL5]
-CELLS[1] = CELLS[1].replace('DATASET_PATH = "/kaggle/input/your-dataset-name"', "DATASET_PATH = %r" % DATASET_PATH)
-CELLS[3] = CELLS[3].replace('NGROK_TOKEN_FALLBACK = ""', "NGROK_TOKEN_FALLBACK = %r" % NGROK_TOKEN)
-
-def _cell_json(src):
-    lines = src.rstrip("\n").split("\n")
-    return {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [],
-            "source": [l + "\n" for l in lines[:-1]] + [lines[-1]]}
-
-_nb_cells = [_cell_json(c) for c in (CELL1, CELL2, CELL3, CELL4, CELL5)]
-(WORK / "start.ipynb").write_text(json.dumps({
-    "cells": _nb_cells,
-    "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}, "language_info": {"name": "python"}},
-    "nbformat": 4, "nbformat_minor": 5}, ensure_ascii=False, indent=1), encoding="utf-8")
-print("📁 已写出 app.py / index.html / start.ipynb / README.md ->", WORK)
-
-_TITLES = ["安装依赖", "准备参考音频", "启动后端服务", "ngrok 打洞", "保活循环"]
-_skip = {int(x) for x in os.environ.get("CLONE_SKIP_CELLS", "").split(",") if x.strip().isdigit()}   # 自检用,正常不用设置
-for _i, _src in enumerate(CELLS, 1):
-    if _i in _skip:
-        print("\n(跳过步骤 %d)" % _i)
-        continue
-    print("\n" + "━" * 64 + "\n▶ 步骤 %d / 5 · %s\n" % (_i, _TITLES[_i - 1]) + "━" * 64)
-    exec(compile(_src, "<步骤%d>" % _i, "exec"), globals())
+    print("已手动停止,正在关闭服务…")
+finally:
+    for pr in (_VC_SRV.get("proc"), tunnel_proc):
+        try:
+            if pr and pr.poll() is None:
+                os.killpg(os.getpgid(pr.pid), 15)
+        except Exception:
+            pass
