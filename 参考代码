@@ -1,24 +1,27 @@
 # =============================================================================
-#  Voice Clone Studio · Kaggle 一体化脚本
-#  Qwen3-TTS-12Hz-1.7B-Base 声音克隆(流式 · 双 T4 并行)  ×  DeepSeek 流式长文本  ×  零停顿播放
+#  克隆语音播放器 · Kaggle 一体化脚本 (v4)
+#  Qwen3-TTS-12Hz-1.7B-Base 声音克隆  ×  双 T4 并行流式合成  ×  LoRA 训练 + 声纹自动评估  ×  零停顿流式播放
 #
-#  使用方法(只需 3 步):
+#  使用方法(整个文件粘贴进 Kaggle Notebook 的【一个】代码单元格,Shift+Enter 运行):
 #    1. 右侧 Settings:Accelerator 选 "GPU T4 x2",Internet 打开 On。
-#    2. 顶部 Add-ons → Secrets 添加(并勾选 Attached):
-#         DEEPSEEK_API_KEY   你的 DeepSeek API Key            (必需)
-#         NGROK_TOKEN        你的 ngrok authtoken              (可选;没有就自动用 Cloudflare 免费隧道)
-#         HF_TOKEN           HuggingFace Token                 (可选;下载模型被限速时才需要)
-#    3. 把「整个文件」粘贴进一个代码单元格,Shift+Enter 运行。
-#       等到输出出现「🌐 网页地址」,点开即可:在网页里录音/上传参考语音 → 开始克隆 → 对话。
+#    2. 顶部 Add-ons → Secrets 添加并勾选 Attached:
+#         NGROK_TOKEN        ngrok authtoken(必需;本系统只用 ngrok,不用 Cloudflare:它会缓冲流式响应,导致音频延迟)
+#         DEEPSEEK_API_KEY   DeepSeek Key(可选;只有网页里「AI 对话」需要,「朗读文字」不需要)
+#         HF_TOKEN           HuggingFace Token(可选;下载被限速时才需要)
+#    3. 运行。输出出现「🌐 网页地址」后点开:录音/上传参考语音 → 开始克隆 → 输入文字 → 合成并播放。
 #       这个单元格会一直运行 = 服务在线,请不要停止它。
 #
-#  这个脚本会自动: 写出服务文件 → 建独立 Python 环境并安装依赖 → 预下载模型 →
-#                 启动网关 + 每张 GPU 一个 TTS 进程 → 打开公网隧道 → 保活并自动拉起崩溃的服务
+#  三种模式(改下面的 MODE):
+#    "serve"            直接使用 Qwen3-TTS 零样本克隆(默认,约 5~10 分钟就能用)
+#    "train"            只做 LoRA 微调训练 + 自动评估(需要 TRAIN_DATA_DIR),结束后导出 best_model
+#    "train_then_serve" 先训练,达标/收敛后自动用微调后的模型启动服务
+#  以后每次运行 "serve" 时,只要 /kaggle/working/best_model 存在(或设置了 BEST_MODEL_DIR),就会自动加载微调模型。
 # =============================================================================
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -28,58 +31,991 @@ from collections import deque
 from pathlib import Path
 
 # ╔═══════════════════════════ 只需要改这里(都可以不改) ═══════════════════════════╗
-DEEPSEEK_API_KEY = ""        # 留空 = 从 Kaggle Secrets 读取 DEEPSEEK_API_KEY(推荐)。⚠ 填了就别公开分享笔记本
-NGROK_TOKEN = ""             # 留空 = 从 Kaggle Secrets 读取 NGROK_TOKEN;都没有 = 自动用 cloudflared 免费隧道
-REFERENCE_AUDIO = ""         # 可选:默认参考音频(例如 /kaggle/input/你的数据集/reference.wav)。留空 = 在网页里录制/上传
-REFERENCE_TEXT = ""          # 可选:默认参考音频里说的文字(填了相似度更高;留空会自动识别)
-DEEPSEEK_MODEL = "deepseek-chat"
+MODE = "serve"                 # "serve" | "train" | "train_then_serve"
+NGROK_TOKEN = ""               # 留空 = 从 Kaggle Secrets 读取 NGROK_TOKEN。⚠ 直接填写后请不要公开分享笔记本
+DEEPSEEK_API_KEY = ""          # 留空 = 从 Secrets 读取 DEEPSEEK_API_KEY(可选)
+REFERENCE_AUDIO = ""           # 可选:默认参考音频(如 /kaggle/input/你的数据集/reference.wav)。留空 = 在网页里录制/上传
+REFERENCE_TEXT = ""            # 可选:默认参考音频里说的文字(填了相似度更高;留空会自动识别)
+REQUIRE_DUAL_GPU = True        # True = 少于 2 张 GPU 就报错停止(按需求);False = 单卡也继续运行
+# —— 训练(MODE 为 train / train_then_serve 时才用) ——
+TRAIN_DATA_DIR = ""            # 参考音频文件夹(wav + 可选同名 txt),如 /kaggle/input/my-voice/reference_audio;总时长建议 ≥ 10 分钟
+TARGET_SIMILARITY = 0.99       # 目标声纹相似度;达到就自动停止
+MAX_EPOCHS = 50                # 最大轮数上限
+PATIENCE = 6                   # 连续多少轮相似度无提升就判定收敛并停止(防止白白烧 GPU 时长)
+TRAIN_LR = 2e-4                # LoRA 学习率;相似度卡住/loss 出现 NaN 时降到 1e-4
+TRAIN_LANGUAGE = ""            # 自动转录的语言提示:chinese / english …,留空自动检测
+FRESH_TRAIN = False            # True = 忽略已有 checkpoint,从头训练
+# —— 服务 ——
+BEST_MODEL_DIR = "/kaggle/working/best_model"   # 微调后的模型目录(存在则自动使用)
+USE_TRAINED_MODEL = True
 TTS_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+DEEPSEEK_MODEL = "deepseek-chat"
 PORT = 8000
+SEED = 42                      # 两张卡使用同一随机种子
+TEMPERATURE, TOP_P, TOP_K, REPETITION_PENALTY = 0.7, 0.9, 50, 1.05
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 
-WORK = Path(os.environ.get("VC_WORK") or "/kaggle/working/vc")
+TEST = os.environ.get("VC_LAUNCH_TEST") == "1"          # 本地自检用(跳过安装/隧道/训练)
+WORK = Path(os.environ.get("VC_WORK") or "/kaggle/working/vc")      # 运行时数据(克隆的声音等)
+APP = (WORK / "app") if TEST else Path("/kaggle/working")           # 源文件位置(与需求一致:/kaggle/working/)
 VENV = WORK.parent / "vc_env"
-TEST = os.environ.get("VC_LAUNCH_TEST") == "1"          # 本地自检用(跳过安装/隧道)
+OUT = WORK.parent if not TEST else WORK                              # train_state / eval_log 所在目录
 
-SERVER_PY = r'''# -*- coding: utf-8 -*-
+FILES = {}
+FILES['app.py'] = r'''# -*- coding: utf-8 -*-
 """
-Voice Clone Studio 服务端
-  网关进程 : FastAPI + WebSocket。负责网页、DeepSeek 流式对话、按标点切句、按顺序把音频推给浏览器。不碰 GPU。
-  TTS 进程 : 每张 GPU 一个独立进程(互不抢 GIL、互不影响 CUDA Graph),运行 Qwen3-TTS-12Hz-1.7B-Base 流式克隆合成。
+app.py —— FastAPI + WebSocket 网关(子系统 B+C)
 
-  数据流:  浏览器 --文字--> 网关 --DeepSeek 流式--> 切句 --> 多卡并行合成 --> 去静音/拼接/插入停顿 --> 24kHz PCM 二进制帧 --> 浏览器 AudioWorklet
-  二进制帧格式: [uint32 小端 turn 编号][int16 小端 PCM...]  (24000Hz 单声道)
+  /            网页(index.html)            /worklet.js  AudioWorklet 播放器
+  /ws          主通道: 聊天 / 朗读 / 状态推送 / 二进制音频帧 [uint32 turn][int16 PCM 24kHz]
+  /stream      简化通道: 发 {"text": "..."} -> 收原始 PCM 二进制 -> 收 {"event":"done","similarity":0.97}
+  /monitor     监控通道: 每 2 秒推送 {"event":"gpu_status",...} 与 {"event":"train_progress",...}
+  /api/voice   上传参考音频(POST wav) / 清除(DELETE)
+  /health      健康检查
+全程 WebSocket(不使用 HTTP 轮询 / SSE);推理在各 GPU 子进程中,事件循环从不被阻塞。
 """
 import asyncio
 import json
-import logging
 import multiprocessing as mp
 import os
-import queue as _queue
 import re
 import struct
 import subprocess
 import sys
 import threading
 import time
-import traceback
 import wave
+from pathlib import Path
+
+import numpy as np
+
+from infer_dual_gpu import (CHUNK_FIRST, CHUNK_REST, MODEL, SR, WORK, Segmenter, Trimmer, detect_lang, has_speech, log, pause_ms,  # noqa: F401
+                            speech_rms, tts_clean, worker_main)
+
+PORT = int(os.environ.get("VC_PORT", "8000"))
+MOCK = os.environ.get("VC_MOCK") == "1"
+MOCK_LLM = os.environ.get("VC_MOCK_LLM") == "1"
+DS_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+DS_BASE = os.environ.get("DEEPSEEK_BASE", "https://api.deepseek.com").rstrip("/")
+DS_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+VOICE_DIR = WORK / "voice"
+EVAL_LOG = Path(os.environ.get("VC_EVAL_LOG", "/kaggle/working/eval_log.jsonl"))
+TRAIN_STATE = Path(os.environ.get("VC_TRAIN_STATE", "/kaggle/working/train_state.json"))
+TRAINED = os.environ.get("VC_TRAINED") == "1"            # 当前加载的是否是微调后的 best_model
+
+
+# ════════════════════════════════════════════════════════════════
+#  网关
+# ════════════════════════════════════════════════════════════════
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi.responses import HTMLResponse, JSONResponse, Response  # noqa: E402
+
+SRC_DIR = Path(__file__).resolve().parent
+app = FastAPI(title="Voice Clone Studio")
+LOOP = None
+POOL = None
+SESSIONS = set()
+ACTIVE = {}          # turn uid -> Turn
+VOICE = {"vid": 0, "state": "none", "mode": "", "text": "", "path": None, "pending": set(), "info": {}, "err": "", "msg": ""}
+ASR_WAIT = {}
+MONITORS = set()
+_uid = [0]
+
+
+class Worker:
+    def __init__(self, idx, gpu, proc, q):
+        self.idx, self.gpu, self.proc, self.q = idx, gpu, proc, q
+        self.status, self.msg = "loading", "启动中…"
+        self.voice_vid = None
+        self.voice_info = {}
+        self.pending = 0
+        self.mem = (0.0, 0.0, 0)
+
+    def ready(self):
+        return self.status in ("ready", "voice") and self.proc.is_alive()
+
+
+class Pool:
+    def __init__(self, ctx, gpus, cfg):
+        self.ctx = ctx
+        self.epoch = ctx.Value("i", 0)
+        self.res_q = ctx.Queue()
+        self.workers = []
+        for i, g in enumerate(gpus):
+            q = ctx.Queue()
+            p = ctx.Process(target=worker_main, args=(i, g, q, self.res_q, self.epoch, cfg), daemon=True, name="tts-gpu%s" % g)
+            p.start()
+            self.workers.append(Worker(i, g, p, q))
+
+    def pick(self):
+        cand = [w for w in self.workers if w.ready() and w.voice_vid == VOICE["vid"] and VOICE["vid"] > 0]
+        if not cand:
+            return None
+        return min(cand, key=lambda w: (w.pending, w.idx))
+
+    def bump(self):
+        with self.epoch.get_lock():
+            self.epoch.value += 1
+
+    def stop(self):
+        for w in self.workers:
+            try:
+                w.q.put(("quit",))
+            except Exception:  # noqa: BLE001
+                pass
+
+
+class Session:
+    def __init__(self, ws):
+        self.ws = ws
+        self.q = asyncio.Queue()
+        self.history = []
+        self.task = None
+        self.turn = None
+        self.legacy = False
+
+    def send(self, obj):
+        self.q.put_nowait(json.dumps(obj, ensure_ascii=False))
+
+    def send_bin(self, b):
+        self.q.put_nowait(b)
+
+
+def broadcast(obj):
+    for s in list(SESSIONS):
+        if not s.legacy:
+            s.send(obj)
+
+
+class Seg:
+    def __init__(self, idx, text, end_char):
+        self.idx, self.text, self.end = idx, text, end_char
+        self.out = []
+        self.done = False
+        self.err = ""
+        self.trim = Trimmer()
+        self.worker = -1
+        self.had_audio = False
+        self.stats = {}
+        self.sim = None
+        self.sim_dur = 0.0
+        self.sim_done = False
+
+
+class Turn:
+    def __init__(self, sess, ref, breath):
+        _uid[0] += 1
+        self.uid = _uid[0]
+        self.sess, self.ref, self.breath = sess, ref, breath
+        self.segs = []
+        self.cur = 0
+        self.text_done = False
+        self.closed = False
+        self.pending_pause = 0
+        self.t0 = time.time()
+        self.first_audio = None
+        self.samples = 0
+        self.full_text = ""
+        self.gpu_segs = {}
+        self.tts = True
+        self.warned = False
+        self.sim_wait = 0
+        self.sim_sent = False
+
+
+TARGET_RMS = [0.0]            # 目标有声电平(int16 量纲):两张卡测得电平的几何平均
+GAIN = {}                     # worker idx -> 线性增益(RMS 归一化)
+RECENT = {}                   # 已结束但还在等声纹分的 turn
+
+
+def voice_public():
+    return {"state": VOICE["state"], "mode": VOICE["mode"], "text": VOICE["text"], "vid": VOICE["vid"],
+            "info": VOICE["info"], "err": VOICE["err"], "msg": VOICE["msg"]}
+
+
+def state_public():
+    ws = []
+    for w in POOL.workers if POOL else []:
+        ws.append({"idx": w.idx, "gpu": w.gpu, "status": w.status, "msg": w.msg, "voice": (w.voice_vid == VOICE["vid"] and VOICE["vid"] > 0),
+                   "mem": [round(w.mem[0], 1), round(w.mem[1], 1)], "util": w.mem[2], "info": w.voice_info, "alive": w.proc.is_alive()})
+    return {"type": "state", "workers": ws, "voice": voice_public(), "deepseek": bool(DS_KEY or MOCK_LLM), "mock": MOCK,
+            "model": (Path(MODEL).name if os.path.isdir(MODEL) else MODEL), "trained": TRAINED, "target": TARGET_RMS[0]}
+
+
+def pump(turn):
+    """按句子顺序把已就绪的音频推给浏览器。第 k 句的音频只有在前 k-1 句全部发完之后才会发出。"""
+    if turn.closed:
+        return
+    sess = turn.sess
+    head = struct.pack("<I", turn.uid)
+    while turn.cur < len(turn.segs):
+        seg = turn.segs[turn.cur]
+        if seg.out:
+            parts = [head]
+            if turn.pending_pause > 0:
+                parts.append(np.zeros(int(SR * turn.pending_pause / 1000), "<i2").tobytes())
+                turn.pending_pause = 0
+            for a in seg.out:
+                parts.append(a.astype("<i2").tobytes())
+                turn.samples += len(a)
+            seg.out = []
+            if turn.first_audio is None:
+                turn.first_audio = time.time() - turn.t0
+            seg.had_audio = True
+            sess.send_bin(b"".join(parts))
+        if seg.done:
+            if seg.had_audio:
+                turn.pending_pause = pause_ms(seg.end, turn.breath)
+            turn.cur += 1
+            continue
+        break
+    if turn.text_done and turn.cur >= len(turn.segs):
+        turn.closed = True
+        ACTIVE.pop(turn.uid, None)
+        if turn.sim_wait > 0:
+            RECENT[turn.uid] = turn
+        sess.send({"type": "turn_done", "turn": turn.uid, "audio_s": round(turn.samples / SR, 2),
+                   "first_ms": int(turn.first_audio * 1000) if turn.first_audio is not None else None,
+                   "gpu_segs": turn.gpu_segs, "segs": len(turn.segs),
+                   "chars": len(turn.full_text)})
+        sim_check(turn)
+
+
+def dispatch(turn, text):
+    clean = tts_clean(text)
+    if not turn.tts or not has_speech(clean):
+        return
+    seg = Seg(len(turn.segs), clean, text.strip()[-1:])
+    turn.segs.append(seg)
+    w = POOL.pick() if POOL else None
+    if w is None:
+        seg.done = True
+        seg.err = "没有可用的 GPU 进程或声音还没克隆好"
+        if not turn.warned:
+            turn.warned = True
+            turn.sess.send({"type": "warn", "msg": "无法朗读: " + seg.err})
+        return
+    seg.worker = w.idx
+    turn.sim_wait += 1
+    w.pending += len(clean)
+    turn.gpu_segs[str(w.idx)] = turn.gpu_segs.get(str(w.idx), 0) + 1
+    w.q.put(("tts", turn.uid, POOL.epoch.value, seg.idx, clean, CHUNK_FIRST if seg.idx == 0 else CHUNK_REST))
+
+
+def on_worker_msg(msg):
+    k = msg[0]
+    if k == "status":
+        _, idx, stage, text = msg
+        w = POOL.workers[idx]
+        w.status, w.msg = stage, text
+        broadcast(state_public())
+    elif k == "voice_ok":
+        _, idx, vid, info = msg
+        w = POOL.workers[idx]
+        if vid == VOICE["vid"]:
+            w.voice_vid, w.voice_info = vid, info
+            VOICE["pending"].discard(idx)
+            VOICE["info"][str(idx)] = info
+            rs = {int(k): v.get("rms") for k, v in VOICE["info"].items() if v.get("rms")}
+            if rs:                                              # 两张卡的有声 RMS 对齐到几何平均(单卡则增益=1)
+                tgt = float(np.exp(np.mean(np.log(list(rs.values())))))
+                TARGET_RMS[0] = round(tgt, 1)
+                for i, r in rs.items():
+                    GAIN[i] = float(min(1.4, max(0.7, tgt / max(r, 1.0))))
+            log.info("[GPU%d] 声音就绪: %s 增益 %.2f", idx, info, GAIN.get(idx, 1.0))
+            _voice_progress()
+    elif k == "voice_err":
+        _, idx, vid, err = msg
+        if vid == VOICE["vid"]:
+            VOICE["pending"].discard(idx)
+            VOICE["err"] = err
+            log.error("[GPU%d] 声音设置失败: %s", idx, err)
+            _voice_progress()
+    elif k == "asr":
+        _, rid, text, err = msg
+        fut = ASR_WAIT.pop(rid, None)
+        if fut and not fut.done():
+            fut.set_result((text, err))
+    elif k == "chunk":
+        _, tuid, seg_i, data = msg
+        t = ACTIVE.get(tuid)
+        if t is None or t.closed or seg_i >= len(t.segs):
+            return
+        seg = t.segs[seg_i]
+        a = seg.trim.feed(np.frombuffer(data, dtype="<i2"))
+        g = GAIN.get(seg.worker, 1.0)
+        if a.size and abs(g - 1.0) > 0.02:                       # 两卡 RMS 电平对齐(限幅,防止削波)
+            a = np.clip(a.astype(np.float32) * g, -32767, 32767).astype("<i2")
+        if a.size:
+            seg.out.append(a)
+            pump(t)
+    elif k == "sim":
+        _, tuid, seg_i, sim, dur = msg
+        t = ACTIVE.get(tuid) or RECENT.get(tuid)
+        if t is None or seg_i >= len(t.segs):
+            return
+        t.segs[seg_i].sim, t.segs[seg_i].sim_dur = sim, float(dur or 0)
+        _sim_slot_done(t, seg_i)
+    elif k in ("seg_done", "seg_err"):
+        if k == "seg_done":
+            _, tuid, seg_i, idx, stats = msg
+            err = ""
+        else:
+            _, tuid, seg_i, idx, err = msg
+            stats = {}
+        w = POOL.workers[idx]
+        t = ACTIVE.get(tuid)
+        if t is None or t.closed or seg_i >= len(t.segs):
+            if k == "seg_err":
+                t2 = RECENT.get(tuid)
+                if t2 is not None:
+                    _sim_slot_done(t2, seg_i)
+            return
+        seg = t.segs[seg_i]
+        w.pending = max(0, w.pending - len(seg.text))
+        a = seg.trim.flush()
+        g = GAIN.get(seg.worker, 1.0)
+        if a.size and abs(g - 1.0) > 0.02:
+            a = np.clip(a.astype(np.float32) * g, -32767, 32767).astype("<i2")
+        if a.size:
+            seg.out.append(a)
+        if err or stats.get("skipped"):
+            _sim_slot_done(t, seg_i)
+        seg.done, seg.err, seg.stats = True, err, stats
+        if err:
+            t.sess.send({"type": "warn", "msg": "第 %d 句合成失败: %s" % (seg_i + 1, err)})
+        elif stats.get("audio"):
+            log.info("[#%d] 第%d句 GPU%d: %d字 → 音频 %.1fs, 首包 %.2fs, 耗时 %.1fs (RTF %.2f)", t.uid, seg_i, idx, len(seg.text),
+                     stats["audio"], stats.get("first") or 0, stats.get("wall") or 0, (stats.get("wall") or 0) / max(stats["audio"], 1e-3))
+        pump(t)
+
+
+def turn_sim(turn):
+    """按音频时长加权的声纹相似度(忽略 <1.2s 的短句,嵌入不可靠)"""
+    xs = [(g.sim, g.sim_dur) for g in turn.segs if g.sim is not None and g.sim_dur > 1.2]
+    if not xs:
+        return None
+    return round(sum(a * b for a, b in xs) / sum(b for _, b in xs), 4)
+
+
+def _sim_slot_done(turn, seg_i):
+    g = turn.segs[seg_i]
+    if g.sim_done:
+        return
+    g.sim_done = True
+    turn.sim_wait = max(0, turn.sim_wait - 1)
+    sim_check(turn)
+
+
+def sim_check(turn):
+    if turn.sim_sent:
+        return
+    v = turn_sim(turn)
+    final = turn.closed and turn.sim_wait == 0
+    if v is not None or final:
+        turn.sess.send({"type": "sim", "turn": turn.uid, "value": v, "final": bool(final)})
+    if final:
+        turn.sim_sent = True
+        RECENT.pop(turn.uid, None)
+
+
+def _voice_progress():
+    if not VOICE["pending"]:
+        ok = [w for w in POOL.workers if w.voice_vid == VOICE["vid"]]
+        VOICE["state"] = "ready" if ok else "error"
+        if ok:
+            VOICE["err"] = ""
+        else:
+            VOICE["err"] = VOICE["err"] or "所有 GPU 都没能完成声音设置"
+    broadcast(state_public())
+
+
+def reader_thread(loop):
+    while True:
+        try:
+            msg = POOL.res_q.get()
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            loop.call_soon_threadsafe(on_worker_msg, msg)
+        except RuntimeError:
+            return
+
+
+# ───────── 声音克隆 ─────────
+def read_wav(data):
+    import io
+    with wave.open(io.BytesIO(data), "rb") as w:
+        ch, sw, sr, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+        raw = w.readframes(n)
+    if sw != 2:
+        raise ValueError("需要 16-bit WAV")
+    a = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    if ch > 1:
+        a = a.reshape(-1, ch).mean(axis=1)
+    return a, sr
+
+
+def prepare_reference(a, sr):
+    """清理参考音频: 去直流、去首尾静音、归一化到 -3dBFS。"""
+    a = a - float(a.mean())
+    fr = max(1, sr // 100)
+    n = len(a) // fr
+    if n > 10:
+        e = np.sqrt((a[: n * fr].reshape(n, fr) ** 2).mean(axis=1))
+        thr = max(0.004, float(np.percentile(e, 95)) * 0.06)
+        idx = np.where(e > thr)[0]
+        if idx.size:
+            s = max(0, idx[0] - 15) * fr
+            t = min(n, idx[-1] + 20) * fr
+            a = a[s:t]
+    pk = float(np.abs(a).max()) if a.size else 0
+    if pk > 1e-4:
+        a = a * (0.7 / pk)
+    return a.astype(np.float32), sr
+
+
+async def clone_job(vid, path, text, xvec):
+    try:
+        GAIN.clear()
+        TARGET_RMS[0] = 0.0
+        if not xvec and not text:
+            w0 = next((w for w in POOL.workers if w.ready()), None)
+            VOICE["msg"] = "正在自动识别参考音频里说了什么…"
+            broadcast(state_public())
+            if w0 is not None:
+                rid = "asr%d" % vid
+                fut = LOOP.create_future()
+                ASR_WAIT[rid] = fut
+                w0.q.put(("asr", rid, path))
+                try:
+                    text, err = await asyncio.wait_for(fut, 240)
+                except asyncio.TimeoutError:
+                    text, err = "", "识别超时"
+                if err:
+                    log.warning("自动识别失败: %s", err)
+            if not text:
+                xvec = True
+        if vid != VOICE["vid"]:
+            return
+        VOICE.update(text=text, mode=("xvec" if xvec else "icl"), msg="", info={}, err="")
+        (VOICE_DIR / "current.json").write_text(json.dumps({"path": path, "text": text, "xvec": xvec}, ensure_ascii=False), encoding="utf-8")
+        alive = [w for w in POOL.workers if w.proc.is_alive() and w.status != "error"]
+        VOICE["pending"] = set(w.idx for w in alive)
+        for w in POOL.workers:
+            w.voice_vid = None
+        if not alive:
+            VOICE.update(state="error", err="没有可用的 GPU 进程")
+            broadcast(state_public())
+            return
+        for w in alive:
+            w.q.put(("voice", vid, path, text, xvec))
+        broadcast(state_public())
+    except Exception as e:  # noqa: BLE001
+        log.exception("clone_job")
+        VOICE.update(state="error", err="%s: %s" % (type(e).__name__, e))
+        broadcast(state_public())
+
+
+def start_clone(path, text, xvec):
+    VOICE["vid"] += 1
+    VOICE.update(state="cloning", path=path, text=text, mode="", pending=set(), info={}, err="", msg="准备中…")
+    asyncio.get_running_loop().create_task(clone_job(VOICE["vid"], path, text, xvec))
+
+
+@app.post("/api/voice")
+async def api_voice(request: Request):
+    data = await request.body()
+    text = (request.query_params.get("text") or "").strip()
+    try:
+        a, sr = read_wav(data)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "音频无法解析: %s" % e}, status_code=400)
+    if len(a) / sr < 2.0:
+        return JSONResponse({"ok": False, "error": "参考音频太短(<2 秒)"}, status_code=400)
+    if len(a) / sr > 40:
+        return JSONResponse({"ok": False, "error": "参考音频太长(>40 秒)"}, status_code=400)
+    a, sr = prepare_reference(a, sr)
+    import soundfile as sf
+    VOICE_DIR.mkdir(parents=True, exist_ok=True)
+    path = str(VOICE_DIR / ("ref_%d.wav" % int(time.time() * 1000)))      # 每次用新文件名: 引擎按路径缓存声音特征
+    sf.write(path, a, sr, subtype="PCM_16")
+    for old in VOICE_DIR.glob("ref_*.wav"):
+        if str(old) != path and time.time() - old.stat().st_mtime > 600:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    start_clone(path, text, False)
+    return {"ok": True, "vid": VOICE["vid"], "seconds": round(len(a) / sr, 1)}
+
+
+@app.delete("/api/voice")
+async def api_voice_clear():
+    VOICE["vid"] += 1
+    VOICE.update(state="none", mode="", text="", path=None, pending=set(), info={}, err="", msg="")
+    for w in POOL.workers:
+        w.voice_vid = None
+    try:
+        (VOICE_DIR / "current.json").unlink()
+    except OSError:
+        pass
+    broadcast(state_public())
+    return {"ok": True}
+
+
+# ───────── DeepSeek ─────────
+SYS_BASE = ("你是一个自然、亲切、有温度的中文语音聊天助手。你的回答会被直接用语音朗读出来,所以必须遵守:"
+            "1)只用口语化的纯文本,不要用 Markdown、列表符号、标题、表情符号、括号注释、网址;"
+            "2)多用逗号和句号断句,每个短句尽量不超过 25 个字;"
+            "3)阿拉伯数字和英文缩写要写成容易读出来的样子;"
+            "4)像真人聊天一样回应,不要说“作为AI”;"
+            "5)语气要有感情、有起伏:高兴时轻快,安慰时温柔,适当用语气词(嗯、哈、呀、啦),不要平淡机械。")
+SYS_SHORT = "默认回答简短,通常 1 到 3 句话,除非用户明确要求详细内容。"
+SYS_LONG = "用户可能要求讲故事、做讲解等长内容:请连贯、有画面感、有起承转合地完整讲完,按自然段落推进,不要出现标题和序号。"
+SYS_FILLER = "回答的第一个短句请先用一个很短的口语开头,例如“嗯,”“好的,”“哈,”“让我想想,”,然后再接正文。"
+
+
+async def deepseek_stream(messages, long_mode):
+    if MOCK_LLM:
+        txt = ("嗯，好的。这是一个用来测试的回答。我会先说一小句，然后再慢慢往下讲。" * (6 if long_mode else 1)) + "好啦，就说到这里。"
+        for i in range(0, len(txt), 3):
+            await asyncio.sleep(0.05)
+            yield txt[i:i + 3]
+        return
+    if not DS_KEY:
+        raise RuntimeError("没有配置 DEEPSEEK_API_KEY(在 Kaggle Secrets 里添加,或填到脚本顶部的 DEEPSEEK_API_KEY)")
+    import httpx
+    payload = {"model": DS_MODEL, "messages": messages, "stream": True, "temperature": 1.1,
+               "max_tokens": 8000 if long_mode else 1200}
+    headers = {"Authorization": "Bearer " + DS_KEY, "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as cli:
+        async with cli.stream("POST", DS_BASE + "/chat/completions", headers=headers, json=payload) as r:
+            if r.status_code != 200:
+                body = (await r.aread()).decode("utf-8", "ignore")[:300]
+                raise RuntimeError("DeepSeek 返回 %d: %s" % (r.status_code, body))
+            async for line in r.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                d = line[5:].strip()
+                if d == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(d)
+                    t = obj["choices"][0]["delta"].get("content")
+                except Exception:  # noqa: BLE001
+                    continue
+                if t:
+                    yield t
+
+
+async def run_turn(sess, turn, user_text, opts, say_only):
+    seg = Segmenter()
+    try:
+        sess.send({"type": "turn_start", "turn": turn.uid, "ref": turn.ref, "sr": SR, "tts": turn.tts})
+        if say_only:
+            turn.full_text = user_text
+            for s in seg.push(user_text) + seg.finish():
+                dispatch(turn, s)
+        else:
+            sysmsg = SYS_BASE + (SYS_LONG if opts.get("long") else SYS_SHORT) + (SYS_FILLER if opts.get("filler") else "")
+            sess.history.append({"role": "user", "content": user_text})
+            sess.history = sess.history[-24:]
+            msgs = [{"role": "system", "content": sysmsg}] + sess.history
+            first = True
+            async for delta in deepseek_stream(msgs, bool(opts.get("long"))):
+                if first:
+                    first = False
+                    sess.send({"type": "llm_first", "turn": turn.uid, "ms": int((time.time() - turn.t0) * 1000)})
+                turn.full_text += delta
+                sess.send({"type": "delta", "turn": turn.uid, "t": delta})
+                for s in seg.push(delta):
+                    dispatch(turn, s)
+            for s in seg.finish():
+                dispatch(turn, s)
+        turn.text_done = True
+        pump(turn)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.error("对话出错: %s", e)
+        sess.send({"type": "error", "turn": turn.uid, "msg": str(e)})
+        for s in seg.finish():
+            dispatch(turn, s)
+        turn.text_done = True
+        pump(turn)
+    finally:
+        if turn.full_text and not say_only:
+            sess.history.append({"role": "assistant", "content": turn.full_text})
+
+
+def cancel_turn(sess):
+    if sess.task is not None and not sess.task.done():
+        sess.task.cancel()
+    if sess.turn is not None:
+        sess.turn.closed = True
+        ACTIVE.pop(sess.turn.uid, None)
+    sess.task, sess.turn = None, None
+    if POOL:
+        POOL.bump()
+        for w in POOL.workers:
+            w.pending = 0
+
+
+def start_turn(sess, text, opts, ref, say_only=False):
+    cancel_turn(sess)
+    t = Turn(sess, ref, float(opts.get("breath", 1.0)))
+    t.tts = bool(opts.get("tts", True))
+    ACTIVE[t.uid] = t
+    sess.turn = t
+    sess.task = asyncio.get_running_loop().create_task(run_turn(sess, t, text, opts, say_only))
+
+
+# ───────── 路由 ─────────
+def read_src(name):
+    p = SRC_DIR / name
+    return p.read_text(encoding="utf-8") if p.exists() else None
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    h = read_src("index.html")
+    if h is None:
+        return HTMLResponse("index.html 不存在", status_code=500)
+    # 自动替换 {{WS_URL}}:ngrok 转发时用 X-Forwarded-Proto / Host 还原出浏览器看到的真实 wss 地址
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    ws_url = ("wss://" if proto == "https" else "ws://") + host + "/ws"
+    return HTMLResponse(h.replace("{{WS_URL}}", ws_url), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/worklet.js")
+async def worklet():
+    return Response(read_src("worklet.js") or "", media_type="text/javascript", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)
+
+
+@app.get("/health")
+async def health():
+    return {"ok": True, "workers": [{"idx": w.idx, "status": w.status, "msg": w.msg, "alive": w.proc.is_alive()} for w in POOL.workers] if POOL else [],
+            "voice": VOICE["state"], "mock": MOCK, "deepseek": bool(DS_KEY or MOCK_LLM)}
+
+
+@app.get("/api/state")
+async def api_state():
+    return state_public()
+
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    await ws.accept()
+    sess = Session(ws)
+    SESSIONS.add(sess)
+
+    async def sender():
+        try:
+            while True:
+                m = await sess.q.get()
+                if isinstance(m, (bytes, bytearray)):
+                    await ws.send_bytes(m)
+                else:
+                    await ws.send_text(m)
+        except Exception:  # noqa: BLE001
+            pass
+
+    st = asyncio.get_running_loop().create_task(sender())
+    sess.send(state_public())
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                m = json.loads(raw)
+            except ValueError:
+                continue
+            k = m.get("type")
+            if k == "ping":
+                sess.send({"type": "pong", "t": m.get("t")})
+            elif k == "chat":
+                txt = str(m.get("text") or "").strip()
+                if txt:
+                    start_turn(sess, txt[:4000], m.get("opts") or {}, m.get("ref"))
+            elif k == "say":
+                txt = str(m.get("text") or "").strip()
+                if txt:
+                    o = dict(m.get("opts") or {})
+                    o["tts"] = True
+                    start_turn(sess, txt[:3000], o, m.get("ref"), say_only=True)
+            elif k == "stop":
+                cancel_turn(sess)
+                sess.send({"type": "stopped"})
+            elif k == "reset":
+                cancel_turn(sess)
+                sess.history = []
+                sess.send({"type": "reset_ok"})
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:  # noqa: BLE001
+        log.info("ws 结束: %s", e)
+    finally:
+        cancel_turn(sess)
+        SESSIONS.discard(sess)
+        st.cancel()
+
+
+def read_train_progress():
+    """读取 auto_train_loop / train.py 写出的训练状态,供 /monitor 推送"""
+    out = {"event": "train_progress", "status": "idle", "epoch": None, "similarity": None}
+    try:
+        if TRAIN_STATE.exists():
+            out.update(json.loads(TRAIN_STATE.read_text(encoding="utf-8")))
+        if EVAL_LOG.exists():
+            lines = [ln for ln in EVAL_LOG.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            if lines:
+                j = json.loads(lines[-1])
+                out["epoch"], out["similarity"] = j.get("epoch"), j.get("similarity")
+                out["best"] = max(json.loads(ln).get("similarity", 0) for ln in lines)
+    except Exception:  # noqa: BLE001
+        pass
+    out["event"] = "train_progress"
+    return out
+
+
+@app.websocket("/monitor")
+async def monitor_ws(ws: WebSocket):
+    await ws.accept()
+    MONITORS.add(ws)
+
+    async def rd():
+        try:
+            while True:
+                await ws.receive_text()
+        except Exception:  # noqa: BLE001
+            pass
+
+    rt = asyncio.get_running_loop().create_task(rd())
+    try:
+        while not rt.done():
+            g = {"event": "gpu_status"}
+            for w in (POOL.workers if POOL else []):
+                g["gpu%d" % w.idx] = w.mem[2]
+                g["mem%d" % w.idx] = round(w.mem[0], 1)
+            await ws.send_text(json.dumps(g))
+            await ws.send_text(json.dumps(read_train_progress(), ensure_ascii=False))
+            await asyncio.sleep(2.0)
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        rt.cancel()
+        MONITORS.discard(ws)
+
+
+@app.websocket("/stream")
+async def stream_ws(ws: WebSocket):
+    """简化协议: 发 {"text": "..."} -> 收原始 PCM(int16, 24kHz, 无头) -> 收 {"event":"done","similarity":0.97}"""
+    await ws.accept()
+    sess = Session(ws)
+    sess.legacy = True
+    SESSIONS.add(sess)
+    st = {"deadline": None, "done": True, "sim": None}
+
+    async def finish():
+        st["done"] = True
+        st["deadline"] = None
+        await ws.send_text(json.dumps({"event": "done", "similarity": st["sim"]}))
+
+    async def sender():
+        try:
+            while True:
+                try:
+                    m = await asyncio.wait_for(sess.q.get(), 0.5)
+                except asyncio.TimeoutError:
+                    if st["deadline"] and not st["done"] and time.time() > st["deadline"]:
+                        await finish()
+                    continue
+                if isinstance(m, (bytes, bytearray)):
+                    await ws.send_bytes(bytes(m[4:]))
+                    continue
+                o = json.loads(m)
+                t = o.get("type")
+                if t == "sim":
+                    st["sim"] = o.get("value") if o.get("value") is not None else st["sim"]
+                    if o.get("final") and not st["done"]:
+                        await finish()
+                elif t == "turn_done":
+                    st["deadline"] = time.time() + 3.0
+                elif t == "error":
+                    st["done"] = True
+                    await ws.send_text(json.dumps({"event": "error", "message": o.get("msg", "")}, ensure_ascii=False))
+                elif t == "warn":
+                    await ws.send_text(json.dumps({"event": "warn", "message": o.get("msg", "")}, ensure_ascii=False))
+        except Exception:  # noqa: BLE001
+            pass
+
+    stt = asyncio.get_running_loop().create_task(sender())
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                m = json.loads(raw)
+            except ValueError:
+                m = {"text": raw}
+            if m.get("type") == "ping" or m.get("event") == "ping":
+                await ws.send_text(json.dumps({"event": "pong"}))
+                continue
+            if m.get("type") == "stop":
+                cancel_turn(sess)
+                continue
+            txt = str(m.get("text") or "").strip()
+            if not txt:
+                continue
+            if VOICE["state"] != "ready":
+                await ws.send_text(json.dumps({"event": "error", "message": "声音还没有克隆好,请先在网页里录入参考语音"}, ensure_ascii=False))
+                continue
+            st.update(done=False, sim=None, deadline=None)
+            start_turn(sess, txt[:3000], {"tts": True}, None, say_only=True)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:  # noqa: BLE001
+        log.info("stream 结束: %s", e)
+    finally:
+        cancel_turn(sess)
+        SESSIONS.discard(sess)
+        stt.cancel()
+
+
+async def gpu_loop():
+    while True:
+        await asyncio.sleep(2.0)
+        for k in [k for k, t in RECENT.items() if time.time() - t.t0 > 120]:
+            RECENT.pop(k, None)
+        if not (SESSIONS or MONITORS) or POOL is None:
+            continue
+        try:
+            if not MOCK:
+                p = await asyncio.create_subprocess_exec("nvidia-smi", "--query-gpu=index,memory.used,memory.total,utilization.gpu",
+                                                         "--format=csv,noheader,nounits", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                out, _ = await asyncio.wait_for(p.communicate(), 5)
+                rows = {}
+                for line in out.decode().strip().splitlines():
+                    f = [x.strip() for x in line.split(",")]
+                    if len(f) >= 4:
+                        rows[int(f[0])] = (float(f[1]) / 1024, float(f[2]) / 1024, int(float(f[3])))
+                for w in POOL.workers:
+                    if int(w.gpu) in rows:
+                        w.mem = rows[int(w.gpu)]
+            else:
+                for w in POOL.workers:
+                    w.mem = (5.5 + w.idx, 15.0, 40 + 20 * w.idx)
+        except Exception:  # noqa: BLE001
+            pass
+        broadcast(state_public())
+
+
+def restore_voice():
+    """重启后自动恢复上一次克隆的声音;或使用脚本里指定的默认参考音频。"""
+    try:
+        ra = os.environ.get("VC_REF_AUDIO")
+        if os.environ.get("VC_REF_FORCE") == "1" and ra and Path(ra).exists():       # 微调模型: 默认用它训练时的说话人
+            log.info("使用微调模型的说话人参考音频(x-vector 模式): %s", ra)
+            start_clone(ra, os.environ.get("VC_REF_TEXT", "").strip(), os.environ.get("VC_REF_XVEC") == "1")
+            return
+        f = VOICE_DIR / "current.json"
+        if f.exists():
+            j = json.loads(f.read_text(encoding="utf-8"))
+            if Path(j["path"]).exists():
+                log.info("恢复上一次的克隆声音: %s", j["path"])
+                start_clone(j["path"], j.get("text", ""), bool(j.get("xvec")))
+                return
+        ra = os.environ.get("VC_REF_AUDIO")
+        if ra and Path(ra).exists():
+            log.info("使用默认参考音频: %s", ra)
+            start_clone(ra, os.environ.get("VC_REF_TEXT", "").strip(), os.environ.get("VC_REF_XVEC") == "1")
+    except Exception as e:  # noqa: BLE001
+        log.warning("恢复声音失败: %s", e)
+
+
+@app.on_event("startup")
+async def _startup():
+    global LOOP
+    LOOP = asyncio.get_running_loop()
+    if POOL is not None:
+        threading.Thread(target=reader_thread, args=(LOOP,), daemon=True).start()
+        LOOP.create_task(gpu_loop())
+        restore_voice()
+
+
+def detect_gpus():
+    env = os.environ.get("VC_GPUS")
+    if env:
+        return [x.strip() for x in env.split(",") if x.strip()]
+    if MOCK:
+        return ["0", "1"]
+    try:
+        out = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=15).stdout
+        n = len([ln for ln in out.splitlines() if ln.startswith("GPU ")])
+        return [str(i) for i in range(n)]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def main():
+    global POOL
+    VOICE_DIR.mkdir(parents=True, exist_ok=True)
+    gpus = detect_gpus()
+    log.info("检测到 GPU: %s | 模型: %s | mock=%s", gpus or "无", MODEL, MOCK)
+    if not gpus:
+        log.error("⚠ 没有检测到 GPU,语音合成不可用(聊天文字仍可用)。请在 Kaggle 右侧 Settings → Accelerator 选择 GPU T4 x2")
+    ctx = mp.get_context("spawn")
+    POOL = Pool(ctx, gpus, {"mock": MOCK})
+    import uvicorn
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning", ws_ping_interval=20, ws_ping_timeout=60)
+    finally:
+        POOL.stop()
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+FILES['infer_dual_gpu.py'] = r'''# -*- coding: utf-8 -*-
+"""
+infer_dual_gpu.py —— 双卡并行推理模块(子系统 B)
+
+  架构: 数据并行。每张 GPU 一个独立进程,各自加载"完全相同的权重"(同一个模型目录),
+        网关把长文本切成短句,轮流派给空闲的卡并行合成,再按句子顺序拼接 -> 音频连续无缝。
+        (没有用层切分的"模型并行":1.7B 的 fp16 权重只有 ~3.5GB,单张 T4 绰绰有余,层切分只会增加跨卡通信延迟。)
+  一致性: 同一随机种子(VC_SEED) + 同一采样超参 + 同一采样率校验(必须 24kHz) + 两卡各自校准 RMS 电平。
+  流式: faster-qwen3-tts 的 generate_voice_clone_streaming 每 chunk_size 个 codec 帧(12Hz)立即解码并吐出 PCM。
+"""
+import logging
+import multiprocessing as mp
+import os
+import queue as _queue
+import re
+import sys
+import time
+import traceback
 from pathlib import Path
 
 import numpy as np
 
 SR = 24000
 WORK = Path(os.environ.get("VC_WORK") or "/kaggle/working/vc")
-PORT = int(os.environ.get("VC_PORT", "8000"))
 MODEL = os.environ.get("VC_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
-MOCK = os.environ.get("VC_MOCK") == "1"
-MOCK_LLM = os.environ.get("VC_MOCK_LLM") == "1"
-DS_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-DS_BASE = os.environ.get("DEEPSEEK_BASE", "https://api.deepseek.com").rstrip("/")
-DS_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
-CHUNK_FIRST = int(os.environ.get("VC_CHUNK_FIRST", "4"))     # 首句每块 4 个 codec 帧(≈333ms),首声最快
-CHUNK_REST = int(os.environ.get("VC_CHUNK_REST", "6"))       # 后续句每块 6 帧(≈500ms)
-VOICE_DIR = WORK / "voice"
+CHUNK_FIRST = int(os.environ.get("VC_CHUNK_FIRST", "4"))      # 首句每块 4 个 codec 帧(≈333ms),首声最快
+CHUNK_REST = int(os.environ.get("VC_CHUNK_REST", "6"))        # 后续句每块 6 帧(≈500ms)
+SEED = int(os.environ.get("VC_SEED", "42"))                   # 两卡相同种子
+TEMPERATURE = float(os.environ.get("VC_TEMPERATURE", "0.7"))
+TOP_P = float(os.environ.get("VC_TOP_P", "0.9"))
+TOP_K = int(os.environ.get("VC_TOP_K", "50"))
+REP_PENALTY = float(os.environ.get("VC_REP_PENALTY", "1.05"))  # 官方默认 1.05;>1.1 在 12Hz 码本上容易吞字/拖音
+MAX_NEW_TOKENS = int(os.environ.get("VC_MAX_NEW_TOKENS", "2048"))
+ASR_MODEL = os.environ.get("VC_ASR_MODEL", "openai/whisper-large-v3-turbo")
 
 log = logging.getLogger("vc")
 if not log.handlers:
@@ -264,8 +1200,22 @@ class Trimmer:
 
 
 # ════════════════════════════════════════════════════════════════
-#  TTS 引擎(运行在各自的 GPU 进程里)
+#  声音电平 / 重采样小工具
 # ════════════════════════════════════════════════════════════════
+def speech_rms(pcm):
+    """只统计"有声帧"(10ms RMS > 阈值)的整体 RMS(int16 量纲)。用于两张卡的音量对齐。"""
+    pcm = np.asarray(pcm)
+    fr = SR // 100
+    n = len(pcm) // fr
+    if n < 5:
+        return 0.0
+    f = pcm[: n * fr].astype(np.float32).reshape(n, fr)
+    r = np.sqrt((f ** 2).mean(axis=1))
+    thr = max(110.0, float(np.percentile(r, 90)) * 0.12)
+    v = f[r >= thr]
+    return float(np.sqrt((v ** 2).mean())) if v.size else 0.0
+
+
 def _f2pcm(a):
     if hasattr(a, "detach"):
         a = a.detach().float().cpu().numpy()
@@ -273,7 +1223,24 @@ def _f2pcm(a):
     return (np.clip(a, -1, 1) * 32767.0).round().astype("<i2")
 
 
+def _seed_all():
+    """两张卡每段合成前都用同一个随机种子 -> 音色/语气走向一致"""
+    import random
+    random.seed(SEED)
+    np.random.seed(SEED)
+    try:
+        import torch
+        torch.manual_seed(SEED)
+        torch.cuda.manual_seed_all(SEED)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# ════════════════════════════════════════════════════════════════
+#  TTS 引擎(运行在各自的 GPU 进程里)
+# ════════════════════════════════════════════════════════════════
 class MockEngine:
+    """无 GPU 的自检引擎(VC_MOCK=1):合成正弦"语音",用来验证整条链路。"""
     name = "mock"
 
     def __init__(self, idx, send):
@@ -285,9 +1252,10 @@ class MockEngine:
 
     def set_voice(self, path, text, xvec):
         time.sleep(0.4)
-        return {"rtf": 0.4, "ttfa": 0.2, "dtype": "mock", "sr": SR, "mode": "mock"}
+        return {"rtf": 0.4, "ttfa": 0.2, "dtype": "mock", "sr": SR, "mode": "mock", "sim": 0.96, "rms": 3000.0}
 
     def stream(self, text, chunk_size):
+        _seed_all()
         speed = float(os.environ.get("VC_MOCK_SPEED", "0.45"))      # 合成耗时 / 音频时长
         dur = max(0.6, len(text) * 0.2)
         f0 = 140 + (sum(map(ord, text)) % 5) * 25
@@ -305,12 +1273,15 @@ class MockEngine:
             yield (0.25 * sig * env).astype(np.float32), SR
             t0 += d
 
+    def score(self, pcm):
+        return 0.95 + (len(pcm) % 7) / 200.0
+
     def asr(self, path):
         return "这是一段模拟识别的参考文本"
 
 
 class RealEngine:
-    """Qwen3-TTS-12Hz-1.7B-Base。优先用 faster-qwen3-tts(CUDA Graph + 流式);失败则回退到官方 qwen-tts(整句合成)。"""
+    """Qwen3-TTS-12Hz-1.7B。优先 faster-qwen3-tts(CUDA Graph + 流式);失败则回退官方 qwen-tts(整句合成)。"""
     name = "qwen3-tts"
 
     def __init__(self, idx, send):
@@ -321,6 +1292,8 @@ class RealEngine:
         self.ref = None
         self.prompt = None
         self._asr = None
+        self.scorer = None
+        self.scorer_failed = False
         self.sr = SR
         self.mode = ""
         self.order = []
@@ -329,6 +1302,7 @@ class RealEngine:
         self.send("status", self.idx, stage, msg)
         log.info("[GPU%d] %s", self.idx, msg)
 
+    # ───── 加载(服务启动时就加载到 GPU,绝不懒加载) ─────
     def load(self, force_dtype=None):
         import torch
         if not torch.cuda.is_available():
@@ -338,7 +1312,7 @@ class RealEngine:
         self.order = order
         self.dtype = force_dtype or order[0]
         dt = getattr(torch, self.dtype)
-        self.say("loading", "加载 %s (%s)…" % (MODEL.split("/")[-1], self.dtype))
+        self.say("loading", "加载 %s (%s)…" % (Path(MODEL).name if os.path.isdir(MODEL) else MODEL.split("/")[-1], self.dtype))
         t0 = time.time()
         try:
             from faster_qwen3_tts import FasterQwen3TTS
@@ -362,6 +1336,8 @@ class RealEngine:
                 self.slow = Qwen3TTSModel.from_pretrained(MODEL, device_map="cuda:0", torch_dtype=dt, attn_implementation="sdpa")
             mode = "官方整句模式(较慢)"
         self.mode = mode
+        if self.sr != SR:
+            raise RuntimeError("模型输出采样率是 %d,系统固定使用 %d,拒绝启动(防止两卡音频不一致)" % (self.sr, SR))
         self.say("loaded", "模型就绪 · %s · %.0fs" % (mode, time.time() - t0))
 
     def _free(self):
@@ -379,13 +1355,34 @@ class RealEngine:
         if self.fast is None and self.slow is not None:
             self.prompt = self.slow.create_voice_clone_prompt(ref_audio=path, ref_text=("" if xvec else text), x_vector_only_mode=bool(xvec))
 
+    # ───── 声纹打分器(WavLM-SV,失败则静默禁用,不影响合成) ─────
+    def _prep_scorer(self, path):
+        if self.scorer_failed:
+            return
+        try:
+            from speaker_sim import SpkScorer, load_wav16k
+            if self.scorer is None:
+                self.say("voice", "加载声纹评分模型…")
+                self.scorer = SpkScorer("cuda")
+            self.scorer.set_ref([load_wav16k(path)])
+        except Exception as e:  # noqa: BLE001
+            self.scorer_failed = True
+            self.scorer = None
+            log.warning("[GPU%d] 声纹评分不可用(不影响合成): %s", self.idx, e)
+
+    def score(self, pcm):
+        if self.scorer is None or self.scorer.ref is None:
+            return None
+        from speaker_sim import pcm16_to_16k
+        return self.scorer.score(pcm16_to_16k(pcm, SR))
+
     def set_voice(self, path, text, xvec):
         self._make_prompt(path, text, xvec)
         bad = None
         for attempt in range(2):
             t0 = time.time()
             first, parts = None, []
-            for a, sr in self.stream("你好，我已经准备好了。", 8):
+            for a, sr in self.stream("你好，我已经准备好了，今天天气真不错，我们可以开始聊天了。", 8):
                 if first is None:
                     first = time.time() - t0
                 parts.append(_f2pcm(a))
@@ -394,7 +1391,15 @@ class RealEngine:
             dur = len(pcm) / SR
             ok = len(pcm) > SR * 0.3 and float(np.sqrt((pcm.astype(np.float32) ** 2).mean())) > 90
             if ok:
-                return {"rtf": round(wall / max(dur, 1e-3), 2), "ttfa": round(first or wall, 2), "dtype": self.dtype, "mode": self.mode, "sr": self.sr}
+                info = {"rtf": round(wall / max(dur, 1e-3), 2), "ttfa": round(first or wall, 2), "dtype": self.dtype, "mode": self.mode,
+                        "sr": self.sr, "rms": round(speech_rms(pcm), 1), "sim": None}
+                self._prep_scorer(path)
+                try:
+                    s = self.score(pcm)
+                    info["sim"] = None if s is None else round(s, 4)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("[GPU%d] 试合成打分失败: %s", self.idx, e)
+                return info
             bad = "试合成的声音是空的/无声(精度 %s)" % self.dtype
             alt = [d for d in self.order if d != self.dtype]
             if attempt == 0 and alt:
@@ -407,14 +1412,17 @@ class RealEngine:
     def stream(self, text, chunk_size):
         path, ref_text, xvec = self.ref
         lang = detect_lang(text)
-        max_new = max(120, int(len(text) * 7))
+        max_new = min(MAX_NEW_TOKENS, max(120, int(len(text) * 7)))
+        _seed_all()
         if self.fast is not None:
             for a, sr, _timing in self.fast.generate_voice_clone_streaming(
                     text=text, language=lang, ref_audio=path, ref_text=ref_text, chunk_size=chunk_size,
-                    xvec_only=xvec, temperature=0.8, top_k=50, repetition_penalty=1.05, max_new_tokens=max_new):
+                    xvec_only=xvec, temperature=TEMPERATURE, top_k=TOP_K, top_p=TOP_P,
+                    repetition_penalty=REP_PENALTY, max_new_tokens=max_new):
                 yield a, sr
         else:
-            wavs, sr = self.slow.generate_voice_clone(text=text, language=lang, voice_clone_prompt=self.prompt, max_new_tokens=max_new)
+            wavs, sr = self.slow.generate_voice_clone(text=text, language=lang, voice_clone_prompt=self.prompt, max_new_tokens=max_new,
+                                                      temperature=TEMPERATURE, top_k=TOP_K, top_p=TOP_P, repetition_penalty=REP_PENALTY)
             yield wavs[0], sr
 
     def asr(self, path):
@@ -422,11 +1430,17 @@ class RealEngine:
         import torch
         if self._asr is None:
             from transformers import pipeline
-            self.say("loading", "加载语音识别模型 whisper-small…")
-            try:
-                self._asr = pipeline("automatic-speech-recognition", model="openai/whisper-small", device=0, dtype=torch.float16)
-            except TypeError:
-                self._asr = pipeline("automatic-speech-recognition", model="openai/whisper-small", device=0, torch_dtype=torch.float16)
+            last = None
+            for name in (ASR_MODEL, "openai/whisper-small"):
+                try:
+                    self.say("loading", "加载语音识别模型 %s…" % name.split("/")[-1])
+                    self._asr = pipeline("automatic-speech-recognition", model=name, device=0, torch_dtype=torch.float16, chunk_length_s=30)
+                    break
+                except Exception as e:  # noqa: BLE001
+                    last = e
+                    log.warning("[GPU%d] ASR 模型 %s 加载失败: %s", self.idx, name, e)
+            if self._asr is None:
+                raise RuntimeError("语音识别模型加载失败: %s" % last)
         a, sr = sf.read(path, dtype="float32", always_2d=False)
         if a.ndim > 1:
             a = a.mean(axis=1)
@@ -489,6 +1503,7 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
                     send("seg_done", tuid, seg, idx, {"skipped": True})
                     continue
                 t0, first, nsamp = time.time(), None, 0
+                acc = []
                 gen = eng.stream(text, cs)
                 try:
                     for a, sr in gen:
@@ -498,6 +1513,7 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
                         if first is None:
                             first = time.time() - t0
                         nsamp += len(pcm)
+                        acc.append(pcm)
                         send("chunk", tuid, seg, pcm.tobytes())
                 finally:
                     try:
@@ -506,6 +1522,13 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
                         pass
                 wall = time.time() - t0
                 send("seg_done", tuid, seg, idx, {"first": first, "wall": wall, "audio": nsamp / SR})
+                sim = None                                              # 音频已经全部发出,再算声纹分(不拖慢播放)
+                if epoch.value == ep and nsamp > SR * 1.2:
+                    try:
+                        sim = eng.score(np.concatenate(acc))
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("[GPU%d] 打分失败: %s", idx, e)
+                send("sim", tuid, seg, sim, nsamp / SR)
         except Exception as e:  # noqa: BLE001
             log.error("[GPU%d] 任务出错:\n%s", idx, traceback.format_exc())
             if kind == "voice":
@@ -517,682 +1540,108 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
                 send("asr", job[1], "", str(e))
 
 
-# ════════════════════════════════════════════════════════════════
-#  网关
-# ════════════════════════════════════════════════════════════════
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect  # noqa: E402
-from fastapi.responses import HTMLResponse, JSONResponse, Response  # noqa: E402
-
-SRC_DIR = Path(__file__).resolve().parent
-app = FastAPI(title="Voice Clone Studio")
-LOOP = None
-POOL = None
-SESSIONS = set()
-ACTIVE = {}          # turn uid -> Turn
-VOICE = {"vid": 0, "state": "none", "mode": "", "text": "", "path": None, "pending": set(), "info": {}, "err": "", "msg": ""}
-ASR_WAIT = {}
-_uid = [0]
-
-
-class Worker:
-    def __init__(self, idx, gpu, proc, q):
-        self.idx, self.gpu, self.proc, self.q = idx, gpu, proc, q
-        self.status, self.msg = "loading", "启动中…"
-        self.voice_vid = None
-        self.voice_info = {}
-        self.pending = 0
-        self.mem = (0.0, 0.0, 0)
-
-    def ready(self):
-        return self.status in ("ready", "voice") and self.proc.is_alive()
-
-
-class Pool:
-    def __init__(self, ctx, gpus, cfg):
-        self.ctx = ctx
-        self.epoch = ctx.Value("i", 0)
-        self.res_q = ctx.Queue()
-        self.workers = []
-        for i, g in enumerate(gpus):
-            q = ctx.Queue()
-            p = ctx.Process(target=worker_main, args=(i, g, q, self.res_q, self.epoch, cfg), daemon=True, name="tts-gpu%s" % g)
-            p.start()
-            self.workers.append(Worker(i, g, p, q))
-
-    def pick(self):
-        cand = [w for w in self.workers if w.ready() and w.voice_vid == VOICE["vid"] and VOICE["vid"] > 0]
-        if not cand:
-            return None
-        return min(cand, key=lambda w: (w.pending, w.idx))
-
-    def bump(self):
-        with self.epoch.get_lock():
-            self.epoch.value += 1
-
-    def stop(self):
-        for w in self.workers:
-            try:
-                w.q.put(("quit",))
-            except Exception:  # noqa: BLE001
-                pass
-
-
-class Session:
-    def __init__(self, ws):
-        self.ws = ws
-        self.q = asyncio.Queue()
-        self.history = []
-        self.task = None
-        self.turn = None
-
-    def send(self, obj):
-        self.q.put_nowait(json.dumps(obj, ensure_ascii=False))
-
-    def send_bin(self, b):
-        self.q.put_nowait(b)
-
-
-def broadcast(obj):
-    for s in list(SESSIONS):
-        s.send(obj)
-
-
-class Seg:
-    def __init__(self, idx, text, end_char):
-        self.idx, self.text, self.end = idx, text, end_char
-        self.out = []
-        self.done = False
-        self.err = ""
-        self.trim = Trimmer()
-        self.worker = -1
-        self.had_audio = False
-        self.stats = {}
-
-
-class Turn:
-    def __init__(self, sess, ref, breath):
-        _uid[0] += 1
-        self.uid = _uid[0]
-        self.sess, self.ref, self.breath = sess, ref, breath
-        self.segs = []
-        self.cur = 0
-        self.text_done = False
-        self.closed = False
-        self.pending_pause = 0
-        self.t0 = time.time()
-        self.first_audio = None
-        self.samples = 0
-        self.full_text = ""
-        self.gpu_segs = {}
-        self.tts = True
-        self.warned = False
-
-
-def voice_public():
-    return {"state": VOICE["state"], "mode": VOICE["mode"], "text": VOICE["text"], "vid": VOICE["vid"],
-            "info": VOICE["info"], "err": VOICE["err"], "msg": VOICE["msg"]}
-
-
-def state_public():
-    ws = []
-    for w in POOL.workers if POOL else []:
-        ws.append({"idx": w.idx, "gpu": w.gpu, "status": w.status, "msg": w.msg, "voice": (w.voice_vid == VOICE["vid"] and VOICE["vid"] > 0),
-                   "mem": [round(w.mem[0], 1), round(w.mem[1], 1)], "util": w.mem[2], "info": w.voice_info, "alive": w.proc.is_alive()})
-    return {"type": "state", "workers": ws, "voice": voice_public(), "deepseek": bool(DS_KEY or MOCK_LLM), "mock": MOCK, "model": MODEL}
-
-
-def pump(turn):
-    """按句子顺序把已就绪的音频推给浏览器。第 k 句的音频只有在前 k-1 句全部发完之后才会发出。"""
-    if turn.closed:
-        return
-    sess = turn.sess
-    head = struct.pack("<I", turn.uid)
-    while turn.cur < len(turn.segs):
-        seg = turn.segs[turn.cur]
-        if seg.out:
-            parts = [head]
-            if turn.pending_pause > 0:
-                parts.append(np.zeros(int(SR * turn.pending_pause / 1000), "<i2").tobytes())
-                turn.pending_pause = 0
-            for a in seg.out:
-                parts.append(a.astype("<i2").tobytes())
-                turn.samples += len(a)
-            seg.out = []
-            if turn.first_audio is None:
-                turn.first_audio = time.time() - turn.t0
-            seg.had_audio = True
-            sess.send_bin(b"".join(parts))
-        if seg.done:
-            if seg.had_audio:
-                turn.pending_pause = pause_ms(seg.end, turn.breath)
-            turn.cur += 1
-            continue
-        break
-    if turn.text_done and turn.cur >= len(turn.segs):
-        turn.closed = True
-        ACTIVE.pop(turn.uid, None)
-        sess.send({"type": "turn_done", "turn": turn.uid, "audio_s": round(turn.samples / SR, 2),
-                   "first_ms": int(turn.first_audio * 1000) if turn.first_audio is not None else None,
-                   "gpu_segs": turn.gpu_segs, "segs": len(turn.segs),
-                   "chars": len(turn.full_text)})
-
-
-def dispatch(turn, text):
-    clean = tts_clean(text)
-    if not turn.tts or not has_speech(clean):
-        return
-    seg = Seg(len(turn.segs), clean, text.strip()[-1:])
-    turn.segs.append(seg)
-    w = POOL.pick() if POOL else None
-    if w is None:
-        seg.done = True
-        seg.err = "没有可用的 GPU 进程或声音还没克隆好"
-        if not turn.warned:
-            turn.warned = True
-            turn.sess.send({"type": "warn", "msg": "无法朗读: " + seg.err})
-        return
-    seg.worker = w.idx
-    w.pending += len(clean)
-    turn.gpu_segs[str(w.idx)] = turn.gpu_segs.get(str(w.idx), 0) + 1
-    w.q.put(("tts", turn.uid, POOL.epoch.value, seg.idx, clean, CHUNK_FIRST if seg.idx == 0 else CHUNK_REST))
-
-
-def on_worker_msg(msg):
-    k = msg[0]
-    if k == "status":
-        _, idx, stage, text = msg
-        w = POOL.workers[idx]
-        w.status, w.msg = stage, text
-        broadcast(state_public())
-    elif k == "voice_ok":
-        _, idx, vid, info = msg
-        w = POOL.workers[idx]
-        if vid == VOICE["vid"]:
-            w.voice_vid, w.voice_info = vid, info
-            VOICE["pending"].discard(idx)
-            VOICE["info"][str(idx)] = info
-            log.info("[GPU%d] 声音就绪: %s", idx, info)
-            _voice_progress()
-    elif k == "voice_err":
-        _, idx, vid, err = msg
-        if vid == VOICE["vid"]:
-            VOICE["pending"].discard(idx)
-            VOICE["err"] = err
-            log.error("[GPU%d] 声音设置失败: %s", idx, err)
-            _voice_progress()
-    elif k == "asr":
-        _, rid, text, err = msg
-        fut = ASR_WAIT.pop(rid, None)
-        if fut and not fut.done():
-            fut.set_result((text, err))
-    elif k == "chunk":
-        _, tuid, seg_i, data = msg
-        t = ACTIVE.get(tuid)
-        if t is None or t.closed or seg_i >= len(t.segs):
-            return
-        seg = t.segs[seg_i]
-        a = seg.trim.feed(np.frombuffer(data, dtype="<i2"))
-        if a.size:
-            seg.out.append(a)
-            pump(t)
-    elif k in ("seg_done", "seg_err"):
-        if k == "seg_done":
-            _, tuid, seg_i, idx, stats = msg
-            err = ""
-        else:
-            _, tuid, seg_i, idx, err = msg
-            stats = {}
-        w = POOL.workers[idx]
-        t = ACTIVE.get(tuid)
-        if t is None or t.closed or seg_i >= len(t.segs):
-            return
-        seg = t.segs[seg_i]
-        w.pending = max(0, w.pending - len(seg.text))
-        a = seg.trim.flush()
-        if a.size:
-            seg.out.append(a)
-        seg.done, seg.err, seg.stats = True, err, stats
-        if err:
-            t.sess.send({"type": "warn", "msg": "第 %d 句合成失败: %s" % (seg_i + 1, err)})
-        elif stats.get("audio"):
-            log.info("[#%d] 第%d句 GPU%d: %d字 → 音频 %.1fs, 首包 %.2fs, 耗时 %.1fs (RTF %.2f)", t.uid, seg_i, idx, len(seg.text),
-                     stats["audio"], stats.get("first") or 0, stats.get("wall") or 0, (stats.get("wall") or 0) / max(stats["audio"], 1e-3))
-        pump(t)
-
-
-def _voice_progress():
-    if not VOICE["pending"]:
-        ok = [w for w in POOL.workers if w.voice_vid == VOICE["vid"]]
-        VOICE["state"] = "ready" if ok else "error"
-        if ok:
-            VOICE["err"] = ""
-        else:
-            VOICE["err"] = VOICE["err"] or "所有 GPU 都没能完成声音设置"
-    broadcast(state_public())
-
-
-def reader_thread(loop):
-    while True:
-        try:
-            msg = POOL.res_q.get()
-        except Exception:  # noqa: BLE001
-            return
-        try:
-            loop.call_soon_threadsafe(on_worker_msg, msg)
-        except RuntimeError:
-            return
-
-
-# ───────── 声音克隆 ─────────
-def read_wav(data):
-    import io
-    with wave.open(io.BytesIO(data), "rb") as w:
-        ch, sw, sr, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
-        raw = w.readframes(n)
-    if sw != 2:
-        raise ValueError("需要 16-bit WAV")
-    a = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-    if ch > 1:
-        a = a.reshape(-1, ch).mean(axis=1)
-    return a, sr
-
-
-def prepare_reference(a, sr):
-    """清理参考音频: 去直流、去首尾静音、归一化到 -3dBFS。"""
-    a = a - float(a.mean())
-    fr = max(1, sr // 100)
-    n = len(a) // fr
-    if n > 10:
-        e = np.sqrt((a[: n * fr].reshape(n, fr) ** 2).mean(axis=1))
-        thr = max(0.004, float(np.percentile(e, 95)) * 0.06)
-        idx = np.where(e > thr)[0]
-        if idx.size:
-            s = max(0, idx[0] - 15) * fr
-            t = min(n, idx[-1] + 20) * fr
-            a = a[s:t]
-    pk = float(np.abs(a).max()) if a.size else 0
-    if pk > 1e-4:
-        a = a * (0.7 / pk)
-    return a.astype(np.float32), sr
-
-
-async def clone_job(vid, path, text, xvec):
-    try:
-        if not xvec and not text:
-            w0 = next((w for w in POOL.workers if w.ready()), None)
-            VOICE["msg"] = "正在自动识别参考音频里说了什么…"
-            broadcast(state_public())
-            if w0 is not None:
-                rid = "asr%d" % vid
-                fut = LOOP.create_future()
-                ASR_WAIT[rid] = fut
-                w0.q.put(("asr", rid, path))
-                try:
-                    text, err = await asyncio.wait_for(fut, 240)
-                except asyncio.TimeoutError:
-                    text, err = "", "识别超时"
-                if err:
-                    log.warning("自动识别失败: %s", err)
-            if not text:
-                xvec = True
-        if vid != VOICE["vid"]:
-            return
-        VOICE.update(text=text, mode=("xvec" if xvec else "icl"), msg="", info={}, err="")
-        (VOICE_DIR / "current.json").write_text(json.dumps({"path": path, "text": text, "xvec": xvec}, ensure_ascii=False), encoding="utf-8")
-        alive = [w for w in POOL.workers if w.proc.is_alive() and w.status != "error"]
-        VOICE["pending"] = set(w.idx for w in alive)
-        for w in POOL.workers:
-            w.voice_vid = None
-        if not alive:
-            VOICE.update(state="error", err="没有可用的 GPU 进程")
-            broadcast(state_public())
-            return
-        for w in alive:
-            w.q.put(("voice", vid, path, text, xvec))
-        broadcast(state_public())
-    except Exception as e:  # noqa: BLE001
-        log.exception("clone_job")
-        VOICE.update(state="error", err="%s: %s" % (type(e).__name__, e))
-        broadcast(state_public())
-
-
-def start_clone(path, text, xvec):
-    VOICE["vid"] += 1
-    VOICE.update(state="cloning", path=path, text=text, mode="", pending=set(), info={}, err="", msg="准备中…")
-    asyncio.get_running_loop().create_task(clone_job(VOICE["vid"], path, text, xvec))
-
-
-@app.post("/api/voice")
-async def api_voice(request: Request):
-    data = await request.body()
-    text = (request.query_params.get("text") or "").strip()
-    try:
-        a, sr = read_wav(data)
-    except Exception as e:  # noqa: BLE001
-        return JSONResponse({"ok": False, "error": "音频无法解析: %s" % e}, status_code=400)
-    if len(a) / sr < 2.0:
-        return JSONResponse({"ok": False, "error": "参考音频太短(<2 秒)"}, status_code=400)
-    if len(a) / sr > 40:
-        return JSONResponse({"ok": False, "error": "参考音频太长(>40 秒)"}, status_code=400)
-    a, sr = prepare_reference(a, sr)
-    import soundfile as sf
-    VOICE_DIR.mkdir(parents=True, exist_ok=True)
-    path = str(VOICE_DIR / ("ref_%d.wav" % int(time.time() * 1000)))      # 每次用新文件名: 引擎按路径缓存声音特征
-    sf.write(path, a, sr, subtype="PCM_16")
-    for old in VOICE_DIR.glob("ref_*.wav"):
-        if str(old) != path and time.time() - old.stat().st_mtime > 600:
-            try:
-                old.unlink()
-            except OSError:
-                pass
-    start_clone(path, text, False)
-    return {"ok": True, "vid": VOICE["vid"], "seconds": round(len(a) / sr, 1)}
-
-
-@app.delete("/api/voice")
-async def api_voice_clear():
-    VOICE["vid"] += 1
-    VOICE.update(state="none", mode="", text="", path=None, pending=set(), info={}, err="", msg="")
-    for w in POOL.workers:
-        w.voice_vid = None
-    try:
-        (VOICE_DIR / "current.json").unlink()
-    except OSError:
-        pass
-    broadcast(state_public())
-    return {"ok": True}
-
-
-# ───────── DeepSeek ─────────
-SYS_BASE = ("你是一个自然、亲切、有温度的中文语音聊天助手。你的回答会被直接用语音朗读出来,所以必须遵守:"
-            "1)只用口语化的纯文本,不要用 Markdown、列表符号、标题、表情符号、括号注释、网址;"
-            "2)多用逗号和句号断句,每个短句尽量不超过 25 个字;"
-            "3)阿拉伯数字和英文缩写要写成容易读出来的样子;"
-            "4)像真人聊天一样回应,不要说“作为AI”。")
-SYS_SHORT = "默认回答简短,通常 1 到 3 句话,除非用户明确要求详细内容。"
-SYS_LONG = "用户可能要求讲故事、做讲解等长内容:请连贯、有画面感、有起承转合地完整讲完,按自然段落推进,不要出现标题和序号。"
-SYS_FILLER = "回答的第一个短句请先用一个很短的口语开头,例如“嗯,”“好的,”“哈,”“让我想想,”,然后再接正文。"
-
-
-async def deepseek_stream(messages, long_mode):
-    if MOCK_LLM:
-        txt = ("嗯，好的。这是一个用来测试的回答。我会先说一小句，然后再慢慢往下讲。" * (6 if long_mode else 1)) + "好啦，就说到这里。"
-        for i in range(0, len(txt), 3):
-            await asyncio.sleep(0.05)
-            yield txt[i:i + 3]
-        return
-    if not DS_KEY:
-        raise RuntimeError("没有配置 DEEPSEEK_API_KEY(在 Kaggle Secrets 里添加,或填到脚本顶部的 DEEPSEEK_API_KEY)")
-    import httpx
-    payload = {"model": DS_MODEL, "messages": messages, "stream": True, "temperature": 1.1,
-               "max_tokens": 8000 if long_mode else 1200}
-    headers = {"Authorization": "Bearer " + DS_KEY, "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as cli:
-        async with cli.stream("POST", DS_BASE + "/chat/completions", headers=headers, json=payload) as r:
-            if r.status_code != 200:
-                body = (await r.aread()).decode("utf-8", "ignore")[:300]
-                raise RuntimeError("DeepSeek 返回 %d: %s" % (r.status_code, body))
-            async for line in r.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                d = line[5:].strip()
-                if d == "[DONE]":
-                    break
-                try:
-                    obj = json.loads(d)
-                    t = obj["choices"][0]["delta"].get("content")
-                except Exception:  # noqa: BLE001
-                    continue
-                if t:
-                    yield t
-
-
-async def run_turn(sess, turn, user_text, opts, say_only):
-    seg = Segmenter()
-    try:
-        sess.send({"type": "turn_start", "turn": turn.uid, "ref": turn.ref, "sr": SR, "tts": turn.tts})
-        if say_only:
-            turn.full_text = user_text
-            for s in seg.push(user_text) + seg.finish():
-                dispatch(turn, s)
-        else:
-            sysmsg = SYS_BASE + (SYS_LONG if opts.get("long") else SYS_SHORT) + (SYS_FILLER if opts.get("filler") else "")
-            sess.history.append({"role": "user", "content": user_text})
-            sess.history = sess.history[-24:]
-            msgs = [{"role": "system", "content": sysmsg}] + sess.history
-            first = True
-            async for delta in deepseek_stream(msgs, bool(opts.get("long"))):
-                if first:
-                    first = False
-                    sess.send({"type": "llm_first", "turn": turn.uid, "ms": int((time.time() - turn.t0) * 1000)})
-                turn.full_text += delta
-                sess.send({"type": "delta", "turn": turn.uid, "t": delta})
-                for s in seg.push(delta):
-                    dispatch(turn, s)
-            for s in seg.finish():
-                dispatch(turn, s)
-        turn.text_done = True
-        pump(turn)
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:  # noqa: BLE001
-        log.error("对话出错: %s", e)
-        sess.send({"type": "error", "turn": turn.uid, "msg": str(e)})
-        for s in seg.finish():
-            dispatch(turn, s)
-        turn.text_done = True
-        pump(turn)
-    finally:
-        if turn.full_text and not say_only:
-            sess.history.append({"role": "assistant", "content": turn.full_text})
-
-
-def cancel_turn(sess):
-    if sess.task is not None and not sess.task.done():
-        sess.task.cancel()
-    if sess.turn is not None:
-        sess.turn.closed = True
-        ACTIVE.pop(sess.turn.uid, None)
-    sess.task, sess.turn = None, None
-    if POOL:
-        POOL.bump()
-        for w in POOL.workers:
-            w.pending = 0
-
-
-def start_turn(sess, text, opts, ref, say_only=False):
-    cancel_turn(sess)
-    t = Turn(sess, ref, float(opts.get("breath", 1.0)))
-    t.tts = bool(opts.get("tts", True))
-    ACTIVE[t.uid] = t
-    sess.turn = t
-    sess.task = asyncio.get_running_loop().create_task(run_turn(sess, t, text, opts, say_only))
-
-
-# ───────── 路由 ─────────
-def read_src(name):
-    p = SRC_DIR / name
-    return p.read_text(encoding="utf-8") if p.exists() else None
-
-
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    h = read_src("index.html")
-    if h is None:
-        return HTMLResponse("index.html 不存在", status_code=500)
-    return HTMLResponse(h, headers={"Cache-Control": "no-store"})
-
-
-@app.get("/worklet.js")
-async def worklet():
-    return Response(read_src("worklet.js") or "", media_type="text/javascript", headers={"Cache-Control": "no-store"})
-
-
-@app.get("/favicon.ico")
-async def favicon():
-    return Response(status_code=204)
-
-
-@app.get("/health")
-async def health():
-    return {"ok": True, "workers": [{"idx": w.idx, "status": w.status, "msg": w.msg, "alive": w.proc.is_alive()} for w in POOL.workers] if POOL else [],
-            "voice": VOICE["state"], "mock": MOCK, "deepseek": bool(DS_KEY or MOCK_LLM)}
-
-
-@app.get("/api/state")
-async def api_state():
-    return state_public()
-
-
-@app.websocket("/ws")
-async def ws_endpoint(ws: WebSocket):
-    await ws.accept()
-    sess = Session(ws)
-    SESSIONS.add(sess)
-
-    async def sender():
-        try:
-            while True:
-                m = await sess.q.get()
-                if isinstance(m, (bytes, bytearray)):
-                    await ws.send_bytes(m)
-                else:
-                    await ws.send_text(m)
-        except Exception:  # noqa: BLE001
-            pass
-
-    st = asyncio.get_running_loop().create_task(sender())
-    sess.send(state_public())
-    try:
-        while True:
-            raw = await ws.receive_text()
-            try:
-                m = json.loads(raw)
-            except ValueError:
-                continue
-            k = m.get("type")
-            if k == "ping":
-                sess.send({"type": "pong", "t": m.get("t")})
-            elif k == "chat":
-                txt = str(m.get("text") or "").strip()
-                if txt:
-                    start_turn(sess, txt[:4000], m.get("opts") or {}, m.get("ref"))
-            elif k == "say":
-                txt = str(m.get("text") or "").strip()
-                if txt:
-                    o = dict(m.get("opts") or {})
-                    o["tts"] = True
-                    start_turn(sess, txt[:3000], o, m.get("ref"), say_only=True)
-            elif k == "stop":
-                cancel_turn(sess)
-                sess.send({"type": "stopped"})
-            elif k == "reset":
-                cancel_turn(sess)
-                sess.history = []
-                sess.send({"type": "reset_ok"})
-    except WebSocketDisconnect:
-        pass
-    except Exception as e:  # noqa: BLE001
-        log.info("ws 结束: %s", e)
-    finally:
-        cancel_turn(sess)
-        SESSIONS.discard(sess)
-        st.cancel()
-
-
-async def gpu_loop():
-    while True:
-        await asyncio.sleep(2.0)
-        if not SESSIONS or POOL is None:
-            continue
-        try:
-            if not MOCK:
-                p = await asyncio.create_subprocess_exec("nvidia-smi", "--query-gpu=index,memory.used,memory.total,utilization.gpu",
-                                                         "--format=csv,noheader,nounits", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-                out, _ = await asyncio.wait_for(p.communicate(), 5)
-                rows = {}
-                for line in out.decode().strip().splitlines():
-                    f = [x.strip() for x in line.split(",")]
-                    if len(f) >= 4:
-                        rows[int(f[0])] = (float(f[1]) / 1024, float(f[2]) / 1024, int(float(f[3])))
-                for w in POOL.workers:
-                    if int(w.gpu) in rows:
-                        w.mem = rows[int(w.gpu)]
-            else:
-                for w in POOL.workers:
-                    w.mem = (5.5 + w.idx, 15.0, 40 + 20 * w.idx)
-        except Exception:  # noqa: BLE001
-            pass
-        broadcast(state_public())
-
-
-def restore_voice():
-    """重启后自动恢复上一次克隆的声音;或使用脚本里指定的默认参考音频。"""
-    try:
-        f = VOICE_DIR / "current.json"
-        if f.exists():
-            j = json.loads(f.read_text(encoding="utf-8"))
-            if Path(j["path"]).exists():
-                log.info("恢复上一次的克隆声音: %s", j["path"])
-                start_clone(j["path"], j.get("text", ""), bool(j.get("xvec")))
-                return
-        ra = os.environ.get("VC_REF_AUDIO")
-        if ra and Path(ra).exists():
-            log.info("使用默认参考音频: %s", ra)
-            start_clone(ra, os.environ.get("VC_REF_TEXT", "").strip(), False)
-    except Exception as e:  # noqa: BLE001
-        log.warning("恢复声音失败: %s", e)
-
-
-@app.on_event("startup")
-async def _startup():
-    global LOOP
-    LOOP = asyncio.get_running_loop()
-    if POOL is not None:
-        threading.Thread(target=reader_thread, args=(LOOP,), daemon=True).start()
-        LOOP.create_task(gpu_loop())
-        restore_voice()
-
-
-def detect_gpus():
-    env = os.environ.get("VC_GPUS")
-    if env:
-        return [x.strip() for x in env.split(",") if x.strip()]
-    if MOCK:
-        return ["0", "1"]
-    try:
-        out = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=15).stdout
-        n = len([ln for ln in out.splitlines() if ln.startswith("GPU ")])
-        return [str(i) for i in range(n)]
-    except Exception:  # noqa: BLE001
-        return []
-
-
-def main():
-    global POOL
-    VOICE_DIR.mkdir(parents=True, exist_ok=True)
-    gpus = detect_gpus()
-    log.info("检测到 GPU: %s | 模型: %s | mock=%s", gpus or "无", MODEL, MOCK)
-    if not gpus:
-        log.error("⚠ 没有检测到 GPU,语音合成不可用(聊天文字仍可用)。请在 Kaggle 右侧 Settings → Accelerator 选择 GPU T4 x2")
-    ctx = mp.get_context("spawn")
-    POOL = Pool(ctx, gpus, {"mock": MOCK})
-    import uvicorn
-    try:
-        uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning", ws_ping_interval=20, ws_ping_timeout=60)
-    finally:
-        POOL.stop()
-
-
-if __name__ == "__main__":
-    main()
 '''
-INDEX_HTML = r'''<!DOCTYPE html>
+
+FILES['speaker_sim.py'] = r'''# -*- coding: utf-8 -*-
+"""
+声纹相似度工具(服务端实时打分 + evaluate.py 离线评估共用)
+
+  模型 : microsoft/wavlm-base-plus-sv (WavLM x-vector,transformers 原生支持,Kaggle 上零额外依赖、可稳定下载)
+  指标 : 说话人嵌入的余弦相似度 (Cosine Similarity),范围 -1~1,越接近 1 越像。
+  说明 : 不同声纹模型的绝对分值不可比;本系统所有"相似度"都用这同一个模型计算,训练/评估/网页显示口径一致。
+"""
+import os
+
+import numpy as np
+
+SV_MODEL = os.environ.get("VC_SV_MODEL", "microsoft/wavlm-base-plus-sv")
+
+
+def to16k(x, sr):
+    """float32 mono -> 16kHz float32"""
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    if sr == 16000 or x.size == 0:
+        return x
+    try:
+        from math import gcd
+        from scipy.signal import resample_poly
+        g = gcd(int(sr), 16000)
+        return resample_poly(x, 16000 // g, int(sr) // g).astype(np.float32)
+    except Exception:  # noqa: BLE001
+        n = int(len(x) * 16000 / sr)
+        return np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x).astype(np.float32)
+
+
+def load_wav16k(path):
+    import soundfile as sf
+    a, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    if a.ndim > 1:
+        a = a.mean(axis=1)
+    return to16k(a, sr)
+
+
+def pcm16_to_16k(pcm, sr=24000):
+    return to16k(np.asarray(pcm, dtype=np.float32) / 32768.0, sr)
+
+
+class SpkScorer:
+    """加载一次,反复打分。device 例如 'cuda' / 'cuda:0' / 'cpu'。"""
+
+    def __init__(self, device="cuda"):
+        import torch
+        from transformers import AutoFeatureExtractor, WavLMForXVector
+        self.torch = torch
+        self.device = device if (device == "cpu" or torch.cuda.is_available()) else "cpu"
+        self.fe = AutoFeatureExtractor.from_pretrained(SV_MODEL)
+        try:
+            model = WavLMForXVector.from_pretrained(SV_MODEL)
+        except Exception as e:  # noqa: BLE001
+            # 该仓库只有 pytorch_model.bin;torch<2.6 时 transformers 会拒绝加载 -> 用 weights_only=True 手动加载(同样安全)
+            from huggingface_hub import hf_hub_download
+            from transformers import AutoConfig
+            cfg = AutoConfig.from_pretrained(SV_MODEL)
+            model = WavLMForXVector(cfg)
+            sd = torch.load(hf_hub_download(SV_MODEL, "pytorch_model.bin"), map_location="cpu", weights_only=True)
+            model.load_state_dict(sd, strict=False)
+        self.model = model.to(self.device).eval()
+        self.ref = None
+
+    def embed(self, wav16k):
+        torch = self.torch
+        w = np.asarray(wav16k, dtype=np.float32).reshape(-1)
+        if w.size < 8000:                                   # 不足 0.5 秒,嵌入不可靠
+            w = np.pad(w, (0, 8000 - w.size))
+        w = w[: 16000 * 30]
+        inp = self.fe([w], sampling_rate=16000, return_tensors="pt", padding=True)
+        inp = {k: v.to(self.device) for k, v in inp.items()}
+        with torch.inference_mode():
+            e = self.model(**inp).embeddings
+        return torch.nn.functional.normalize(e.float(), dim=-1)[0]
+
+    def set_ref(self, wav16k_list):
+        """参考声纹 = 若干条真人音频嵌入的均值(再归一化)"""
+        torch = self.torch
+        if isinstance(wav16k_list, np.ndarray):
+            wav16k_list = [wav16k_list]
+        es = torch.stack([self.embed(w) for w in wav16k_list])
+        self.ref = torch.nn.functional.normalize(es.mean(0), dim=-1)
+        return self.ref
+
+    def score(self, wav16k):
+        if self.ref is None:
+            raise RuntimeError("先调用 set_ref")
+        return float((self.embed(wav16k) * self.ref).sum().item())
+
+    def pair(self, a16k, b16k):
+        return float((self.embed(a16k) * self.embed(b16k)).sum().item())
+'''
+
+FILES['index.html'] = r'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Voice Clone Studio · Qwen3-TTS × DeepSeek</title>
+<title>🎙️ 克隆语音播放器 · Qwen3-TTS 双卡并行</title>
 <style>
 :root{
   --bg:#070b17; --bg2:#0b1226; --panel:rgba(18,25,48,.72); --panel2:rgba(11,17,36,.8); --line:rgba(120,140,220,.16);
@@ -1319,18 +1768,37 @@ input.in{flex:1;font-size:15px;padding:13px 16px;border-radius:14px;border-color
   body{overflow:auto} .app{height:auto;min-height:100%} main{grid-template-columns:1fr} .pills{margin-left:0}
   .chat{min-height:52vh} .msg{max-width:92%}
 }
+
+/* v4 additions */
+.tabs{display:flex;gap:8px;margin-left:12px}
+.tabs .chip{cursor:pointer}
+.strip{margin:2px 18px 8px;padding:10px 14px;border-radius:14px;background:var(--panel2);border:1px solid var(--line);display:flex;flex-direction:column;gap:7px}
+.strip .r1{display:flex;align-items:center;gap:10px;font-size:14px}
+.strip .r1 .sp{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+.pbar{height:9px;border-radius:9px;background:rgba(255,255,255,.08);overflow:hidden}
+.pbar i{display:block;height:100%;width:0;background:var(--ok);transition:width .12s linear,background .2s}
+.pbar.low i{background:var(--warn)} .pbar.danger i{background:var(--bad)}
+.simline{font-size:13px;color:var(--muted)} .simline b{font-size:15px;color:var(--text)}
+.sayrow{display:flex;gap:10px;padding:2px 18px 16px;align-items:stretch}
+.sayrow textarea{flex:1;min-height:92px;max-height:240px;resize:vertical;background:var(--panel2);border:1px solid rgba(124,108,255,.45);border-radius:14px;color:var(--text);font:inherit;font-size:15px;line-height:1.7;padding:12px 14px;outline:none}
+.sayrow textarea:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(124,108,255,.18)}
+.sayrow .col{display:flex;flex-direction:column;gap:8px}
+.sayrow .send{padding:0 22px;flex:1}
+.sayrow .stop{padding:10px 20px}
+.foot{margin:0 18px 14px;text-align:center;color:var(--muted);font-size:12px;line-height:1.6}
 </style>
 </head>
 <body>
 <div class="app">
   <header>
-    <div class="brand"><div class="logo">🎙️</div><b>Voice Clone Studio</b><button class="btn-ghost" id="btnLog">📜 运行日志</button></div>
+    <div class="brand"><div class="logo">🎙️</div><b>🎙️ 克隆语音播放器</b><button class="btn-ghost" id="btnLog">📜 运行日志</button></div>
     <div class="pills">
       <div class="pill"><span class="dot wait" id="dConn"></span>连接 <b id="tConn">连接中…</b></div>
       <div class="pill"><span class="dot wait" id="dLlm"></span>对话 <b id="tLlm">—</b></div>
       <div class="pill"><span class="dot wait" id="dTts"></span>语音 <b id="tTts">—</b></div>
       <div class="pill" id="pg0" style="display:none">GPU0 <span class="mini"><i id="g0b"></i></span><span id="g0t">—</span></div>
       <div class="pill" id="pg1" style="display:none">GPU1 <span class="mini"><i id="g1b"></i></span><span id="g1t">—</span></div>
+      <div class="pill" id="pTrain" style="display:none">训练 <b id="tTrain">—</b></div>
       <div class="pill">首声 <b id="tFirst" style="color:var(--warn)">—</b></div>
       <div class="pill">声音 <b id="tVoice">未克隆</b></div>
     </div>
@@ -1359,11 +1827,17 @@ input.in{flex:1;font-size:15px;padding:13px 16px;border-radius:14px;border-color
     </section>
 
     <section class="panel right">
-      <div class="head"><span class="num">2</span><h3>语音对话 · 克隆声音自动朗读</h3>
-        <div class="live"><span class="hint" id="rateTx"></span><div class="meter" id="meter"><i id="meterI"></i></div><span class="tag idle" id="tag">空闲</span></div>
+      <div class="head"><span class="num">2</span><h3>合成 · 克隆声音朗读</h3>
+        <div class="tabs"><button class="chip on" id="tabSay">📝 朗读文字</button><button class="chip" id="tabChat">💬 AI 对话</button></div>
+        <div class="live"><span class="hint" id="rateTx"></span><div class="meter" id="meter" style="display:none"><i id="meterI"></i></div><span class="tag idle" id="tag" style="display:none">就绪</span></div>
+      </div>
+      <div class="strip">
+        <div class="r1"><span class="dot wait" id="sDot"></span><b id="sTxt">连接中…</b><span class="sp" id="sBuf">缓冲: 0ms</span></div>
+        <div class="pbar" id="pbar"><i id="pbarI"></i></div>
+        <div class="simline">当前声纹相似度:<b id="simVal">—</b> <span id="simNote"></span></div>
       </div>
       <div class="chat scroll" id="chat"><div class="empty" id="empty"><div class="big">🎧</div>先在左侧克隆你的声音<br>然后在下面输入或语音说话,DeepSeek 边想边说,你的声音边合成边播放</div></div>
-      <div class="tools">
+      <div class="tools" id="chatTools" style="display:none">
         <button class="chip on" id="oAuto">🔊 自动播放</button>
         <button class="chip on" id="oSmooth">🧵 无停顿优先</button>
         <button class="chip" id="oFiller">💬 语气词先行</button>
@@ -1371,12 +1845,17 @@ input.in{flex:1;font-size:15px;padding:13px 16px;border-radius:14px;border-color
         <label class="slide">🌬 呼吸<input type="range" id="breath" min="0" max="2" step="0.1" value="1"></label>
         <button class="chip" id="oNew">🧹 新对话</button>
       </div>
-      <div class="inputrow">
+      <div class="sayrow" id="sayRow">
+        <textarea id="sayTxt" placeholder="请输入要合成的文字"></textarea>
+        <div class="col"><button class="send" id="btnSpeak">🎙️ 合成并播放</button><button class="stop" id="btnStop2">停止</button></div>
+      </div>
+      <div class="inputrow" id="chatRow" style="display:none">
         <button class="mic" id="btnMic" title="语音输入(Chrome)">🎙</button>
         <input class="in" id="inp" placeholder="输入消息,回车发送 …" autocomplete="off">
         <button class="send" id="btnSend">发送</button>
         <button class="stop" id="btnStop">停止</button>
       </div>
+      <div class="foot">本系统使用 Qwen3-TTS-1.7B 双卡并行生成 · 声纹相似度为 WavLM-SV 实测值(微调目标 ≥ 0.99)</div>
     </section>
   </main>
 </div>
@@ -1385,6 +1864,15 @@ input.in{flex:1;font-size:15px;padding:13px 16px;border-radius:14px;border-color
 
 <script>
 "use strict";
+/* ═════════ 播放配置参数(集中在顶部) ═════════ */
+const SAMPLE_RATE = 24000;                          // 和 TTS 输出一致,禁止让 AudioContext 自动决定
+const START_THRESHOLD_BYTES = 24000 * 2 * 0.15;     // 收到 150ms 音频后立即开始播放
+const TARGET_BUFFER_MS = 400;                       // 目标缓冲(进度条满格)
+const LOW_WATER_MS = 40;                            // 低水位:缓冲 < 40ms 视为危险,时间线必须立即接上
+const HEARTBEAT_INTERVAL = 18000;                   // 每 18 秒发一次心跳
+const RECONNECT_DELAY = 2000;                       // 断线 2 秒后自动重连
+const CHUNK_DECODE_SIZE = 24000 * 2 * 0.1;          // 每 100ms 音频量排一次队
+const WS_URL = "{{WS_URL}}";                        // 服务端在返回网页时自动替换成真实地址
 /* ═════════ 工具 ═════════ */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -1403,58 +1891,144 @@ $("logClose").onclick = () => $("logd").classList.remove("open");
 /* ═════════ 全局状态 ═════════ */
 const S = {
   ws: null, wsOk: false, state: null, uid: null, turnDone: true, t0: 0, firstMs: null, underruns: 0, minRho: 1, llmMs: null,
-  startMs: ls.get("startMs", 300), opts: { auto: ls.get("auto", true), smooth: ls.get("smooth", true), filler: ls.get("filler", false), long: ls.get("long", false), breath: ls.get("breath", 1) },
+  startMs: ls.get("startMs", Math.round(START_THRESHOLD_BYTES / 48)), opts: { auto: ls.get("auto", true), smooth: ls.get("smooth", true), filler: ls.get("filler", false), long: ls.get("long", false), breath: ls.get("breath", 1) },
   bubble: null, metaEl: null, ref: null, retry: 0, pingT: null, lastLat: null, phase: "idle",
 };
 
-/* ═════════ 播放器(AudioWorklet 无缝 + 弹性放慢) ═════════ */
-const P = {
-  ctx: null, node: null, p: null, rate: 24000,
+/* ═════════ 播放器 ═════════
+ * 引擎 A(默认): AudioWorklet 无缝播放 —— 一条连续的采样时间线,缓冲吃紧时"保音高弹性放慢"而不是停住。
+ * 引擎 B(兜底): AudioContext 时间线排队 —— 每块音频精确 start(nextPlayTime),nextPlayTime += duration,绝不 start(0)。
+ *               浏览器没有 AudioWorklet(旧版 Safari 等)时自动启用。
+ */
+const PW = {
+  ctx: null, node: null, p: null,
   init() {
     if (this.p) { if (this.ctx.state === "suspended") this.ctx.resume(); return this.p; }
     this.p = (async () => {
       const AC = window.AudioContext || window.webkitAudioContext;
-      let ctx; try { ctx = new AC({ sampleRate: 24000, latencyHint: "interactive" }); } catch (e) { ctx = new AC(); }
-      ctx.resume();
-      await ctx.audioWorklet.addModule("/worklet.js?v=" + Date.now());
-      const node = new AudioWorkletNode(ctx, "vc-player", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
-      node.connect(ctx.destination);
-      node.port.onmessage = (e) => P.onmsg(e.data);
-      this.ctx = ctx; this.node = node; this.rate = ctx.sampleRate;
-      log("音频引擎就绪 · 采样率 " + ctx.sampleRate + "Hz" + (ctx.sampleRate !== 24000 ? "(与 TTS 不同,已启用重采样)" : ""), "o");
+      let ctx; try { ctx = new AC({ sampleRate: SAMPLE_RATE, latencyHint: "interactive" }); } catch (e) { ctx = new AC(); }
+      try {
+        ctx.resume();
+        await ctx.audioWorklet.addModule("/worklet.js?v=" + Date.now());
+        const node = new AudioWorkletNode(ctx, "vc-player", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
+        node.connect(ctx.destination);
+        node.port.onmessage = (e) => onPlayerMsg(e.data);
+        this.ctx = ctx; this.node = node;
+      } catch (e) { try { ctx.close(); } catch (_) {} this.p = null; throw e; }
+      log("音频引擎就绪 · 采样率 " + ctx.sampleRate + "Hz" + (ctx.sampleRate !== SAMPLE_RATE ? "(与 TTS 不同,已启用重采样)" : ""), "o");
     })();
     return this.p;
   },
+  get rate() { return this.ctx.sampleRate; },
   open() { this.node.port.postMessage({ t: "open", cfg: { startMs: S.startMs, hiMs: Math.max(300, S.startMs), loMs: 110, rebufMs: Math.max(700, S.startMs * 2), rhoMin: 0.62, stretch: S.opts.smooth } }); },
-  end() { if (this.node) this.node.port.postMessage({ t: "end" }); },
-  flush() { if (this.node) this.node.port.postMessage({ t: "flush" }); },
+  end() { this.node.port.postMessage({ t: "end" }); },
+  flush() { this.node.port.postMessage({ t: "flush" }); },
   push(buf) {                                    // buf: ArrayBuffer(含 4 字节 turn 头)
     const i16 = new Int16Array(buf, 4, (buf.byteLength - 4) >> 1);
     let f = new Float32Array(i16.length);
     for (let i = 0; i < i16.length; i++) f[i] = i16[i] / 32768;
-    if (this.rate !== 24000) f = resample(f, 24000, this.rate);
+    if (this.rate !== SAMPLE_RATE) f = resample(f, SAMPLE_RATE, this.rate);
     this.node.port.postMessage({ t: "pcm", d: f }, [f.buffer]);
   },
-  onmsg(m) {
-    if (m.t === "started") {
-      S.firstMs = Math.round(performance.now() - S.t0);
-      $("tFirst").textContent = (S.firstMs / 1000).toFixed(2) + "s";
-      setPhase("play"); log("首声 " + S.firstMs + "ms", "o");
-    } else if (m.t === "stat") {
-      const ms = m.ms; const pct = Math.min(100, ms / 800 * 100);
-      $("meterI").style.width = pct + "%";
-      $("meter").className = "meter" + (pct < 15 ? " danger" : pct < 35 ? " low" : "");
-      if (m.rho < 0.995) { S.minRho = Math.min(S.minRho, m.rho); $("rateTx").textContent = "弹性放慢 ×" + m.rho.toFixed(2); } else $("rateTx").textContent = "";
-      if (m.mode === "rebuffer") setPhase("buf"); else if (m.mode === "playing" && S.phase === "buf") setPhase("play");
-    } else if (m.t === "underrun") {
-      S.underruns++; S.startMs = Math.min(1500, Math.round(S.startMs * 1.4)); ls.set("startMs", S.startMs);
-      setPhase("buf"); log("缓冲耗尽(第 " + S.underruns + " 次),已自动加大起播缓冲到 " + S.startMs + "ms", "w");
-    } else if (m.t === "drained") {
-      $("meterI").style.width = "0%"; $("rateTx").textContent = "";
-      if (S.turnDone) { setPhase("idle"); finishMeta(); if (S.underruns === 0 && S.startMs > 300) { S.startMs = Math.max(300, Math.round(S.startMs * 0.9)); ls.set("startMs", S.startMs); } }
-    }
+};
+
+const PT = {
+  ctx: null, p: null, next: 0, acc: [], accBytes: 0, srcs: new Set(), started: false, ended: false, rebuf: false, startBytes: START_THRESHOLD_BYTES, tm: null,
+  init() {
+    if (this.p) { if (this.ctx.state === "suspended") this.ctx.resume(); return this.p; }
+    this.p = (async () => {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      let ctx; try { ctx = new AC({ sampleRate: SAMPLE_RATE, latencyHint: "interactive" }); } catch (e) { ctx = new AC(); }   // 必须指定 24000
+      await ctx.resume(); this.ctx = ctx;
+      this.tm = setInterval(() => this.tick(), 100);
+    })();
+    return this.p;
+  },
+  open() {
+    this.flush(); this.ended = false; this.started = false; this.rebuf = false; this.next = 0;
+    this.startBytes = Math.max(START_THRESHOLD_BYTES, S.startMs * 48);
+  },
+  push(buf) {
+    const i16 = new Int16Array(buf, 4, (buf.byteLength - 4) >> 1);
+    this.acc.push(new Int16Array(i16)); this.accBytes += i16.length * 2;
+    this.drain(false);
+  },
+  drain(force) {
+    if (!this.accBytes) return;
+    const need = this.rebuf ? this.startBytes * 2 : this.started ? CHUNK_DECODE_SIZE : this.startBytes;
+    if (!force && this.accBytes < need) return;
+    const n = this.accBytes / 2, f = new Float32Array(n); let o = 0;
+    for (const a of this.acc) { for (let i = 0; i < a.length; i++) f[o + i] = a[i] / 32768; o += a.length; }
+    this.acc = []; this.accBytes = 0;
+    try {                                         // 解码/排队失败: 跳过这一块,继续处理后面的
+      const ctx = this.ctx, ab = ctx.createBuffer(1, n, SAMPLE_RATE); ab.copyToChannel(f, 0);
+      const now = ctx.currentTime;
+      if (this.next <= now + 0.005) this.next = now + 0.01;   // 低水位保护: 时间线落后于现在(已断档) -> 拉回,留 10ms 防撕裂
+      const src = ctx.createBufferSource(); src.buffer = ab; src.connect(ctx.destination);
+      src.onended = () => this.srcs.delete(src); this.srcs.add(src);
+      src.start(this.next);                       // 精确排队,绝不 start(0)
+      this.next += ab.duration;                   // 时间线向前推进
+      this.rebuf = false;
+      if (!this.started) { this.started = true; onPlayerMsg({ t: "started" }); }
+    } catch (e) { log("排队失败(已跳过): " + e.message, "w"); }
+  },
+  tick() {
+    if (!this.ctx) return;
+    const ms = Math.max(0, (this.next - this.ctx.currentTime) * 1000);
+    if (this.started && !this.ended && !this.rebuf && ms <= 0 && !this.accBytes) { this.rebuf = true; onPlayerMsg({ t: "underrun" }); }
+    if (this.started && this.ended && ms <= 0 && !this.accBytes) { this.started = false; this.ended = false; onPlayerMsg({ t: "drained" }); return; }
+    if (this.ended && this.accBytes) this.drain(true);
+    onPlayerMsg({ t: "stat", ms, rho: 1, mode: this.rebuf ? "rebuffer" : this.started ? "playing" : "buffering", low: ms < LOW_WATER_MS });
+  },
+  end() { this.ended = true; this.drain(true); if (!this.started) { this.ended = false; onPlayerMsg({ t: "drained" }); } },
+  flush() {
+    for (const s of this.srcs) { try { s.onended = null; s.stop(); } catch (e) {} }
+    this.srcs.clear(); this.acc = []; this.accBytes = 0; this.next = 0; this.started = false; this.ended = false; this.rebuf = false;
   },
 };
+
+const P = {
+  impl: null, p: null,
+  get ctx() { return this.impl ? this.impl.ctx : null; },
+  get node() { return this.impl ? (this.impl.node || this.impl.ctx) : null; },
+  init() {
+    if (this.p) { const c = this.ctx; if (c && c.state === "suspended") c.resume(); return this.p; }
+    this.p = (async () => {
+      let impl = null;
+      if (window.AudioWorkletNode) { try { await PW.init(); impl = PW; } catch (e) { log("AudioWorklet 不可用(" + e.message + "),改用时间线排队播放", "w"); } }
+      if (!impl) { await PT.init(); impl = PT; }
+      this.impl = impl;
+      log("播放引擎: " + (impl === PW ? "AudioWorklet 无缝播放" : "AudioContext 时间线排队(nextPlayTime)"), "o");
+    })().catch((e) => { this.p = null; throw e; });
+    return this.p;
+  },
+  open() { this.impl.open(); },
+  end() { if (this.impl) this.impl.end(); },
+  flush() { if (this.impl) this.impl.flush(); },
+  push(b) { this.impl.push(b); },
+};
+
+function onPlayerMsg(m) {
+  if (m.t === "started") {
+    S.firstMs = Math.round(performance.now() - S.t0);
+    $("tFirst").textContent = (S.firstMs / 1000).toFixed(2) + "s";
+    setPhase("play"); log("首声 " + S.firstMs + "ms", "o");
+  } else if (m.t === "stat") {
+    const ms = m.ms, pct = Math.min(100, ms / TARGET_BUFFER_MS * 100);        // 绿 >50% · 黄 20~50% · 红 <20%
+    const cls = pct < 20 ? " danger" : pct < 50 ? " low" : "";
+    $("pbarI").style.width = pct + "%"; $("pbar").className = "pbar" + cls;
+    $("meterI").style.width = pct + "%"; $("meter").className = "meter" + cls;
+    $("sBuf").textContent = "缓冲: " + Math.round(ms) + "ms";
+    if (m.rho < 0.995) { S.minRho = Math.min(S.minRho, m.rho); $("rateTx").textContent = "弹性放慢 ×" + m.rho.toFixed(2); } else $("rateTx").textContent = "";
+    if (m.mode === "rebuffer") setPhase("buf"); else if (m.mode === "playing" && S.phase === "buf") setPhase("play");
+  } else if (m.t === "underrun") {
+    S.underruns++; S.startMs = Math.min(1500, Math.round(S.startMs * 1.4)); ls.set("startMs", S.startMs);
+    setPhase("buf"); log("缓冲耗尽(第 " + S.underruns + " 次),已自动加大起播缓冲到 " + S.startMs + "ms", "w");
+  } else if (m.t === "drained") {
+    $("meterI").style.width = "0%"; $("pbarI").style.width = "0%"; $("sBuf").textContent = "缓冲: 0ms"; $("rateTx").textContent = "";
+    if (S.turnDone) { setPhase("idle"); finishMeta(); if (S.underruns === 0 && S.startMs > 150) { S.startMs = Math.max(150, Math.round(S.startMs * 0.9)); ls.set("startMs", S.startMs); } }
+  }
+}
 function resample(f, a, b) {
   const n = Math.round(f.length * b / a), o = new Float32Array(n), r = a / b;
   for (let i = 0; i < n; i++) { const x = i * r, k = Math.floor(x), t = x - k; o[i] = (f[k] || 0) * (1 - t) + (f[k + 1] || f[k] || 0) * t; }
@@ -1462,21 +2036,23 @@ function resample(f, a, b) {
 }
 function setPhase(p) {
   S.phase = p;
-  const m = { idle: ["空闲", "idle"], think: ["思考中…", "think"], buf: ["缓冲中…", "buf"], play: ["播放中", "play"] }[p];
+  const m = { idle: ["就绪", "idle", "ok"], conn: ["连接中…", "think", "wait"], think: ["合成中…", "think", "wait"], buf: ["缓冲中…", "buf", "wait"], play: ["播放中", "play", "ok"], bad: ["连接断开,重连中…", "buf", "bad"] }[p];
   $("tag").textContent = m[0]; $("tag").className = "tag " + m[1];
+  $("sTxt").textContent = m[0]; $("sDot").className = "dot " + m[2];
 }
 
 /* ═════════ WebSocket ═════════ */
-function wsUrl() { return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"; }
+function wsUrl() { return WS_URL.indexOf("{{") < 0 && WS_URL ? WS_URL : (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"; }
 function connect() {
+  clearTimeout(S.rcT); setPhase(S.phase === "idle" || S.phase === "bad" ? "conn" : S.phase);
   let ws; try { ws = new WebSocket(wsUrl()); } catch (e) { return retry(); }
   ws.binaryType = "arraybuffer"; S.ws = ws;
-  ws.onopen = () => { S.wsOk = true; S.retry = 0; $("dConn").className = "dot ok"; $("tConn").textContent = "已连接"; log("WebSocket 已连接", "o"); ping(); clearInterval(S.pingT); S.pingT = setInterval(ping, 15000); };
+  ws.onopen = () => { S.wsOk = true; S.retry = 0; $("dConn").className = "dot ok"; $("tConn").textContent = "已连接"; log("WebSocket 已连接", "o"); setPhase("idle"); ping(); clearInterval(S.pingT); S.pingT = setInterval(ping, HEARTBEAT_INTERVAL); };
   ws.onmessage = (e) => { if (typeof e.data === "string") onJson(JSON.parse(e.data)); else onBin(e.data); };
-  ws.onclose = () => { S.wsOk = false; clearInterval(S.pingT); $("dConn").className = "dot bad"; $("tConn").textContent = "已断开,重连中…"; retry(); };
-  ws.onerror = () => {};
+  ws.onclose = () => { S.wsOk = false; clearInterval(S.pingT); $("dConn").className = "dot bad"; $("tConn").textContent = "已断开,重连中…"; if (S.phase === "idle" || S.phase === "conn") setPhase("bad"); retry(); };
+  ws.onerror = () => { $("dConn").className = "dot bad"; $("tConn").textContent = "连接出错"; log("WebSocket 出错," + RECONNECT_DELAY / 1000 + " 秒后重连", "w"); };
 }
-function retry() { const d = Math.min(8000, 800 * Math.pow(1.6, S.retry++)); setTimeout(connect, d); }
+function retry() { clearTimeout(S.rcT); S.rcT = setTimeout(connect, RECONNECT_DELAY); }
 function ping() { if (S.wsOk) S.ws.send(JSON.stringify({ type: "ping", t: performance.now() })); }
 function send(o) { if (S.wsOk) { S.ws.send(JSON.stringify(o)); return true; } return false; }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { if (P.ctx && P.ctx.state === "suspended") P.ctx.resume(); if (!S.wsOk && (!S.ws || S.ws.readyState > 1)) connect(); } });
@@ -1496,6 +2072,7 @@ function onJson(m) {
       if (m.tts && P.node) P.open();
       break;
     case "llm_first": S.llmMs = m.ms; break;
+    case "sim": if (m.turn === S.uid || m.final) setSim(m.value, m.final); break;
     case "delta": if (S.bubble) { S.bubble.textContent += m.t; scrollChat(); } break;
     case "turn_done": onTurnDone(m); break;
     case "warn": log("⚠ " + m.msg, "w"); addSys("⚠ " + m.msg); break;
@@ -1503,6 +2080,11 @@ function onJson(m) {
     case "stopped": break;
     case "reset_ok": break;
   }
+}
+function setSim(v, final) {
+  const el = $("simVal"); if (v == null) { if (final && el.textContent === "…") el.textContent = "—"; return; }
+  el.textContent = v.toFixed(2); el.style.color = v >= 0.9 ? "var(--ok)" : v >= 0.8 ? "var(--warn)" : "var(--bad)";
+  $("simNote").textContent = final ? "(本轮加权平均)" : "(实时)"; S.lastSim = v;
 }
 function onTurnDone(m) {
   S.turnDone = true;
@@ -1521,6 +2103,7 @@ function finishMeta() {
   if (S.llmMs != null) parts.push("DeepSeek 首字 " + (S.llmMs / 1000).toFixed(2) + "s");
   if (m.first_ms != null) parts.push("服务端首包 " + (m.first_ms / 1000).toFixed(2) + "s");
   if (g) parts.push(g);
+  if (S.lastSim != null) parts.push("声纹 " + S.lastSim.toFixed(2));
   if (m.audio_s) parts.push(S.underruns ? "断流 " + S.underruns + " 次(已自适应加大缓冲)" : "零断流");
   if (S.minRho < 0.995) parts.push("弹性放慢最低 ×" + S.minRho.toFixed(2));
   S.metaEl.textContent = parts.join(" · ");
@@ -1541,7 +2124,7 @@ function renderState() {
     $("g" + i + "t").textContent = w.mem[0].toFixed(1) + "G " + w.util + "%";
   });
   const v = st.voice, ok = v.state === "ready";
-  $("tVoice").textContent = ok ? "已克隆" : v.state === "cloning" ? "克隆中…" : v.state === "error" ? "失败" : "未克隆";
+  $("tVoice").textContent = ok ? (st.trained ? "已克隆·微调" : "已克隆") : v.state === "cloning" ? "克隆中…" : v.state === "error" ? "失败" : "未克隆";
   $("tVoice").style.color = ok ? "var(--ok)" : v.state === "error" ? "var(--bad)" : "";
   /* 每卡进度 */
   const box = $("gpus"); box.innerHTML = "";
@@ -1562,6 +2145,9 @@ function renderState() {
     c.className = "card"; ring.textContent = "✓"; h.textContent = "克隆完成 · 模式 " + (v.mode === "icl" ? "ICL 上下文克隆" : "x-vector 声纹");
     const infos = Object.values(v.info || {}); const slow = infos.some((i) => i.rtf >= 1);
     let t = "参考文字: " + (v.text ? "「" + esc(v.text.slice(0, 60)) + (v.text.length > 60 ? "…" : "") + "」" : "无(仅声纹,相似度会低一些,建议补上文字重新克隆)");
+    const sims = infos.map((i) => i.sim).filter((x) => x != null);
+    if (sims.length) t += "<br>试合成声纹相似度 " + sims.map((x) => x.toFixed(3)).join(" / ") + "(WavLM-SV,与参考音频对比)";
+    if (st.trained) t += "<br>✅ 正在使用你微调训练后的模型";
     if (infos.length) t += "<br>每卡试合成速度 RTF " + infos.map((i) => i.rtf).join(" / ") + "(<1 即快于实时)";
     if (slow) t += "<br>⚠ 有显卡慢于实时,已用「弹性放慢」保证不停顿;双卡并行可进一步提速。";
     b.innerHTML = t;
@@ -1590,8 +2176,9 @@ async function sendChat(text, say) {
   P.flush();
   if (S.bubble) S.bubble.classList.remove("typing");
   if (!say) addMsg("u", text);
-  S.bubble = addMsg("a typing", ""); S.metaEl = document.createElement("div"); S.metaEl.className = "meta"; $("chat").appendChild(S.metaEl);
-  S.t0 = performance.now(); S.firstMs = null; S.underruns = 0; S.minRho = 1; S.turnInfo = null; S.uid = null;
+  S.bubble = addMsg("a typing", "");
+  if (say) { S.bubble.textContent = text; S.bubble.classList.remove("typing"); } S.metaEl = document.createElement("div"); S.metaEl.className = "meta"; $("chat").appendChild(S.metaEl);
+  $("simVal").textContent = "…"; $("simNote").textContent = ""; S.t0 = performance.now(); S.firstMs = null; S.underruns = 0; S.minRho = 1; S.turnInfo = null; S.uid = null;
   const v = S.state && S.state.voice;
   const tts = S.opts.auto && v && v.state === "ready";
   if (S.opts.auto && !tts) addSys("还没有克隆好声音,本轮只显示文字。先在左侧完成克隆即可朗读。");
@@ -1606,7 +2193,7 @@ $("btnSend").onclick = () => { const v = $("inp").value; $("inp").value = ""; se
 $("inp").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("btnSend").click(); } });
 $("btnStop").onclick = doStop;
 $("btnTry").onclick = () => sendChat("你好呀，这是我的克隆声音。你觉得，听起来像我吗？", true);
-function chip(id, key) { const el = $(id); const sync = () => el.classList.toggle("on", !!S.opts[key]); sync(); el.onclick = () => { S.opts[key] = !S.opts[key]; ls.set(key, S.opts[key]); sync(); if (key === "smooth" && P.node) P.node.port.postMessage({ t: "cfg", cfg: { stretch: S.opts.smooth } }); }; }
+function chip(id, key) { const el = $(id); const sync = () => el.classList.toggle("on", !!S.opts[key]); sync(); el.onclick = () => { S.opts[key] = !S.opts[key]; ls.set(key, S.opts[key]); sync(); if (key === "smooth" && P.impl === PW) PW.node.port.postMessage({ t: "cfg", cfg: { stretch: S.opts.smooth } }); }; }
 chip("oAuto", "auto"); chip("oSmooth", "smooth"); chip("oFiller", "filler"); chip("oLong", "long");
 $("breath").value = S.opts.breath; $("breath").oninput = (e) => { S.opts.breath = +e.target.value; ls.set("breath", S.opts.breath); };
 $("oNew").onclick = () => { doStop(); send({ type: "reset" }); $("chat").innerHTML = ""; S.bubble = null; addSys("— 新对话 —"); };
@@ -1735,6 +2322,34 @@ $("btnClone").onclick = async () => {
   } catch (e) { addErr("克隆请求失败: " + e.message); $("btnClone").disabled = false; }
 };
 
+/* ═════════ 朗读 / 对话 切换 ═════════ */
+function setTab(t) {
+  S.tab = t; const say = t === "say";
+  $("tabSay").classList.toggle("on", say); $("tabChat").classList.toggle("on", !say);
+  $("sayRow").style.display = say ? "" : "none"; $("chatRow").style.display = say ? "none" : "";
+  $("chatTools").style.display = say ? "none" : ""; ls.set("tab", t);
+}
+$("tabSay").onclick = () => setTab("say"); $("tabChat").onclick = () => setTab("chat");
+$("btnSpeak").onclick = () => { const v = $("sayTxt").value; if (!v.trim()) { $("sayTxt").focus(); return; } S.opts.auto = true; sendChat(v, true); };
+$("sayTxt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); $("btnSpeak").click(); } });
+$("btnStop2").onclick = doStop;
+$("sayTxt").value = ls.get("sayTxt", "");
+$("sayTxt").addEventListener("input", () => ls.set("sayTxt", $("sayTxt").value));
+setTab(ls.get("tab", "say"));
+
+/* /monitor: 训练进度 + GPU 利用率(WebSocket) */
+function monitor() {
+  let w; try { w = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/monitor"); } catch (e) { return; }
+  w.onmessage = (e) => {
+    let m; try { m = JSON.parse(e.data); } catch (_) { return; }
+    if (m.event === "train_progress" && m.status && m.status !== "idle") {
+      $("pTrain").style.display = ""; $("tTrain").textContent = (m.status === "finished" ? "完成 " : "第 " + (m.epoch ?? "?") + " 轮 ") + (m.similarity != null ? "· 相似度 " + (+m.similarity).toFixed(3) : "");
+    }
+  };
+  w.onclose = () => setTimeout(monitor, 5000);
+  setInterval(() => { try { if (w.readyState === 1) w.send(JSON.stringify({ type: "ping" })); } catch (_) {} }, HEARTBEAT_INTERVAL);
+}
+
 /* ═════════ 启动 ═════════ */
 setPhase("idle");
 function demo() {                                  // ?demo=1 : 离线界面预览(不连接服务器)
@@ -1749,12 +2364,13 @@ function demo() {                                  // ?demo=1 : 离线界面预�
   const m = document.createElement("div"); m.className = "meta"; m.textContent = "音频 14.73s · 首声 1.38s · DeepSeek 首字 0.52s · GPU0×3 GPU1×3 · 零断流"; $("chat").appendChild(m);
   setPhase("play"); $("meterI").style.width = "62%";
 }
-if (/[?&]demo\b/.test(location.search)) demo(); else { connect(); window.addEventListener("pointerdown", () => { P.init().catch(() => {}); }, { once: true }); }
+if (/[?&]demo\b/.test(location.search)) demo(); else { connect(); monitor(); window.addEventListener("pointerdown", () => { P.init().catch(() => {}); }, { once: true }); }
 </script>
 </body>
 </html>
 '''
-WORKLET_JS = r'''/* Voice Clone Studio - AudioWorklet
+
+FILES['worklet.js'] = r'''/* Voice Clone Studio - AudioWorklet
  *  - vc-player : 无缝流式播放器(抖动缓冲 + 保音高弹性放慢 WSOLA)。缓冲吃紧时"放慢"而不是"停住"。
  *  - vc-rec    : 麦克风录音(把 Float32 帧发回主线程)
  * PlayerCore 不依赖 Web Audio, 可以在 Node 里单元测试。
@@ -1977,6 +2593,1267 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 if (typeof module !== "undefined") module.exports = { PlayerCore };
 '''
 
+FILES['train.py'] = r'''# -*- coding: utf-8 -*-
+"""
+train.py —— Qwen3-TTS-12Hz-1.7B-Base · LoRA 监督微调 (SFT) · 双 T4 DDP(Accelerate)
+
+  启动(双卡):  accelerate launch --multi_gpu --num_processes 2 --mixed_precision fp16 train.py [参数]
+  合并导出  :  python train.py --merge --adapter checkpoints/epoch_7/adapter.pt --out best_model
+
+  做法(与官方 finetuning/sft_12hz.py 同一训练目标,但把全参数微调换成 LoRA,才能放进 16GB 的 T4):
+    · 输入序列 = [文本 token | 说话人向量(ref_audio) | 目标语音 codec token];  loss 只算语音部分(SFT 范式)
+    · loss = CE(第 0 层 codec) + 0.3 × CE(其余 15 层 sub-talker)
+    · LoRA: r=16, alpha=32, dropout=0.05, 覆盖 talker 与 code_predictor 里所有 q/k/v/o/gate/up/down 投影
+    · fp16 混合精度:基座权重 fp16,LoRA 权重 fp32 + GradScaler;梯度累积;余弦学习率 + 5% warmup
+  循环训练 + 自动评估:
+    · 每个 epoch 结束 → 保存 checkpoints/epoch_X/ → rank0 调用 evaluate.py 测声纹相似度 → 写 eval_log.jsonl
+    · 相似度 ≥ 目标 → 全部进程一起停止;连续 patience 轮没有提升 → 视为收敛,停止并选最优轮;最多 max_epochs 轮
+    (训练进程常驻,epoch 之间不重新加载 1.7B 模型,比"每轮重启一次"快得多;断点续训见 --resume)
+"""
+import argparse
+import json
+import math
+import os
+import random
+import shutil
+import subprocess
+import sys
+import time
+from datetime import timedelta
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+
+HERE = Path(__file__).resolve().parent
+LORA_TARGET_REGEX = (r"talker\.(model|code_predictor\.model)\.layers\.\d+\."
+                     r"(self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj))")
+
+
+def build_lora(inner, r, alpha, dropout):
+    """直接把 LoRA 注入原模型(不套 PeftModel 外壳,这样 model.talker / model.speaker_encoder 仍可直接调用)"""
+    from peft import LoraConfig
+    from peft.tuners.lora import LoraModel
+    cfg = LoraConfig(r=r, lora_alpha=alpha, lora_dropout=dropout, target_modules=LORA_TARGET_REGEX, bias="none")
+    lm = LoraModel(inner, cfg, "default")
+    n = sum(1 for k, _ in inner.named_parameters() if "lora_A" in k)
+    if n == 0:
+        names = [k for k, _ in inner.named_modules()][:40]
+        raise RuntimeError("没有匹配到任何 LoRA 目标层,请检查模块名。前 40 个模块: %s" % names)
+    return lm, n
+
+
+def lora_state(inner):
+    return {k: v.detach().cpu().float() for k, v in inner.named_parameters() if "lora_" in k}
+
+
+def load_base(path, dtype):
+    from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
+    return Qwen3TTSModel.from_pretrained(path, torch_dtype=dtype, attn_implementation="sdpa")
+
+
+def resolve_base(name):
+    if os.path.isdir(name):
+        return name
+    from huggingface_hub import snapshot_download
+    return snapshot_download(name)
+
+
+class SFTModule(nn.Module):
+    """整个前向 + loss 封装成一个 Module,DDP 才能正确同步梯度(官方脚本直接调子模块,只适用于单卡)"""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids, codec_ids, ref_mels, text_embedding_mask, codec_embedding_mask, attention_mask, codec_0_labels, codec_mask):
+        m = self.model
+        dtype = m.talker.model.text_embedding.weight.dtype
+        with torch.no_grad():
+            speaker_embedding = m.speaker_encoder(ref_mels.to(dtype)).detach()
+        input_text_ids = input_ids[:, :, 0]
+        input_codec_ids = input_ids[:, :, 1]
+        input_text_embedding = m.talker.model.text_embedding(input_text_ids) * text_embedding_mask
+        input_codec_embedding = m.talker.model.codec_embedding(input_codec_ids) * codec_embedding_mask
+        input_codec_embedding[:, 6, :] = speaker_embedding
+        input_embeddings = input_text_embedding + input_codec_embedding
+        for i in range(1, 16):
+            e = m.talker.code_predictor.get_input_embeddings()[i - 1](codec_ids[:, :, i])
+            input_embeddings = input_embeddings + e * codec_mask.unsqueeze(-1)
+        outputs = m.talker(inputs_embeds=input_embeddings[:, :-1, :], attention_mask=attention_mask[:, :-1],
+                           labels=codec_0_labels[:, 1:], output_hidden_states=True)
+        hidden = outputs.hidden_states[0][-1]
+        talker_hidden = hidden[codec_mask[:, :-1]]
+        talker_codec_ids = codec_ids[codec_mask]
+        _, sub_loss = m.talker.forward_sub_talker_finetune(talker_codec_ids, talker_hidden)
+        return outputs.loss + 0.3 * sub_loss
+
+
+def read_jsonl(p):
+    return [json.loads(x) for x in Path(p).read_text(encoding="utf-8").splitlines() if x.strip()]
+
+
+def eval_rows(eval_log):
+    p = Path(eval_log)
+    if not p.exists():
+        return []
+    out = []
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        try:
+            out.append(json.loads(ln))
+        except ValueError:
+            pass
+    return out
+
+
+def decide(eval_log, epoch, target, patience, max_epochs):
+    """返回 (stop, reason, best_epoch, best_sim)。只看 epoch>=1 的评估(0 是未微调基线)"""
+    rows = [r for r in eval_rows(eval_log) if r.get("epoch", 0) >= 1 and r.get("similarity") is not None]
+    if not rows:
+        return epoch + 1 >= max_epochs, "达到最大轮数" if epoch + 1 >= max_epochs else "", None, None
+    best = max(rows, key=lambda r: r["similarity"])
+    cur = [r for r in rows if r["epoch"] == epoch + 1]
+    if cur and cur[-1]["similarity"] >= target:
+        return True, "达标", best["epoch"], best["similarity"]
+    since = (epoch + 1) - best["epoch"]
+    if since >= patience:
+        return True, "收敛(连续 %d 轮无提升)" % patience, best["epoch"], best["similarity"]
+    if epoch + 1 >= max_epochs:
+        return True, "达到最大轮数", best["epoch"], best["similarity"]
+    return False, "", best["epoch"], best["similarity"]
+
+
+def write_state(path, **kw):
+    try:
+        old = {}
+        if Path(path).exists():
+            old = json.loads(Path(path).read_text(encoding="utf-8"))
+        old.update(kw)
+        old["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        tmp = str(path) + ".tmp"
+        Path(tmp).write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# ────────────────────────────── 合并导出 ──────────────────────────────
+def merge_export(args):
+    """把 LoRA 合并进基座权重,导出成一个完整的 Qwen3-TTS-Base 模型目录(faster-qwen3-tts / qwen-tts 都能直接加载)"""
+    from safetensors.torch import save_file
+    base = resolve_base(args.base)
+    ck = torch.load(args.adapter, map_location="cpu")
+    cfg = ck["lora_cfg"]
+    print("加载基座(CPU, fp16)…", flush=True)
+    tts = load_base(base, torch.float16)
+    inner = tts.model
+    lm, n = build_lora(inner, cfg["r"], cfg["alpha"], 0.0)
+    missing, unexpected = inner.load_state_dict(ck["lora"], strict=False)
+    bad = [k for k in missing if "lora_" in k]
+    if bad or unexpected:
+        raise RuntimeError("LoRA 权重与模型不匹配: missing=%s unexpected=%s" % (bad[:5], list(unexpected)[:5]))
+    merged = lm.merge_and_unload()
+    out = Path(args.out)
+    if out.exists():
+        shutil.rmtree(out)
+    root = os.path.abspath(base)
+
+    def ignore(d, names):
+        if os.path.abspath(d) != root:
+            return [".git"] if ".git" in names else []
+        return [x for x in names if x.endswith((".safetensors", ".bin", ".msgpack", ".h5")) or x == "model.safetensors.index.json" or x.startswith(".")]
+
+    shutil.copytree(base, out, ignore=ignore)
+    sd = {k: v.detach().to("cpu", torch.float16).contiguous() for k, v in merged.state_dict().items()}
+    save_file(sd, str(out / "model.safetensors"), metadata={"format": "pt"})
+    meta = dict(ck.get("meta", {}))
+    meta.update(merged_from=str(args.adapter), lora_modules=n, time=time.strftime("%Y-%m-%d %H:%M:%S"), base=args.base)
+    if args.ref_wav and Path(args.ref_wav).exists():
+        shutil.copy(args.ref_wav, out / "speaker_ref.wav")
+        meta["ref_text"] = Path(args.ref_text).read_text(encoding="utf-8").strip() if args.ref_text and Path(args.ref_text).exists() else ""
+    (out / "trained.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("✅ 已导出合并后的模型 → %s  (%.2f GB)" % (out, (out / "model.safetensors").stat().st_size / 1e9), flush=True)
+
+
+# ────────────────────────────── 训练 ──────────────────────────────
+def run_eval(args, epoch, adapter, local_rank):
+    cmd = [sys.executable, str(HERE / "evaluate.py"), "--adapter", str(adapter), "--epoch", str(epoch), "--data_dir", args.data_dir,
+           "--base", args.base, "--device", "cuda:%d" % local_rank, "--eval_log", args.eval_log, "--n", str(args.eval_n)]
+    env = {k: v for k, v in os.environ.items() if k not in ("RANK", "WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT")}
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=args.eval_timeout)
+    except Exception as e:  # noqa: BLE001
+        print("⚠ 评估启动失败: %s" % e, flush=True)
+        return None
+    sim = None
+    for ln in (r.stdout or "").splitlines():
+        if ln.startswith("EVAL_RESULT "):
+            try:
+                sim = json.loads(ln[len("EVAL_RESULT "):]).get("similarity")
+            except ValueError:
+                pass
+    if sim is None:
+        print("⚠ 评估没有产出结果(训练继续)。stderr 尾部:\n%s" % "\n".join((r.stderr or r.stdout or "").splitlines()[-15:]), flush=True)
+    return sim
+
+
+def train(args):
+    from accelerate import Accelerator
+    from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs
+    from torch.utils.data import DataLoader
+    from transformers import AutoConfig
+    from tts_dataset import TTSDataset
+
+    dtype = torch.float16 if args.dtype == "fp16" else torch.bfloat16
+    rows = read_jsonl(args.train_jsonl)
+    world0 = int(os.environ.get("WORLD_SIZE", "1"))
+    micro_per_epoch = math.ceil(len(rows) / (args.batch_size * world0))
+    accum = args.grad_accum if args.grad_accum > 0 else max(1, min(8, micro_per_epoch // 8))
+    ddp_kw = DistributedDataParallelKwargs(find_unused_parameters=True)
+    pg_kw = InitProcessGroupKwargs(timeout=timedelta(hours=3))          # rank0 评估期间,其余 rank 在栅栏处等待
+    acc = Accelerator(mixed_precision=args.dtype, gradient_accumulation_steps=accum, kwargs_handlers=[ddp_kw, pg_kw])
+    main = acc.is_main_process
+    world = acc.num_processes
+    seed = args.seed
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    out_dir = Path(args.output_dir)
+    ck_dir = out_dir / "checkpoints"
+    ctrl_path = out_dir / "train_control.json"
+    if main:
+        ck_dir.mkdir(parents=True, exist_ok=True)
+        if ctrl_path.exists():
+            ctrl_path.unlink()
+        (out_dir / "train_done.json").unlink(missing_ok=True)
+    acc.wait_for_everyone()
+
+    base = resolve_base(args.base)
+    args.base = base
+    acc.print("加载基座模型 %s (%s)…" % (args.base, args.dtype))
+    tts = load_base(base, dtype)
+    inner = tts.model
+    config = AutoConfig.from_pretrained(base)
+    for p in inner.parameters():
+        p.requires_grad_(False)
+    lm, n_lora = build_lora(inner, args.lora_r, args.lora_alpha, args.lora_dropout)
+    for p in inner.parameters():
+        if p.requires_grad:
+            p.data = p.data.float()                                    # LoRA 权重用 fp32(配合 GradScaler)
+    inner.to(acc.device)
+    trainable = [p for p in inner.parameters() if p.requires_grad]
+    acc.print("LoRA 层数: %d · 可训练参数: %.2fM · 世界大小(GPU 数): %d" % (n_lora, sum(p.numel() for p in trainable) / 1e6, world))
+
+    ds = TTSDataset(rows, tts.processor, config)
+    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True, collate_fn=ds.collate_fn, num_workers=args.workers, drop_last=False)
+    micro_per_epoch = math.ceil(len(rows) / (args.batch_size * world))
+    steps_per_epoch = max(1, math.ceil(micro_per_epoch / accum))
+    total_steps = steps_per_epoch * args.max_epochs
+    warm = max(1, int(total_steps * args.warmup_ratio))
+    acc.print("训练样本 %d · 每卡 batch %d × %d 卡 × 累积 %d = 等效 batch %d · 每轮 %d 个优化步" %
+              (len(rows), args.batch_size, world, accum, args.batch_size * world * accum, steps_per_epoch))
+
+    optimizer = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=0.01)
+
+    def lr_lambda(s):
+        if s < warm:
+            return (s + 1) / warm
+        pr = (s - warm) / max(1, total_steps - warm)
+        return 0.02 + 0.98 * 0.5 * (1 + math.cos(math.pi * min(1.0, pr)))
+
+    sched = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    start_epoch, opt_steps, resume_state = 0, 0, None
+    if args.resume:
+        cands = sorted(ck_dir.glob("epoch_*/state.pt"), key=lambda p: int(p.parent.name.split("_")[1]))
+        if cands:
+            st = resume_state = torch.load(cands[-1], map_location="cpu")
+            inner.load_state_dict(st["lora"], strict=False)
+            optimizer.load_state_dict(st["opt"])
+            sched.load_state_dict(st["sched"])
+            start_epoch, opt_steps = st["epoch"], st["opt_steps"]
+            acc.print("♻ 从 %s 恢复:已完成 %d 轮" % (cands[-1].parent, start_epoch))
+    module = SFTModule(inner)
+    module, optimizer, dl = acc.prepare(module, optimizer, dl)
+    if resume_state is not None and acc.scaler is not None and resume_state.get("scaler"):
+        try:
+            acc.scaler.load_state_dict(resume_state["scaler"])
+        except Exception:  # noqa: BLE001
+            pass
+
+    state_file = out_dir / "train_state.json"
+    t_start = time.time()
+    nan_run = 0
+    for epoch in range(start_epoch, args.max_epochs):
+        module.train()
+        inner.speaker_encoder.eval()                                   # 说话人编码器冻结:BatchNorm 统计量不能被训练数据改动
+        run_loss, run_n, t_ep = 0.0, 0, time.time()
+        for batch in dl:
+            with acc.accumulate(module):
+                loss = module(**batch)
+                if not torch.isfinite(loss):
+                    nan_run += 1
+                    if nan_run > 30:
+                        raise RuntimeError("连续 30 步 loss 为 NaN(fp16 数值溢出)。请降低 --lr(例如 1e-4)后重试。")
+                acc.backward(loss)
+                if acc.sync_gradients:
+                    acc.clip_grad_norm_(trainable, 1.0)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+            if torch.isfinite(loss):
+                nan_run = 0
+                run_loss += float(loss.detach()); run_n += 1
+            if acc.sync_gradients:
+                sched.step()
+                opt_steps += 1
+                if main and opt_steps % args.logging_steps == 0:
+                    print("[epoch %d/%d] step %d · loss %.4f · lr %.2e · %.1f min" % (epoch + 1, args.max_epochs, opt_steps,
+                          run_loss / max(1, run_n), sched.get_last_lr()[0], (time.time() - t_start) / 60), flush=True)
+                    write_state(state_file, status="running", epoch=epoch + 1, step=opt_steps, loss=round(run_loss / max(1, run_n), 4))
+                if main and opt_steps % args.save_steps == 0:                       # 每 10 个优化步存一次 LoRA(崩溃保险)
+                    torch.save({"lora": lora_state(inner), "lora_cfg": {"r": args.lora_r, "alpha": args.lora_alpha}, "epoch": epoch, "step": opt_steps},
+                               ck_dir / "last_step.pt")
+        acc.wait_for_everyone()
+        ep_loss = run_loss / max(1, run_n)
+        if main:
+            d = ck_dir / ("epoch_%d" % (epoch + 1))
+            d.mkdir(parents=True, exist_ok=True)
+            lc = {"r": args.lora_r, "alpha": args.lora_alpha}
+            lo = lora_state(inner)
+            torch.save({"lora": lo, "lora_cfg": lc, "meta": {"epoch": epoch + 1, "loss": ep_loss, "base": args.base}}, d / "adapter.pt")
+            torch.save({"lora": lo, "lora_cfg": lc, "opt": optimizer.state_dict(), "sched": sched.state_dict(), "epoch": epoch + 1, "opt_steps": opt_steps,
+                        "scaler": acc.scaler.state_dict() if acc.scaler is not None else None}, d / "state.pt")
+            print("✔ 第 %d 轮完成 · 平均 loss %.4f · 用时 %.1f 分钟 → %s" % (epoch + 1, ep_loss, (time.time() - t_ep) / 60, d), flush=True)
+            sim = None
+            if (epoch + 1) % args.eval_every == 0:
+                torch.cuda.empty_cache()
+                sim = run_eval(args, epoch + 1, d / "adapter.pt", acc.local_process_index)
+            stop, reason, be, bs = decide(args.eval_log, epoch, args.target, args.patience, args.max_epochs)
+            write_state(state_file, status="running", epoch=epoch + 1, loss=round(ep_loss, 4), similarity=sim, best_epoch=be, best_similarity=bs)
+            ctrl_path.write_text(json.dumps({"epoch": epoch + 1, "stop": bool(stop), "reason": reason, "best_epoch": be, "best_sim": bs, "sim": sim}), encoding="utf-8")
+            keep = {be, epoch + 1, epoch}                                               # 只保留最优 + 最近两轮,省磁盘
+            for old in ck_dir.glob("epoch_*"):
+                k = int(old.name.split("_")[1])
+                if k not in keep:
+                    shutil.rmtree(old, ignore_errors=True)
+                elif k != epoch + 1 and (old / "state.pt").exists():
+                    (old / "state.pt").unlink()
+        acc.wait_for_everyone()
+        ctrl = json.loads(ctrl_path.read_text(encoding="utf-8"))
+        if ctrl["stop"]:
+            acc.print("■ 停止训练:%s(最优 epoch %s,相似度 %s)" % (ctrl["reason"], ctrl["best_epoch"], ctrl["best_sim"]))
+            break
+    if main:
+        write_state(state_file, status="finished")
+        (out_dir / "train_done.json").write_text(json.dumps(json.loads(ctrl_path.read_text(encoding="utf-8")) if ctrl_path.exists() else {}), encoding="utf-8")
+    acc.wait_for_everyone()
+
+
+def main_cli():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--base", default="Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+    ap.add_argument("--data_dir", default="/kaggle/working/data")
+    ap.add_argument("--train_jsonl", default="")
+    ap.add_argument("--output_dir", default="/kaggle/working")
+    ap.add_argument("--eval_log", default="/kaggle/working/eval_log.jsonl")
+    ap.add_argument("--batch_size", type=int, default=2, help="每卡 batch")
+    ap.add_argument("--grad_accum", type=int, default=0, help="0=自动(小数据集不累积太多,保证每轮至少约 8 个优化步;上限 8)")
+    ap.add_argument("--lr", type=float, default=2e-4)
+    ap.add_argument("--warmup_ratio", type=float, default=0.05)
+    ap.add_argument("--max_epochs", type=int, default=50)
+    ap.add_argument("--lora_r", type=int, default=16)
+    ap.add_argument("--lora_alpha", type=int, default=32)
+    ap.add_argument("--lora_dropout", type=float, default=0.05)
+    ap.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
+    ap.add_argument("--save_steps", type=int, default=10)
+    ap.add_argument("--logging_steps", type=int, default=5)
+    ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--target", type=float, default=0.99)
+    ap.add_argument("--patience", type=int, default=6)
+    ap.add_argument("--eval_every", type=int, default=1)
+    ap.add_argument("--eval_n", type=int, default=5)
+    ap.add_argument("--eval_timeout", type=int, default=1800)
+    ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--merge", action="store_true")
+    ap.add_argument("--adapter", default="")
+    ap.add_argument("--out", default="/kaggle/working/best_model")
+    ap.add_argument("--ref_wav", default="")
+    ap.add_argument("--ref_text", default="")
+    args = ap.parse_args()
+    if not args.train_jsonl:
+        args.train_jsonl = str(Path(args.data_dir) / "train_codes.jsonl")
+    if args.merge:
+        merge_export(args)
+    else:
+        train(args)
+
+
+if __name__ == "__main__":
+    main_cli()
+'''
+
+FILES['evaluate.py'] = r'''# -*- coding: utf-8 -*-
+"""
+evaluate.py —— 声纹相似度自动评估(子系统 A)
+
+  1) 加载基座模型,若给了 --adapter 就把该 checkpoint 的 LoRA 合并进去
+  2) 用参考音频(x-vector 模式,与训练时的输入格式完全一致)合成 5 条固定测试语句
+  3) 用 WavLM-SV 提取说话人嵌入,计算 "合成语音 vs 真人参考声纹" 的余弦相似度,5 条取平均 = 本轮得分
+  4) 追加写入 eval_log.jsonl: {"epoch": X, "similarity": 0.XXX, "timestamp": "..."} (另附逐条得分与真人上限)
+
+  "真人上限"(real_ceiling): 用没参与声纹质心的真人录音和质心比出来的相似度。
+  合成语音的得分几乎不可能超过它;如果上限本身 < 0.99,那么 0.99 的目标就不可能达到 —— 评估会如实打印出来。
+"""
+import argparse
+import json
+import os
+import random
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+TEST_TEXTS = [
+    "今天天气真不错，我们一起去公园散散步吧，顺便拍几张照片留作纪念。",
+    "你知道吗，我刚刚听到一个特别有意思的消息，真的让我又惊讶又开心！",
+    "别担心，一切都会好起来的，只要我们一步一步慢慢来，就一定能做到。",
+    "各位听众朋友大家好，欢迎收听今天的节目，接下来我们聊聊生活中的小确幸。",
+    "夜深了，窗外下着小雨，我泡了一杯热茶，静静地听着雨声，心里格外平静。",
+]
+
+
+def read_jsonl(p):
+    return [json.loads(x) for x in Path(p).read_text(encoding="utf-8").splitlines() if x.strip()]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--adapter", default="none")
+    ap.add_argument("--epoch", type=int, default=0)
+    ap.add_argument("--data_dir", default="/kaggle/working/data")
+    ap.add_argument("--base", default="Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+    ap.add_argument("--model_dir", default="", help="直接评估一个已合并导出的模型目录(优先于 --base/--adapter)")
+    ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--eval_log", default="/kaggle/working/eval_log.jsonl")
+    ap.add_argument("--samples_dir", default="/kaggle/working/eval_samples")
+    ap.add_argument("--n", type=int, default=5)
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--temperature", type=float, default=float(os.environ.get("VC_TEMPERATURE", "0.7")))
+    ap.add_argument("--top_p", type=float, default=float(os.environ.get("VC_TOP_P", "0.9")))
+    ap.add_argument("--top_k", type=int, default=int(os.environ.get("VC_TOP_K", "50")))
+    ap.add_argument("--rep", type=float, default=float(os.environ.get("VC_REP_PENALTY", "1.05")))
+    args = ap.parse_args()
+
+    import soundfile as sf
+    import torch
+    from speaker_sim import SpkScorer, load_wav16k, to16k
+    from train import build_lora, resolve_base
+    from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
+
+    data = Path(args.data_dir)
+    ref_wav, ref_txt = data / "ref.wav", data / "ref.txt"
+    if not ref_wav.exists():
+        raise SystemExit("找不到参考音频 %s(先运行 data_prep.py)" % ref_wav)
+
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
+    base = args.model_dir or resolve_base(args.base)
+    print("加载模型 %s …" % base, flush=True)
+    t0 = time.time()
+    tts = Qwen3TTSModel.from_pretrained(base, device_map=args.device, torch_dtype=torch.float16, attn_implementation="sdpa")
+    if args.adapter and args.adapter != "none" and not args.model_dir:
+        ck = torch.load(args.adapter, map_location="cpu")
+        lm, _ = build_lora(tts.model, ck["lora_cfg"]["r"], ck["lora_cfg"]["alpha"], 0.0)
+        miss, unexp = tts.model.load_state_dict(ck["lora"], strict=False)
+        if [k for k in miss if "lora_" in k] or unexp:
+            raise SystemExit("LoRA 权重与模型不匹配")
+        tts.model = lm.merge_and_unload()
+        print("已合并 LoRA: %s" % args.adapter, flush=True)
+    tts.model.eval()
+
+    prompt = tts.create_voice_clone_prompt(ref_audio=str(ref_wav), ref_text="", x_vector_only_mode=True)
+    texts = TEST_TEXTS[: max(1, min(args.n, len(TEST_TEXTS)))]
+    kw = dict(language="Chinese", voice_clone_prompt=prompt, max_new_tokens=1024, temperature=args.temperature, top_p=args.top_p,
+              top_k=args.top_k, repetition_penalty=args.rep)
+    wavs, sr = [], 24000
+    try:
+        torch.manual_seed(args.seed)
+        ws, sr = tts.generate_voice_clone(text=texts, **kw)                    # 一批合成,快
+        wavs = list(ws)
+    except Exception as e:  # noqa: BLE001
+        print("批量合成失败(%s),改为逐条合成" % e, flush=True)
+        torch.cuda.empty_cache()
+        wavs = []
+        for t in texts:
+            torch.manual_seed(args.seed)
+            ws, sr = tts.generate_voice_clone(text=t, **kw)
+            wavs.append(ws[0])
+    if sr != 24000:
+        raise SystemExit("合成采样率 %s != 24000" % sr)
+    print("合成完成 %.0fs" % (time.time() - t0), flush=True)
+
+    out = Path(args.samples_dir) / ("epoch_%d" % args.epoch)
+    out.mkdir(parents=True, exist_ok=True)
+    for i, w in enumerate(wavs):
+        sf.write(str(out / ("%d.wav" % i)), np.asarray(w, dtype=np.float32), sr)
+
+    del tts, prompt
+    torch.cuda.empty_cache()
+
+    # ── 真人声纹质心 ──
+    rows = []
+    for f in ("train.jsonl", "val.jsonl", "dataset.jsonl"):
+        if (data / f).exists():
+            rows = read_jsonl(data / f)
+            if f != "val.jsonl":
+                break
+    paths = [r["audio_path"] for r in rows if Path(r["audio_path"]).exists()]
+    random.Random(0).shuffle(paths)
+    cen_paths = [str(ref_wav)] + paths[:7]
+    ceil_paths = paths[7:12] if len(paths) > 9 else paths[:5]
+    sc = SpkScorer(args.device)
+    sc.set_ref([load_wav16k(p) for p in cen_paths])
+    real = [sc.score(load_wav16k(p)) for p in ceil_paths] if ceil_paths else []
+    sims = [sc.score(to16k(np.asarray(w, dtype=np.float32), sr)) for w in wavs]
+    mean = float(np.mean(sims))
+    ceiling = float(np.mean(real)) if real else None
+    rec = {"epoch": args.epoch, "similarity": round(mean, 4), "per_sample": [round(x, 4) for x in sims],
+           "real_ceiling": None if ceiling is None else round(ceiling, 4), "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+           "adapter": args.adapter}
+    with open(args.eval_log, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    print("EVAL_RESULT " + json.dumps(rec, ensure_ascii=False), flush=True)
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+FILES['auto_train_loop.py'] = r'''# -*- coding: utf-8 -*-
+"""
+auto_train_loop.py —— 训练 + 评估循环控制器(子系统 A)
+
+  流程: ① 评估未微调的基线(epoch 0)  ② accelerate 双卡启动 train.py:每个 epoch 结束自动评估声纹相似度
+        ③ 相似度 ≥ 目标 → 停止并保存;连续 patience 轮无提升 → 判定收敛,停止并取最优轮;最多 max_epochs(50)轮
+        ④ 把最优 checkpoint 合并导出到 best_model/(完整模型目录,服务启动时自动加载)
+  每轮打印: 当前轮次 · 当前相似度 · 距离目标的差距 · 预计还需多少轮
+  可随时中断(Ctrl+C / 停止单元格),再次运行自动从最近的 checkpoint 续训。
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+
+def rows(p):
+    out = []
+    if Path(p).exists():
+        for ln in Path(p).read_text(encoding="utf-8").splitlines():
+            try:
+                out.append(json.loads(ln))
+            except ValueError:
+                pass
+    return out
+
+
+def plot(eval_log, target, path):
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        rs = [r for r in rows(eval_log) if r.get("similarity") is not None]
+        if not rs:
+            return False
+        fig, ax = plt.subplots(figsize=(7, 3.4), dpi=110)
+        ax.plot([r["epoch"] for r in rs], [r["similarity"] for r in rs], "o-", color="#7c6cff", label="similarity")
+        ax.axhline(target, color="#34d399", ls="--", label="target %.2f" % target)
+        ce = [r["real_ceiling"] for r in rs if r.get("real_ceiling")]
+        if ce:
+            ax.axhline(ce[-1], color="#fbbf24", ls=":", label="real-speech ceiling %.3f" % ce[-1])
+        ax.set_xlabel("epoch (0 = baseline, no fine-tune)")
+        ax.set_ylabel("speaker cosine similarity")
+        ax.grid(alpha=.3)
+        ax.legend(loc="lower right")
+        fig.tight_layout()
+        fig.savefig(path)
+        plt.close(fig)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def eta(rs, target):
+    pts = [r["similarity"] for r in rs if r.get("epoch", 0) >= 1][-4:]
+    if len(pts) < 2:
+        return "未知(至少 2 轮后估算)"
+    d = (pts[-1] - pts[0]) / (len(pts) - 1)
+    if pts[-1] >= target:
+        return "0"
+    if d <= 1e-4:
+        return "∞(提升已停滞)"
+    return "约 %d 轮" % max(1, int((target - pts[-1]) / d + 0.999))
+
+
+def report(args, seen):
+    rs = rows(args.eval_log)
+    new = [r for r in rs if r.get("timestamp") not in seen]
+    for r in new:
+        seen.add(r.get("timestamp"))
+        if r.get("similarity") is None:
+            continue
+        gap = args.target - r["similarity"]
+        print("\n" + "═" * 64)
+        print("  轮次 %s │ 当前相似度 %.4f │ 距离目标 %.2f 还差 %+.4f │ 预计还需 %s" %
+              (("%d/%d" % (r["epoch"], args.max_epochs)) if r["epoch"] else "基线", r["similarity"], args.target, gap, eta(rs, args.target)))
+        if r.get("real_ceiling"):
+            print("  真人录音自身一致性上限 ≈ %.4f(合成语音很难超过它)" % r["real_ceiling"])
+        print("═" * 64, flush=True)
+        if plot(args.eval_log, args.target, str(Path(args.work) / "similarity_curve.png")):
+            print("CURVE_UPDATED " + str(Path(args.work) / "similarity_curve.png"), flush=True)
+
+
+def run_eval_baseline(args):
+    if any(r.get("epoch") == 0 for r in rows(args.eval_log)):
+        return
+    print("▶ 评估未微调的基线(epoch 0)…", flush=True)
+    r = subprocess.run([sys.executable, str(HERE / "evaluate.py"), "--adapter", "none", "--epoch", "0", "--data_dir", args.data_dir,
+                        "--base", args.base, "--eval_log", args.eval_log, "--device", "cuda:0"], capture_output=True, text=True)
+    if r.returncode != 0:
+        print("⚠ 基线评估失败(不影响训练):\n" + "\n".join((r.stderr or r.stdout).splitlines()[-12:]), flush=True)
+
+
+def gpu_count():
+    try:
+        import torch
+        return torch.cuda.device_count()
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--work", default="/kaggle/working")
+    ap.add_argument("--data_dir", default="/kaggle/working/data")
+    ap.add_argument("--base", default="Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+    ap.add_argument("--target", type=float, default=0.99)
+    ap.add_argument("--max_epochs", type=int, default=50)
+    ap.add_argument("--patience", type=int, default=6)
+    ap.add_argument("--lr", type=float, default=2e-4)
+    ap.add_argument("--batch_size", type=int, default=2)
+    ap.add_argument("--fresh", action="store_true", help="忽略已有 checkpoint,从头训练")
+    args = ap.parse_args()
+    work = Path(args.work)
+    args.eval_log = str(work / "eval_log.jsonl")
+    ck = work / "checkpoints"
+    ngpu = max(1, gpu_count())
+    if args.fresh:
+        for p in (ck, work / "eval_samples", work / "train_state.json", work / "train_done.json", Path(args.eval_log)):
+            shutil.rmtree(p, ignore_errors=True) if Path(p).is_dir() else Path(p).unlink(missing_ok=True)
+    if not (Path(args.data_dir) / "train_codes.jsonl").exists():
+        raise SystemExit("❌ 找不到 %s/train_codes.jsonl,请先运行 data_prep.py" % args.data_dir)
+    print("训练配置: GPU×%d · 目标相似度 %.2f · 最多 %d 轮 · 收敛耐心 %d 轮 · lr %g" % (ngpu, args.target, args.max_epochs, args.patience, args.lr), flush=True)
+    seen = set(r.get("timestamp") for r in rows(args.eval_log))
+    (work / "train_state.json").write_text(json.dumps({"status": "starting"}), encoding="utf-8")
+    if not seen:
+        run_eval_baseline(args)
+    report(args, seen)
+
+    bs = args.batch_size
+    proc, interrupted = None, False
+    already = (work / "train_done.json").exists() and not args.fresh
+    if already:
+        print("ℹ 检测到上一次训练已经完成(train_done.json),跳过训练直接导出;想重新训练请加 --fresh", flush=True)
+    for attempt in range(0 if already else 4):
+        resume = bool(list(ck.glob("epoch_*/state.pt")))
+        port = 29500 + (os.getpid() + attempt) % 400
+        cmd = [sys.executable, "-m", "accelerate.commands.launch", "--num_processes", str(ngpu), "--num_machines", "1",
+               "--mixed_precision", "fp16", "--dynamo_backend", "no", "--main_process_port", str(port)]
+        if ngpu > 1:
+            cmd.append("--multi_gpu")
+        cmd += [str(HERE / "train.py"), "--base", args.base, "--data_dir", args.data_dir, "--output_dir", str(work), "--eval_log", args.eval_log,
+                "--batch_size", str(bs), "--lr", str(args.lr), "--target", str(args.target), "--max_epochs", str(args.max_epochs),
+                "--patience", str(args.patience)]
+        if resume:
+            cmd.append("--resume")
+        print("\n▶ 启动训练(第 %d 次尝试%s)…" % (attempt + 1, ",从 checkpoint 续训" if resume else ""), flush=True)
+        env = dict(os.environ, PYTHONUNBUFFERED="1", TOKENIZERS_PARALLELISM="false", PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True")
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, start_new_session=True, cwd=str(HERE))
+        tail = []
+        try:
+            for line in proc.stdout:
+                line = line.rstrip()
+                tail.append(line)
+                tail = tail[-60:]
+                if re.search(r"^\[epoch|^✔|^■|^LoRA|^训练样本|^加载|^♻|Traceback|Error|error|⚠|EVAL_RESULT", line):
+                    print("  " + line[:220], flush=True)
+                report(args, seen)
+            proc.wait()
+        except KeyboardInterrupt:
+            interrupted = True
+            print("\n⏹ 收到中断,正在停止训练(下次运行会自动从最近的 checkpoint 续训)…", flush=True)
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:  # noqa: BLE001
+                pass
+            break
+        report(args, seen)
+        done = work / "train_done.json"
+        if proc.returncode == 0 and done.exists():
+            break
+        txt = "\n".join(tail)
+        print("⚠ 训练进程异常退出(code %s)。最后日志:\n%s" % (proc.returncode, "\n".join("   " + x for x in tail[-14:])), flush=True)
+        if re.search(r"out of memory|CUDA error: out of memory|OutOfMemory", txt, re.I) and bs > 1:
+            bs = max(1, bs // 2)
+            print("  → 显存不足,每卡 batch 降为 %d 后续训" % bs, flush=True)
+        elif attempt >= 2:
+            break
+        time.sleep(5)
+
+    if interrupted:
+        return
+    rs = [r for r in rows(args.eval_log) if r.get("epoch", 0) >= 1 and r.get("similarity") is not None]
+    cks = {int(p.name.split("_")[1]): p for p in ck.glob("epoch_*") if (p / "adapter.pt").exists()}
+    if not cks:
+        raise SystemExit("❌ 没有任何可用 checkpoint,训练失败。")
+    if rs:
+        best = max(rs, key=lambda r: r["similarity"])
+        be = best["epoch"] if best["epoch"] in cks else max(cks)
+        bsim = best["similarity"]
+    else:
+        be, bsim = max(cks), None
+    base_row = next((r for r in rows(args.eval_log) if r.get("epoch") == 0), None)
+    print("\n" + "█" * 64)
+    if bsim is not None and bsim >= args.target:
+        print("  ✅ 训练完成,相似度已达到 %.2f 以上(第 %d 轮 = %.4f)" % (args.target, be, bsim))
+    else:
+        ce = rs[-1].get("real_ceiling") if rs else None
+        print("  ⏹ 训练结束:最优为第 %d 轮,相似度 %s(目标 %.2f 未达到)" % (be, ("%.4f" % bsim) if bsim else "未知", args.target))
+        if ce and ce < args.target:
+            print("  ℹ 真人录音自身一致性上限只有 %.4f < %.2f:在这个声纹模型上 %.2f 是不可能达到的,%.4f 已接近天花板" % (ce, args.target, args.target, bsim or 0))
+    if base_row and bsim:
+        print("  对比基线(未微调) %.4f → 微调后 %.4f (%+.4f)" % (base_row["similarity"], bsim, bsim - base_row["similarity"]))
+    print("█" * 64, flush=True)
+
+    best_dir = work / "best_model"
+    print("▶ 合并最优 LoRA(第 %d 轮)→ %s …" % (be, best_dir), flush=True)
+    r = subprocess.run([sys.executable, str(HERE / "train.py"), "--merge", "--adapter", str(cks[be] / "adapter.pt"), "--out", str(best_dir),
+                        "--base", args.base, "--ref_wav", str(Path(args.data_dir) / "ref.wav"), "--ref_text", str(Path(args.data_dir) / "ref.txt")],
+                       cwd=str(HERE), env=dict(os.environ, PYTHONUNBUFFERED="1"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    print("\n".join("  " + x for x in r.stdout.strip().splitlines()[-6:]), flush=True)
+    if r.returncode != 0:
+        raise SystemExit("❌ 合并导出失败")
+    shutil.copy(cks[be] / "adapter.pt", best_dir / "adapter.pt")
+    (work / "best_checkpoint.txt").write_text(str(cks[be]), encoding="utf-8")
+    print("✅ 最优 checkpoint: %s\n✅ 完整模型已导出: %s(服务启动时自动加载)" % (cks[be], best_dir), flush=True)
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+FILES['data_prep.py'] = r'''# -*- coding: utf-8 -*-
+"""
+data_prep.py —— 训练数据预处理(子系统 A)
+
+  输入 : --src 目录(默认 /kaggle/working/reference_audio),里面放 .wav/.mp3/.flac/.m4a 音频,可附同名 .txt 转录
+  处理 : ① 统一转成 24kHz 单声道 16-bit  ② 长录音(>20s)按静音自动切成 3~15 秒的片段(不是直接丢掉,不浪费数据)
+         ③ 过滤 <2s / >20s / 几乎无声的片段  ④ 没有 .txt 的片段用 Whisper 自动转录  ⑤ 挑一条最合适的参考音频 ref.wav/ref.txt
+         ⑥ 95% / 5% 划分训练集/验证集  ⑦ 用 Qwen3-TTS-Tokenizer-12Hz 提取 audio_codes(SFT 训练需要)
+  输出 : data/wavs/*.wav · dataset.jsonl · train.jsonl · val.jsonl · ref.wav · ref.txt · train_codes.jsonl · val_codes.jsonl
+"""
+import argparse
+import json
+import os
+import random
+import shutil
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+SR = 24000
+EXTS = {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac", ".opus", ".webm"}
+MIN_S, MAX_S, CHUNK_MAX = 2.0, 20.0, 15.0
+
+
+def load_audio(p):
+    import librosa
+    y, _ = librosa.load(str(p), sr=SR, mono=True)
+    return y.astype(np.float32)
+
+
+def split_long(y):
+    """把长录音按静音切成 3~15 秒的片段,返回 [(start, end)] 采样点区间"""
+    import librosa
+    iv = librosa.effects.split(y, top_db=33, frame_length=2048, hop_length=512)
+    segs, cur = [], None
+    for s, e in iv:
+        if e - s > CHUNK_MAX * SR:                       # 单段连续说话就超长: 在能量最低点硬切
+            pieces = []
+            a = s
+            while e - a > CHUNK_MAX * SR:
+                lo, hi = a + int(8 * SR), a + int(CHUNK_MAX * SR)
+                w = np.abs(y[lo:hi])
+                k = lo + int(np.argmin(np.convolve(w, np.ones(480) / 480, mode="same")))
+                pieces.append((a, k))
+                a = k
+            pieces.append((a, e))
+        else:
+            pieces = [(s, e)]
+        for ps, pe in pieces:
+            if cur is None:
+                cur = [ps, pe]
+            elif pe - cur[0] <= CHUNK_MAX * SR and ps - cur[1] <= 0.8 * SR:
+                cur[1] = pe
+            else:
+                segs.append(tuple(cur))
+                cur = [ps, pe]
+    if cur is not None:
+        segs.append(tuple(cur))
+    pad = int(0.12 * SR)
+    return [(max(0, s - pad), min(len(y), e + pad)) for s, e in segs]
+
+
+def rms_db(y):
+    return 20 * np.log10(float(np.sqrt((y.astype(np.float64) ** 2).mean())) + 1e-9)
+
+
+def build_asr(name, device):
+    import torch
+    from transformers import pipeline
+    dev = 0 if (device.startswith("cuda") and torch.cuda.is_available()) else -1
+    last = None
+    for n in (name, "openai/whisper-small"):
+        try:
+            print("加载语音识别模型 %s …" % n, flush=True)
+            return pipeline("automatic-speech-recognition", model=n, device=dev, torch_dtype=torch.float16 if dev == 0 else torch.float32, chunk_length_s=30)
+        except Exception as e:  # noqa: BLE001
+            last = e
+            print("  加载失败: %s" % e, flush=True)
+    raise RuntimeError("语音识别模型加载失败: %s" % last)
+
+
+def transcribe(pipe, wavs16, language):
+    kw = {"task": "transcribe"}
+    if language:
+        kw["language"] = language
+    outs = []
+    for i in range(0, len(wavs16), 8):
+        batch = [{"raw": w, "sampling_rate": 16000} for w in wavs16[i:i + 8]]
+        res = pipe(batch, batch_size=len(batch), generate_kwargs=kw)
+        outs += [(r.get("text") or "").strip() for r in res]
+        print("  转录 %d/%d" % (min(i + 8, len(wavs16)), len(wavs16)), flush=True)
+    return outs
+
+
+def to16(y):
+    from speaker_sim import to16k
+    return to16k(y, SR)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--src", default="/kaggle/working/reference_audio")
+    ap.add_argument("--out", default="/kaggle/working/data")
+    ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--asr_model", default=os.environ.get("VC_ASR_MODEL", "openai/whisper-large-v3-turbo"))
+    ap.add_argument("--language", default="", help="转录语言提示,如 chinese / english;留空自动检测")
+    ap.add_argument("--tokenizer", default="Qwen/Qwen3-TTS-Tokenizer-12Hz")
+    ap.add_argument("--skip_codes", action="store_true")
+    ap.add_argument("--val_ratio", type=float, default=0.05)
+    args = ap.parse_args()
+
+    import soundfile as sf
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    src, out = Path(args.src), Path(args.out)
+    files = sorted(p for p in src.rglob("*") if p.suffix.lower() in EXTS) if src.exists() else []
+    if not files:
+        raise SystemExit("❌ 在 %s 里没找到音频文件(.wav/.mp3/.flac/.m4a …)。请把参考音频上传成 Kaggle Dataset 并设置 TRAIN_DATA_DIR。" % src)
+    if out.exists():
+        shutil.rmtree(out)
+    (out / "wavs").mkdir(parents=True)
+    print("找到 %d 个音频文件,开始切分/统一格式…" % len(files), flush=True)
+
+    clips = []                      # dict(path, text, dur, rms)
+    dropped = {"太短": 0, "太长": 0, "太安静": 0, "读取失败": 0}
+    for fi, f in enumerate(files):
+        try:
+            y = load_audio(f)
+        except Exception as e:  # noqa: BLE001
+            dropped["读取失败"] += 1
+            print("  ⚠ 跳过 %s: %s" % (f.name, e))
+            continue
+        dur = len(y) / SR
+        txt_file = f.with_suffix(".txt")
+        given = txt_file.read_text(encoding="utf-8", errors="ignore").strip() if txt_file.exists() else ""
+        if dur > MAX_S:
+            ranges = split_long(y)
+            given = ""                                # 长录音的整段文字没法对齐到片段,交给 ASR
+        else:
+            ranges = [(0, len(y))]
+        for ci, (s, e) in enumerate(ranges):
+            seg = y[s:e]
+            d = len(seg) / SR
+            if d < MIN_S:
+                dropped["太短"] += 1
+                continue
+            if d > MAX_S:
+                dropped["太长"] += 1
+                continue
+            if rms_db(seg) < -48:
+                dropped["太安静"] += 1
+                continue
+            pk = float(np.abs(seg).max())
+            if pk > 1e-4:
+                seg = seg * (0.9 / pk)
+            name = "%s_%03d_%02d.wav" % (f.stem[:40].replace(" ", "_"), fi, ci)
+            sf.write(str(out / "wavs" / name), seg, SR, subtype="PCM_16")
+            clips.append({"audio_path": str(out / "wavs" / name), "text": given, "duration": round(d, 3), "rms": rms_db(seg)})
+    if not clips:
+        raise SystemExit("❌ 过滤后没有可用片段:%s" % dropped)
+
+    need = [c for c in clips if not c["text"]]
+    if need:
+        print("%d 个片段没有转录文本,使用 Whisper 自动转录…" % len(need), flush=True)
+        pipe = build_asr(args.asr_model, args.device)
+        texts = transcribe(pipe, [to16(load_audio(c["audio_path"])) for c in need], args.language)
+        for c, t in zip(need, texts):
+            c["text"] = t
+        del pipe
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001
+            pass
+    bad = [c for c in clips if len(c["text"].strip()) < 2 or len(set(c["text"])) < 3]
+    clips = [c for c in clips if c not in bad]
+    if bad:
+        print("丢弃 %d 个转录无效/为空的片段" % len(bad))
+    if len(clips) < 5:
+        raise SystemExit("❌ 可用片段只有 %d 条,太少,无法训练(建议总时长 10 分钟以上)。" % len(clips))
+
+    rnd = random.Random(42)
+    rnd.shuffle(clips)
+    nval = max(1, int(round(len(clips) * args.val_ratio))) if len(clips) >= 20 else 0
+    val, train = clips[:nval], clips[nval:]
+
+    def dump(name, rows):
+        with open(out / name, "w", encoding="utf-8") as fh:
+            for r in rows:
+                fh.write(json.dumps({"audio_path": r["audio_path"], "text": r["text"], "duration": r["duration"]}, ensure_ascii=False) + "\n")
+
+    dump("dataset.jsonl", clips)
+    dump("train.jsonl", train)
+    dump("val.jsonl", val)
+
+    cand = [c for c in clips if 6.0 <= c["duration"] <= 12.0] or [c for c in clips if 4.0 <= c["duration"] <= 14.0] or clips
+    ref = max(cand, key=lambda c: (c["rms"] > -35) * 2 + (-abs(c["duration"] - 9.0)) / 9.0 + c["rms"] / 100.0)
+    shutil.copy(ref["audio_path"], out / "ref.wav")
+    (out / "ref.txt").write_text(ref["text"], encoding="utf-8")
+
+    tot = sum(c["duration"] for c in clips)
+    print("\n" + "─" * 50 + "\n数据集统计\n" + "─" * 50)
+    print("  片段数 : %d (训练 %d / 验证 %d)" % (len(clips), len(train), len(val)))
+    print("  总时长 : %.1f 分钟" % (tot / 60))
+    print("  平均   : %.1f 秒/条" % (tot / len(clips)))
+    print("  丢弃   : %s" % dropped)
+    print("  参考音频: %s (%.1fs) 「%s」" % (Path(ref["audio_path"]).name, ref["duration"], ref["text"][:40]))
+    if tot < 600:
+        print("  ⚠ 总时长不足 10 分钟,声纹相似度提升会受限(建议 ≥ 10 分钟、越多越好)")
+
+    if args.skip_codes:
+        return
+    print("\n提取 audio_codes(%s)…" % args.tokenizer, flush=True)
+    from qwen_tts import Qwen3TTSTokenizer
+    tok = Qwen3TTSTokenizer.from_pretrained(args.tokenizer, device_map=args.device)
+    for name, rows in (("train_codes.jsonl", train), ("val_codes.jsonl", val)):
+        with open(out / name, "w", encoding="utf-8") as fh:
+            for i in range(0, len(rows), 16):
+                b = rows[i:i + 16]
+                enc = tok.encode([r["audio_path"] for r in b])
+                for r, code in zip(b, enc.audio_codes):
+                    fh.write(json.dumps({"audio": r["audio_path"], "text": r["text"], "ref_audio": str(out / "ref.wav"), "language": "Auto",
+                                         "audio_codes": code.cpu().tolist()}, ensure_ascii=False) + "\n")
+                print("  codes %d/%d" % (min(i + 16, len(rows)), len(rows)), flush=True)
+    (out / "data_ready.json").write_text(json.dumps({"clips": len(clips), "minutes": round(tot / 60, 1), "time": time.strftime("%F %T")}), encoding="utf-8")
+    print("✅ 数据准备完成 → %s" % out)
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+FILES['tts_dataset.py'] = r'''# coding=utf-8
+# 取自 QwenLM/Qwen3-TTS/finetuning/dataset.py (Apache-2.0),仅增加了参考 mel 缓存。
+# Copyright 2026 The Alibaba Qwen team.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from typing import Any, List, Tuple, Union
+
+import librosa
+import numpy as np
+import torch
+from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
+from qwen_tts.core.models.modeling_qwen3_tts import mel_spectrogram
+from torch.utils.data import Dataset
+
+AudioLike = Union[
+    str,                     # wav path, URL, base64
+    np.ndarray,              # waveform (requires sr)
+    Tuple[np.ndarray, int],  # (waveform, sr)
+]
+
+MaybeList = Union[Any, List[Any]]
+
+class TTSDataset(Dataset):
+    def __init__(self, data_list, processor, config:Qwen3TTSConfig, lag_num = -1):
+        self.data_list = data_list
+        self.processor = processor
+        self.lag_num = lag_num
+        self.config = config
+        self._mel_cache = {}
+
+    def __len__(self):
+        return len(self.data_list)
+    
+    def _load_audio_to_np(self, x: str) -> Tuple[np.ndarray, int]:
+        
+        audio, sr = librosa.load(x, sr=None, mono=True)
+
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=-1)
+
+        return audio.astype(np.float32), int(sr)
+
+    def _normalize_audio_inputs(self, audios: Union[AudioLike, List[AudioLike]]) -> List[Tuple[np.ndarray, int]]:
+        """
+        Normalize audio inputs into a list of (waveform, sr).
+
+        Supported forms:
+          - str: wav path / URL / base64 audio string
+          - np.ndarray: waveform (NOT allowed alone here because sr is unknown)
+          - (np.ndarray, sr): waveform + sampling rate
+          - list of the above
+
+        Args:
+            audios:
+                Audio input(s).
+
+        Returns:
+            List[Tuple[np.ndarray, int]]:
+                List of (float32 waveform, original sr).
+
+        Raises:
+            ValueError: If a numpy waveform is provided without sr.
+        """
+        if isinstance(audios, list):
+            items = audios
+        else:
+            items = [audios]
+
+        out: List[Tuple[np.ndarray, int]] = []
+        for a in items:
+            if isinstance(a, str):
+                out.append(self._load_audio_to_np(a))
+            elif isinstance(a, tuple) and len(a) == 2 and isinstance(a[0], np.ndarray):
+                out.append((a[0].astype(np.float32), int(a[1])))
+            elif isinstance(a, np.ndarray):
+                raise ValueError("For numpy waveform input, pass a tuple (audio, sr).")
+            else:
+                raise TypeError(f"Unsupported audio input type: {type(a)}")
+        return out
+
+    
+    def _build_assistant_text(self, text: str) -> str:
+        return f"<|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n"
+    
+    def _ensure_list(self, x: MaybeList) -> List[Any]:
+        return x if isinstance(x, list) else [x]
+    
+    def _tokenize_texts(self, text) -> List[torch.Tensor]:
+        input = self.processor(text=text, return_tensors="pt", padding=True)
+        input_id = input["input_ids"]
+        input_id = input_id.unsqueeze(0) if input_id.dim() == 1 else input_id
+        return input_id
+    
+    @torch.inference_mode()
+    def extract_mels(self, audio, sr):
+        assert sr == 24000, "Only support 24kHz audio"
+        mels = mel_spectrogram(
+            torch.from_numpy(audio).unsqueeze(0), 
+            n_fft=1024, 
+            num_mels=128, 
+            sampling_rate=24000,
+            hop_size=256, 
+            win_size=1024, 
+            fmin=0, 
+            fmax=12000
+        ).transpose(1, 2)
+        return mels
+
+
+
+    def __getitem__(self, idx):
+        item = self.data_list[idx]
+
+        audio_path  = item["audio"]
+        text        = item["text"]
+        audio_codes = item["audio_codes"]
+        language        = item.get('language','Auto')
+        ref_audio_path  = item['ref_audio']
+
+        text = self._build_assistant_text(text)
+        text_ids = self._tokenize_texts(text)
+
+        audio_codes = torch.tensor(audio_codes, dtype=torch.long)
+
+        ref_audio_list = self._ensure_list(ref_audio_path)
+        normalized = self._normalize_audio_inputs(ref_audio_list)
+        wav,sr = normalized[0]
+
+        key = ref_audio_list[0] if isinstance(ref_audio_list[0], str) else None
+        if key is not None and key in self._mel_cache:                  # 所有样本共用同一条参考音频 -> 只算一次 mel
+            ref_mel = self._mel_cache[key]
+        else:
+            ref_mel = self.extract_mels(audio=wav, sr=sr)
+            if key is not None:
+                self._mel_cache[key] = ref_mel
+
+        return {
+            "text_ids": text_ids[:,:-5],    # 1 , t
+            "audio_codes":audio_codes,      # t, 16
+            "ref_mel":ref_mel
+        }
+        
+    def collate_fn(self, batch):
+        assert self.lag_num == -1
+
+        item_length = [b['text_ids'].shape[1] + b['audio_codes'].shape[0] for b in batch]
+        max_length = max(item_length) + 8
+        b,t = len(batch),max_length
+
+        input_ids   = torch.zeros((b,t,2),dtype=torch.long)
+        codec_ids   = torch.zeros((b,t,16),dtype=torch.long)
+        text_embedding_mask     = torch.zeros((b,t),dtype=torch.bool)
+        codec_embedding_mask    = torch.zeros((b,t),dtype=torch.bool)
+        codec_mask      = torch.zeros((b,t),dtype=torch.bool)
+        attention_mask  = torch.zeros((b,t),dtype=torch.long)
+        codec_0_labels  = torch.full((b, t), -100, dtype=torch.long)
+
+        for i,data in enumerate(batch):
+            text_ids        = data['text_ids']
+            audio_codec_0   = data['audio_codes'][:,0]
+            audio_codecs    = data['audio_codes']
+
+            text_ids_len = text_ids.shape[1]
+            codec_ids_len = audio_codec_0.shape[0]
+            
+            # text channel
+            input_ids[i,  :3, 0] = text_ids[0,:3]
+            input_ids[i, 3:7, 0] = self.config.tts_pad_token_id
+            input_ids[i,   7, 0] = self.config.tts_bos_token_id
+            input_ids[i, 8:8+text_ids_len-3, 0] = text_ids[0,3:]
+            input_ids[i,   8+text_ids_len-3, 0] = self.config.tts_eos_token_id
+            input_ids[i, 8+text_ids_len-2:8+text_ids_len+codec_ids_len , 0] = self.config.tts_pad_token_id
+            text_embedding_mask[i,  :8+text_ids_len+codec_ids_len] = True
+
+            # codec channel
+            # input_ids[i,   :3, 1] = 0
+            input_ids[i,    3:8 ,1] = torch.tensor(
+                                        [
+                                            self.config.talker_config.codec_nothink_id,
+                                            self.config.talker_config.codec_think_bos_id,
+                                            self.config.talker_config.codec_think_eos_id,
+                                            0,     # for speaker embedding
+                                            self.config.talker_config.codec_pad_id       
+                                        ]
+                                    )
+            input_ids[i,    8:8+text_ids_len-3  ,1] = self.config.talker_config.codec_pad_id
+            input_ids[i,    8+text_ids_len-3    ,1] = self.config.talker_config.codec_pad_id
+            input_ids[i,    8+text_ids_len-2    ,1] = self.config.talker_config.codec_bos_id
+            input_ids[i,    8+text_ids_len-1:8+text_ids_len-1+codec_ids_len,    1] = audio_codec_0
+            input_ids[i,    8+text_ids_len-1+codec_ids_len,    1] = self.config.talker_config.codec_eos_token_id
+
+            codec_0_labels[i,    8+text_ids_len-1:8+text_ids_len-1+codec_ids_len] = audio_codec_0
+            codec_0_labels[i,    8+text_ids_len-1+codec_ids_len] = self.config.talker_config.codec_eos_token_id
+
+            codec_ids[i, 8+text_ids_len-1:8+text_ids_len-1+codec_ids_len,:] = audio_codecs
+
+            codec_embedding_mask[i, 3:8+text_ids_len+codec_ids_len] = True
+            codec_embedding_mask[i, 6] = False       # for speaker embedding
+
+            codec_mask[i,   8+text_ids_len-1:8+text_ids_len-1+codec_ids_len] = True
+            attention_mask[i, :8+text_ids_len+codec_ids_len] = True
+        
+        ref_mels = [data['ref_mel'] for data in batch]
+        ref_mels = torch.cat(ref_mels,dim=0)
+
+        return {
+            'input_ids':input_ids,
+            'ref_mels':ref_mels,
+            'attention_mask':attention_mask,
+            'text_embedding_mask':text_embedding_mask.unsqueeze(-1),
+            'codec_embedding_mask':codec_embedding_mask.unsqueeze(-1),
+            'codec_0_labels':codec_0_labels,
+            'codec_ids': codec_ids,
+            'codec_mask':codec_mask
+        }
+'''
+
+FILES['README.md'] = r'''# 克隆语音播放器 · Qwen3-TTS-1.7B · Kaggle 双 T4
+
+## 快速启动
+1. Kaggle Notebook → Settings: Accelerator = **GPU T4 x2**, Internet = **On**
+2. Add-ons → Secrets: 添加 `NGROK_TOKEN`(必需)、`DEEPSEEK_API_KEY`(可选,AI 对话用)、`HF_TOKEN`(可选)
+3. 把 `kaggle_voice_clone.py` 的全部内容粘贴进一个代码单元格运行,等输出「🌐 网页地址」
+
+## 文件(运行时自动写到 /kaggle/working/)
+| 文件 | 作用 |
+|---|---|
+| app.py | FastAPI + WebSocket 网关:/ws /stream /monitor /api/voice /health |
+| infer_dual_gpu.py | 双卡并行推理(每卡一个进程,同种子/同超参/同采样率,RMS 电平对齐) |
+| speaker_sim.py | 声纹相似度(WavLM-SV 余弦相似度),服务端实时打分与训练评估共用 |
+| index.html / worklet.js | 前端:零停顿流式播放器(AudioWorklet,兜底 nextPlayTime 时间线排队) |
+| data_prep.py | 数据预处理:24kHz 单声道、长录音自动切片、Whisper 转录、95/5 划分、提取 audio_codes |
+| train.py | LoRA SFT(r=16, alpha=32, fp16, Accelerate 双卡 DDP),每轮自动评估 |
+| evaluate.py | 合成 5 条测试语音 → 声纹余弦相似度 → eval_log.jsonl |
+| auto_train_loop.py | 循环控制器:达标/收敛/50 轮上限即停,导出 best_model/ |
+| tts_dataset.py | 官方 finetuning/dataset.py(增加参考 mel 缓存) |
+
+## 训练
+脚本顶部 `MODE = "train_then_serve"`,设置 `TRAIN_DATA_DIR`(wav + 可选同名 txt,总时长建议 ≥ 10 分钟)。
+输出: /kaggle/working/{data, checkpoints/epoch_X, eval_log.jsonl, best_model, similarity_curve.png}
+'''
+
+
 
 def banner(t):
     print("\n" + "═" * 70 + "\n  " + t + "\n" + "═" * 70, flush=True)
@@ -2010,6 +3887,38 @@ def run(cmd, tail=25, env=None, show=None):
     return list(last)
 
 
+_CURVE = {"shown": False}
+
+
+def stream(cmd, env=None, cwd=None):
+    """运行子进程并原样转发输出;识别训练曲线更新信号并在 Notebook 里刷新图表。可被 Ctrl+C / 停止按钮中断。"""
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, cwd=cwd, start_new_session=True)
+    try:
+        for line in p.stdout:
+            line = line.rstrip()
+            if line.startswith("CURVE_UPDATED "):
+                try:
+                    from IPython.display import Image, display, update_display
+                    img = Image(filename=line.split(" ", 1)[1])
+                    if _CURVE["shown"]:
+                        update_display(img, display_id="vc_curve")
+                    else:
+                        display(img, display_id="vc_curve")
+                        _CURVE["shown"] = True
+                except Exception:
+                    pass
+                continue
+            print(line[:230], flush=True)
+        p.wait()
+    except KeyboardInterrupt:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        except Exception:
+            pass
+        raise
+    return p.returncode
+
+
 # ───────────────────────── 0. 环境检查 ─────────────────────────
 banner("0/6  环境检查")
 gpus = []
@@ -2018,35 +3927,47 @@ try:
     gpus = [l.strip() for l in out.strip().splitlines() if l.strip()]
 except Exception:
     pass
-if gpus:
-    for i, g in enumerate(gpus):
-        print("  GPU%d: %s" % (i, g))
-    if len(gpus) == 1:
-        print("  ℹ 只有 1 张 GPU:单卡 T4 合成速度≈实时,系统会靠「弹性放慢」保证不停顿;选 GPU T4 x2 体验最佳。")
-elif not TEST:
-    raise RuntimeError("没有检测到 GPU!请在右侧 Settings → Accelerator 选择 GPU T4 x2,然后重新运行。")
+for i, g in enumerate(gpus):
+    print("  GPU%d: %s" % (i, g))
 try:
-    urllib.request.urlopen("https://huggingface.co", timeout=10)
-    print("  ✅ 网络正常")
-except Exception as e:
-    if not TEST:
+    import torch
+    print("  PyTorch %s · CUDA %s · 可见 GPU %d" % (torch.__version__, torch.version.cuda, torch.cuda.device_count()))
+except Exception:
+    pass
+if not TEST:
+    if not gpus:
+        raise RuntimeError("没有检测到 GPU!请在右侧 Settings → Accelerator 选择 GPU T4 x2,然后重新运行。")
+    if len(gpus) < 2:
+        if REQUIRE_DUAL_GPU:
+            raise RuntimeError("只检测到 %d 张 GPU。请在 Kaggle 右侧 Settings → Accelerator 选择「GPU T4 x2」后重新运行"
+                               "(想用单卡也要继续的话,把脚本顶部 REQUIRE_DUAL_GPU 改成 False)。" % len(gpus))
+        print("  ℹ 只有 1 张 GPU:仍可运行,但合成速度≈实时,系统会靠「弹性放慢」保证不停顿。")
+    try:
+        urllib.request.urlopen("https://huggingface.co", timeout=10)
+        print("  ✅ 网络正常")
+    except Exception as e:
         raise RuntimeError("无法访问外网(%s)。请在右侧 Settings 里把 Internet 打开为 On。" % e)
-
+if MODE not in ("serve", "train", "train_then_serve"):
+    raise RuntimeError("MODE 只能是 serve / train / train_then_serve")
+if MODE != "serve" and not TEST and not (TRAIN_DATA_DIR and Path(TRAIN_DATA_DIR).exists()) and not (OUT / "data" / "train_codes.jsonl").exists():
+    raise RuntimeError("训练模式需要把参考音频文件夹设置到脚本顶部的 TRAIN_DATA_DIR(例如 /kaggle/input/你的数据集/reference_audio)。")
 ds_key = (DEEPSEEK_API_KEY or secret("DEEPSEEK_API_KEY")).strip()
-print("  DeepSeek Key: %s" % ("✅ 已找到" if ds_key else "❌ 未找到(网页里仍可克隆/试听,但对话需要它。请在 Secrets 添加 DEEPSEEK_API_KEY 后重跑)"))
+print("  DeepSeek Key: %s" % ("✅ 已找到" if ds_key else "— 未配置(只影响「AI 对话」;「朗读文字」不受影响)"))
+hf = secret("HF_TOKEN")
 
 # ───────────────────────── 1. 写出文件 ─────────────────────────
-banner("1/6  写出服务文件 → %s" % WORK)
+banner("1/6  写出程序文件 → %s" % APP)
+APP.mkdir(parents=True, exist_ok=True)
 WORK.mkdir(parents=True, exist_ok=True)
-for name, content in (("server.py", SERVER_PY), ("index.html", INDEX_HTML), ("worklet.js", WORKLET_JS)):
-    (WORK / name).write_text(content, encoding="utf-8")
-    print("  ✅ %-11s %6.1f KB" % (name, len(content.encode("utf-8")) / 1024))
+for name, content in FILES.items():
+    (APP / name).write_text(content, encoding="utf-8")
+    print("  ✅ %-20s %6.1f KB" % (name, len(content.encode("utf-8")) / 1024))
 
 # ───────────────────────── 2. 依赖 ─────────────────────────
-banner("2/6  安装依赖(独立环境,不会破坏 Kaggle 自带的 PyTorch;首次约 3~6 分钟)")
+banner("2/6  安装依赖(独立环境,不破坏 Kaggle 自带的 PyTorch;首次约 3~6 分钟)")
 PY = sys.executable
 if not TEST:
-    ok_marker = VENV / ".ok_v3"
+    ok_marker = VENV / ".ok_v4"
     venv_py = VENV / "bin" / "python"
     if not ok_marker.exists():
         shutil.rmtree(VENV, ignore_errors=True)
@@ -2062,44 +3983,115 @@ if not TEST:
                 print("  ⚠ 无法创建独立环境,改为直接安装到当前环境(装完如提示需要重启内核,请 Run → Restart Session 后重新运行)")
                 shutil.rmtree(VENV, ignore_errors=True)
     PY = str(venv_py) if venv_py.exists() else sys.executable
-    pkgs = ["faster-qwen3-tts", "fastapi", "uvicorn[standard]", "httpx", "soundfile", "huggingface_hub"]
-    need = True
-    try:
-        r = subprocess.run([PY, "-c", "import faster_qwen3_tts, fastapi, uvicorn, httpx, soundfile, websockets; print('SMOKE_OK')"], capture_output=True, text=True, timeout=180)
-        need = "SMOKE_OK" not in r.stdout
-    except Exception:
-        need = True
-    if need:
-        print("  正在安装: " + " ".join(pkgs), flush=True)
-        run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check"] + pkgs, show=r"(?i)^(error|successfully)")
+    # 版本固定在一组互相验证过的组合:faster-qwen3-tts 0.3.x ↔ qwen-tts 0.1.1 ↔ transformers 4.57.3
+    base_pkgs = ["transformers==4.57.3", "accelerate==1.12.0", "peft==0.17.1", "huggingface_hub>=0.36,<1.0", "safetensors", "fastapi", "uvicorn[standard]",
+                 "httpx", "soundfile", "scipy", "librosa", "einops", "onnxruntime", "sox", "matplotlib", "pyngrok"]
+    smoke_py = ("import torch, transformers, accelerate, peft, fastapi, uvicorn, httpx, soundfile, websockets, scipy, librosa, matplotlib\n"
+                "import qwen_tts, faster_qwen3_tts\n"
+                "assert transformers.__version__ == '4.57.3', transformers.__version__\n"
+                "print('torch', torch.__version__, '| transformers', transformers.__version__, '| peft', peft.__version__, '| cuda', torch.cuda.is_available(), torch.cuda.device_count())\n"
+                "print('SMOKE_OK')")
+
+    def smoke():
+        try:
+            r = subprocess.run([PY, "-c", smoke_py], capture_output=True, text=True, timeout=300)
+            return "SMOKE_OK" in r.stdout, r
+        except Exception as e:
+            return False, e
+
+    ok, r = smoke()
+    if not ok:
+        print("  正在安装依赖…", flush=True)
+        run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check"] + base_pkgs, show=r"(?i)^(error|successfully)")
+        run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--no-deps", "qwen-tts==0.1.1", "faster-qwen3-tts==0.3.2"], show=r"(?i)^(error|successfully)")
         print()
-    smoke = ("import torch, transformers, fastapi, uvicorn, httpx, soundfile, websockets\n"
-             "print('torch', torch.__version__, '| transformers', transformers.__version__, '| cuda', torch.cuda.is_available(), torch.cuda.device_count())\n"
-             "try:\n    import faster_qwen3_tts; print('ENGINE faster-qwen3-tts OK')\nexcept Exception as e:\n    print('ENGINE faster-qwen3-tts FAIL', repr(e))\n"
-             "try:\n    import qwen_tts; print('ENGINE qwen-tts OK')\nexcept Exception as e:\n    print('ENGINE qwen-tts FAIL', repr(e))\n"
-             "print('SMOKE_OK')")
-    r = subprocess.run([PY, "-c", smoke], capture_output=True, text=True, timeout=300)
+        ok, r = smoke()
+    if not ok:
+        msg = (r.stderr or r.stdout) if hasattr(r, "stdout") else str(r)
+        raise RuntimeError("依赖自检失败,请把下面的报错发给我:\n" + "\n".join(str(msg).strip().splitlines()[-25:]))
     print("\n".join("  " + l for l in r.stdout.strip().splitlines()))
-    if "SMOKE_OK" not in r.stdout or "ENGINE faster-qwen3-tts OK" not in r.stdout and "ENGINE qwen-tts OK" not in r.stdout:
-        raise RuntimeError("依赖自检失败,请把下面的报错发给我:\n" + "\n".join((r.stderr or r.stdout).strip().splitlines()[-25:]))
     if VENV.exists():
         ok_marker.write_text("ok")
     print("  ✅ 依赖就绪")
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pyngrok"], capture_output=True)
+else:
+    print("  (自检模式:跳过)")
 
-# ───────────────────────── 3. 预下载模型 ─────────────────────────
-banner("3/6  下载模型 %s(首次约 5GB,之后秒开)" % TTS_MODEL)
-hf = secret("HF_TOKEN")
-env_dl = dict(os.environ, HF_HUB_DISABLE_PROGRESS_BARS="1", PYTHONUNBUFFERED="1")
+senv = dict(os.environ, PYTHONUNBUFFERED="1", VC_WORK=str(WORK), VC_PORT=str(PORT), DEEPSEEK_API_KEY=ds_key, DEEPSEEK_MODEL=DEEPSEEK_MODEL,
+            COQUI_TOS_AGREED="1", TOKENIZERS_PARALLELISM="false", HF_HUB_DISABLE_PROGRESS_BARS="1", VC_SEED=str(SEED), VC_TEMPERATURE=str(TEMPERATURE),
+            VC_TOP_P=str(TOP_P), VC_TOP_K=str(TOP_K), VC_REP_PENALTY=str(REPETITION_PENALTY), VC_EVAL_LOG=str(OUT / "eval_log.jsonl"),
+            VC_TRAIN_STATE=str(OUT / "train_state.json"), PYTHONPATH=str(APP))
 if hf:
-    env_dl["HF_TOKEN"] = hf
+    senv["HF_TOKEN"] = hf
+
+# ───────────────────────── 3. 下载模型 ─────────────────────────
+banner("3/6  下载模型(首次约 6~8GB,之后秒开)")
 if not TEST:
     t0 = time.time()
-    dl = "from huggingface_hub import snapshot_download as s; print('PATH', s(%r))" % TTS_MODEL
-    last = run([PY, "-c", dl], env=env_dl, show=r"^PATH")
+    need = [TTS_MODEL, "microsoft/wavlm-base-plus-sv", "openai/whisper-large-v3-turbo"] + (["Qwen/Qwen3-TTS-Tokenizer-12Hz"] if MODE != "serve" else [])
+    dl = ("from huggingface_hub import snapshot_download as s\n"
+          "for m in %r:\n"
+          "    try:\n"
+          "        p = s(m, ignore_patterns=['*.msgpack','*.h5','*.onnx','flax_*','tf_*','*.ot','*.gguf'])\n"
+          "        print('PATH', m, p)\n"
+          "    except Exception as e:\n"
+          "        print('PATH_FAIL', m, repr(e)[:200])\n") % (need,)
+    last = run([PY, "-c", dl], env=dict(senv), show=r"^PATH")
+    fails = [l for l in last if l.startswith("PATH_FAIL")]
+    if any(TTS_MODEL in l for l in fails):
+        raise RuntimeError("下载 %s 失败:\n%s" % (TTS_MODEL, "\n".join(fails)))
+    for l in fails:
+        print("  ⚠ 可选模型下载失败(用到时再重试):" + l[:160])
     print("  ✅ 模型已缓存 (%.0fs)" % (time.time() - t0))
+
+# ───────────────────────── 3b. 训练 ─────────────────────────
+trained_dir = Path(BEST_MODEL_DIR)
+if MODE in ("train", "train_then_serve") and not TEST:
+    banner("训练 · 数据预处理(data_prep.py)")
+    data_dir = OUT / "data"
+    if TRAIN_DATA_DIR and Path(TRAIN_DATA_DIR).exists():
+        if FRESH_TRAIN or not (data_dir / "train_codes.jsonl").exists():
+            cmd = [PY, str(APP / "data_prep.py"), "--src", TRAIN_DATA_DIR, "--out", str(data_dir), "--device", "cuda:0"]
+            if TRAIN_LANGUAGE:
+                cmd += ["--language", TRAIN_LANGUAGE]
+            if stream(cmd, env=dict(senv), cwd=str(APP)) != 0:
+                raise RuntimeError("数据预处理失败,见上方日志")
+        else:
+            print("  已有预处理好的数据 %s(想重做请把 FRESH_TRAIN 设为 True)" % data_dir)
+    banner("训练 · LoRA 双卡微调 + 每轮自动评估(auto_train_loop.py)")
+    print("  可随时中断(停止单元格);再次运行会自动从最近的 checkpoint 续训。\n", flush=True)
+    cmd = [PY, str(APP / "auto_train_loop.py"), "--work", str(OUT), "--data_dir", str(data_dir), "--base", TTS_MODEL, "--target", str(TARGET_SIMILARITY),
+           "--max_epochs", str(MAX_EPOCHS), "--patience", str(PATIENCE), "--lr", str(TRAIN_LR)]
+    if FRESH_TRAIN:
+        cmd.append("--fresh")
+    rc = stream(cmd, env=dict(senv), cwd=str(APP))
+    if rc != 0:
+        raise RuntimeError("训练流程出错,见上方日志")
+    trained_dir = OUT / "best_model"
+    if MODE == "train":
+        banner("训练完成")
+        print("  ✅ 模型已导出到 %s\n  → 把 MODE 改为 \"serve\" 再运行一次,服务会自动加载它。" % trained_dir)
+        print("  → 想保存到下次会话:Kaggle 右上角 Save Version → Save & Run All(Commit),输出里就有 best_model。")
+        sys.exit(0)
 
 # ───────────────────────── 4. 启动服务 ─────────────────────────
 banner("4/6  启动服务(网关 + 每张 GPU 一个 TTS 进程)")
+use_trained = bool(USE_TRAINED_MODEL and (trained_dir / "trained.json").exists() and (trained_dir / "model.safetensors").exists())
+if use_trained:
+    meta = json.loads((trained_dir / "trained.json").read_text(encoding="utf-8"))
+    senv.update(VC_MODEL=str(trained_dir), VC_TRAINED="1", VC_REF_AUDIO=str(trained_dir / "speaker_ref.wav"), VC_REF_TEXT=meta.get("ref_text", ""),
+                VC_REF_XVEC="1", VC_REF_FORCE="1")
+    print("  ✅ 使用微调后的模型: %s(默认说话人 = 训练时的参考音频,x-vector 模式,与训练格式一致)" % trained_dir)
+else:
+    senv["VC_MODEL"] = TTS_MODEL
+    if REFERENCE_AUDIO and Path(REFERENCE_AUDIO).exists():
+        senv["VC_REF_AUDIO"], senv["VC_REF_TEXT"] = REFERENCE_AUDIO, REFERENCE_TEXT
+        print("  使用默认参考音频:", REFERENCE_AUDIO)
+    elif REFERENCE_AUDIO:
+        print("  ⚠ 找不到 REFERENCE_AUDIO:", REFERENCE_AUDIO, "(将在网页里录制/上传)")
+if TEST:
+    senv.update(VC_MOCK="1", VC_MOCK_LLM="1")
+
 SRV = globals().get("_VC_SRV")
 if SRV and SRV.get("proc") and SRV["proc"].poll() is None:
     print("  停掉上一次运行的服务…")
@@ -2111,30 +4103,18 @@ if SRV and SRV.get("proc") and SRV["proc"].poll() is None:
 subprocess.run(["bash", "-lc", "fuser -k %d/tcp >/dev/null 2>&1 || true" % PORT])
 time.sleep(1)
 
-senv = dict(os.environ, PYTHONUNBUFFERED="1", VC_WORK=str(WORK), VC_PORT=str(PORT), VC_MODEL=TTS_MODEL, DEEPSEEK_API_KEY=ds_key,
-            DEEPSEEK_MODEL=DEEPSEEK_MODEL, COQUI_TOS_AGREED="1", TOKENIZERS_PARALLELISM="false", HF_HUB_DISABLE_PROGRESS_BARS="1")
-if hf:
-    senv["HF_TOKEN"] = hf
-if REFERENCE_AUDIO and Path(REFERENCE_AUDIO).exists():
-    senv["VC_REF_AUDIO"], senv["VC_REF_TEXT"] = REFERENCE_AUDIO, REFERENCE_TEXT
-    print("  使用默认参考音频:", REFERENCE_AUDIO)
-elif REFERENCE_AUDIO:
-    print("  ⚠ 找不到 REFERENCE_AUDIO:", REFERENCE_AUDIO, "(将在网页里录制/上传)")
-if TEST:
-    senv.update(VC_MOCK="1", VC_MOCK_LLM="1")
-
 _VC_SRV = {"proc": None, "tail": deque(maxlen=60)}
 
 
 def start_server():
-    p = subprocess.Popen([PY, str(WORK / "server.py")], cwd=str(WORK), env=senv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    p = subprocess.Popen([PY, str(APP / "app.py")], cwd=str(APP), env=senv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
     _VC_SRV["proc"] = p
 
     def pump():
         for line in p.stdout:
             line = line.rstrip()
             _VC_SRV["tail"].append(line)
-            if re.search(r"Traceback|Error|error|ERROR|⚠|声音|首包|RTF|就绪|加载|捕获|检测到|模型|对话出错|合成失败|Warning|WARNING", line) and "DeprecationWarning" not in line:
+            if re.search(r"Traceback|Error|error|ERROR|⚠|声音|首包|RTF|就绪|加载|捕获|检测到|模型|对话出错|合成失败|Warning|WARNING|增益|相似", line) and "DeprecationWarning" not in line:
                 print("  [server] " + line[:200], flush=True)
     threading.Thread(target=pump, daemon=True).start()
     return p
@@ -2149,7 +4129,7 @@ def health():
 
 start_server()
 t0, seen = time.time(), {}
-print("  等待 TTS 进程加载模型(首次需要几分钟:加载权重 + 捕获 CUDA Graph)…", flush=True)
+print("  等待两张 GPU 加载模型并捕获 CUDA Graph(首次需要几分钟;模型在启动时就加载到显存,不会等到第一次请求)…", flush=True)
 while True:
     h = health()
     if _VC_SRV["proc"].poll() is not None:
@@ -2161,7 +4141,7 @@ while True:
             if seen.get(w["idx"]) != k:
                 seen[w["idx"]] = k
                 print("  GPU%d · %s · %s" % (w["idx"], w["status"], w["msg"]), flush=True)
-        if ws and all(w["status"] in ("ready", "error") for w in ws):
+        if ws and all(w["status"] in ("ready", "error", "voice") for w in ws):
             break
         if not ws:
             print("  ⚠ 没有 GPU 进程,语音合成不可用")
@@ -2177,57 +4157,51 @@ if bad and len(bad) == len(h.get("workers", [])):
     raise RuntimeError("所有 GPU 进程都加载失败,见上方 ❌ 信息与 [server] 日志。")
 print("  ✅ 服务已就绪 (%.0fs) · 可用 GPU 进程: %d" % (time.time() - t0, len(h.get("workers", [])) - len(bad)))
 
-# ───────────────────────── 5. 公网隧道 ─────────────────────────
-banner("5/6  打开公网隧道(WebSocket 直连,不缓冲)")
+
+def gpu_report():
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=index,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=10).stdout
+        return " · ".join("GPU%s %s/%sMB %s%%" % tuple(x.strip() for x in l.split(",")) for l in out.strip().splitlines())
+    except Exception:
+        return "?"
+
+
+print("  显存: " + gpu_report())
+
+# ───────────────────────── 5. ngrok 隧道 ─────────────────────────
+banner("5/6  打开 ngrok 隧道(WebSocket 直连,不缓冲)")
 public_url = None
-tunnel_proc = None
+
+
+def open_ngrok(token):
+    from pyngrok import conf, ngrok
+    conf.get_default().auth_token = token
+    for t in ngrok.get_tunnels():
+        try:
+            ngrok.disconnect(t.public_url)
+        except Exception:
+            pass
+    return ngrok.connect(PORT, "http").public_url.replace("http://", "https://")
+
+
+token = ""
 if TEST:
     public_url = "http://127.0.0.1:%d" % PORT
 else:
     token = (NGROK_TOKEN or secret("NGROK_TOKEN")).strip()
-    if token:
-        try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pyngrok"], check=True, capture_output=True)
-            from pyngrok import conf, ngrok
-            conf.get_default().auth_token = token
-            for t in ngrok.get_tunnels():
-                try:
-                    ngrok.disconnect(t.public_url)
-                except Exception:
-                    pass
-            public_url = ngrok.connect(PORT, "http").public_url.replace("http://", "https://")
-            print("  ✅ ngrok 隧道已建立")
-        except Exception as e:
-            msg = str(e)
-            if "ERR_NGROK_108" in msg or "simultaneous" in msg:
-                msg += "\n    → 免费账号同时只能有 1 个 ngrok 会话,请到 https://dashboard.ngrok.com/agents 停掉旧会话"
-            print("  ⚠ ngrok 失败: %s\n  → 自动改用 cloudflared 免费隧道" % msg)
-    if not public_url:
-        try:
-            cf = Path("/kaggle/working/cloudflared")
-            if not cf.exists():
-                urllib.request.urlretrieve("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64", str(cf))
-                cf.chmod(0o755)
-            tunnel_proc = subprocess.Popen([str(cf), "tunnel", "--url", "http://127.0.0.1:%d" % PORT, "--no-autoupdate"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-            found = {}
-
-            def cf_pump():
-                for line in tunnel_proc.stdout:
-                    m = re.search(r"https://[-a-z0-9]+\.trycloudflare\.com", line)
-                    if m and "url" not in found:
-                        found["url"] = m.group(0)
-            threading.Thread(target=cf_pump, daemon=True).start()
-            for _ in range(60):
-                if "url" in found:
-                    break
-                time.sleep(1)
-            public_url = found.get("url")
-            if public_url:
-                print("  ✅ cloudflared 隧道已建立(WebSocket 可正常穿透;每次运行地址会变)")
-        except Exception as e:
-            print("  ❌ cloudflared 也失败了:", e)
-if not public_url:
-    raise RuntimeError("没能建立公网隧道。请在 Secrets 里添加 NGROK_TOKEN(https://dashboard.ngrok.com/get-started/your-authtoken)后重跑。")
+    if not token:
+        raise RuntimeError("没有找到 NGROK_TOKEN。请到 https://dashboard.ngrok.com/get-started/your-authtoken 复制 authtoken,"
+                           "在 Kaggle 顶部 Add-ons → Secrets 里添加名为 NGROK_TOKEN 的密钥并勾选 Attached,然后重新运行。"
+                           "(本系统只使用 ngrok:Cloudflare Tunnel 会缓冲流式响应,无法做到零停顿播放。)")
+    try:
+        public_url = open_ngrok(token)
+        print("  ✅ ngrok 隧道已建立")
+    except Exception as e:
+        msg = str(e)
+        if "ERR_NGROK_108" in msg or "simultaneous" in msg:
+            msg += "\n    → 免费账号同时只能有 1 个 ngrok 会话,请到 https://dashboard.ngrok.com/agents 停掉旧会话后重跑"
+        raise RuntimeError("ngrok 隧道建立失败: %s" % msg)
 try:
     req = urllib.request.Request(public_url + "/health", headers={"ngrok-skip-browser-warning": "1", "User-Agent": "vc"})
     urllib.request.urlopen(req, timeout=25).read()
@@ -2238,16 +4212,16 @@ except Exception as e:
 banner("6/6  完成")
 print("🌐 网页地址:  " + public_url)
 print("   · 左侧:录音/上传参考语音 → 开始克隆(双卡同时) → 「试听」确认是你的声音")
-print("   · 右侧:输入文字或点麦克风说话,DeepSeek 边想边说,你的克隆声音边合成边播放")
+print("   · 右侧「朗读文字」:输入文字 → 合成并播放;「AI 对话」:DeepSeek 边想边说,你的克隆声音边合成边播放")
 print("   · ngrok 免费版首次打开会有提示页,点 Visit Site 即可")
 print("   · 本单元格会一直运行 = 服务在线,请不要停止它;日志可在网页右上角「运行日志」查看\n", flush=True)
 try:
     from IPython.display import HTML, display
-    display(HTML('<a href="%s" target="_blank" style="font-size:20px;font-weight:700">👉 点击打开 Voice Clone Studio</a>' % public_url))
+    display(HTML('<a href="%s" target="_blank" style="font-size:20px;font-weight:700">👉 点击打开 克隆语音播放器</a>' % public_url))
 except Exception:
     pass
 
-# ───────────────────────── 保活 ─────────────────────────
+# ───────────────────────── 7. 保活 ─────────────────────────
 n, last_beat = 0, 0
 try:
     while True:
@@ -2257,22 +4231,40 @@ try:
         if _VC_SRV["proc"].poll() is not None:
             print("[%s] ⚠ 服务进程退出,正在自动拉起…" % time.strftime("%H:%M:%S"), flush=True)
             print("\n".join("   " + l for l in list(_VC_SRV["tail"])[-8:]))
-            subprocess.run(["bash", "-lc", "pkill -f %s || true" % (WORK / "server.py")])
+            subprocess.run(["bash", "-lc", "pkill -f %s || true" % (APP / "app.py")])
             time.sleep(3)
             start_server()
             continue
-        if time.time() - last_beat >= 300:
+        if time.time() - last_beat >= 300:                      # 每 5 分钟打印一次,避免 Kaggle 因长时间无输出回收会话
             last_beat = time.time()
             n += 1
             h = health() or {}
-            print("[%s] 💓 心跳 #%d · 服务 %s · GPU进程 %s · 声音 %s" % (time.strftime("%H:%M:%S"), n, "正常" if h else "❌无响应",
-                  "/".join(w["status"] for w in h.get("workers", [])), h.get("voice", "?")), flush=True)
+            print("[%s] 💓 心跳 #%d · 服务 %s · GPU进程 %s · 声音 %s · %s" % (time.strftime("%H:%M:%S"), n, "正常" if h else "❌无响应",
+                  "/".join(w["status"] for w in h.get("workers", [])), h.get("voice", "?"), gpu_report()), flush=True)
+            if not TEST:
+                try:
+                    from pyngrok import ngrok
+                    if not ngrok.get_tunnels():
+                        raise RuntimeError("隧道消失")
+                except Exception as e:
+                    print("   ⚠ ngrok 隧道异常(%s),正在重建…" % e, flush=True)
+                    try:
+                        public_url = open_ngrok(token)
+                        print("   ✅ 新地址: " + public_url, flush=True)
+                    except Exception as e2:
+                        print("   ❌ 重建失败: %s" % e2, flush=True)
 except KeyboardInterrupt:
     print("已手动停止,正在关闭服务…")
 finally:
-    for pr in (_VC_SRV.get("proc"), tunnel_proc):
+    pr = _VC_SRV.get("proc")
+    try:
+        if pr and pr.poll() is None:
+            os.killpg(os.getpgid(pr.pid), 15)
+    except Exception:
+        pass
+    if not TEST:
         try:
-            if pr and pr.poll() is None:
-                os.killpg(os.getpgid(pr.pid), 15)
+            from pyngrok import ngrok
+            ngrok.kill()
         except Exception:
             pass
