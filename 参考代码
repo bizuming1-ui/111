@@ -1,5 +1,5 @@
 # =============================================================================
-#  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v7 · 搜索首页 · 可见浏览器自动化 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
+#  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v8 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
 #  (在 v6「连续播放优先 · 背压 + 帧序号 + 断线续传 · 无变速 · 完整性检测 · 留出评估」之上无损追加;原语音克隆页在 /voice,根路径 / 是搜索首页)
 #  Qwen3-TTS-12Hz-1.7B-Base 声音克隆  ×  双 T4  ×  LoRA 训练(留出验证)  ×  真实指标面板
 #
@@ -20,6 +20,9 @@
 #    "train"            LoRA 微调(双卡 DDP,留出验证集),训练期间网页就是实时训练监控页(不占显存)
 #    "train_then_serve" 先训练,再用微调后的模型启动服务
 #
+#  v8 变更: ①真实根因(搜索失败.png):Bing 在受控浏览器里对该查询返回「没有与此相关的结果」,旧逻辑只会暂停;现在零结果/验证页会【自动换引擎】(Bing→360 搜索→DuckDuckGo→Google),日志如实记录每次回退;
+#           ②服务器直连搜索改为多来源合并(不足 8 条时继续查下一个来源并去重);③所有第一方页面统一深灰设计系统;④浏览器画面 1280×800,工作台全视口,支持原生全屏;⑤语音:说出指令即由真实 Chromium 执行,画面里是真实鼠标/逐字符键入。
+#           ⑥视觉模型:默认不加载(未经实测不能占用 T4 显存);定位仍以 Playwright Locator/ARIA 语义为准。无 Key 搜索:服务器直连 Bing→DuckDuckGo→维基百科,失败再走可见 Chromium(含 360 搜索)。
 #  诚实声明: ①"零缓冲"改为可测试目标:起播后 underrun=0、rebuffer=0、无漏块/重复块;网络中断时不承诺连续。 ②声纹 cosine 是原始指标,
 #  没有独立标注数据校准前不显示百分比,更不存在"99% 人耳相似"。 ③歌声克隆:不支持/未验证。 ④Mock 只用于单元测试,不能证明真实质量。
 # =============================================================================
@@ -5283,14 +5286,27 @@ async def run_one(prov, pid, q, count, page, site, recency, sleep=asyncio.sleep)
 async def search_http_chain(q, count=8, page=0, site=None, recency=None, engine=None, attempts=None):
     """依次尝试免 Key 的 HTTP 提供方。成功返回 (results, provider_id, attempts);全部失败抛 SearchFailed(attempts)。"""
     attempts = attempts if attempts is not None else []
+    merged, used, seen = [], [], set()
     for pid in order_for(engine, page):
+        if merged and pid == "wikipedia":
+            break                                                   # 百科只作为「完全没有结果」时的兜底,不掺进已有的网页结果
+        if len(merged) >= count:
+            break                                                   # v8:召回不足(少于 count 条)时才继续查下一个互补来源并合并去重;有界
         if pid == "wikipedia" and (site or recency):
             attempts.append({"provider": pid, "ok": False, "kind": "empty", "message": "指定了站点/时间范围,维基百科兜底不适用", "ms": 0, "tries": 0})
             continue
         res, rec = await run_one(HTTP_PROVIDERS[pid], pid, q, count, page, site, recency)
         attempts.append(rec)
         if res:
-            return res, "http:" + pid, attempts
+            used.append(pid)
+            for r in res:
+                key = r["url"].split("#")[0].rstrip("/")
+                if key in seen or len(merged) >= count:
+                    continue
+                seen.add(key)
+                merged.append(dict(r, rank=len(merged) + 1 + page * 10))
+    if merged:
+        return merged, "http:" + "+".join(used), attempts
     raise SearchFailed(attempts)
 '''
 
@@ -5331,8 +5347,8 @@ IDLE_TTL_S = float(os.environ.get("VC_BROWSER_IDLE_TTL", "900"))
 FPS = float(os.environ.get("VC_BROWSER_FPS", "1.5"))                         # 空闲(没有任务在跑)
 FPS_ACTIVE = float(os.environ.get("VC_BROWSER_FPS_ACTIVE", "7"))             # 任务执行中:真实截图,最新帧覆盖旧帧(有界,不堆积)
 FPS_BUSY = float(os.environ.get("VC_BROWSER_FPS_BUSY", "2"))                 # TTS 正在播放时封顶(保证音频优先)
-JPEG_Q = int(os.environ.get("VC_BROWSER_JPEG_Q", "50"))
-VIEW = (1100, 680)
+JPEG_Q = int(os.environ.get("VC_BROWSER_JPEG_Q", "68"))
+VIEW = (1280, 800)                                                              # v8:更大的真实视口(工作台全视口展示时更清晰)
 CONFIRM_TIMEOUT_S = 180
 MAX_TEXT = 300
 
@@ -5357,14 +5373,21 @@ DDG_JS = """() => Array.from(document.querySelectorAll('.result')).map(r=>{const
   return a?{title:a.innerText.trim(), url:a.href, snippet:((s&&s.innerText)||'').trim().slice(0,400)}:null}).filter(Boolean)"""
 BING_JS = """() => Array.from(document.querySelectorAll('li.b_algo')).map(r=>{const a=r.querySelector('h2 a'); const s=r.querySelector('.b_caption p, .b_lineclamp2, .b_algoSlug');
   return a?{title:a.innerText.trim(), url:a.href, snippet:((s&&s.innerText)||'').trim().slice(0,400)}:null}).filter(Boolean)"""
+SO360_JS = """() => Array.from(document.querySelectorAll('li.res-list')).map(r=>{const a=r.querySelector('h3 a'); const s=r.querySelector('.res-desc, .res-rich, .res-comm-con, p');
+  return a?{title:a.innerText.trim(), url:a.getAttribute('data-mdurl')||a.getAttribute('data-url')||a.href, snippet:((s&&s.innerText)||'').trim().slice(0,400)}:null}).filter(Boolean)"""
 ENGINES = {
     "google": {"ready": "#search a h3, #rso a h3", "name": "Google(受控浏览器内的普通搜索)", "home": "https://www.google.com/", "box": 'textarea[name="q"], input[name="q"]', "js": GOOGLE_JS,
                "page": lambda q, p: "https://www.google.com/search?" + urlencode({"q": q, "start": p * 10}), "recency": {"d": "qdr:d", "w": "qdr:w", "m": "qdr:m", "y": "qdr:y"}, "rec_param": "tbs"},
     "duckduckgo": {"ready": ".result", "name": "DuckDuckGo(受控浏览器内的普通搜索)", "home": "https://html.duckduckgo.com/html/", "box": 'input[name="q"]', "js": DDG_JS,
                    "page": lambda q, p: "https://html.duckduckgo.com/html/?" + urlencode({"q": q, "s": p * 30}), "recency": {"d": "d", "w": "w", "m": "m", "y": "y"}, "rec_param": "df"},
     "bing": {"ready": "li.b_algo", "name": "Bing(受控浏览器内的普通搜索)", "home": "https://www.bing.com/", "box": 'textarea[name="q"], input[name="q"]', "js": BING_JS,
-             "page": lambda q, p: "https://www.bing.com/search?" + urlencode({"q": q, "first": p * 10 + 1}), "recency": {}, "rec_param": None},
+             "page": lambda q, p: "https://www.bing.com/search?" + urlencode({"q": q, "first": p * 10 + 1, "setlang": "zh-Hans", "mkt": "zh-CN"}), "recency": {}, "rec_param": None},
+    "so360": {"ready": "li.res-list", "name": "360 搜索(受控浏览器内的普通搜索)", "home": "https://www.so.com/", "box": 'input#keyword, input[name="q"]', "js": SO360_JS,
+              "page": lambda q, p: "https://www.so.com/s?" + urlencode({"q": q, "pn": p + 1}), "recency": {}, "rec_param": None},
 }
+FALLBACK_ORDER = ["bing", "so360", "duckduckgo", "google"]                                     # 零结果/验证页时自动换下一个(不绕过任何验证)
+NO_RESULT_JS = """() => { const t=((document.body&&document.body.innerText)||'').slice(0,1500);
+  return /没有与此相关的结果|没有找到与|找不到和您的查询|No results found|did not match any documents|抱歉,没有找到|未找到相关/i.test(t) || !!document.querySelector('.b_no, #b_results .b_no, .no-results, .nothing-found'); }"""
 
 
 def now_iso():
@@ -5697,6 +5720,10 @@ class NeedHuman(Exception):
     pass
 
 
+class SearchBlocked(ActionError):
+    """搜索引擎出现验证页:不绕过,由 _search 自动换下一个引擎;全部都被拦才交给用户。"""
+
+
 class Sub:
     def __init__(self):
         self.q = deque(maxlen=400)
@@ -5971,7 +5998,7 @@ class BSession:
             h = "?"
         return {"url": pg.url, "title": (await pg.title())[:100] if not pg.is_closed() else "", "sig": h}
 
-    async def _check_blockers(self):
+    async def _check_blockers(self, soft=False):
         """验证码/反机器人/登录墙 → 暂停交给用户,绝不尝试绕过"""
         try:
             r = await self.page.evaluate(BLOCKER_JS)
@@ -5980,6 +6007,8 @@ class BSession:
         host = urlsplit(r["url"]).hostname or ""
         if r["frame"] or BLOCKER_RE.search(r["text"]) or "consent.google" in host or "/sorry/" in r["url"]:
             self.add_log("blocked", "页面需要人工处理(验证码/同意页/反机器人检测):%s。本系统不会绕过,请点「人工接管」自己完成后再继续。" % host)
+            if soft:
+                raise SearchBlocked("%s 出现验证/反机器人页" % host)
             raise NeedHuman("页面出现验证/同意/反机器人检测(%s),需要你亲自处理" % host)
 
     async def _mouse_to(self, x, y, kind="move"):
@@ -6235,7 +6264,7 @@ class BSession:
         else:
             self.add_log("verify", "富文本区域无法读取内容,请在画面中核对", ok=None)
 
-    async def _search(self, a, direct=False):
+    async def _search_one(self, a, direct=False):
         eng = ENGINES[a.get("engine") if a.get("engine") in ENGINES else "bing"]
         ename = a.get("engine") if a.get("engine") in ENGINES else "bing"
         q = a["query"] + ((" site:" + a["site"]) if a.get("site") else "")
@@ -6260,11 +6289,18 @@ class BSession:
             await self.do({"action": "goto", "url": u})
         elif a.get("recency") and not eng["recency"]:
             self.add_log("blocked", "该搜索引擎不支持时间范围过滤,已忽略")
-        await self._check_blockers()
-        try:
-            await pg.wait_for_selector(eng["ready"], timeout=9000)
-        except Exception:  # noqa: BLE001
-            pass                                                                            # 超时就按现状解析:空结果会如实报错,不会编造
+        await self._check_blockers(soft=True)
+        t_wait = time.time()
+        while time.time() - t_wait < 9.0:                                                   # 结果出现 / 明确的「没有结果」页 → 立刻继续,不再干等 9 秒
+            try:
+                if await pg.locator(eng["ready"]).count():
+                    break
+                if await pg.evaluate(NO_RESULT_JS):
+                    self.add_log("blocked", "%s 页面明确显示「没有相关结果」(真实页面文字,不是解析失败)" % ename)
+                    break
+            except Exception:  # noqa: BLE001
+                pass
+            await asyncio.sleep(0.35)
         try:
             raw = await pg.evaluate(eng["js"])
         except Exception as e:  # noqa: BLE001
@@ -6283,12 +6319,36 @@ class BSession:
             res.append({"title": r["title"][:200], "url": u, "domain": (urlsplit(u).hostname or ""), "snippet": r["snippet"], "fetched_at": t, "rank": len(res) + 1 + pgn * 10,
                         "provider": "browser:" + ename})
         if not res:
-            raise ActionError("没有解析到搜索结果(可能被拦截或页面结构已变化)。可以换一个搜索引擎,或点「人工接管」查看页面")
+            raise ActionError("%s 没有解析到搜索结果(页面显示无结果/被拦截/结构变化)" % ename)
         self.last_results = (self.last_results if (direct and pgn) else []) + res
         self.last_query = {"query": a["query"], "engine": ename, "site": a.get("site"), "recency": a.get("recency")}
         self.search_page = pgn
         self.add_log("verify", "解析到 %d 条真实搜索结果(来自页面,抓取时间 %s)" % (len(res), t), ok=True, results=len(res))
         self.emit({"type": "results", "results": self.last_results, "query_len": len(q), "engine": ename})
+
+    async def _search(self, a, direct=False):
+        """搜索 + 自动回退:请求的引擎零结果/验证页 → 依次换 FALLBACK_ORDER 里的其它引擎(每次回退都写入动作日志,真实可见,不伪装成功)。
+        只有全部引擎都没有结果时才暂停交给用户。对真实查询不做任何改写。"""
+        first = a.get("engine") if a.get("engine") in ENGINES else "bing"
+        chain = [first] + [e for e in FALLBACK_ORDER if e != first and e in ENGINES]
+        fails = []
+        for i, ename in enumerate(chain):
+            if i:
+                self.add_log("action", "自动回退:改用 %s 搜索同一个关键词(上一个引擎:%s)" % (ENGINES[ename]["name"], fails[-1][1][:60]), action="search")
+            try:
+                await self._search_one(dict(a, engine=ename), direct=(direct or i > 0))
+                if fails:
+                    self.add_log("verify", "已从 %s 回退到 %s,并拿到真实结果" % (fails[0][0], ename), ok=True)
+                return
+            except ActionError as e:
+                if e.fatal:
+                    raise
+                fails.append((ename, str(e)))
+            if self.cancel_flag:
+                raise ActionError("任务已取消", fatal=True)
+        if all("验证" in f[1] or "反机器人" in f[1] for f in fails):
+            raise NeedHuman("所有搜索引擎都出现了验证页,需要你亲自处理(本系统不会绕过)")
+        raise ActionError("所有可见搜索引擎都没有返回结果:" + ";".join("%s:%s" % (n, m[:50]) for n, m in fails) + "。可以改写关键词,或点「人工接管」自己查看页面")
 
     # —— 任务 ——
     async def run(self, actions, title):
@@ -6529,7 +6589,7 @@ from libraries import StoreError
 
 LLM_PLANNER_SYS = ("你是浏览器指令翻译器。只把【用户的指令】翻译成 JSON 动作列表,不要执行、不要解释。只输出 JSON:{\"actions\":[...]}。\n"
                    "允许的动作(其余一律不允许):\n"
-                   "{\"action\":\"search\",\"query\":str,\"engine\":\"google|duckduckgo|bing\",\"site\":\"域名(可选)\",\"recency\":\"d|w|m|y(可选)\"}\n"
+                   "{\"action\":\"search\",\"query\":str,\"engine\":\"google|duckduckgo|bing|so360\",\"site\":\"域名(可选)\",\"recency\":\"d|w|m|y(可选)\"}\n"
                    "{\"action\":\"goto\",\"url\":str} {\"action\":\"open_result\",\"n\":int} {\"action\":\"search_more\"} {\"action\":\"back\"} {\"action\":\"forward\"} {\"action\":\"reload\"}\n"
                    "{\"action\":\"scroll\",\"direction\":\"up|down|top|bottom\",\"amount\":int} {\"action\":\"click\",\"by\":\"text|role|label|placeholder\",\"value\":str}\n"
                    "{\"action\":\"type\",\"text\":str,\"into\":{\"by\":\"label|placeholder\",\"value\":str}} {\"action\":\"key\",\"key\":\"Enter|Escape|Tab|PageDown|PageUp\"} {\"action\":\"read\"} {\"action\":\"snapshot\"}\n"
@@ -7772,6 +7832,28 @@ input.in{flex:1;font-size:15px;padding:13px 16px;border-radius:14px;border-color
 #qcBox,#vextra{display:flex;flex-direction:column;gap:6px} .qc{padding:10px 12px;border-radius:12px;border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.07);font-size:12.5px;line-height:1.6}
 .qc.bad{border-color:rgba(248,113,113,.45);background:rgba(248,113,113,.08)} .qc.ok{border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.06)} .qc button{margin:6px 6px 0 0}
 select.sel{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:3px 6px}
+
+/* ═════════ v8 · /voice 深灰化(与星河首页同一套 Token) ═════════ */
+:root{--bg:#141517;--bg2:#191a1d;--panel:rgba(29,30,34,.86);--panel2:rgba(20,21,23,.9);--line:#2e3036;--text:#ececef;--muted:#9b9ea8;--a1:#7fa3b6;--a2:#9cc4d6;--ok:#7fd1a6;--warn:#e6b96a;--bad:#f09186;--r:14px}
+body{background:radial-gradient(900px 480px at 50% -160px,rgba(156,196,214,.07),transparent 70%),var(--bg)!important;color:var(--text);font-family:"Inter",-apple-system,"PingFang SC","Noto Sans SC","Microsoft YaHei","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+header,.panel{backdrop-filter:blur(12px);box-shadow:none}
+.logo{background:var(--card,#24262b)!important;background:#24262b!important;border:1px solid #3b3e46;box-shadow:none!important}
+.btn-ghost{background:rgba(255,255,255,.04);border:1px solid #3b3e46}.btn-ghost:hover{background:rgba(255,255,255,.09)}
+.num{background:#2e3036;color:#cfd1d8}
+.btn{background:rgba(255,255,255,.045);transition:background .18s,transform .12s,border-color .18s}.btn:active:not(:disabled){transform:translateY(1px)}
+.btn.main{background:#9cc4d6!important;color:#0d1418!important;box-shadow:none!important}.btn.main:hover:not(:disabled){filter:none;background:#b3d4e3!important}
+.rec{background:radial-gradient(circle at 35% 30%,#f6a39a,#c4574b)!important;box-shadow:0 6px 22px rgba(196,87,75,.32)!important}
+.mini i,.bar i{background:linear-gradient(90deg,#7fa3b6,#9cc4d6)!important}.bar.err i{background:var(--bad)!important}.bar.done i{background:linear-gradient(90deg,#5fb88b,#9cc4d6)!important}
+.bar.run i{background-image:linear-gradient(90deg,#7fa3b6,#b3d4e3,#7fa3b6)!important}
+.ring::after{background:#191a1d!important}
+.card.none{background:#191a1d}.card div{color:#b9bcc6}
+textarea.ref,input.in,.wave{background:#141517;border-color:#2e3036}textarea.ref:focus,input.in:focus{border-color:#9cc4d6;box-shadow:0 0 0 3px rgba(156,196,214,.14)}
+.script{border-color:rgba(156,196,214,.3)}.script .swap{color:#9cc4d6}
+.dot.ok{box-shadow:0 0 6px var(--ok)}
+.scroll{scrollbar-color:#3b3e46 transparent}
+:focus-visible{outline:2px solid #9cc4d6;outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+
 </style>
 </head>
 <body>
@@ -8604,7 +8686,7 @@ header{backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 78%,tra
 .st.paused,.st.waiting_human,.st.waiting_confirm,.st.queued{color:var(--warn);border-color:var(--warn)}.st.paused::before,.st.waiting_human::before,.st.waiting_confirm::before,.st.queued::before{background:var(--warn)}
 @keyframes blink{50%{opacity:.25}}
 #tProg{height:3px;background:var(--line)}#tProg i{display:block;height:100%;width:0;background:linear-gradient(90deg,#4285f4,#34a853,#fbbc05);transition:width .35s ease}
-#tStage{position:relative;line-height:0;background:#0d0f14;aspect-ratio:1100/680;overflow:hidden}
+#tStage{position:relative;line-height:0;background:#0d0f14;aspect-ratio:1280/800;overflow:hidden}
 #tCanvas,#tTrail{position:absolute;inset:0;width:100%;height:100%;display:block}
 #tTrail{pointer-events:none}
 #tStage.take{cursor:crosshair;outline:3px solid #ff3d71;outline-offset:-3px}
@@ -8627,34 +8709,145 @@ header{backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 78%,tra
 .diag{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;border:1px dashed var(--bad);border-radius:10px;padding:8px 10px;color:var(--bad);margin:8px auto;max-width:760px;text-align:left}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media (max-width:640px){.hero h1{font-size:34px}#voice{grid-template-columns:1fr;justify-items:center;text-align:center}#tTitle{display:none}}
+
+/* ═════════ v8 · 星河设计系统:深灰 / 雾蓝 · 克制 · 真实状态 ═════════ */
+:root{color-scheme:dark;--bg:#141517;--bg2:#191a1d;--card:#1d1e22;--card2:#24262b;--line:#2e3036;--line2:#3b3e46;--fg:#ececef;--mut:#9b9ea8;--acc:#9cc4d6;--accfg:#0d1418;--ok:#7fd1a6;--warn:#e6b96a;--bad:#f09186;--sh:0 10px 40px rgba(0,0,0,.45);--r:14px;--ease:cubic-bezier(.2,.7,.2,1)}
+html{scroll-behavior:smooth}
+body{background:radial-gradient(900px 480px at 50% -160px,rgba(156,196,214,.07),transparent 70%),var(--bg);color:var(--fg);font:15px/1.65 "Inter",system-ui,-apple-system,"Segoe UI","PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+
+::selection{background:rgba(156,196,214,.3)}
+a{color:var(--acc);text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--acc);outline-offset:3px;border-radius:6px}
+header{padding:12px clamp(14px,3vw,32px);background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}
+.brand{gap:10px;color:var(--fg)}.brand .mark{width:26px;height:26px;color:var(--acc)}.brand i{font-style:normal;font-size:19px;font-weight:700;letter-spacing:.14em;background:none;-webkit-background-clip:initial;color:var(--fg)}.brand small{font-size:12.5px;color:var(--mut);letter-spacing:.08em;margin-left:-2px}
+nav{gap:4px}nav a,nav button{border:1px solid transparent;background:transparent;color:var(--mut);padding:6px 14px;border-radius:999px;font-size:13.5px;transition:color .2s,background .2s,border-color .2s}
+nav a:hover{color:var(--fg);background:var(--card)}nav a.primary{background:var(--card2);color:var(--fg);border-color:var(--line2);font-weight:500}nav [aria-current=page]{box-shadow:none;color:var(--fg);background:var(--card);border-color:var(--line2)}
+main{max-width:1120px;padding:clamp(12px,2.4vw,28px)}
+.view.on{animation:fadein .45s ease both}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@keyframes fadeup{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+h2{font-size:22px;font-weight:650;letter-spacing:.02em;margin:6px 0 14px}h2 .sub{font-size:13px;font-weight:400;color:var(--mut);margin-left:8px}h3{font-weight:600}
+/* 首页:极简 */
+.hero{padding:clamp(48px,13vh,130px) 0 22px;display:flex;flex-direction:column;align-items:center;gap:6px}
+.hero .logo{width:56px;height:56px;color:var(--acc);animation:orbit 28s linear infinite;opacity:.95}
+@keyframes orbit{to{transform:rotate(360deg)}}
+.hero h1{margin:6px 0 2px;font-size:clamp(40px,7vw,64px);font-weight:300;letter-spacing:.16em;line-height:1.1;text-shadow:none;padding-left:.16em}
+.hero h1 span{color:var(--fg);font-weight:600}.hero h1 em{font-style:normal;color:var(--mut);font-weight:300}
+.hero p{color:var(--mut);font-size:14.5px;margin:6px 0 24px;max-width:36em}
+.sbox{max-width:720px;padding:7px 8px 7px 20px;border-radius:999px;background:var(--card);border:1px solid var(--line);box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 8px 30px rgba(0,0,0,.28);transition:border-color .25s,box-shadow .25s,background .25s}
+.sbox:hover{border-color:var(--line2)}.sbox:focus-within{border-color:var(--acc);background:var(--card2);box-shadow:0 0 0 4px rgba(156,196,214,.12),0 12px 40px rgba(0,0,0,.4)}
+.sbox.hearing{border-color:var(--bad);box-shadow:0 0 0 4px rgba(240,145,134,.14),0 12px 40px rgba(0,0,0,.4)}
+.sbox .si{width:20px;height:20px;color:var(--mut);flex:none}.sbox input{font-size:17px;color:var(--fg)}.sbox input::placeholder{color:#6f727c}
+.ib{width:42px;height:42px;color:var(--mut);display:grid;place-items:center;transition:background .2s,color .2s,transform .2s}.ib svg{width:21px;height:21px}.ib:hover{background:var(--card2);color:var(--fg);transform:none}
+.ib.rec{background:var(--bad);color:#1b0f0d;animation:ring 1.3s infinite}
+@keyframes ring{70%{box-shadow:0 0 0 14px rgba(240,145,134,0)}100%{box-shadow:0 0 0 0 rgba(240,145,134,0)}}
+.btn{border:1px solid var(--line2);background:var(--card);color:var(--fg);border-radius:10px;padding:8px 15px;font-size:14px;transition:background .18s,border-color .18s,transform .12s,color .18s}
+.btn:hover:not([disabled]){background:var(--card2);border-color:#555963}.btn:active:not([disabled]){transform:translateY(1px) scale(.985)}
+.btn.pri{background:var(--acc);color:var(--accfg);border-color:var(--acc);font-weight:600;box-shadow:none}.btn.pri:hover:not([disabled]){background:#b3d4e3;border-color:#b3d4e3}
+.sbox .btn.pri{border-radius:999px;padding:9px 22px}
+.btn.danger{color:var(--bad);border-color:rgba(240,145,134,.35)}.btn.danger:hover:not([disabled]){background:rgba(240,145,134,.1)}
+.btn[disabled]{opacity:.45}
+#modeBadge{border:0;background:none;color:#7b7e88;font-size:12px;padding:0}
+.optwrap{max-width:720px;margin:14px auto 0}.optwrap summary{cursor:pointer;color:var(--mut);font-size:13px;list-style:none;text-align:center;padding:4px 0;transition:color .2s}.optwrap summary::-webkit-details-marker{display:none}.optwrap summary:hover{color:var(--fg)}
+.optwrap summary::after{content:"";display:inline-block;width:6px;height:6px;margin:0 0 2px 8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .25s}.optwrap[open] summary::after{transform:rotate(-135deg) translateY(-2px)}
+.opts{margin:8px auto;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg2);animation:fadeup .3s var(--ease) both;justify-content:flex-start}
+.opts select,.opts input[type=text]{background:var(--card);color:var(--fg);border:1px solid var(--line2);border-radius:8px;padding:4px 8px}
+/* 语音面板:首次使用才展开 */
+#voice{display:none;max-width:720px;border:1px solid var(--line);border-radius:18px;background:var(--bg2);padding:14px 18px;margin-top:14px}
+#voice.show{display:grid;animation:fadeup .35s var(--ease) both}
+#orbBtn{width:58px;height:58px;color:var(--fg);background:var(--card2);border:1px solid var(--line2);box-shadow:none;display:grid;place-items:center}
+#orbBtn::after{display:none}#orbBtn span{display:grid;place-items:center}#orbBtn svg{width:24px;height:24px}
+#orbBtn i{inset:-7px;border:1.5px solid var(--acc)}
+#orbBtn.on{background:var(--bad);color:#1b0f0d;border-color:var(--bad);animation:breathe 1.4s ease-in-out infinite}
+@keyframes breathe{50%{box-shadow:0 0 0 10px rgba(240,145,134,.14)}}
+#vState{font-weight:600;font-size:14px}#vHeard{font-size:18px;color:var(--fg);min-height:26px}
+.chip{background:var(--card);border:1px solid var(--line);color:var(--mut);padding:3px 12px;font-size:12.5px;cursor:pointer;transition:all .18s}.chip:hover{color:var(--fg);border-color:var(--line2);background:var(--card2)}
+#live{max-width:720px;font-size:14px;min-height:22px}
+.badge{border:1px solid var(--line2);background:transparent;color:var(--mut);font-size:11.5px;padding:1px 9px}.badge.ok{color:var(--ok);border-color:rgba(127,209,166,.45)}.badge.warn{color:var(--warn);border-color:rgba(230,185,106,.45)}.badge.bad{color:var(--bad);border-color:rgba(240,145,134,.45)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px}
+.diag{border-color:rgba(240,145,134,.5);background:rgba(240,145,134,.05);border-radius:12px}
+.warnbox{border-color:rgba(230,185,106,.4);background:rgba(230,185,106,.06);border-radius:10px}
+/* 搜索结果:清晰层级 */
+#results,#answer{max-width:760px;margin:0 auto}
+.res{padding:18px 0 16px;border-bottom:1px solid var(--line)}.res .dom{font-size:12.5px;color:var(--mut);display:flex;gap:8px;align-items:center;flex-wrap:wrap;word-break:break-all}
+.res h4{margin:4px 0 4px;font-size:19px;line-height:1.4;font-weight:500}.res h4 a{color:var(--acc);text-decoration:none}.res h4 a:hover{text-decoration:underline}.res h4 a:visited{color:#b7a8d6}
+.res p{color:#c3c5cc;font-size:14.5px;line-height:1.7;margin:3px 0 6px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.res .meta{font-size:12px;color:#7b7e88;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.res .meta .btn{padding:2px 10px;font-size:12px;border-radius:8px}
+.attempts{font-size:12px;color:var(--mut);padding:10px 0;border-bottom:1px solid var(--line)}
+.attempts b.ok{color:var(--ok)}.attempts b.no{color:var(--bad)}
+/* 日志 / 表格 / 对话框 */
+.log{background:var(--bg2);border:1px solid var(--line);border-radius:10px;scrollbar-width:thin;scrollbar-color:#3b3e46 transparent}.log div{border-bottom:1px solid rgba(255,255,255,.04)}
+table{font-size:13px}th,td{border-bottom:1px solid var(--line)}
+dialog{background:var(--card);color:var(--fg);border:1px solid var(--line2);border-radius:18px;box-shadow:var(--sh)}dialog::backdrop{background:rgba(8,9,10,.62);backdrop-filter:blur(3px)}
+textarea.in,input.in,.smp textarea{background:var(--bg2);border:1px solid var(--line2);border-radius:10px;color:var(--fg);transition:border-color .2s,box-shadow .2s}textarea.in:focus,input.in:focus{outline:0;border-color:var(--acc);box-shadow:0 0 0 3px rgba(156,196,214,.14)}
+.lib{background:var(--card);border:1px solid var(--line);border-radius:var(--r)}.lib.act{border-color:var(--acc);box-shadow:none;background:linear-gradient(180deg,rgba(156,196,214,.06),transparent 60%),var(--card)}
+.st{border-color:var(--line2)}
+/* 浏览器页:占满视口 */
+body.vb main{max-width:none;padding:10px clamp(10px,2vw,24px) 14px}
+body.vb #v-browser.on{display:flex;flex-direction:column;min-height:calc(100dvh - 64px)}
+#stageWrap{max-width:none;border:1px solid var(--line2);border-radius:14px;background:#0c0d0e;display:flex;justify-content:center;align-items:flex-start;box-shadow:var(--sh)}
+#stage{width:min(100%,calc((100dvh - 330px) * 1.6));min-width:min(100%,520px)}
+#shot{background:#fff;min-height:0;aspect-ratio:1280/800}
+#stageWrap:fullscreen{border-radius:0;border:0;align-items:center;background:#0c0d0e}#stageWrap:fullscreen #stage{width:min(100vw,calc(100dvh * 1.6))}
+#banner{background:rgba(29,30,34,.94);border-bottom:1px solid var(--line2);color:var(--fg);backdrop-filter:blur(8px);font-size:13px}#banner.warn{background:rgba(70,52,20,.95);color:#f3d89b}#banner.bad{background:rgba(70,30,26,.95);color:#f7b8b0}
+#cur{border-color:var(--acc);background:rgba(156,196,214,.28)}
+#stage.take,#tStage.take{outline:2px solid var(--acc)}
+/* 工作台(任务执行时):全视口 */
+#theater{max-width:1180px;border-radius:20px;background:var(--bg2);border:1px solid var(--line2);box-shadow:var(--sh)}
+#tBar{display:flex;gap:12px;align-items:center;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line)}
+#tBar .dots{display:flex;gap:6px}#tBar .dots b{width:9px;height:9px;border-radius:50%;background:#3b3e46;display:block}
+#tUrl{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:5px 14px;font:12.5px/1.4 ui-monospace,Menlo,Consolas,monospace;color:#c3c5cc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tTitle{max-width:22%;font-size:12.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tProg{background:var(--line);height:2px}#tProg i{background:var(--acc)}
+#tStage{background:#0c0d0e}
+#tCur svg path{fill:#fff}
+#tRip{border-color:var(--acc)}
+#tKeys .typed{background:rgba(20,21,23,.9);border:1px solid var(--line2);color:var(--fg)}
+.kcap{background:#e9eaee;color:#14151a;box-shadow:0 3px 0 #8a8d98}
+#tCaption{background:linear-gradient(180deg,rgba(12,13,14,.78),transparent);font-size:13px;padding:10px 16px}
+#tFoot{border-top:1px solid var(--line);background:var(--card);padding:10px 14px;gap:8px}
+#tSteps{padding:10px 14px 0}.step{background:transparent;border-color:var(--line2)}
+body.noscroll #theater.full,#theater.full{position:fixed;inset:0;z-index:90;margin:0;max-width:none;border-radius:0;border:0;display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-areas:"bar bar" "prog prog" "stage side" "foot foot";background:var(--bg);animation:fadeup .3s var(--ease) both}
+#theater.full #tBar{grid-area:bar}#theater.full #tProg{grid-area:prog}
+#theater.full #tStage{grid-area:stage;align-self:center;justify-self:center;width:min(100%,calc((100dvh - 128px) * 1.6));margin:0;border-radius:10px;box-shadow:0 20px 70px rgba(0,0,0,.55)}
+#theater.full #tSteps{display:none}
+#theater.full #tLog{grid-area:side;max-height:none;margin:12px 12px 12px 0;height:calc(100% - 24px);font-size:12px}
+#theater.full #tFoot{grid-area:foot}
+#theater:fullscreen{background:var(--bg)}
+@media (max-width:900px){#theater.full{grid-template-columns:minmax(0,1fr);grid-template-areas:"bar" "prog" "stage" "foot"}#theater.full #tLog{display:none}#theater.full #tStage{width:100%}#theater.full #tTitle{display:none}#stage{width:100%}}
+@media (max-width:640px){.hero{padding-top:56px}.hero h1{font-size:40px}header{padding:10px 12px}nav a{padding:5px 10px;font-size:13px}.brand small{display:none}#voice.show{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+body.noscroll{overflow:hidden}body.noscroll>header,body.noscroll>.skip{display:none}
+
 </style>
 </head>
 <body>
 <a class="skip" href="#main">跳到主要内容</a>
 <header>
-  <a class="brand" href="#/search" aria-label="星河搜索助手首页"><span aria-hidden="true">🌌</span><i>星河搜索助手</i></a>
+  <a class="brand" href="#/search" aria-label="星河搜索助手首页"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="5.2" fill="currentColor"/><ellipse cx="32" cy="32" rx="26" ry="10" fill="none" stroke="currentColor" stroke-width="2" transform="rotate(-28 32 32)" opacity=".9"/><ellipse cx="32" cy="32" rx="26" ry="10" fill="none" stroke="currentColor" stroke-width="2" transform="rotate(32 32 32)" opacity=".45"/><circle cx="52" cy="22" r="2.6" fill="currentColor"/><circle cx="14" cy="43" r="2" fill="currentColor" opacity=".7"/></svg><i>星河</i><small>搜索助手</small></a>
   <nav aria-label="主导航">
-    <a class="primary" id="navVoice" href="/voice">🎙️ 语音克隆</a>
-    <a id="navBrowser" href="#/browser">🌐 浏览器</a>
-    <a id="navLibs" href="#/libs">📚 语音库</a>
-    <a id="navStatus" href="#/status">📊 运行状态 / 设置</a>
+    <a class="primary" id="navVoice" href="/voice">语音克隆</a>
+    <a id="navBrowser" href="#/browser">浏览器</a>
+    <a id="navLibs" href="#/libs">语音库</a>
+    <a id="navStatus" href="#/status">状态与设置</a>
   </nav>
 </header>
 <main id="main" tabindex="-1">
 
 <!-- ═════════ 搜索 ═════════ -->
 <section class="view" id="v-search" aria-labelledby="h-search">
-  <div class="hero"><h1 id="h-search"><span style="color:#4285f4">星</span><span style="color:#ea4335">河</span><span style="color:#fbbc05">搜</span><span style="color:#34a853">索</span></h1>
-    <p>直接搜索,无需任何 Key · 对着麦克风说话,让浏览器替你操作(你能看到鼠标和键盘)· 克隆声音朗读</p></div>
+  <div class="hero"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="5.2" fill="currentColor"/><ellipse cx="32" cy="32" rx="26" ry="10" fill="none" stroke="currentColor" stroke-width="2" transform="rotate(-28 32 32)" opacity=".9"/><ellipse cx="32" cy="32" rx="26" ry="10" fill="none" stroke="currentColor" stroke-width="2" transform="rotate(32 32 32)" opacity=".45"/><circle cx="52" cy="22" r="2.6" fill="currentColor"/><circle cx="14" cy="43" r="2" fill="currentColor" opacity=".7"/></svg><h1 id="h-search"><span>星河</span><em>搜索</em></h1>
+    <p>直接搜索,无需任何 Key。点麦克风说出想查的内容,浏览器会在你眼前真实完成。</p></div>
   <form class="sbox" id="sform" role="search" aria-label="搜索或下达指令">
-    <span aria-hidden="true">🔎</span>
-    <input id="q" type="search" autocomplete="off" aria-label="搜索关键词或自然语言指令" placeholder="输入要搜索的内容,回车即搜;或点右边的麦克风直接说">
-    <button class="ib" type="button" id="mic" aria-label="语音输入(再点一次结束)" title="语音:搜索 / 浏览器操作">🎙</button>
+    <svg class="si" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <input id="q" type="search" autocomplete="off" aria-label="搜索关键词或自然语言指令" placeholder="搜索,或点麦克风直接说出指令">
+    <button class="ib" type="button" id="mic" aria-label="语音输入(再点一次结束)" title="语音:搜索 / 浏览器操作"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
     <button class="btn pri" type="submit" id="go">搜索</button>
   </form>
   <div class="center row" style="margin-top:8px"><span class="badge" id="modeBadge">当前模式:读取中…</span></div>
   <div id="voice" aria-live="polite">
-    <button type="button" id="orbBtn" aria-label="开始 / 停止语音控制浏览器"><i></i><span>🎙</span></button>
+    <button type="button" id="orbBtn" aria-label="开始 / 停止语音控制浏览器"><i></i><span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span></button>
     <div>
       <div id="vState"><span id="vStateTxt">语音控制浏览器 · 点圆球开始说话</span><span class="badge" id="vEngine"></span></div>
       <div id="vHeard"></div>
@@ -8663,16 +8856,16 @@ header{backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 78%,tra
       </div>
     </div>
   </div>
-  <div class="opts" role="group" aria-label="搜索选项">
+  <details class="optwrap"><summary>搜索选项</summary><div class="opts" role="group" aria-label="搜索选项">
     <label><input type="checkbox" id="visSearch"> 👁 文字搜索也用可见浏览器执行</label>
-    <label>引擎 <select id="eng" aria-label="搜索引擎"><option value="bing">Bing</option><option value="duckduckgo">DuckDuckGo</option><option value="google">Google(仅可见浏览器)</option></select></label>
+    <label>引擎 <select id="eng" aria-label="搜索引擎"><option value="bing">Bing</option><option value="duckduckgo">DuckDuckGo</option><option value="so360">360 搜索</option><option value="google">Google(仅可见浏览器)</option></select></label>
     <label>网站 <input type="text" id="site" size="14" placeholder="wikipedia.org" aria-label="限定网站"></label>
     <label>时间 <select id="rec" aria-label="时间范围"><option value="">不限</option><option value="d">一天内</option><option value="w">一周内</option><option value="m">一个月内</option><option value="y">一年内</option></select></label>
     <label>提供方 <select id="prov" aria-label="搜索提供方"><option value="auto">自动(免 Key)</option><option value="browser">仅可见浏览器</option><option value="brave">Brave API(可选)</option><option value="google_cse">Google CSE(遗留)</option></select></label>
     <label><input type="checkbox" id="wantAns" checked> 生成带来源的回答(需 DeepSeek,可选)</label>
     <label><input type="checkbox" id="wantSpeak"> 用当前语音库朗读 <span class="badge" id="spkLib">—</span></label>
     <label hidden><input type="radio" name="mode" value="search" checked></label>
-  </div>
+  </div></details>
   <div id="live" role="status" aria-live="polite"></div>
   <div id="diag" class="diag" hidden></div>
   <div id="asrBox" class="card" hidden aria-label="语音识别结果">
@@ -8685,11 +8878,11 @@ header{backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 78%,tra
   <div id="theater" hidden aria-label="浏览器实时画面(真实截图)">
     <div id="tBar"><div class="dots" aria-hidden="true"><b></b><b></b><b></b></div><div id="tUrl" title="当前真实 URL">about:blank</div><div id="tTitle"></div><span class="st" id="tSt">空闲</span></div>
     <div id="tProg"><i></i></div>
-    <div id="tStage"><canvas id="tCanvas" width="1100" height="680"></canvas><canvas id="tTrail" width="1100" height="680"></canvas><div id="tCaption">等待任务…</div><div id="tCur"><svg viewBox="0 0 24 24"><path d="M3 2l7.6 19 2.6-7.8L21 10.6z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg></div><div id="tRip"></div><div id="tKeys"></div></div>
+    <div id="tStage"><canvas id="tCanvas" width="1280" height="800"></canvas><canvas id="tTrail" width="1280" height="800"></canvas><div id="tCaption">等待任务…</div><div id="tCur"><svg viewBox="0 0 24 24"><path d="M3 2l7.6 19 2.6-7.8L21 10.6z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg></div><div id="tRip"></div><div id="tKeys"></div></div>
     <div id="tSteps"></div>
     <div id="tFoot">
       <button class="btn" id="tPause">⏸ 暂停</button><button class="btn" id="tResume">▶ 继续</button><button class="btn danger" id="tCancel">⏹ 取消</button><button class="btn" id="tTake" aria-pressed="false">✋ 人工接管</button><button class="btn" id="tRetry">↻ 重试</button><button class="btn" id="tHide">收起</button>
-      <span class="mut" id="tStat"></span>
+      <button class="btn" id="tFull" aria-pressed="false" title="切换原生全屏(Esc 退出)">全屏</button><span class="mut" id="tStat"></span>
     </div>
     <div class="log" id="tLog" aria-live="polite"></div>
   </div>
@@ -8701,13 +8894,13 @@ header{backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 78%,tra
 
 <!-- ═════════ 浏览器 ═════════ -->
 <section class="view" id="v-browser" aria-labelledby="h-browser">
-  <h2 id="h-browser">🌐 隔离浏览器(实时画面)</h2>
+  <h2 id="h-browser">隔离浏览器 <span class="sub">真实 Chromium 实时画面</span></h2>
   <p class="mut">这是服务器上的隔离 Chromium(CPU,独立 Cookie,关闭即清除登录状态)。画面是真实截图;红圈 = 真正执行的鼠标位置;输入的字会真的出现在网页里。验证码/登录/发送/提交/购买/删除等会暂停等你处理。</p>
   <div class="row" style="margin-bottom:8px">
     <input class="in" id="goUrl" style="flex:1;min-width:200px" placeholder="https://example.com" aria-label="网址">
     <button class="btn" id="goBtn">打开</button>
     <button class="btn" id="bPause">⏸ 暂停</button><button class="btn" id="bResume">▶ 继续</button><button class="btn danger" id="bCancel">⏹ 取消</button>
-    <button class="btn" id="bTake" aria-pressed="false">✋ 人工接管</button><button class="btn" id="bRead">📖 读取并总结</button><button class="btn danger" id="bClose">关闭会话</button>
+    <button class="btn" id="bTake" aria-pressed="false">✋ 人工接管</button><button class="btn" id="bRead">📖 读取并总结</button><button class="btn" id="bFull" title="原生全屏">全屏</button><button class="btn danger" id="bClose">关闭会话</button>
   </div>
   <div class="row" style="margin-bottom:8px"><input class="in" id="cmd" style="flex:1;min-width:200px" placeholder="自然语言:例如 向下滚动,然后点击 登录" aria-label="给浏览器的指令"><button class="btn pri" id="cmdGo">规划并执行</button></div>
   <div id="stageWrap"><div id="stage"><img id="shot" alt="远程浏览器实时画面" draggable="false"><div id="cur"></div><div id="typing"></div></div><div id="banner">未连接</div></div>
@@ -8718,7 +8911,7 @@ header{backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 78%,tra
 
 <!-- ═════════ 语音库 ═════════ -->
 <section class="view" id="v-libs" aria-labelledby="h-libs">
-  <h2 id="h-libs">📚 语音库</h2>
+  <h2 id="h-libs">语音库</h2>
   <div class="card"><div class="row"><input class="in" id="newName" style="flex:1;min-width:160px" placeholder="新语音库名称" aria-label="新语音库名称"><button class="btn pri" id="newLib">创建</button></div>
     <label class="mut"><input type="checkbox" id="newConsent"> 我确认这些声音属于本人,或已获得所有者的明确授权;输出为 AI 合成语音</label></div>
   <div id="usage" class="mut"></div>
@@ -8727,7 +8920,7 @@ header{backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 78%,tra
 
 <!-- ═════════ 状态 ═════════ -->
 <section class="view" id="v-status" aria-labelledby="h-status">
-  <h2 id="h-status">📊 运行状态 / 设置</h2>
+  <h2 id="h-status">运行状态与设置</h2>
   <div id="stbody" class="grid2"></div>
 </section>
 </main>
@@ -8762,6 +8955,7 @@ const VIEWS = ["search", "browser", "libs", "status"];
 function route() {
   let v = (location.hash.replace(/^#\/?/, "") || "search").split("?")[0]; if (!VIEWS.includes(v)) v = "search";
   VIEWS.forEach((x) => { $("v-" + x).classList.toggle("on", x === v); const n = $("nav" + x[0].toUpperCase() + x.slice(1)); if (n) { if (x === v) n.setAttribute("aria-current", "page"); else n.removeAttribute("aria-current"); } });
+  document.body.classList.toggle("vb", v === "browser"); document.body.classList.toggle("vs", v === "search");
   if (v === "browser" || v === "search") connectBrowser(); if (v === "libs") loadLibs(); if (v === "status") loadStatus();
   document.title = { search: "星河搜索助手", browser: "浏览器 · 星河搜索助手", libs: "语音库 · 星河搜索助手", status: "运行状态 · 星河搜索助手" }[v];
 }
@@ -8858,6 +9052,7 @@ function WavRec() {
 /* ───── 语音控制浏览器(服务端 ASR 优先,失败回退浏览器识别,再回退文字输入) ───── */
 let micRec = null, speechRec = null, vT0 = 0, vVoiced = false, vLastVoice = 0, vMax = null;
 function vSet(state, txt, heard, interim) {
+  $("voice").classList.add("show");
   $("vStateTxt").textContent = txt; if (heard != null) { $("vHeard").textContent = heard; $("vHeard").className = interim ? "interim" : ""; }
   $("orbBtn").classList.toggle("on", state === "listen"); $("mic").classList.toggle("rec", state === "listen"); $("sform").classList.toggle("hearing", state === "listen");
   if (state !== "listen") $("orbBtn").style.setProperty("--lv", 0);
@@ -8927,7 +9122,7 @@ $("asrNo").onclick = () => { $("asrBox").hidden = true; live(""); };
 $("asrOk").onclick = () => { const t = $("asrText").value.trim(); $("asrBox").hidden = true; if (t) handleVoiceText(t, null, "已核对的文字"); };
 
 /* ───── 浏览器视图 ───── */
-let BW = null, TAKE = false, VIEWSZ = { w: 1100, h: 680 }, lastUrl = null;
+let BW = null, TAKE = false, VIEWSZ = { w: 1280, h: 800 }, lastUrl = null;
 function bLog(e) { const d = document.createElement("div"); d.className = "k-" + e.kind; d.textContent = e.t.slice(11, 19) + " [" + e.kind + "] " + e.msg; const b = $("blog"); b.appendChild(d); b.scrollTop = b.scrollHeight; while (b.children.length > 300) b.removeChild(b.firstChild); }
 function bStatus(s) {
   const map = { idle: "空闲", running: "执行中", paused: "已暂停", waiting_confirm: "等待你确认", waiting_human: "需要你人工处理", done: "完成", error: "出错", cancelled: "已取消", queued: "排队中" };
@@ -8954,6 +9149,7 @@ $("goBtn").onclick = async () => { const r = await post("/api/agent/run", { acti
 $("cmdGo").onclick = async () => { const p = await post("/api/agent/plan", { text: $("cmd").value, engine: $("eng").value }); if (!p.actions || !p.actions.length) { $("banner").textContent = "⚠ " + (p.clarify || p.error || "无法理解"); return; }
   if (p.needs_confirm && !(await ask("指令含高影响词「" + p.risk_word + "」", "<p>将执行:<span class='mono'>" + esc(JSON.stringify(p.actions)) + "</span></p><p>真正产生外部影响的步骤仍会在执行前再确认一次。</p>"))) return;
   const r = await post("/api/agent/run", { actions: p.actions, title: $("cmd").value.slice(0, 40) }); if (!r.ok) $("banner").textContent = "⚠ " + (r.error || r._status); };
+$("bFull").onclick = () => { const w = $("stageWrap"); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else if (w.requestFullscreen) w.requestFullscreen().catch(() => live("此浏览器不支持原生全屏", true)); else live("此浏览器不支持原生全屏,已使用全视口布局", false); };
 $("bTake").onclick = async () => { TAKE = !TAKE; $("bTake").setAttribute("aria-pressed", TAKE); $("stage").classList.toggle("take", TAKE); if (TAKE) { await act("pause"); $("kbd").focus(); $("banner").textContent = "人工接管:点击画面操作,直接打字(你输入的内容不会被记录,也不会发给 AI)。完成后再点一次“人工接管”,然后点「继续」。"; } };
 $("stage").addEventListener("click", (e) => { if (!TAKE || !BW) return; const r = $("shot").getBoundingClientRect(); BW.send(JSON.stringify({ type: "human", kind: "click", x: (e.clientX - r.left) / r.width * VIEWSZ.w, y: (e.clientY - r.top) / r.height * VIEWSZ.h })); $("kbd").focus(); });
 $("stage").addEventListener("wheel", (e) => { if (!TAKE || !BW) return; e.preventDefault(); BW.send(JSON.stringify({ type: "human", kind: "scroll", dy: e.deltaY })); }, { passive: false });
@@ -8966,25 +9162,25 @@ $("bRead").onclick = async () => { const r = await post("/api/agent/run", { acti
 /* ───── 浏览器剧场(search 页内联):画面=真实截图;光标=真实 mouse.move 事件;键盘=真实按键事件 ───── */
 const TH = { ctx: null, trail: null, pts: [], raf: 0, shown: false, keyT: 0, lastKeys: [], ripT: 0, pendingFrame: null };
 function showTheater(clear) {
-  const t = $("theater"); if (t.hidden) { t.hidden = false; } TH.shown = true;
+  const t = $("theater"); if (t.hidden) { t.hidden = false; t.classList.add("full"); document.body.classList.add("noscroll"); } TH.shown = true;
   if (clear) { $("tLog").innerHTML = ""; $("tKeys").innerHTML = ""; $("tCaption").textContent = "任务已提交,等待浏览器…"; $("tProg").firstElementChild.style.width = "4%"; }
-  if (!TH.ctx) { TH.ctx = $("tCanvas").getContext("2d"); TH.trail = $("tTrail").getContext("2d"); TH.ctx.fillStyle = "#0d0f14"; TH.ctx.fillRect(0, 0, 1100, 680); }
-  if (clear) setTimeout(() => t.scrollIntoView({ behavior: "smooth", block: "nearest" }), 60);
+  if (!TH.ctx) { TH.ctx = $("tCanvas").getContext("2d"); TH.trail = $("tTrail").getContext("2d"); TH.ctx.fillStyle = "#0d0f14"; TH.ctx.fillRect(0, 0, 1280, 800); }
+  if (clear) { t.classList.add("full"); document.body.classList.add("noscroll"); }
 }
 function resetSteps() { $("tSteps").innerHTML = ""; }
 function paintFrame(blob) {
   if (typeof createImageBitmap === "function") {
-    createImageBitmap(blob).then((b) => { if (!TH.ctx) showTheater(); TH.ctx.drawImage(b, 0, 0, 1100, 680); b.close && b.close(); }).catch(() => {});
-  } else { const u = URL.createObjectURL(blob), im = new Image(); im.onload = () => { if (TH.ctx) TH.ctx.drawImage(im, 0, 0, 1100, 680); URL.revokeObjectURL(u); }; im.src = u; }
+    createImageBitmap(blob).then((b) => { if (!TH.ctx || $("theater").hidden) { b.close && b.close(); return; } TH.ctx.drawImage(b, 0, 0, 1280, 800); b.close && b.close(); }).catch(() => {});
+  } else { const u = URL.createObjectURL(blob), im = new Image(); im.onload = () => { if (TH.ctx) TH.ctx.drawImage(im, 0, 0, 1280, 800); URL.revokeObjectURL(u); }; im.src = u; }
 }
-function stagePx(m) { const r = $("tStage").getBoundingClientRect(); return [m.x / m.vw * r.width, m.y / m.vh * r.height, m.x / m.vw * 1100, m.y / m.vh * 680]; }
+function stagePx(m) { const r = $("tStage").getBoundingClientRect(); return [m.x / m.vw * r.width, m.y / m.vh * r.height, m.x / m.vw * 1280, m.y / m.vh * 800]; }
 function moveCursor(m) {
   const [px, py, cx, cy] = stagePx(m), c = $("tCur"); c.style.display = "block"; c.style.transform = "translate(" + px + "px," + py + "px)";
   TH.pts.push({ x: cx, y: cy, t: performance.now() }); if (TH.pts.length > 40) TH.pts.shift(); if (!TH.raf) TH.raf = requestAnimationFrame(drawTrail);
   if (m.kind === "click") { const r = $("tRip"); r.style.left = px + "px"; r.style.top = py + "px"; r.classList.remove("go"); void r.offsetWidth; r.classList.add("go"); }
 }
 function drawTrail() {
-  const g = TH.trail, now = performance.now(); g.clearRect(0, 0, 1100, 680); TH.pts = TH.pts.filter((p) => now - p.t < 520);
+  const g = TH.trail, now = performance.now(); g.clearRect(0, 0, 1280, 800); TH.pts = TH.pts.filter((p) => now - p.t < 520);
   for (let i = 1; i < TH.pts.length; i++) { const a = TH.pts[i - 1], b = TH.pts[i], k = 1 - (now - b.t) / 520; g.strokeStyle = "rgba(255,61,113," + (0.55 * k).toFixed(3) + ")"; g.lineWidth = 3 + 5 * k; g.lineCap = "round"; g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); }
   TH.raf = TH.pts.length ? requestAnimationFrame(drawTrail) : 0;
 }
@@ -9025,7 +9221,7 @@ function onBrowserMsg(ev) {
     paintFrame(ev.data); const u = URL.createObjectURL(ev.data); const img = $("shot"); const old = img.src; img.onload = () => { if (old && old.startsWith("blob:")) URL.revokeObjectURL(old); }; img.src = u; return;
   }
   const m = JSON.parse(ev.data);
-  if (m.type === "hello") { $("blog").innerHTML = ""; (m.log || []).forEach(bLog); bStatus(m); if (m.status && m.status !== "idle") { showTheater(); (m.log || []).slice(-30).forEach(tLogAdd); } theaterStatus(m); }
+  if (m.type === "hello") { $("blog").innerHTML = ""; (m.log || []).forEach(bLog); bStatus(m); if (m.status && !["idle", "done", "error", "cancelled"].includes(m.status)) { showTheater(); (m.log || []).slice(-30).forEach(tLogAdd); } theaterStatus(m); }
   else if (m.type === "log") { bLog(m.entry); tLogAdd(m.entry); }
   else if (m.type === "status") { bStatus(m); theaterStatus(m); if (m.status && m.status !== "idle" && m.status !== "done") showTheater(); }
   else if (m.type === "cursor") { moveCursor(m); const c = $("cur"); c.style.display = "block"; c.style.left = (m.x / m.vw * 100) + "%"; c.style.top = (m.y / m.vh * 100) + "%"; c.className = m.kind === "click" ? "click" : ""; void c.offsetWidth; }
@@ -9037,7 +9233,15 @@ function onBrowserMsg(ev) {
   else if (m.type === "meta") { if (m.url) { $("tUrl").textContent = m.url; if (m.url !== lastUrl) { lastUrl = m.url; $("goUrl").value = m.url; } } if (m.title) $("tTitle").textContent = m.title; }
 }
 $("tPause").onclick = () => act("pause"); $("tResume").onclick = () => act("resume"); $("tCancel").onclick = () => act("cancel");
-$("tHide").onclick = () => { $("theater").hidden = true; };
+function leaveFull() { $("theater").classList.remove("full"); document.body.classList.remove("noscroll"); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); $("tFull").setAttribute("aria-pressed", "false"); }
+$("tHide").onclick = () => { leaveFull(); $("theater").hidden = true; };
+$("tFull").onclick = () => {
+  const t = $("theater"), on = document.fullscreenElement !== t;
+  t.classList.add("full"); document.body.classList.add("noscroll");
+  if (on && t.requestFullscreen) { t.requestFullscreen().then(() => $("tFull").setAttribute("aria-pressed", "true")).catch(() => live("此浏览器不支持原生全屏,已使用全视口布局", false)); }
+  else if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+};
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !document.fullscreenElement && $("theater").classList.contains("full") && !TAKE) leaveFull(); });
 $("tRetry").onclick = () => { if (LAST_RUN) runActions(LAST_RUN.actions, LAST_RUN.title); else live("没有可重试的任务", true); };
 $("tTake").onclick = async () => { TAKE = !TAKE; $("tTake").setAttribute("aria-pressed", TAKE); $("tStage").classList.toggle("take", TAKE); if (TAKE) { await act("pause"); $("kbd").focus(); $("tCaption").textContent = "人工接管:点击画面操作,直接打字(你输入的内容不会被记录,也不会发给 AI)。完成后再点一次“人工接管”,然后点「继续」。"; } };
 $("tStage").addEventListener("click", (e) => { if (!TAKE || !BW) return; const r = $("tStage").getBoundingClientRect(); BW.send(JSON.stringify({ type: "human", kind: "click", x: (e.clientX - r.left) / r.width * VIEWSZ.w, y: (e.clientY - r.top) / r.height * VIEWSZ.h })); $("kbd").focus(); });
@@ -11860,13 +12064,13 @@ def test_server_integration_libraries_switch_restore_and_isolation():
         c, j, _ = _http(srv, "POST", "/api/portal/asr", tg.wav_bytes(tg.speechlike(3.0)))
         assert c == 200 and j["text"] and j["confidence"] is None
         c, j, _ = _http(srv, "POST", "/api/search", {"q": "x", "provider": "brave"})
-        assert c == 400 and "未配置" in j["error"] and "results" not in j
+        assert (c == 200 and j["ok"] or c == 502) and j["attempts"][0]["kind"] == "config" and "未配置" in j["attempts"][0]["message"]      # 可选 Key 未配置 → 如实记录并自动改用免 Key 搜索
         c, j, _ = _http(srv, "POST", "/api/agent/run", {"actions": [{"action": "eval", "code": "1"}]})
         assert c == 400
         c, j, _ = _http(srv, "POST", "/api/sync/preview", {})
         assert j["configured"] is False and all(f["path"].startswith("telemetry/") for f in j["files"])
         st = _http(srv, "GET", "/api/portal/status")[1]
-        assert st["mock"] is True and st["search"]["auto"] in ("browser",) and any(v["id"] == "t4x2_ddp" and v["status"] == "未验证" for v in st["verification"]) and st["storage"]["session_only"] is True
+        assert st["mock"] is True and st["search"]["auto"] in ("browser", "http") and any(v["id"] == "t4x2_ddp" and v["status"] == "未验证" for v in st["verification"]) and st["storage"]["session_only"] is True
         # 重启恢复:同一个 VC_WORK,新进程自动恢复选中的库并克隆
         srv.stop()
         srv = tg.Server(VC_WORK=work)
@@ -12205,6 +12409,35 @@ if __name__ == "__main__":
 '''
 
 FILES['tests/test_v71.py'] = r'''# -*- coding: utf-8 -*-
+# ── v8 回归:搜索失败.png(Bing 对「江门职业技术学院」零结果)→ 引擎自动回退 + 多来源合并 ──
+def test_unit_v8_engine_fallback_order_and_merge():
+    import asyncio
+    import browser_agent as ba
+    import search_providers as sp
+    assert "so360" in ba.ENGINES and ba.FALLBACK_ORDER[0] == "bing" and "so360" in ba.FALLBACK_ORDER
+    assert ba.VIEW == (1280, 800)
+
+    class Fake(sp.Provider):
+        def __init__(self, urls):
+            self.urls = urls
+
+        async def search(self, q, count=8, page=0, site=None, recency=None):
+            return [{"title": "t", "url": u, "snippet": "s", "domain": "x", "fetched_at": "", "rank": 1, "provider": "fake"} for u in self.urls]
+
+    old = dict(sp.HTTP_PROVIDERS)
+    try:
+        sp.HTTP_PROVIDERS["bing"] = Fake(["https://a.example/1", "https://a.example/2", "https://dup.example/"])
+        sp.HTTP_PROVIDERS["duckduckgo"] = Fake(["https://dup.example", "https://b.example/1"])
+        sp.HTTP_PROVIDERS["wikipedia"] = Fake(["https://wiki.example/x"])
+        res, pid, att = asyncio.run(sp.search_http_chain("q", 8))
+        urls = [r["url"].rstrip("/") for r in res]
+        assert pid == "http:bing+duckduckgo", pid
+        assert len(urls) == len(set(urls)) == 4 and "https://wiki.example/x" not in urls, urls
+        assert [r["rank"] for r in res] == [1, 2, 3, 4]
+    finally:
+        sp.HTTP_PROVIDERS.update(old)
+
+
 """
 test_v71.py —— v7.1 修复的回归测试:声纹评分器 / 免 Key 搜索 / 语音指令规划 / 前端错误可读性
 
@@ -12407,7 +12640,7 @@ def test_unit_search_chain_fallback_errors_and_no_retry_policy():
     try:
         FakeSite.modes.update(bing="ok", ddg="ok", wiki="ok")
         res, pid, att = asyncio.run(sp.search_http_chain("测试", 8))
-        assert pid == "http:bing" and len(res) == 2 and att[0]["ok"]
+        assert pid == "http:bing+duckduckgo" and len(res) == 3 and att[0]["ok"] and att[1]["ok"]      # v8:Bing 只有 2 条(<8)→ 合并 DDG 的 1 条
         # Bing 持续 5xx:可重试 → 重试 1 次后失败 → 自动切到 DuckDuckGo;失败原因与实际 provider 都可见
         FakeSite.modes.update(bing="503")
         FakeSite.hits.update(bing=0, ddg=0, wiki=0)
@@ -12577,7 +12810,7 @@ def test_server_search_without_keys_and_json_errors():
     srv = tg.Server(**env)
     try:
         code, j, hd = _http(srv, "POST", "/api/search", {"q": "日期", "answer": False})                        # 没有任何 Key,直接搜索
-        assert code == 200 and j["ok"] and j["mode"]["provider"] == "http:bing" and len(j["results"]) == 2 and j["request_id"] and hd.get("X-Request-Id") == j["request_id"], (code, j)
+        assert code == 200 and j["ok"] and j["mode"]["provider"] == "http:bing+duckduckgo" and len(j["results"]) == 3 and j["request_id"] and hd.get("X-Request-Id") == j["request_id"], (code, j)
         assert j["results"][0]["domain"] == "example.org" and j["attempts"][0]["ok"]
         code, st, _ = _http(srv, "GET", "/api/portal/status")
         assert st["search"]["auto"] == "http" and {x["id"]: x["available"] for x in st["search"]["providers"]}["bing"]
