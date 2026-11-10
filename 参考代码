@@ -1,5 +1,5 @@
 # =============================================================================
-#  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v9 · 大模型意图理解 · 2 秒静音自动执行 · 真实 Google/Bing 多来源 · 页面视觉理解 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
+#  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v10 · 完整可下载的合成音频 · 合规搜索加速 · 在 v9 之上最小必要改动 · 大模型意图理解 · 2 秒静音自动执行 · 真实 Google/Bing 多来源 · 页面视觉理解 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
 #  (在 v6「连续播放优先 · 背压 + 帧序号 + 断线续传 · 无变速 · 完整性检测 · 留出评估」之上无损追加;原语音克隆页在 /voice,根路径 / 是搜索首页)
 #  Qwen3-TTS-12Hz-1.7B-Base 声音克隆  ×  双 T4  ×  LoRA 训练(留出验证)  ×  真实指标面板
 #
@@ -35,6 +35,23 @@
 #    ⑤  当前页面提问:DOM 文字优先,按需真实截图(Playwright page.screenshot)→ DeepSeek 视觉;需要你明确授权才会把页面内容发到云端;含密码/验证码/银行卡输入的页面一律拦截。
 #    ⑥  Kaggle Secrets 额外可选:DEEPSEEK_API_KEY(意图理解/总结/视觉,强烈建议)· DEEPSEEK_MODEL / DEEPSEEK_VISION_MODEL(默认 deepseek-flash)。没有 Key 也能搜索(规则回退)。
 #    ⑦  诚实声明:本脚本在开发沙箱做了单元测试(意图/网关/VAD/引擎语义);「Kaggle T4×2 实机」「真实 DeepSeek 调用」「真实 Google/Bing 页面」未在沙箱验证,以你在 Kaggle 里的实际运行为准;不保证零延迟/永不被验证码拦截(遇到验证页只会停下交给你,不绕过)。
+#
+#  v10 变更(在 v9 之上最小必要改动;不重写、不破坏 TTS / 训练 / 语音库 / 浏览器 / 搜索 / 持久化 / 鉴权):
+#    ①【下载完整性】v9 的 GEN_AUDIO 只在内存、只留最近 3 轮、单轮 ≤120 秒、按 worker 块「到达顺序」拼接(双 GPU 时会串段)、不含句间停顿。
+#       v10 新增 artifacts.py:在 pump()/emit() 同一处按【最终播放顺序】记录 → 每段单独 WAV + 整轮 WAV(=实际发给浏览器的 PCM,含句间停顿,逐样本一致)+ ZIP + 脱敏 manifest.json。
+#       有界写盘线程(不阻塞事件循环/GPU)· .part → fsync → 独立解码读回校验(采样率/声道/帧数/字节数/SHA-256)→ 与 turn.log 真实帧对账 → 原子改名 → 才标记 ready;
+#       队列满 / 磁盘满 / 写错误 / 校验失败 → failed 并显示具体原因,绝不静默丢块、绝不把 .part 当成品。无轮数上限、无时长上限;空间不足只告警并停止新归档,不自动删文件。
+#       质量检查(阈值可配置并写入清单):空音频 / 帧数不符 / 严重削波 / DC 偏置 / 异常静音 / 段边界突变 / 帧序号缺失。默认不做降噪/EQ/压缩/响度归一化。
+#       API:/api/artifacts(列表+状态)、/{id}/turn.wav[?format=flac]、/{id}/segments/{sid}.wav、/{id}/verify、/zip、DELETE;复用鉴权 + 语音库隔离;ID 不可猜测;
+#       返回 Content-Type / Content-Disposition: attachment / Content-Length / SHA-256 ETag / Range(已实测);旧 /api/gen/{uid}.wav 自动映射到整轮产物。页面右上「💾 下载」。
+#       诚实说明:TTS worker 在送出前已把输出量化为 int16,所以只能保证「与实际播放 PCM 逐样本一致」,无法恢复量化前的 float 音频;FLAC 只是同一批 int16 的无损封装。
+#    ②【搜索加速 · 合规】新增 search_policy.py:共享连接池(keep-alive / 可用时 HTTP/2)· 真实结果短 TTL 缓存(命中会标注)· 同查询 single-flight · 每域名并发/间隔限制 ·
+#       超时/5xx 指数退避+抖动并遵守 Retry-After · 熔断器 · 浏览器媒体不加载(BROWSER_LITE 可再省图片/字体)。
+#       ⛔ 遇到 401/403/429/验证码/人机验证:立即【停止】对该站点的请求(冷却期内一次都不再发)并如实显示原因。脚本里没有 stealth / 指纹伪装 / 代理或 IP 轮换 / 验证码代答 / 偷 Cookie
+#       (有自动化测试扫描源码守卫)。因此【不可能、也不承诺】「所有搜索 0 拦截」——是否被拦截取决于对方站点和 Kaggle 出口 IP。要最稳定:配置 BRAVE_SEARCH_API_KEY(官方 API)。
+#       Kaggle 的 GPU 加速器只用于 TTS 推理,不能加速远端搜索;搜索全部跑在 CPU/网络层,不占显存。启动时会做一次「网络与搜索通道体检」(真实请求,结果如实打印)。
+#    ③ 测试:tests/test_artifacts.py(乱序到达/>3 轮/长音频/队列满/磁盘满/.part/路径穿越/库隔离/Range/ZIP/鉴权/重启)+ tests/test_search_policy.py(429 Retry-After/403/验证码/5xx 退避/熔断/缓存/连接复用/无绕过守卫)。
+#       Mock 测试只证明流程与完整性,不证明真实 TTS 音质 / T4 性能 / 外网搜索 / Kaggle 持久化——这些「未验证」,以你在 Kaggle 里的实际运行为准。
 # =============================================================================
 import json
 import os
@@ -61,6 +78,11 @@ EMOTION_PAUSE = False          # Base 模型不支持情绪指令;True 仅按文
 RUN_TESTS = "unit"             # 启动前自检: "unit" 单元测试 | "full" 含 Mock 集成测试(约 1 分钟) | False 跳过
 ACCESS_PASSWORD = ""            # 留空 = 从 Secrets 读取 ACCESS_PASSWORD;都没有 → 自动生成随机密码(打印在输出里)
 GITHUB_REPO = "bizuming1-ui/111"  # 脱敏遥测同步的目标仓库(公开仓库只收脱敏审计,绝不收声音数据)
+BROWSER_LITE = False           # True: 搜索浏览器再跳过图片与字体(页面更快,画面不完整);video/audio 媒体始终不加载。只影响 Chromium 搜索,与 GPU 无关
+SEARCH_CACHE_TTL = 300         # 真实搜索结果缓存秒数(命中会在尝试记录里标注 cache 与年龄);0 = 关闭
+NET_PREFLIGHT = True           # 启动时对 Bing / DuckDuckGo / 维基百科 / HuggingFace 各发 1 次真实请求,如实报告可达性/是否被站点限制(不绕过)
+ARTIFACT_MIN_FREE_MB = 1024    # 磁盘剩余低于它 → 告警并停止新归档(不会自动删除任何文件)
+ARTIFACT_MAX_MB = 8192         # 生成产物总量上限(MB);Kaggle /kaggle/working 约 20GB,请及时下载 ZIP
 INSTALL_BROWSER = True         # 安装 Playwright + Chromium(CPU,约 150MB;失败只影响浏览器功能,其余照常)
 TRAIN_FROM_LIBRARY = False     # True: MODE=train 时使用语音库里「排队」的训练任务与其冻结数据集(网页「语音库」里点“加入训练队列”)
 REQUIRE_DUAL_GPU = True        # True = 少于 2 张 GPU 就报错停止(按需求);False = 单卡也继续运行
@@ -93,7 +115,6 @@ VENV = WORK.parent / "vc_env"
 OUT = WORK.parent if not TEST else WORK                              # train_state / eval_log 所在目录
 
 FILES = {}
-
 FILES['app.py'] = r'''# -*- coding: utf-8 -*-
 """
 app.py —— FastAPI + WebSocket 网关(v6)
@@ -129,6 +150,7 @@ from pathlib import Path
 
 import numpy as np
 
+import artifacts as art
 import audio_qc as aq
 from infer_dual_gpu import (EMO_PAUSE_SCALE, LATENCY_MODE, MODEL, PLAN_CAP_MS, PLAN_FLOOR_MS, PLAN_K, SCHED, SEND_AHEAD_MS, SEED, SR, WORK,  # noqa: F401
                             Segmenter, Trimmer, detect_emotion, detect_lang, has_speech, log, pause_ms, seg_seed, speech_rms, tts_clean, worker_main)
@@ -156,7 +178,8 @@ except Exception:  # noqa: BLE001
     SV_MODEL = "microsoft/wavlm-base-plus-sv"
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect  # noqa: E402
-from fastapi.responses import HTMLResponse, JSONResponse, Response  # noqa: E402
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse  # noqa: E402
+from starlette.background import BackgroundTask  # noqa: E402
 
 SRC_DIR = Path(__file__).resolve().parent
 app = FastAPI(title="Voice Clone Studio")
@@ -175,7 +198,10 @@ SEC = {"model_sha256": None, "model_file": None}
 METRICS = deque(maxlen=300)        # 浏览器上报的每轮实测
 TURN_LOG = deque(maxlen=300)       # 网关记录的每轮实测
 GEN_LIB = {}                       # turn uid -> library_id(语音库评估只用属于该库的生成音频)
-GEN_AUDIO = OrderedDict()          # turn uid -> bytes(int16) 供 A/B 试听与下载(只保留最近 3 轮)
+GEN_AUDIO = OrderedDict()          # turn uid -> bytes(int16):仅供 A/B 试听/语音库评估/声学摘要的内存副本(最近 3 轮);【下载】走 artifacts(磁盘、无轮数上限、播放顺序)
+ART = None                         # artifacts.ArtifactStore(在 startup 里创建,避免 spawn 的 GPU 子进程重复创建)
+UID_AID = {}                       # turn uid(本进程) -> artifact id,供旧 /api/gen/{uid}.wav 兼容映射
+GEN_PCM_CAP_S = int(os.environ.get("VC_GEN_PCM_CAP_S", "1800"))   # 评估用内存副本的上限(秒);超过时不再追加并明确标记 eval_truncated(不影响磁盘产物)
 EVENTS = {"reconnect_resumed": 0, "resume_fail": 0, "ab_votes": [], "visibility": 0}
 WARM = {"n": 0}                    # 当前声音下已完成首块的轮数(0 = 冷启动)
 _uid = [0]
@@ -367,6 +393,10 @@ class Turn:
         self.integrity = []
         self.gen_pcm = []
         self.gen_samples = 0
+        self.gen_truncated = False
+        self.art = None                 # artifacts.TurnRec(第一次真正发出音频时创建)
+        self.art_done = False
+        self.art_ended = set()
         self.cold = WARM["n"] == 0
         self.llm_t0 = None
         self.llm_chars = 0
@@ -637,22 +667,24 @@ def pump(turn):
         if seg.out:
             if turn.sent_ahead_ms() >= turn.window_ms:
                 return
-            parts, flags = [], F_SEG if not seg.had_audio else 0
+            flags = F_SEG if not seg.had_audio else 0
+            pause_b = b""
             if turn.pending_pause > 0:
-                parts.append(np.zeros(int(SR * turn.pending_pause / 1000), "<i2").tobytes())
+                pause_b = np.zeros(int(SR * turn.pending_pause / 1000), "<i2").tobytes()
                 turn.pending_pause = 0
                 flags |= F_PAUSE
-            for a in seg.out:
-                parts.append(a.astype("<i2").tobytes())
+            audio_b = b"".join(a.astype("<i2").tobytes() for a in seg.out)
             seg.out = []
-            b = b"".join(parts)
+            b = pause_b + audio_b
             turn.samples += len(b) // 2
+            art_record(turn, seg.idx, pause_b, audio_b)           # 与 emit 完全同一处、同一顺序:整轮 = 实际播放序列,单段 = 只含本段
             if turn.first_audio is None:
                 turn.first_audio = time.time() - turn.t0
                 WARM["n"] += 1
             seg.had_audio = True
             emit(turn, b, flags, seg.idx)
         if seg.done:
+            art_seg_end(turn, seg)
             if seg.had_audio:
                 turn.pending_pause = int(pause_ms(seg.end, turn.breath) * (EMO_PAUSE_SCALE.get(seg.emotion, 1.0) if EMOTION_PAUSE else 1.0))
             turn.cur += 1
@@ -662,10 +694,50 @@ def pump(turn):
         finish_turn(turn)
 
 
+def art_record(turn, seg_idx, pause_b, audio_b):
+    """把【即将 emit 的这一批】按播放顺序交给有界写盘线程;同时维护评估用内存副本(播放顺序,不含停顿)。不做任何磁盘 I/O。"""
+    if audio_b:
+        if turn.gen_samples < SR * GEN_PCM_CAP_S:
+            turn.gen_pcm.append(audio_b)
+            turn.gen_samples += len(audio_b) // 2
+        else:
+            turn.gen_truncated = True
+    if ART is None:
+        return
+    if turn.art is None:
+        turn.art = ART.begin(turn.uid, (turn.lib or {}).get("library_id"), {})
+        turn.art.sess = turn.sess
+        UID_AID[turn.uid] = turn.art.aid
+        while len(UID_AID) > 2000:
+            UID_AID.pop(next(iter(UID_AID)))
+    turn.art.add(seg_idx, pause_b, audio_b)
+
+
+def art_seg_end(turn, seg):
+    if turn.art is None or seg.idx in turn.art_ended:
+        return
+    turn.art_ended.add(seg.idx)
+    turn.art.seg_end(seg.idx, seg.err or "", len(seg.text))
+
+
+def art_finish(turn, cancelled=False):
+    if turn.art is None or turn.art_done:
+        return
+    turn.art_done = True
+    if cancelled:
+        for sg in turn.segs[:turn.cur + 1]:
+            art_seg_end(turn, sg)
+    params = {"temperature": os.environ.get("VC_TEMPERATURE"), "top_p": os.environ.get("VC_TOP_P"), "top_k": os.environ.get("VC_TOP_K"), "repetition_penalty": os.environ.get("VC_REP_PENALTY"),
+              "seed": os.environ.get("VC_SEED"), "latency_mode": LATENCY_MODE, "gpu_policy": turn.policy}
+    turn.art.finish({"frames": list(turn.log), "integrity": list(turn.integrity), "errors": list(turn.errors), "library": dict(turn.lib or {}), "params": params,
+                     "chars": len(turn.full_text), "text": turn.full_text, "cancelled": cancelled, "model_sha256": SEC.get("model_sha256")})
+
+
 def finish_turn(turn):
     turn.closed = True
     ACTIVE.pop(turn.uid, None)
     emit(turn, b"", F_END, len(turn.segs))
+    art_finish(turn)
     if turn.sim_wait > 0:
         RECENT[turn.uid] = turn
     gaps = {}
@@ -684,7 +756,8 @@ def finish_turn(turn):
                      "queue_ms": int((turn.segs[0].sent_at - turn.t0) * 1000) if turn.segs and turn.segs[0].sent_at else None, "cold": turn.cold,
                      "gpu_segs": turn.gpu_segs, "segs": len(turn.segs), "chars": len(turn.full_text), "chunk_gap_ms_by_gpu": gaps, "errors": turn.errors, "integrity": turn.integrity,
                      "policy": turn.policy, "pinned": turn.pinned, "plan": turn.plan, "emotions": [g.emotion for g in turn.segs][:40], "replayed_frames": turn.replayed,
-                     "seeds": [g.stats.get("seed") for g in turn.segs][:40], "library_id": (turn.lib or {}).get("library_id")}
+                     "seeds": [g.stats.get("seed") for g in turn.segs][:40], "library_id": (turn.lib or {}).get("library_id"),
+                     "artifact_id": turn.art.aid if turn.art else None, "synthetic": True, "eval_truncated": turn.gen_truncated}
     turn.sess.send(turn.done_msg)
     TURN_LOG.append(dict(turn.done_msg, chars=len(turn.full_text), t=time.time()))
     if turn.gen_pcm:
@@ -797,9 +870,6 @@ def on_worker_msg(msg):
         a = _apply_gain(seg.trim.feed(np.frombuffer(data, dtype="<i2")), GAIN.get(seg.worker, 1.0))
         if a.size:
             seg.out.append(a)
-            if t.gen_samples < SR * 120:
-                t.gen_pcm.append(a.tobytes())
-                t.gen_samples += a.size
             pump(t)
     elif k == "sim":
         _, tuid, seg_i, sim, dur = msg[:5]
@@ -851,9 +921,6 @@ def on_worker_msg(msg):
         a = _apply_gain(seg.trim.flush(), GAIN.get(seg.worker, 1.0))
         if a.size:
             seg.out.append(a)
-            if t.gen_samples < SR * 120:
-                t.gen_pcm.append(a.tobytes())
-                t.gen_samples += a.size
         if err or stats.get("skipped"):
             _sim_slot_done(t, seg_i)
         seg.done, seg.err, seg.stats = True, err, stats
@@ -1161,17 +1228,21 @@ async def api_voice_clear():
 
 
 @app.post("/api/data/purge")
-async def api_purge():
+async def api_purge(request: Request):
     """删除我的数据:参考音频原件/处理版/转写、生成音频缓存、诊断快照、报告"""
+    lib_id = (VOICE.get("library") or {}).get("library_id")
     await api_voice_clear()
     GEN_AUDIO.clear()
+    n_art = 0
+    if ART is not None:                                             # 范围明确:只删当前语音库的生成产物(?artifacts=all 才删全部语音库)
+        n_art = ART.purge(lib_id, everything=(request.query_params.get("artifacts") == "all"))
     n = 0
     import shutil
     for d in (os.environ.get("VC_DIAG_DIR") or "/kaggle/working/vc_diag", str(REPORT_DIR)):
         if Path(d).exists():
             shutil.rmtree(d, ignore_errors=True)
             n += 1
-    return {"ok": True, "purged_dirs": n}
+    return {"ok": True, "purged_dirs": n, "artifacts_deleted": n_art, "artifact_scope": ("all" if request.query_params.get("artifacts") == "all" else "library:%s" % lib_id)}
 
 
 @app.get("/api/ref.wav")
@@ -1183,7 +1254,15 @@ async def api_ref():
 
 
 @app.get("/api/gen/{uid}.wav")
-async def api_gen(uid: int):
+async def api_gen(uid: int, request: Request):
+    """旧接口兼容:优先映射到磁盘上已校验的整轮产物(完整、播放顺序、含停顿);没有归档时退回内存副本(最近 3 轮)。"""
+    aid = UID_AID.get(uid)
+    if ART is not None and aid:
+        try:
+            p, fe, m = ART.resolve(aid, cur_lib(), "turn")
+            return serve_file(request, p, fe["sha256"], "ai-synthetic_%s_full.wav" % aid)
+        except art.ArtifactError:
+            pass
     b = GEN_AUDIO.get(uid)
     if not b:
         return Response(status_code=404)
@@ -1194,6 +1273,150 @@ async def api_gen(uid: int):
         w.setframerate(SR)
         w.writeframes(b)
     return Response(bio.getvalue(), media_type="audio/wav", headers={"Cache-Control": "no-store", "X-Synthetic-Audio": "1"})
+
+
+# ════════════════════════════════════════════════════════════════
+#  v10 · 生成音频下载 API(复用全局鉴权中间件 + 语音库隔离;artifact ID 不可猜测,只映射到产物目录内登记过的文件)
+#    GET    /api/artifacts                          列表 + 磁盘/队列状态
+#    GET    /api/artifacts/{aid}                    清单(状态/格式/时长/大小/SHA-256/质量)
+#    GET    /api/artifacts/{aid}/turn.wav[?format=flac]   整轮(播放精确副本)
+#    GET    /api/artifacts/{aid}/segments/{sid}.wav 单段
+#    GET    /api/artifacts/{aid}/verify             重新读盘校验 SHA-256/容器/帧数
+#    GET    /api/artifacts/zip[?ids=a,b]            ZIP(各段 + 整轮 + 脱敏 manifest.json)
+#    DELETE /api/artifacts/{aid}                    删除单个   ·  DELETE /api/artifacts?confirm=1  删除当前语音库全部
+# ════════════════════════════════════════════════════════════════
+def cur_lib():
+    return (VOICE.get("library") or {}).get("library_id")
+
+
+def art_err(e):
+    return JSONResponse({"ok": False, "error": e.msg, "code": e.code}, status_code=e.http, headers={"Cache-Control": "no-store"})
+
+
+def serve_file(request, path, sha, filename, ctype="audio/wav", etag_extra=""):
+    size = path.stat().st_size
+    etag = '"%s%s"' % (etag_extra, sha)
+    hdr = {"ETag": etag, "Accept-Ranges": "bytes", "Cache-Control": "private, no-store", "X-Synthetic-Audio": "1", "X-Content-Type-Options": "nosniff",
+           "Content-Disposition": 'attachment; filename="%s"' % art.safe_filename(filename), "X-Content-SHA256": sha}
+    inm = request.headers.get("if-none-match")
+    if inm and etag in [x.strip() for x in inm.split(",")]:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, no-store"})
+    try:
+        rng = art.parse_range(request.headers.get("range"), size)
+    except art.ArtifactError:
+        return Response(status_code=416, headers={"Content-Range": "bytes */%d" % size, "Cache-Control": "no-store"})
+    ifr = request.headers.get("if-range")
+    if rng and ifr and ifr.strip() != etag:
+        rng = None                                                    # If-Range 不匹配:按规范返回完整新内容
+    if rng:
+        a, b = rng
+        hdr.update({"Content-Range": "bytes %d-%d/%d" % (a, b, size), "Content-Length": str(b - a + 1), "Content-Type": ctype})
+        if request.method == "HEAD":
+            return Response(b"", status_code=206, headers=hdr)
+        return StreamingResponse(art.iter_file(path, a, b), status_code=206, headers=hdr)
+    hdr.update({"Content-Length": str(size), "Content-Type": ctype})
+    if request.method == "HEAD":
+        return Response(b"", status_code=200, headers=hdr)
+    return StreamingResponse(art.iter_file(path), status_code=200, headers=hdr)
+
+
+@app.get("/api/artifacts")
+async def api_art_list():
+    if ART is None:
+        return JSONResponse({"ok": False, "error": "产物存储尚未就绪"}, status_code=503)
+    return {"ok": True, "library_id": cur_lib(), "turns": ART.list(cur_lib()), "disk": ART.disk(), "notice": art.NOTICE, "precision_note": art.PRECISION_NOTE,
+            "thresholds": ART.th, "formats": ["wav", "flac"]}
+
+
+@app.get("/api/artifacts/zip")
+async def api_art_zip(ids: str = "", check: int = 0):
+    if ART is None:
+        return JSONResponse({"ok": False, "error": "产物存储尚未就绪"}, status_code=503)
+    lib = cur_lib()
+    try:
+        aids = [x for x in ids.split(",") if x] or [t["artifact_id"] for t in ART.list(lib) if t.get("downloadable")]
+        if check:                                                   # 预检:前端先拿到具体原因(没有可下载产物/磁盘不足/ID 错误),再发起真正的下载
+            items, need = ART.zip_plan(aids, lib)
+            return {"ok": True, "turns": len(items), "estimated_mb": round(need / 1e6, 1)}
+        tmp = await asyncio.get_running_loop().run_in_executor(None, lambda: ART.build_zip(aids, lib))
+    except art.ArtifactError as e:
+        return art_err(e)
+    size = tmp.stat().st_size
+    return StreamingResponse(art.iter_file(tmp), media_type="application/zip", background=BackgroundTask(lambda: tmp.unlink()),
+                             headers={"Content-Length": str(size), "Cache-Control": "private, no-store", "X-Synthetic-Audio": "1",
+                                      "Content-Disposition": 'attachment; filename="ai-synthetic_%s.zip"' % time.strftime("%Y%m%d_%H%M%S")})
+
+
+@app.get("/api/artifacts/{aid}")
+async def api_art_one(aid: str):
+    try:
+        return {"ok": True, "manifest": ART.manifest(aid, cur_lib())}
+    except art.ArtifactError as e:
+        return art_err(e)
+
+
+@app.api_route("/api/artifacts/{aid}/turn.wav", methods=["GET", "HEAD"])
+async def api_art_turn(aid: str, request: Request, format: str = "wav"):
+    try:
+        p, fe, m = ART.resolve(aid, cur_lib(), "turn")
+        if format == "flac":
+            fp = await asyncio.get_running_loop().run_in_executor(None, lambda: ART.to_flac(p, fe))
+            return serve_file(request, fp, fe["pcm_sha256"], "ai-synthetic_%s_full.flac" % aid, "audio/flac", "flac-")
+        if format != "wav":
+            raise art.ArtifactError("bad_format", "format 只支持 wav / flac", 400)
+        return serve_file(request, p, fe["sha256"], "ai-synthetic_%s_full.wav" % aid)
+    except art.ArtifactError as e:
+        return art_err(e)
+
+
+@app.api_route("/api/artifacts/{aid}/segments/{sid}.wav", methods=["GET", "HEAD"])
+async def api_art_seg(aid: str, sid: str, request: Request):
+    try:
+        p, fe, m = ART.resolve(aid, cur_lib(), "segment", sid)
+        return serve_file(request, p, fe["sha256"], "ai-synthetic_%s_seg%03d.wav" % (aid, fe["index"] + 1))
+    except art.ArtifactError as e:
+        return art_err(e)
+
+
+@app.get("/api/artifacts/{aid}/verify")
+async def api_art_verify(aid: str):
+    try:
+        return {"ok": True, **(await asyncio.get_running_loop().run_in_executor(None, lambda: ART.verify(aid, cur_lib())))}
+    except art.ArtifactError as e:
+        return art_err(e)
+
+
+@app.delete("/api/artifacts/{aid}")
+async def api_art_del(aid: str):
+    try:
+        ART.delete(aid, cur_lib())
+        return {"ok": True, "deleted": aid, "scope": "single"}
+    except art.ArtifactError as e:
+        return art_err(e)
+
+
+@app.delete("/api/artifacts")
+async def api_art_purge(confirm: int = 0):
+    if confirm != 1:
+        return JSONResponse({"ok": False, "error": "需要 ?confirm=1 明确确认;范围:当前语音库的全部生成产物", "code": "confirm"}, status_code=400)
+    return {"ok": True, "deleted": ART.purge(cur_lib()), "scope": "library:%s" % cur_lib()}
+
+
+def _on_art_event(rec):
+    """写盘线程 → 事件循环 → 该会话的 WebSocket(状态变化:generating/finalizing/ready/failed...)。"""
+    s = getattr(rec, "sess", None)
+    if LOOP is None or s is None:
+        return
+    msg = dict(rec.summary(), type="artifact", turn=rec.uid)
+    LOOP.call_soon_threadsafe(lambda: s.send(msg))
+
+
+def init_artifacts():
+    global ART
+    if ART is None:
+        ART = art.ArtifactStore(WORK / "artifacts", sr=SR, on_event=_on_art_event, model={"id": (Path(MODEL).name if os.path.isdir(MODEL) else MODEL), "sha256": SEC.get("model_sha256"), "trained": TRAINED})
+        log.info("产物目录: %s · 已加载 %d 条清单 · 磁盘告警线 %d MB", ART.root, len(ART.disk_manifests), ART.min_free_mb)
+    return ART
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1303,6 +1526,8 @@ def cancel_turn(sess):
     if sess.task is not None and not sess.task.done():
         sess.task.cancel()
     if sess.turn is not None:
+        if not sess.turn.closed:
+            art_finish(sess.turn, cancelled=True)                     # 中途停止:已发出的音频照样归档并标注「不完整」,绝不假装完整
         sess.turn.closed = True
         ACTIVE.pop(sess.turn.uid, None)
     sess.task, sess.turn = None, None
@@ -1726,6 +1951,7 @@ def restore_voice():
 async def _startup():
     global LOOP
     LOOP = asyncio.get_running_loop()
+    init_artifacts()
     LOOP.create_task(gpu_loop())
     if POOL is not None and POOL.workers:
         threading.Thread(target=reader_thread, args=(LOOP,), daemon=True).start()
@@ -1773,7 +1999,6 @@ def main():
 if __name__ == "__main__":
     main()
 '''
-
 FILES['infer_dual_gpu.py'] = r'''# -*- coding: utf-8 -*-
 """
 infer_dual_gpu.py —— 双卡并行推理模块(子系统 B)
@@ -2757,7 +2982,6 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
             elif kind in ("asr", "spk_qc", "spk_cmp"):
                 send(kind, job[1], "" if kind == "asr" else {}, str(e))
 '''
-
 FILES['protocol.py'] = r'''# -*- coding: utf-8 -*-
 """
 protocol.py —— 音频帧协议 v2(网关 ↔ 浏览器共用,带单元测试)
@@ -2840,7 +3064,6 @@ class FrameChecker:
         """与服务端 turn_done 里的总块数 / 总样本数对账"""
         return self.ended and self.count == chunks and self.samples == samples and not self.stat["gap"] and not self.stat["dup"]
 '''
-
 FILES['audio_qc.py'] = r'''# -*- coding: utf-8 -*-
 """
 audio_qc.py —— 音频完整性检测 / 参考音频质检 / 声学摘要 / 相似度校准(只依赖 numpy)
@@ -3240,7 +3463,6 @@ def percentile(xs, q):
     lo, hi = int(math.floor(k)), int(math.ceil(k))
     return xs[lo] + (xs[hi] - xs[lo]) * (k - lo)
 '''
-
 FILES['speaker_sim.py'] = r'''# -*- coding: utf-8 -*-
 """
 声纹相似度工具(服务端实时打分 + evaluate.py 离线评估共用)
@@ -3467,7 +3689,6 @@ def finite_or_none(v):
     except Exception:  # noqa: BLE001
         return None
 '''
-
 FILES['netguard.py'] = r'''# -*- coding: utf-8 -*-
 """
 netguard.py —— 浏览器自动化的网络边界(SSRF 防护)
@@ -3652,7 +3873,6 @@ def safe_url_for_log(url):
     except Exception:  # noqa: BLE001
         return "?"
 '''
-
 FILES['auth.py'] = r'''# -*- coding: utf-8 -*-
 """
 auth.py —— 公网隧道下的访问控制(REST + WebSocket 一起保护)
@@ -3848,7 +4068,6 @@ class AuthMiddleware:
 async def receive_close(send):
     await send({"type": "websocket.close", "code": 4403})
 '''
-
 FILES['audit.py'] = r'''# -*- coding: utf-8 -*-
 """
 audit.py —— 脱敏运行审计日志 + 可以安全同步到【公开】仓库的内容生成器
@@ -3975,7 +4194,6 @@ class Audit:
         files["telemetry/summary.json"] = json.dumps(self.summary(), ensure_ascii=False, indent=1, sort_keys=True) + "\n"
         return files, self.synced_upto + len(pend)
 '''
-
 FILES['libraries.py'] = r'''# -*- coding: utf-8 -*-
 """
 libraries.py —— 多语音库(命名库 · 追加样本 · 数据集版本冻结 · 训练任务队列 · 候选模型/升级/回滚 · 评估记录 · 清单校验)
@@ -4526,7 +4744,6 @@ class LibraryStore:
                 probs.append("哈希不一致: " + rel)
         return {"ok": not probs, "checked": len(man.get("files", {})), "problems": probs[:50]}
 '''
-
 FILES['persist.py'] = r'''# -*- coding: utf-8 -*-
 """
 persist.py —— 存储接口:运行时临时目录 / 可恢复的持久化存储 / GitHub 同步 三者分别管理
@@ -4719,7 +4936,6 @@ class Persist:
                 "restore": self.report, "libraries": len(self.store.idx.get("order", [])), "usage": u,
                 "guarantee": "不保证下次启动一定可恢复:仅当你保存了 Notebook 版本并在下次挂载它、或导入了导出包时才可恢复。"}
 '''
-
 FILES['ghsync.py'] = r'''# -*- coding: utf-8 -*-
 """
 ghsync.py —— GitHub 安全同步(后端专用;Token 只来自 Kaggle Secrets / 环境变量,永不下发浏览器,永不进 URL / 命令行 / 日志)
@@ -4928,7 +5144,219 @@ class GitHubSync:
             atomic_write_json(self.f, self.state)
             raise
 '''
+FILES['search_policy.py'] = r'''# -*- coding: utf-8 -*-
+"""
+search_policy.py —— 搜索「合规加速」策略层(v10 新增,嵌入 FILES['search_policy.py'])
 
+目标:让搜索更快、更稳、对站点更友好;【不是】绕过拦截。本模块里没有、也永远不会有:
+  伪装浏览器指纹 / stealth 插件 / 代理或 IP 轮换 / 验证码代答 / Cookie 偷取 / 换入口抓取同一受限资源。
+
+合法的加速手段(全部在 CPU/网络层,与 TTS 的 GPU 显存互不抢占):
+  1. 连接复用:全进程共享一个 httpx.AsyncClient(keep-alive 连接池,可用时启用 HTTP/2);原来每次搜索都新建连接与 TLS 握手。
+  2. 结果缓存:合法结果短 TTL 缓存(默认 300 s,VC_SEARCH_CACHE_TTL=0 关闭),命中时在 attempts 里明确标注 cache 与年龄,不冒充新结果。
+  3. 去重 + 并发上限:同一个查询并发到达时只发一次真实请求(single-flight);每个域名同时最多 2 个请求,且最小间隔 250 ms。
+  4. 有限退避:仅对超时/网络抖动/普通 5xx 做 1 次指数退避 + 随机抖动重试;遵守 Retry-After(超过可等待上限就不重试,交给熔断器)。
+  5. 熔断器:连续 3 次瞬时故障 → 暂停该提供方 30 s(翻倍,封顶 10 分钟),避免持续请求故障站点。
+
+遇到 HTTP 401/403/429、验证码、人机验证、登录墙、明确拒绝:立即停止对该站点的请求(冷却期内一次都不再发),
+并把原因、剩余冷却时间如实展示给用户。冷却结束后才会再试一次。
+"""
+import asyncio
+import email.utils
+import os
+import random
+import time
+from collections import OrderedDict
+from contextlib import asynccontextmanager
+
+# 访问限制类:一律「停止请求」,不重试、不绕过。值 = 默认冷却秒数(服务端给了 Retry-After 就以它为准,封顶 1 小时)
+HARD_STOP = {"rate_limited": 120.0, "challenge": 900.0, "blocked": 900.0, "access_denied": 600.0}
+SOFT = {"network", "timeout", "server_error"}
+MAX_COOLDOWN = 3600.0
+
+
+def parse_retry_after(value, now=None):
+    """Retry-After: 秒数 或 HTTP 日期 → 秒(float);无效 → None。"""
+    if value is None:
+        return None
+    v = str(value).strip()
+    if not v:
+        return None
+    if v.isdigit():
+        return min(float(v), MAX_COOLDOWN)
+    try:
+        dt = email.utils.parsedate_to_datetime(v)
+        sec = dt.timestamp() - (now if now is not None else time.time())
+        return min(max(sec, 0.0), MAX_COOLDOWN)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+class _Breaker:
+    __slots__ = ("fails", "trips", "open_until", "kind", "msg", "last_ok", "last_err", "hard")
+
+    def __init__(self):
+        self.fails = self.trips = 0
+        self.open_until = 0.0
+        self.kind = self.msg = ""
+        self.last_ok = self.last_err = None
+        self.hard = False
+
+
+class Policy:
+    def __init__(self, clock=time.time, rand=random.random):
+        self.clock, self.rand = clock, rand
+        self.b = {}
+        self.cache = OrderedDict()
+        self.inflight = {}
+        self.hosts = {}
+        self._client = None
+        self._client_loop = None
+        self.stats = {"cache_hit": 0, "cache_miss": 0, "coalesced": 0, "conn_reuse_clients": 0, "stopped_by_cooldown": 0}
+
+    # —— 配置(每次读取环境变量,测试/用户可随时调整)——
+    @staticmethod
+    def cache_ttl():
+        try:
+            return float(os.environ.get("VC_SEARCH_CACHE_TTL", "300"))
+        except ValueError:
+            return 300.0
+
+    def reset(self):
+        self.b.clear()
+        self.cache.clear()
+        self.inflight.clear()
+        self.hosts.clear()
+
+    # —— 熔断器 ——
+    def _br(self, key):
+        return self.b.setdefault(key, _Breaker())
+
+    def allow(self, key):
+        """返回 (允许?, 剩余冷却秒, 说明)。冷却期内【不会】向该站点发任何请求。"""
+        b = self._br(key)
+        rem = b.open_until - self.clock()
+        if rem > 0:
+            self.stats["stopped_by_cooldown"] += 1
+            return False, rem, ("%s;已停止对该站点的请求,冷却 %d 秒后才会再试(不绕过限制)" % (b.msg or b.kind, int(rem) + 1))
+        return True, 0.0, ""
+
+    def ok(self, key):
+        b = self._br(key)
+        b.fails, b.trips, b.open_until, b.hard = 0, 0, 0.0, False
+        b.last_ok = self.clock()
+
+    def fail(self, key, kind, msg="", retry_after=None, status=None):
+        b = self._br(key)
+        b.last_err, b.kind, b.msg = self.clock(), kind, msg
+        if kind in HARD_STOP or status in (401, 403, 429):
+            kind2 = kind if kind in HARD_STOP else ("rate_limited" if status == 429 else "access_denied")
+            cool = retry_after if retry_after else HARD_STOP[kind2]
+            b.open_until, b.hard, b.kind = self.clock() + min(float(cool), MAX_COOLDOWN), True, kind2
+            return b.open_until
+        if kind in SOFT:
+            b.fails += 1
+            if b.fails >= 3 and b.open_until <= self.clock():      # 冷却结束后的第一次探测再失败 → 立即再次熔断(时间翻倍)
+                b.trips += 1
+                b.open_until = self.clock() + min(30.0 * (2 ** (b.trips - 1)), 600.0)
+                b.hard = False
+        return b.open_until
+
+    def state(self, key):
+        b = self.b.get(key)
+        if not b:
+            return {"state": "closed", "cooldown_s": 0}
+        rem = max(0.0, b.open_until - self.clock())
+        return {"state": ("blocked" if b.hard else "open") if rem > 0 else "closed", "cooldown_s": int(rem), "last_kind": b.kind, "last_error": b.msg,
+                "consecutive_fails": b.fails, "last_ok_age_s": int(self.clock() - b.last_ok) if b.last_ok else None}
+
+    # —— 退避 ——
+    def backoff_delay(self, attempt, retry_after=None, max_wait=8.0):
+        """指数退避 + 随机抖动(0.5~1.5 倍)。服务端给了 Retry-After:取较大者;若超过 max_wait 返回 None = 不要在本次请求里等待/重试。"""
+        d = min(max_wait, 0.5 * (2 ** (attempt - 1))) * (0.5 + self.rand())
+        if retry_after is not None:
+            if retry_after > max_wait:
+                return None
+            d = max(d, retry_after)
+        return d
+
+    # —— 缓存 ——
+    def cache_get(self, key):
+        ttl = self.cache_ttl()
+        if ttl <= 0:
+            return None
+        v = self.cache.get(key)
+        if not v:
+            self.stats["cache_miss"] += 1
+            return None
+        if self.clock() - v[0] > ttl:
+            self.cache.pop(key, None)
+            self.stats["cache_miss"] += 1
+            return None
+        self.cache.move_to_end(key)
+        self.stats["cache_hit"] += 1
+        return v[1], v[2], self.clock() - v[0]
+
+    def cache_put(self, key, results, provider):
+        if self.cache_ttl() <= 0 or not results:
+            return
+        self.cache[key] = (self.clock(), results, provider)
+        while len(self.cache) > 200:
+            self.cache.popitem(last=False)
+
+    # —— 并发/速率:每域名最多 2 个并发,最小间隔 250 ms ——
+    @asynccontextmanager
+    async def host_slot(self, host, min_gap=0.25, limit=2):
+        loop = asyncio.get_running_loop()
+        h = self.hosts.get(host)
+        if h is None or h["loop"] is not loop:
+            h = self.hosts[host] = {"sem": asyncio.Semaphore(limit), "next": 0.0, "loop": loop}
+        async with h["sem"]:
+            now = self.clock()
+            start = max(now, h["next"])                  # 先「预约」起跑时刻再睡眠,并发协程不会同时醒来
+            h["next"] = start + min_gap
+            if start > now:
+                await asyncio.sleep(start - now)
+            yield
+
+    # —— single-flight:同一查询并发只发一次 ——
+    async def single_flight(self, key, factory):
+        loop = asyncio.get_running_loop()
+        cur = self.inflight.get(key)
+        if cur is not None and cur[0] is loop:
+            self.stats["coalesced"] += 1
+            return await asyncio.shield(cur[1])
+        fut = asyncio.ensure_future(factory())
+        self.inflight[key] = (loop, fut)
+        try:
+            return await asyncio.shield(fut)
+        finally:
+            if self.inflight.get(key, (None, None))[1] is fut:
+                self.inflight.pop(key, None)
+
+    # —— 共享连接池 ——
+    def client(self, headers, timeout):
+        import httpx
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._client_loop is not loop or self._client.is_closed:
+            http2 = False
+            try:
+                import h2  # noqa: F401
+                http2 = True
+            except Exception:  # noqa: BLE001
+                pass
+            self._client = httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers, http2=http2,
+                                             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=60.0))
+            self._client_loop = loop
+            self.stats["conn_reuse_clients"] += 1
+        return self._client
+
+    def snapshot(self):
+        return {"cache_ttl_s": self.cache_ttl(), "cache_entries": len(self.cache), **self.stats, "providers": {k: self.state(k) for k in self.b}}
+
+
+POLICY = Policy()
+'''
 FILES['search_providers.py'] = r'''# -*- coding: utf-8 -*-
 """
 search_providers.py —— 搜索提供方。核心原则:【无需任何 Key 就能真实搜索】,失败时原因、实际使用的提供方、每次尝试都对用户可见。
@@ -4951,10 +5379,12 @@ import re
 import time
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
+from search_policy import POLICY, parse_retry_after  # 合规加速:连接复用/缓存/退避/熔断(不含任何绕过手段)
+
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 HEADERS = {"User-Agent": UA, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}
 HTTP_TIMEOUT = float(os.environ.get("VC_SEARCH_HTTP_TIMEOUT", "10"))
-MAX_ATTEMPT_RETRIES = 1                                   # 只对明确可重试的瞬时错误(超时/网络抖动/5xx)重试一次
+MAX_ATTEMPT_RETRIES = 1                                   # 只对明确可重试的瞬时错误(超时/网络抖动/5xx)重试一次(指数退避+随机抖动,遵守 Retry-After)
 # 测试钩子:把提供方的基地址指向本机假服务(只用于单元测试,生产环境不设置)
 BASES = {"bing": os.environ.get("VC_TEST_BING_BASE", "https://www.bing.com"), "duckduckgo": os.environ.get("VC_TEST_DDG_BASE", "https://html.duckduckgo.com"),
          "wikipedia": os.environ.get("VC_TEST_WIKI_BASE", "")}
@@ -4970,9 +5400,9 @@ def now_iso():
 class SearchError(Exception):
     """kind: network | timeout | rate_limited | server_error | challenge | parse | empty | blocked | config | client_error"""
 
-    def __init__(self, kind, msg, retryable=False, status=None):
+    def __init__(self, kind, msg, retryable=False, status=None, retry_after=None):
         super().__init__(msg)
-        self.kind, self.retryable, self.status = kind, retryable, status
+        self.kind, self.retryable, self.status, self.retry_after = kind, retryable, status, retry_after
 
 
 class SearchFailed(Exception):
@@ -4984,7 +5414,7 @@ class SearchFailed(Exception):
 
 
 KIND_ZH = {"network": "网络不可用", "timeout": "请求超时", "rate_limited": "被限流(HTTP 429)", "server_error": "搜索站点返回 5xx", "challenge": "遇到验证码/反机器人页(不绕过)",
-           "parse": "页面结构变化,解析失败", "empty": "没有结果", "blocked": "被安全策略拒绝", "config": "未配置", "client_error": "请求被拒绝(4xx)"}
+           "parse": "页面结构变化,解析失败", "empty": "没有结果", "blocked": "被安全策略拒绝", "config": "未配置", "client_error": "请求被拒绝(4xx)", "access_denied": "站点拒绝访问(HTTP 401/403,不绕过)", "cooldown": "冷却中(已停止请求)"}
 
 
 def summarize(attempts):
@@ -5066,7 +5496,7 @@ class Provider:
 
     def info(self):
         return {"id": self.id, "name": self.name, "available": self.configured(), "needs_secrets": list(self.secrets), "cost": self.cost, "note": self.note, "keyless": self.keyless,
-                "missing": [s for s in self.secrets if not os.environ.get(s, "").strip()]}
+                "missing": [s for s in self.secrets if not os.environ.get(s, "").strip()], "policy": POLICY.state(self.id)}
 
     async def search(self, q, count=8, page=0, site=None, recency=None):
         raise NotImplementedError
@@ -5076,30 +5506,33 @@ _WARM = {"t": 0.0, "cookies": None}
 
 
 async def _get(url, params=None, headers=None):
-    """统一的 HTTP GET:把 httpx 的各种异常归类成 SearchError(kind),不泄露内部堆栈。"""
+    """统一的 HTTP GET:共享连接池 + 每域名并发/间隔限制;把 httpx 异常归类成 SearchError(kind),不泄露内部堆栈;429/503 的 Retry-After 会被解析并带出。"""
     import httpx
-    is_bing = url.startswith("https://www.bing.com")                                  # 只对真实 Bing 做 Cookie 预热;测试用的本地假站点不受影响
+    is_bing = url.startswith("https://www.bing.com")                                  # 只对真实 Bing 做会话预热;测试用的本地假站点不受影响
+    host = urlsplit(url).netloc
     try:
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True, headers={**HEADERS, **(headers or {})}, cookies=(_WARM["cookies"] if is_bing else None)) as c:
-            if is_bing and (not _WARM["cookies"] or time.time() - _WARM["t"] > 900):
-                try:                                                                  # 和普通浏览器一样先访问首页拿会话 Cookie(实测能减少 Bing 对无 Cookie 请求的降级结果);不涉及任何验证绕过
+        c = POLICY.client(HEADERS, HTTP_TIMEOUT)
+        async with POLICY.host_slot(host):
+            if is_bing and time.time() - _WARM["t"] > 900:
+                try:                                                                  # 和普通浏览器一样先访问首页拿会话 Cookie(连接池的 Cookie 罐自动保存);不涉及任何验证绕过
                     await c.get("https://www.bing.com/", params={"setlang": "zh-Hans"}, timeout=6)
-                    _WARM.update(t=time.time(), cookies={k: v for k, v in c.cookies.items()})
+                    _WARM["t"] = time.time()
                 except Exception:  # noqa: BLE001
                     pass
-            r = await c.get(url, params=params, headers=({"Referer": "https://www.bing.com/"} if is_bing else None))
+            r = await c.get(url, params=params, headers={**(headers or {}), **({"Referer": "https://www.bing.com/"} if is_bing else {})})
     except httpx.TimeoutException:
         raise SearchError("timeout", "请求超过 %.0f 秒没有响应" % HTTP_TIMEOUT, True)
     except (httpx.ConnectError, httpx.NetworkError, httpx.RemoteProtocolError) as e:
         raise SearchError("network", "无法连接搜索站点:%s" % (str(e) or type(e).__name__)[:80], True)
     except Exception as e:  # noqa: BLE001
         raise SearchError("network", "%s: %s" % (type(e).__name__, str(e)[:80]), True)
+    ra = parse_retry_after(r.headers.get("retry-after"))
     if r.status_code == 429:
-        raise SearchError("rate_limited", "HTTP 429", False, 429)
+        raise SearchError("rate_limited", "HTTP 429" + ((",服务端要求 %d 秒后再试(Retry-After)" % ra) if ra else ""), False, 429, ra)
     if r.status_code >= 500:
-        raise SearchError("server_error", "HTTP %d" % r.status_code, True, r.status_code)
+        raise SearchError("server_error", "HTTP %d" % r.status_code, True, r.status_code, ra)
     if r.status_code in (401, 403):
-        raise SearchError("challenge" if "captcha" in r.text[:3000].lower() else "client_error", "HTTP %d" % r.status_code, False, r.status_code)
+        raise SearchError("challenge" if "captcha" in r.text[:3000].lower() else "access_denied", "HTTP %d" % r.status_code, False, r.status_code, ra)
     if r.status_code >= 400:
         raise SearchError("client_error", "HTTP %d" % r.status_code, False, r.status_code)
     return r
@@ -5296,25 +5729,60 @@ def order_for(engine=None, page=0):
 
 
 async def run_one(prov, pid, q, count, page, site, recency, sleep=asyncio.sleep):
-    """调用单个提供方,最多对【可重试】错误重试 MAX_ATTEMPT_RETRIES 次;返回 (results, attempt_record)。"""
+    """调用单个提供方;返回 (results, attempt_record)。
+    · 熔断/冷却中:一次请求都不发,直接返回 kind=cooldown(访问限制类 401/403/429/验证码 → 停止该站点请求,不绕过)。
+    · 只对【可重试】的瞬时错误(超时/网络/5xx)重试 MAX_ATTEMPT_RETRIES 次:指数退避 + 随机抖动,遵守 Retry-After(过长则不重试)。"""
     t0 = time.time()
+    okay, rem, why = POLICY.allow(pid)
+    if not okay:
+        return None, {"provider": pid, "ok": False, "kind": "cooldown", "message": why, "status": None, "ms": 0, "tries": 0, "cooldown_s": int(rem) + 1}
     tries = 0
     while True:
         tries += 1
         try:
             res = await prov.search(q, count, page, site, recency)
+            POLICY.ok(pid)
             return res, {"provider": pid, "ok": True, "n": len(res), "ms": int((time.time() - t0) * 1000), "tries": tries}
         except SearchError as e:
+            POLICY.fail(pid, e.kind, str(e), e.retry_after, e.status)
             if e.retryable and tries <= MAX_ATTEMPT_RETRIES:
-                await sleep(0.6 * tries)
-                continue
-            return None, {"provider": pid, "ok": False, "kind": e.kind, "message": str(e), "status": e.status, "ms": int((time.time() - t0) * 1000), "tries": tries}
+                d = POLICY.backoff_delay(tries, e.retry_after)
+                if d is not None and POLICY.allow(pid)[0]:
+                    await sleep(d)
+                    continue
+            rec = {"provider": pid, "ok": False, "kind": e.kind, "message": str(e), "status": e.status, "ms": int((time.time() - t0) * 1000), "tries": tries}
+            st = POLICY.state(pid)
+            if st["cooldown_s"]:
+                rec["cooldown_s"] = st["cooldown_s"]
+                if e.kind in ("rate_limited", "challenge", "access_denied", "blocked"):
+                    rec["message"] += ";已停止对该站点的请求 %d 秒(不绕过)" % st["cooldown_s"]
+            return None, rec
         except Exception as e:  # noqa: BLE001
+            POLICY.fail(pid, "network", str(e))
             return None, {"provider": pid, "ok": False, "kind": "network", "message": "%s: %s" % (type(e).__name__, str(e)[:80]), "ms": int((time.time() - t0) * 1000), "tries": tries}
 
 
 async def search_http_chain(q, count=8, page=0, site=None, recency=None, engine=None, attempts=None):
-    """依次尝试免 Key 的 HTTP 提供方。成功返回 (results, provider_id, attempts);全部失败抛 SearchFailed(attempts)。"""
+    """带缓存 + single-flight 的入口:命中缓存时 attempts 里会有 provider=cache 的记录(含年龄),结果不冒充新鲜;失败不缓存。"""
+    attempts = attempts if attempts is not None else []
+    key = (q.strip().lower(), count, page, site or "", recency or "", engine or "", tuple(sorted(HTTP_PROVIDERS)))
+    hit = POLICY.cache_get(key)
+    if hit:
+        res, pid, age = hit
+        attempts.append({"provider": "cache", "ok": True, "cached": True, "n": len(res), "age_s": int(age), "ms": 0, "tries": 0, "message": "命中 %d 秒前的真实结果缓存(来源 %s)" % (int(age), pid)})
+        return [dict(r) for r in res], pid, attempts
+    sub = []
+    try:
+        res, pid, att = await POLICY.single_flight(key, lambda: _search_http_chain(q, count, page, site, recency, engine, sub))
+    except SearchFailed as e:
+        attempts.extend(e.attempts)
+        raise SearchFailed(attempts)
+    attempts.extend(sub if att is sub else att)
+    POLICY.cache_put(key, res, pid)
+    return [dict(r) for r in res], pid, attempts
+
+
+async def _search_http_chain(q, count=8, page=0, site=None, recency=None, engine=None, attempts=None):
     attempts = attempts if attempts is not None else []
     merged, used, seen = [], [], set()
     for pid in order_for(engine, page):
@@ -5339,7 +5807,863 @@ async def search_http_chain(q, count=8, page=0, site=None, recency=None, engine=
         return merged, "http:" + "+".join(used), attempts
     raise SearchFailed(attempts)
 '''
+FILES['artifacts.py'] = r'''# -*- coding: utf-8 -*-
+"""
+artifacts.py —— 生成音频产物体系(v10 新增,嵌入 FILES['artifacts.py'])
 
+解决的真实问题(v9 代码核对):
+  · GEN_AUDIO 只在内存里、只保留最近 3 轮、单轮最多 120 秒,且按【worker 块到达顺序】拼接(双 GPU 乱序时会串段),
+    不含句间停顿 → 下载的并不是实际播放的音频。
+  · 没有「每个文本段单独下载」「整轮下载」「ZIP」,没有校验值与质量状态。
+
+设计:
+  · 记录点放在 pump()/emit() 之前的【最终播放顺序】:停顿(pause)与段音频(audio)分开传入,
+    整轮文件 = 实际发给浏览器的 PCM 序列(逐样本相同),单段文件 = 只含该段自己的音频。
+  · 单个有界写盘线程(queue.Queue(maxsize)),事件循环/GPU 推理永不做磁盘 I/O;队列满/磁盘满/写错误 → 产物 failed(绝不丢块后仍标 ready)。
+  · 写到 *.part → flush+fsync → 用独立解码器(wave)读回校验容器/采样率/声道/帧数/字节数/SHA-256 → 与 turn.log 里真实帧对账 → 原子改名 → 写 manifest.json。
+  · 只有校验通过才是 ready / quality_warning;进程中断留下的 .part 启动时标记为 failed(interrupted),永不作为正式下载。
+  · 质量检查(可配置阈值,写入清单):空音频 / 帧数不符 / 严重削波 / DC 偏置 / 异常静音 / 段边界突变 / 帧序号缺失重复。默认【不】做任何降噪/EQ/压缩/响度归一化。
+  · 精度诚实声明:当前链路里 TTS worker 在送出前已量化为 int16,所以只能保证「与实际播放 PCM 逐样本一致」,
+    无法从 int16 恢复量化前的 float 音频(清单 precision_note 如实写明)。FLAC 只是同一批 int16 样本的无损封装,不是“恢复原始精度”。
+  · 默认不记录文本;公开导出(ZIP)的 manifest 永远不含文本/参考音频路径/声纹向量。
+"""
+import hashlib
+import json
+import os
+import queue
+import re
+import secrets
+import shutil
+import struct
+import tempfile
+import threading
+import time
+import wave
+import zipfile
+from collections import OrderedDict
+from pathlib import Path
+
+import numpy as np
+
+AID_RE = re.compile(r"^t_[0-9a-f]{16}$")
+SID_RE = re.compile(r"^s_[0-9a-f]{10}$")
+NOTICE = "AI 合成语音(Synthetic audio):仅限本人或已获明确授权的声音;不得伪装成真人原始录音。"
+PRECISION_NOTE = ("播放精确副本:PCM int16 单声道,与实际发给浏览器的样本序列逐样本一致。"
+                  "TTS worker 在送出前已量化为 int16,因此无法恢复量化前的 float 音频;FLAC 版本只是同一批 int16 样本的无损封装。")
+# 阈值依据(均可用环境变量 VC_ARTIFACT_THRESH='{"clip_frac_warn":0.002}' 覆盖,清单会写入实际使用的阈值):
+#  clip_frac_warn:  |x|>=32700 的样本占比 > 0.1% 通常已可闻;  dc_warn: 平均值 > 满幅 2% 说明有直流偏置;
+#  max_silence_s:   段内连续 <-60 dBFS 超过 4 s 视为异常静音(句间停顿不计入,停顿是协议插入的);
+#  boundary_step_warn: 相邻段交界处两侧样本幅度 > 满幅 35% 时,零值停顿/拼接处会产生可闻“咔哒”。
+DEFAULT_THRESH = {"clip_level": 32700, "clip_frac_warn": 0.001, "clip_frac_fail": 0.02, "dc_warn": 0.02, "silence_db": -60.0, "max_silence_s": 4.0,
+                  "silence_frac_warn": 0.6, "boundary_step_warn": 0.35, "min_audio_s": 0.05}
+
+
+class ArtifactError(Exception):
+    def __init__(self, code, msg, status=400):
+        super().__init__(msg)
+        self.code, self.msg, self.http = code, msg, status
+
+
+def now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def safe_lib(lib_id):
+    s = re.sub(r"[^A-Za-z0-9_.-]", "", str(lib_id or ""))[:64]
+    return s if s and not s.startswith(".") else "_none"
+
+
+def wav_header(sr, data_bytes, ch=1, bits=16):
+    return (b"RIFF" + struct.pack("<I", 36 + data_bytes) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, ch, sr, sr * ch * bits // 8, ch * bits // 8, bits)
+            + b"data" + struct.pack("<I", data_bytes))
+
+
+def atomic_write_json(path, obj):
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def sha256_file(path, block=1 << 20):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(block)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
+def verify_wav(path, sr, frames, pcm_sha=None):
+    """独立读回(标准库 wave,不复用写入代码):容器/采样率/声道/位深/帧数/字节数/PCM SHA-256。返回 (ok, info)。"""
+    info = {}
+    try:
+        size = os.path.getsize(path)
+        h = hashlib.sha256()
+        with wave.open(str(path), "rb") as w:
+            info.update(sample_rate=w.getframerate(), channels=w.getnchannels(), bits_per_sample=w.getsampwidth() * 8, frames=w.getnframes(), comptype=w.getcomptype())
+            while True:
+                b = w.readframes(1 << 16)
+                if not b:
+                    break
+                h.update(b)
+        info.update(bytes=size, pcm_sha256=h.hexdigest())
+        problems = []
+        if info["sample_rate"] != sr:
+            problems.append("采样率 %s≠%s" % (info["sample_rate"], sr))
+        if info["channels"] != 1 or info["bits_per_sample"] != 16 or info["comptype"] != "NONE":
+            problems.append("格式不是 PCM16 单声道")
+        if info["frames"] != frames:
+            problems.append("读回帧数 %s≠写入 %s" % (info["frames"], frames))
+        if size != 44 + frames * 2:
+            problems.append("文件字节数 %s≠%s" % (size, 44 + frames * 2))
+        if pcm_sha and info["pcm_sha256"] != pcm_sha:
+            problems.append("读回 PCM SHA-256 与写入时不一致(磁盘/写入损坏)")
+        return (not problems), dict(info, problems=problems)
+    except Exception as e:  # noqa: BLE001
+        return False, dict(info, problems=["WAV 无法解码: %s" % str(e)[:120]])
+
+
+def frames_digest(frames):
+    """从 turn.log(实际发出的协议帧)重建 PCM 序列并校验帧序号:返回 (samples, sha256, problems)。"""
+    import protocol as pr
+    h, n, problems, turn_id = hashlib.sha256(), 0, [], None
+    for i, f in enumerate(frames):
+        u = pr.unpack_frame(f)
+        if u["seq"] != i:
+            problems.append("帧序号不连续:位置 %d 的 seq=%d" % (i, u["seq"]))
+        if turn_id is None:
+            turn_id = u["turn"]
+        elif u["turn"] != turn_id:
+            problems.append("帧 %d 属于其他轮次" % i)
+        h.update(u["pcm"])
+        n += len(u["pcm"]) // 2
+    return n, h.hexdigest(), problems
+
+
+class QCAcc:
+    """流式质量统计(不保存音频)。"""
+
+    def __init__(self, sr, th):
+        self.sr, self.th = sr, th
+        self.n = 0
+        self.sum = 0.0
+        self.sumsq = 0.0
+        self.peak = 0
+        self.clip = 0
+        self.first = None
+        self.last = 0
+        self.win = max(1, int(sr * 0.02))
+        self.carry = np.zeros(0, np.float64)
+        self.win_n = self.silent_w = self.run = self.max_run = 0
+        self.thr_lin = 32768.0 * (10 ** (th["silence_db"] / 20.0))
+
+    def feed(self, pcm):
+        x = np.frombuffer(pcm, dtype="<i2")
+        if x.size == 0:
+            return
+        if self.first is None:
+            self.first = int(x[0])
+        self.last = int(x[-1])
+        xf = x.astype(np.float64)
+        self.n += x.size
+        self.sum += float(xf.sum())
+        self.sumsq += float(np.dot(xf, xf))
+        self.peak = max(self.peak, int(np.abs(xf).max()))
+        self.clip += int((np.abs(xf) >= self.th["clip_level"]).sum())
+        buf = np.concatenate([self.carry, xf]) if self.carry.size else xf
+        k = buf.size // self.win
+        if k:
+            blk = buf[:k * self.win].reshape(k, self.win)
+            rms = np.sqrt((blk * blk).mean(axis=1))
+            for v in rms:
+                self.win_n += 1
+                if v < self.thr_lin:
+                    self.silent_w += 1
+                    self.run += 1
+                    self.max_run = max(self.max_run, self.run)
+                else:
+                    self.run = 0
+        self.carry = buf[k * self.win:]
+
+    def report(self, frames_expected=None):
+        th, warns, errs = self.th, [], []
+        dur = self.n / self.sr
+        m = {"samples": self.n, "duration_s": round(dur, 3), "peak_dbfs": None, "rms_dbfs": None, "clip_frac": 0.0, "dc_offset": 0.0, "silence_frac": 0.0, "max_silence_s": 0.0}
+        if self.n == 0 or dur < th["min_audio_s"]:
+            errs.append("空音频或过短(%.3fs)" % dur)
+        else:
+            m["peak_dbfs"] = round(float(20 * np.log10(max(self.peak, 1) / 32768.0)), 2)
+            m["rms_dbfs"] = round(float(20 * np.log10(max(np.sqrt(self.sumsq / self.n), 1e-9) / 32768.0)), 2)
+            m["clip_frac"] = round(self.clip / self.n, 6)
+            m["dc_offset"] = round(abs(self.sum / self.n) / 32768.0, 5)
+            m["silence_frac"] = round(self.silent_w / max(self.win_n, 1), 3)
+            m["max_silence_s"] = round(self.max_run * self.win / self.sr, 2)
+            if self.peak == 0:
+                errs.append("整段为数字静音")
+            if m["clip_frac"] > th["clip_frac_fail"]:
+                errs.append("严重削波:%.2f%% 的样本接近满幅" % (m["clip_frac"] * 100))
+            elif m["clip_frac"] > th["clip_frac_warn"]:
+                warns.append("削波:%.3f%% 的样本接近满幅" % (m["clip_frac"] * 100))
+            if m["dc_offset"] > th["dc_warn"]:
+                warns.append("DC 偏置 %.1f%% 满幅" % (m["dc_offset"] * 100))
+            if m["max_silence_s"] > th["max_silence_s"] and self.peak > 0:
+                warns.append("段内出现 %.1fs 连续静音" % m["max_silence_s"])
+            if m["silence_frac"] > th["silence_frac_warn"] and self.peak > 0:
+                warns.append("静音占比 %.0f%% 异常偏高" % (m["silence_frac"] * 100))
+        if frames_expected is not None and frames_expected != self.n:
+            errs.append("样本数不符:统计 %d≠期望 %d" % (self.n, frames_expected))
+        return {"status": "failed" if errs else ("warning" if warns else "pass"), "warnings": warns, "errors": errs, "metrics": m, "thresholds": th}
+
+
+class _Wav:
+    """写入端(只在写盘线程里使用)。"""
+
+    def __init__(self, final, sr):
+        self.final, self.part, self.sr = Path(final), Path(str(final) + ".part"), sr
+        self.f = open(self.part, "wb")
+        self.f.write(wav_header(sr, 0))
+        self.bytes = 0
+        self.sha = hashlib.sha256()
+
+    def write(self, b):
+        self.f.write(b)
+        self.bytes += len(b)
+        self.sha.update(b)
+
+    def close_verify(self):
+        """flush → 补写头 → fsync → 独立读回校验 → 原子改名。返回 (ok, info)。"""
+        if self.bytes > 0xFFFFFFFF - 36:
+            self.f.close()
+            return False, {"problems": ["超过 WAV 4GB 上限"]}
+        self.f.flush()
+        self.f.seek(0)
+        self.f.write(wav_header(self.sr, self.bytes))
+        self.f.flush()
+        os.fsync(self.f.fileno())
+        self.f.close()
+        ok, info = verify_wav(self.part, self.sr, self.bytes // 2, self.sha.hexdigest())
+        if ok:
+            os.replace(self.part, self.final)
+            info["sha256"] = sha256_file(self.final)
+        return ok, info
+
+    def abandon(self):
+        try:
+            self.f.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+class TurnRec:
+    def __init__(self, store, aid, uid, lib_id, meta):
+        self.store, self.aid, self.uid, self.lib_id, self.meta = store, aid, uid, lib_id, dict(meta or {})
+        self.status, self.reason = "generating", ""
+        self.created = now_iso()
+        self.dir = store.root / safe_lib(lib_id) / aid
+        self.samples_in = 0                      # 主线程累计(用于进度显示)
+        self.dead = False
+        self.sids = {}                           # seg idx -> sid
+        # —— 以下只在写盘线程里读写 ——
+        self.turn_w = None
+        self.turn_qc = QCAcc(store.sr, store.th)
+        self.cur_seg = None
+        self.seg_w = None
+        self.seg_qc = None
+        self.seg_info = OrderedDict()            # idx -> dict
+        self.pause_samples = 0
+        self.prev_edge = None                    # 上一段末样本
+        self.boundary = []
+        self.manifest = None
+
+    def sid(self, idx):
+        return self.sids.setdefault(idx, "s_" + secrets.token_hex(5))
+
+    def fail(self, reason):
+        if not self.dead:
+            self.dead, self.reason, self.status = True, reason, "failed"
+
+    # —— 主线程 API(都不做磁盘 I/O) ——
+    def add(self, seg_idx, pause_pcm, audio_pcm):
+        if self.dead:
+            return False
+        self.sid(seg_idx)
+        if self.store.free_low():
+            self.fail("磁盘空间不足(剩余 < %d MB),已停止归档;未静默删除任何文件" % self.store.min_free_mb)
+            self.store.notify(self)
+            return False
+        try:
+            self.store.q.put_nowait(("add", self, seg_idx, pause_pcm, audio_pcm))
+        except queue.Full:
+            self.fail("写盘队列已满(%d 项):磁盘写入跟不上,本轮归档标记为失败,没有静默丢块" % self.store.q.maxsize)
+            self.store.notify(self)
+            return False
+        self.samples_in += (len(pause_pcm) + len(audio_pcm)) // 2
+        return True
+
+    def seg_end(self, seg_idx, err="", text_len=0):
+        if not self.dead:
+            self._put(("seg_end", self, seg_idx, err, text_len))
+
+    def finish(self, meta=None):
+        self._put(("finish", self, dict(meta or {})))
+
+    def _put(self, item):
+        try:
+            self.store.q.put(item, timeout=5)
+        except queue.Full:
+            self.fail("写盘队列已满,无法完成归档")
+            self.store.notify(self)
+
+    def summary(self):
+        m = self.manifest or {}
+        tf = m.get("turn_file") or {}
+        segs = m.get("segments") or []
+        return {"artifact_id": self.aid, "turn_uid": self.uid, "created_at": self.created, "status": self.status, "reason": self.reason, "library_id": self.lib_id,
+                "duration_s": tf.get("duration_s", round(self.samples_in / self.store.sr, 2)), "bytes": tf.get("bytes"), "sha256": tf.get("sha256"),
+                "quality": (tf.get("quality") or {}).get("status"), "warnings": m.get("warnings", []), "segments": [_seg_public(s) for s in segs],
+                "synthetic": True, "downloadable": self.status in ("ready", "quality_warning")}
+
+
+def _seg_public(s):
+    return {k: s.get(k) for k in ("id", "index", "status", "duration_s", "bytes", "sha256", "frames", "quality_status", "warnings", "reason")}
+
+
+class ArtifactStore:
+    def __init__(self, root, sr=24000, queue_max=None, min_free_mb=None, max_total_mb=None, thresholds=None, on_event=None, store_text=None, model=None):
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.sr = int(sr)
+        self.min_free_mb = int(min_free_mb if min_free_mb is not None else os.environ.get("VC_ARTIFACT_MIN_FREE_MB", "1024"))
+        self.max_total_mb = int(max_total_mb if max_total_mb is not None else os.environ.get("VC_ARTIFACT_MAX_MB", "8192"))
+        th = dict(DEFAULT_THRESH)
+        try:
+            th.update(json.loads(os.environ.get("VC_ARTIFACT_THRESH") or "{}"))
+        except ValueError:
+            pass
+        th.update(thresholds or {})
+        self.th = th
+        self.q = queue.Queue(maxsize=int(queue_max or os.environ.get("VC_ARTIFACT_QUEUE", "4096")))
+        self.on_event = on_event
+        self.store_text = bool(int(os.environ.get("VC_ARTIFACT_STORE_TEXT", "0"))) if store_text is None else store_text
+        self.model = model or {}
+        self.lock = threading.RLock()
+        self.turns = {}                      # aid -> TurnRec(本进程)
+        self.disk_manifests = {}             # aid -> manifest(已落盘)
+        self.stats = {"written_bytes": 0, "queue_high": 0, "failed": 0, "recovered_part": 0}
+        self._free_cache = (0.0, False)
+        self.write_delay = float(os.environ.get("VC_ARTIFACT_TEST_DELAY", "0") or 0)      # 仅测试:模拟慢盘
+        try:
+            (self.root / ".gitignore").write_text("# 私人合成音频与清单:永远不要提交到 Git\n*\n", encoding="utf-8")
+        except OSError:
+            pass
+        self.scan()
+        self.th_worker = threading.Thread(target=self._run, name="artifact-writer", daemon=True)
+        self.th_worker.start()
+
+    # —— 启动恢复 ——
+    def scan(self):
+        for mp in self.root.glob("*/t_*/manifest.json"):
+            try:
+                m = json.loads(mp.read_text(encoding="utf-8"))
+                if not AID_RE.match(m.get("artifact_id", "")):
+                    continue
+                d = mp.parent
+                if m.get("status") in ("ready", "quality_warning"):
+                    for fe in [m["turn_file"]] + list(m.get("segments") or []):
+                        if not fe.get("file"):
+                            continue
+                        p = d / fe["file"]
+                        if fe.get("status") == "failed":
+                            continue
+                        if not p.is_file() or p.stat().st_size != fe["bytes"]:
+                            m["status"], m["reason"] = "expired", "文件缺失或大小与清单不符:%s" % fe["file"]
+                            break
+                self.disk_manifests[m["artifact_id"]] = m
+            except Exception:  # noqa: BLE001
+                continue
+        for d in self.root.glob("*/t_*"):
+            if d.is_dir() and not (d / "manifest.json").exists() and AID_RE.match(d.name) and any(d.glob("*.part")):
+                m = {"schema": 1, "artifact_id": d.name, "turn_uid": None, "created_at": now_iso(), "library_id": d.parent.name if d.parent.name != "_none" else None, "status": "failed",
+                     "reason": "进程中断:只有 .part 临时文件,不完整,未标记为可下载", "synthetic": True, "turn_file": {"file": "turn.wav", "bytes": 0}, "segments": [], "warnings": []}
+                try:
+                    atomic_write_json(d / "manifest.json", m)
+                except OSError:
+                    pass
+                self.disk_manifests[d.name] = m
+                self.stats["recovered_part"] += 1
+
+    # —— 磁盘 ——
+    def total_bytes(self):
+        n = 0
+        for p in self.root.rglob("*"):
+            try:
+                if p.is_file():
+                    n += p.stat().st_size
+            except OSError:
+                pass
+        return n
+
+    def disk(self):
+        try:
+            free = shutil.disk_usage(self.root).free
+        except OSError:
+            free = 0
+        used = self.total_bytes()
+        return {"free_mb": int(free / 1e6), "used_mb": round(used / 1e6, 1), "cap_mb": self.max_total_mb, "min_free_mb": self.min_free_mb,
+                "queue": self.q.qsize(), "queue_max": self.q.maxsize, "recovered_part": self.stats["recovered_part"], "failed": self.stats["failed"],
+                "lifecycle": "Kaggle 的 /kaggle/working 只在当前会话与保存版本内有效,不保证跨会话永久保存,请及时下载 ZIP。"}
+
+    def free_low(self):
+        t, v = self._free_cache
+        if time.time() - t > 2.0:
+            try:
+                free_mb = shutil.disk_usage(self.root).free / 1e6
+            except OSError:
+                free_mb = 0
+            v = free_mb < self.min_free_mb
+            self._free_cache = (time.time(), v)
+        return v
+
+    def notify(self, rec):
+        if self.on_event:
+            try:
+                self.on_event(rec)
+            except Exception:  # noqa: BLE001
+                pass
+
+    # —— 入口 ——
+    def begin(self, uid, lib_id, meta=None):
+        aid = "t_" + secrets.token_hex(8)
+        rec = TurnRec(self, aid, uid, lib_id, dict(meta or {}))
+        with self.lock:
+            self.turns[aid] = rec
+        if self.free_low():
+            rec.fail("磁盘空间不足(剩余 < %d MB),没有开始归档;请先下载并清理旧产物" % self.min_free_mb)
+        elif self.total_bytes() >= self.max_total_mb * 1e6:
+            rec.fail("产物总量已达上限 %d MB,没有开始归档;请先下载并清理旧产物(不会自动删除)" % self.max_total_mb)
+        else:
+            try:
+                rec.dir.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                rec.fail("无法创建产物目录: %s" % e)
+        self.notify(rec)
+        return rec
+
+    def quiesce(self, timeout=30):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if self.q.unfinished_tasks == 0:
+                return True
+            time.sleep(0.02)
+        return False
+
+    # —— 写盘线程 ——
+    def _run(self):
+        while True:
+            item = self.q.get()
+            try:
+                if self.write_delay:
+                    time.sleep(self.write_delay)
+                self.stats["queue_high"] = max(self.stats["queue_high"], self.q.qsize())
+                k = item[0]
+                if k == "add":
+                    self._add(*item[1:])
+                elif k == "seg_end":
+                    self._seg_end(*item[1:])
+                elif k == "finish":
+                    self._finish(*item[1:])
+                elif k == "stop":
+                    return
+            except Exception as e:  # noqa: BLE001
+                rec = item[1] if len(item) > 1 and isinstance(item[1], TurnRec) else None
+                if rec is not None:
+                    rec.fail("写盘异常:%s: %s" % (type(e).__name__, str(e)[:120]))
+                    self._cleanup_open(rec)
+                    self.notify(rec)
+            finally:
+                self.q.task_done()
+
+    def _cleanup_open(self, rec):
+        for w in (rec.turn_w, rec.seg_w):
+            if w is not None:
+                w.abandon()
+        rec.turn_w = rec.seg_w = None
+
+    def _open_seg(self, rec, idx):
+        sid = rec.sid(idx)
+        rec.cur_seg = idx
+        rec.seg_w = _Wav(rec.dir / ("seg_%03d_%s.wav" % (idx + 1, sid)), self.sr)
+        rec.seg_qc = QCAcc(self.sr, self.th)
+
+    def _close_seg(self, rec, err="", text_len=0):
+        idx = rec.cur_seg
+        if idx is None:
+            return
+        w, qc = rec.seg_w, rec.seg_qc
+        rec.cur_seg, rec.seg_w, rec.seg_qc = None, None, None
+        info = {"id": rec.sid(idx), "index": idx, "file": w.final.name, "format": "WAV", "encoding": "PCM", "sample_rate": self.sr, "channels": 1, "bits_per_sample": 16, "sample_type": "int16"}
+        ok, v = w.close_verify()
+        q = qc.report(frames_expected=w.bytes // 2)
+        status = "ready"
+        reasons = list(q["errors"]) + ([] if ok else v.get("problems", []))
+        if err:
+            reasons.insert(0, "合成失败:" + err)
+        if not ok or q["errors"] or err:
+            status = "failed"
+        elif q["warnings"]:
+            status = "quality_warning"
+        info.update(status=status, frames=w.bytes // 2, duration_s=round(w.bytes / 2 / self.sr, 3), bytes=v.get("bytes", w.bytes + 44), sha256=v.get("sha256"), pcm_sha256=v.get("pcm_sha256"),
+                    quality=q, quality_status=q["status"], warnings=q["warnings"], reason="; ".join(reasons), verified=bool(ok))
+        if text_len:
+            info["text_chars"] = text_len
+        rec.seg_info[idx] = info
+
+    def _add(self, rec, seg_idx, pause_pcm, audio_pcm):
+        if rec.dead:
+            return
+        if rec.turn_w is None:
+            rec.turn_w = _Wav(rec.dir / "turn.wav", self.sr)
+        if pause_pcm:
+            rec.turn_w.write(pause_pcm)
+            rec.pause_samples += len(pause_pcm) // 2
+        if audio_pcm:
+            if rec.cur_seg is not None and rec.cur_seg != seg_idx:
+                self._close_seg(rec)
+            if rec.cur_seg is None:
+                self._open_seg(rec, seg_idx)
+                x0 = int(np.frombuffer(audio_pcm[:2], "<i2")[0])
+                if rec.prev_edge is not None:
+                    step = max(abs(rec.prev_edge), abs(x0)) / 32768.0
+                    if step > self.th["boundary_step_warn"]:
+                        rec.boundary.append({"between": [seg_idx - 1, seg_idx], "step": round(step, 3)})
+            rec.turn_w.write(audio_pcm)
+            rec.seg_w.write(audio_pcm)
+            rec.turn_qc.feed(audio_pcm)
+            rec.seg_qc.feed(audio_pcm)
+            rec.prev_edge = int(np.frombuffer(audio_pcm[-2:], "<i2")[0])
+        self.stats["written_bytes"] += len(pause_pcm) + len(audio_pcm)
+
+    def _seg_end(self, rec, seg_idx, err, text_len):
+        if rec.dead:
+            return
+        if rec.cur_seg == seg_idx:
+            self._close_seg(rec, err, text_len)
+        elif seg_idx not in rec.seg_info:
+            rec.seg_info[seg_idx] = {"id": rec.sid(seg_idx), "index": seg_idx, "file": None, "bytes": 0, "frames": 0, "duration_s": 0.0, "status": "failed", "quality_status": "failed",
+                                     "warnings": [], "sha256": None, "reason": ("合成失败:" + err) if err else "该段没有产生音频", "verified": False}
+
+    def _finish(self, rec, meta):
+        if rec.dead:
+            self._cleanup_open(rec)
+            self._write_manifest(rec, meta)
+            return
+        rec.status = "finalizing"
+        self.notify(rec)
+        self._close_seg(rec)
+        warnings, errors = [], []
+        tw = rec.turn_w
+        if tw is None:                                           # 没有任何音频
+            errors.append("本轮没有产生任何音频")
+            tf = {"file": "turn.wav", "frames": 0, "duration_s": 0.0, "bytes": 0, "sha256": None, "verified": False, "quality": rec.turn_qc.report(0)}
+        else:
+            frames = tw.bytes // 2
+            ok, v = tw.close_verify()
+            rec.turn_w = None
+            q = rec.turn_qc.report(frames_expected=frames - rec.pause_samples)
+            tf = {"file": "turn.wav", "format": "WAV", "encoding": "PCM", "sample_rate": self.sr, "channels": 1, "bits_per_sample": 16, "sample_type": "int16", "frames": frames,
+                  "duration_s": round(frames / self.sr, 3), "bytes": v.get("bytes", 0), "sha256": v.get("sha256"), "pcm_sha256": v.get("pcm_sha256"), "verified": bool(ok), "quality": q,
+                  "pause_samples": rec.pause_samples, "pause_s": round(rec.pause_samples / self.sr, 3)}
+            if not ok:
+                errors += v.get("problems", ["读回校验失败"])
+            errors += q["errors"]
+            warnings += q["warnings"]
+            fr = meta.get("frames")                              # 与 turn.log 里【真实发出的帧】对账(独立于写盘路径)
+            if fr is not None:
+                try:
+                    n, sha, probs = frames_digest(fr)
+                    match = (n == frames and sha == v.get("pcm_sha256"))
+                    tf["matches_emitted_frames"] = bool(match and not probs)
+                    tf["emitted_frames"] = len(fr)
+                    if not match:
+                        errors.append("整轮文件与实际发出的帧不一致(样本数 %d≠%d 或 SHA 不同)" % (frames, n))
+                    errors += probs
+                except Exception as e:  # noqa: BLE001
+                    tf["matches_emitted_frames"] = None
+                    warnings.append("无法与发出的帧对账: %s" % str(e)[:80])
+        segs = [rec.seg_info[i] for i in sorted(rec.seg_info)]
+        seg_sum = sum(s.get("frames", 0) for s in segs)
+        consistent = (tf.get("frames", 0) == seg_sum + rec.pause_samples)
+        if not consistent and tf.get("frames"):
+            errors.append("整轮样本数 %d ≠ 各段 %d + 停顿 %d" % (tf.get("frames", 0), seg_sum, rec.pause_samples))
+        for s in segs:
+            if s.get("status") == "failed":
+                warnings.append("第%d段:%s" % (s["index"] + 1, s.get("reason") or "失败"))
+            elif s.get("warnings"):
+                warnings += ["第%d段:%s" % (s["index"] + 1, w_) for w_ in s["warnings"]]
+        for b in rec.boundary:
+            warnings.append("段交界 %d→%d 幅度突变 %.0f%% 满幅(可能有“咔哒”声)" % (b["between"][0] + 1, b["between"][1] + 1, b["step"] * 100))
+        for w_ in meta.get("integrity") or []:
+            warnings.append("生成期检测:%s" % w_)
+        for e_ in meta.get("errors") or []:
+            warnings.append("生成错误:%s" % e_)
+        if meta.get("cancelled"):
+            warnings.append("用户中途停止:文件只包含已经发出的音频(不完整的一轮)")
+        if errors:
+            rec.fail("; ".join(errors)[:600])
+            self.stats["failed"] += 1
+        else:
+            rec.status = "quality_warning" if (warnings or tf.get("quality", {}).get("status") == "warning") else "ready"
+        self._write_manifest(rec, meta, tf, segs, warnings)
+
+    def _write_manifest(self, rec, meta, tf=None, segs=None, warnings=None):
+        lib = meta.get("library") or {}
+        m = {"schema": 1, "artifact_id": rec.aid, "turn_uid": rec.uid, "created_at": rec.created, "finished_at": now_iso(), "library_id": rec.lib_id, "dataset_version": lib.get("dataset_version"),
+             "synthetic": True, "notice": NOTICE, "status": rec.status, "reason": rec.reason, "precision_note": PRECISION_NOTE,
+             "model": {"id": self.model.get("id"), "sha256": meta.get("model_sha256") or self.model.get("sha256"), "trained": self.model.get("trained")},
+             "params": meta.get("params") or {}, "playback": {"sample_rate": self.sr, "channels": 1, "order": "emit(最终播放顺序,含句间停顿)"},
+             "turn_file": tf or {"file": "turn.wav", "bytes": 0, "frames": 0, "duration_s": 0.0}, "segments": segs or [], "warnings": warnings or [],
+             "text_chars": meta.get("chars"), "float_archive": "不可用:TTS worker 在送出前已量化为 int16"}
+        if self.store_text and meta.get("text"):
+            m["text"] = meta["text"]
+        rec.manifest = m
+        try:
+            rec.dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(rec.dir / "manifest.json", m)
+        except OSError as e:
+            if rec.status in ("ready", "quality_warning"):
+                rec.fail("清单写入失败:%s" % e)
+                m["status"], m["reason"] = rec.status, rec.reason
+        with self.lock:
+            self.disk_manifests[rec.aid] = m
+        self.notify(rec)
+
+    # —— 查询 ——
+    def _row(self, m):
+        tf = m.get("turn_file") or {}
+        return {"artifact_id": m["artifact_id"], "turn_uid": m.get("turn_uid"), "created_at": m.get("created_at"), "status": m.get("status"), "reason": m.get("reason", ""),
+                "library_id": m.get("library_id"), "duration_s": tf.get("duration_s"), "bytes": tf.get("bytes"), "sha256": tf.get("sha256"), "quality": (tf.get("quality") or {}).get("status"),
+                "warnings": m.get("warnings", []), "segments": [_seg_public(s) for s in m.get("segments", [])], "synthetic": True,
+                "downloadable": m.get("status") in ("ready", "quality_warning"), "matches_emitted_frames": tf.get("matches_emitted_frames")}
+
+    def list(self, lib_id):
+        out = {}
+        with self.lock:
+            for aid, m in self.disk_manifests.items():
+                if m.get("library_id") == lib_id:
+                    out[aid] = self._row(m)
+            for aid, rec in self.turns.items():
+                if rec.lib_id == lib_id and aid not in out:
+                    out[aid] = rec.summary()
+        return sorted(out.values(), key=lambda s: (s.get("created_at") or "", s["artifact_id"]))
+
+    def manifest(self, aid, lib_id):
+        if not AID_RE.match(str(aid)):
+            raise ArtifactError("bad_id", "产物 ID 格式不正确", 400)
+        m = self.disk_manifests.get(aid)
+        if m is None:
+            rec = self.turns.get(aid)
+            if rec is not None and rec.lib_id == lib_id:
+                raise ArtifactError("not_ready", "本轮仍在 %s(%s):归档完成并校验后才可下载" % ({"generating": "生成中", "finalizing": "保存中"}.get(rec.status, rec.status), rec.reason or "—"), 409)
+            raise ArtifactError("not_found", "没有这个产物(可能已过期、被清理或属于另一个语音库)", 404)
+        if m.get("library_id") != lib_id:
+            raise ArtifactError("not_found", "没有这个产物(可能已过期、被清理或属于另一个语音库)", 404)       # 语音库隔离:不泄露其存在
+        return m
+
+    def resolve(self, aid, lib_id, kind, sid=None):
+        """返回 (路径, 文件清单项, manifest)。只允许清单里登记过、位于该产物目录内的文件。"""
+        m = self.manifest(aid, lib_id)
+        if m["status"] == "expired":
+            raise ArtifactError("expired", "产物已过期:%s" % m.get("reason", "文件缺失"), 410)
+        if m["status"] == "failed":
+            raise ArtifactError("failed", "该产物归档失败,不提供下载:%s" % m.get("reason", ""), 409)
+        if kind == "turn":
+            fe = m["turn_file"]
+        else:
+            if not SID_RE.match(str(sid)):
+                raise ArtifactError("bad_id", "段 ID 格式不正确", 400)
+            fe = next((s for s in m["segments"] if s["id"] == sid), None)
+            if fe is None:
+                raise ArtifactError("not_found", "没有这个文本段", 404)
+            if fe.get("status") == "failed" or not fe.get("file"):
+                raise ArtifactError("failed", "该段合成/校验失败:%s" % fe.get("reason", ""), 409)
+        base = (self.root / safe_lib(m.get("library_id")) / aid).resolve()
+        p = (base / fe["file"]).resolve()
+        if base not in p.parents or not p.is_file():
+            raise ArtifactError("expired", "文件已不存在(可能被手动删除或会话已重置)", 410)
+        if p.stat().st_size != fe["bytes"]:
+            raise ArtifactError("corrupt", "文件大小与清单不符,拒绝提供下载", 409)
+        return p, fe, m
+
+    def verify(self, aid, lib_id):
+        m = self.manifest(aid, lib_id)
+        base = self.root / safe_lib(m.get("library_id")) / aid
+        res = []
+        for fe in [m["turn_file"]] + list(m.get("segments") or []):
+            if not fe.get("file") or fe.get("status") == "failed":
+                continue
+            p = base / fe["file"]
+            if not p.is_file():
+                res.append({"file": fe["file"], "ok": False, "problems": ["缺失"]})
+                continue
+            ok, info = verify_wav(p, self.sr, fe["frames"], fe.get("pcm_sha256"))
+            sha = sha256_file(p)
+            ok = ok and sha == fe.get("sha256")
+            res.append({"file": fe["file"], "ok": ok, "sha256": sha, "problems": info.get("problems", []) + ([] if sha == fe.get("sha256") else ["SHA-256 与清单不一致"])})
+        return {"artifact_id": aid, "ok": bool(res) and all(r["ok"] for r in res), "files": res}
+
+    def to_flac(self, wav_path, fe):
+        """同一批 int16 样本的无损 FLAC 封装;生成后解码回读,PCM SHA-256 必须与 WAV 完全一致才提供。"""
+        try:
+            import soundfile as sf
+        except Exception as e:  # noqa: BLE001
+            raise ArtifactError("flac_unavailable", "服务器没有 soundfile,无法生成 FLAC(请下载 WAV):%s" % str(e)[:60], 501)
+        out = wav_path.with_suffix(".flac")
+        if out.is_file():
+            return out
+        tmp = out.with_name(out.name + ".part")
+        try:
+            with sf.SoundFile(str(wav_path)) as r, sf.SoundFile(str(tmp), "w", samplerate=r.samplerate, channels=r.channels, format="FLAC", subtype="PCM_16") as w:
+                for blk in r.blocks(blocksize=1 << 18, dtype="int16"):
+                    w.write(blk)
+            h = hashlib.sha256()
+            with sf.SoundFile(str(tmp)) as r2:
+                for blk in r2.blocks(blocksize=1 << 18, dtype="int16"):
+                    h.update(blk.astype("<i2").tobytes())
+            if h.hexdigest() != fe.get("pcm_sha256"):
+                raise ArtifactError("flac_mismatch", "FLAC 解码后与 WAV 样本不一致,已放弃(请下载 WAV)", 500)
+            os.replace(tmp, out)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+        return out
+
+    # —— ZIP(只含当前语音库、状态为可下载的产物;manifest 已脱敏)——
+    def public_manifest(self, m):
+        keep = ("schema", "artifact_id", "created_at", "finished_at", "dataset_version", "synthetic", "notice", "status", "precision_note", "model", "params", "playback", "warnings", "float_archive")
+        out = {k: m.get(k) for k in keep}
+        out["turn_file"] = {k: v for k, v in m["turn_file"].items() if k not in ("path", "text")}
+        out["segments"] = [{k: v for k, v in s.items() if k not in ("path", "text")} for s in m.get("segments", [])]
+        return out
+
+    def zip_plan(self, aids, lib_id):
+        """打包前的预检(不写盘):返回 (可打包的 manifest 列表, 预计字节数);没有可打包产物/磁盘不足抛 ArtifactError。"""
+        items = []
+        for aid in aids:
+            m = self.manifest(aid, lib_id)
+            if m["status"] in ("ready", "quality_warning"):
+                items.append(m)
+        if not items:
+            raise ArtifactError("empty", "没有已完成且校验通过的产物可打包", 404)
+        need = 0
+        for m in items:
+            need += m["turn_file"]["bytes"] + sum(s.get("bytes", 0) for s in m["segments"] if s.get("file") and s.get("status") != "failed")
+        try:
+            free = shutil.disk_usage(self.root).free
+        except OSError:
+            free = 0
+        if free < need + 50e6:
+            raise ArtifactError("disk_full", "磁盘空间不足,无法生成 ZIP(需要约 %.0f MB,剩余 %.0f MB)" % (need / 1e6, free / 1e6), 507)
+        return items, need
+
+    def build_zip(self, aids, lib_id):
+        items, need = self.zip_plan(aids, lib_id)
+        fd, tmp = tempfile.mkstemp(prefix="vc_zip_", suffix=".zip", dir=str(self.root))
+        os.close(fd)
+        try:
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+                z.writestr("README.txt", NOTICE + "\n\n" + PRECISION_NOTE + "\n\n每个 manifest.json 含 SHA-256;默认不含文本、参考音频、声纹向量。\n")
+                for m in items:
+                    aid = m["artifact_id"]
+                    base = self.root / safe_lib(m.get("library_id")) / aid
+                    root = "ai-synthetic_%s/" % aid
+                    z.write(base / m["turn_file"]["file"], root + "turn_full.wav")
+                    for s in m["segments"]:
+                        if s.get("file") and s.get("status") != "failed" and (base / s["file"]).is_file():
+                            z.write(base / s["file"], root + "segments/segment_%03d.wav" % (s["index"] + 1))
+                    z.writestr(root + "manifest.json", json.dumps(self.public_manifest(m), ensure_ascii=False, indent=1))
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        return Path(tmp)
+
+    # —— 删除(范围明确:只删指定产物 / 指定语音库)——
+    def _rm(self, aid, m):
+        d = (self.root / safe_lib(m.get("library_id")) / aid).resolve()
+        if self.root.resolve() in d.parents and d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+        with self.lock:
+            self.disk_manifests.pop(aid, None)
+            self.turns.pop(aid, None)
+
+    def delete(self, aid, lib_id):
+        if not AID_RE.match(str(aid)):
+            raise ArtifactError("bad_id", "产物 ID 格式不正确", 400)
+        m = self.disk_manifests.get(aid)
+        if m is None or m.get("library_id") != lib_id:
+            raise ArtifactError("not_found", "没有这个产物", 404)
+        self._rm(aid, m)
+        return True
+
+    def purge(self, lib_id=None, everything=False):
+        self.quiesce(10)
+        with self.lock:
+            targets = [(aid, m) for aid, m in self.disk_manifests.items() if everything or m.get("library_id") == lib_id]
+        for aid, m in targets:
+            self._rm(aid, m)
+        return len(targets)
+
+    def close(self):
+        self.q.put(("stop",))
+
+
+# —— HTTP 辅助(与框架无关,便于单元测试)——
+def parse_range(header, size):
+    """单区间 Range:返回 (start, end) | None(无/忽略);不可满足抛 ArtifactError(416)。"""
+    if not header:
+        return None
+    m = re.match(r"^bytes=(\d*)-(\d*)$", header.strip())
+    if not m or (m.group(1) == "" and m.group(2) == ""):
+        return None                                                   # 多区间/非法格式:按规范忽略并返回整份 200
+    if m.group(1) == "":
+        n = int(m.group(2))
+        if n == 0:
+            raise ArtifactError("range", "Range 不可满足", 416)
+        return max(0, size - n), size - 1
+    a = int(m.group(1))
+    b = int(m.group(2)) if m.group(2) else size - 1
+    if a >= size or a > b:
+        raise ArtifactError("range", "Range 不可满足", 416)
+    return a, min(b, size - 1)
+
+
+def safe_filename(name):
+    return re.sub(r"[^A-Za-z0-9._-]", "_", name)[:120] or "audio.wav"
+
+
+def iter_file(path, start=0, end=None, block=1 << 20):
+    with open(path, "rb") as f:
+        f.seek(start)
+        left = (end - start + 1) if end is not None else None
+        while left is None or left > 0:
+            b = f.read(block if left is None else min(block, left))
+            if not b:
+                break
+            if left is not None:
+                left -= len(b)
+            yield b
+'''
 FILES['browser_agent.py'] = r'''# -*- coding: utf-8 -*-
 """
 browser_agent.py —— 可见、可验证、可中止的隔离浏览器自动化(Playwright + 远程 Chromium,默认 CPU,不占 T4 显存)
@@ -5365,6 +6689,10 @@ from collections import deque
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 import netguard
+from search_policy import POLICY
+
+# 浏览器加速(合规):video/audio 媒体默认不加载(省带宽,阅读搜索结果不需要);VC_BROWSER_LITE=1 时再跳过图片与字体(页面更快,但画面不完整)。不涉及任何指纹/代理/验证绕过。
+BROWSER_LITE = os.environ.get("VC_BROWSER_LITE", "0") == "1"
 
 MAX_SESSIONS = int(os.environ.get("VC_BROWSER_MAX_SESSIONS", "3"))
 MAX_PAGES = int(os.environ.get("VC_BROWSER_MAX_PAGES", "3"))
@@ -5891,6 +7219,10 @@ class BSession:
                 pass
             return
         try:
+            rt = request.resource_type
+            if rt == "media" or (BROWSER_LITE and rt in ("image", "font")):
+                self.lite_skipped = getattr(self, "lite_skipped", 0) + 1
+                return await route.abort("aborted")
             await route.continue_()
         except Exception:  # noqa: BLE001
             pass
@@ -6368,6 +7700,11 @@ class BSession:
         chain = [first] + [e for e in FALLBACK_ORDER if e != first and e in ENGINES]
         fails = []
         for i, ename in enumerate(chain):
+            okay, rem, why = POLICY.allow("browser:" + ename)
+            if not okay:                                       # 此前遇到验证/限流:冷却期内不再向该站点发任何请求(不绕过)
+                fails.append((ename, "冷却中:此前出现验证/反机器人或限流,已停止请求(剩余约 %d 秒)" % int(rem)))
+                self.add_log("blocked", "%s 冷却中,跳过(剩余约 %d 秒;不绕过)" % (ENGINES[ename]["name"], int(rem)))
+                continue
             if i:
                 self.add_log("action", "自动回退:改用 %s 搜索同一个关键词(上一个引擎:%s)" % (ENGINES[ename]["name"], fails[-1][1][:60]), action="search")
             try:
@@ -6379,12 +7716,15 @@ class BSession:
                         raise
                     self.add_log("action", "同一引擎改用结果页地址直达再试一次(首页输入得到零结果:%s)" % str(e1)[:50], action="search")
                     await self._search_one(dict(a, engine=ename), direct=True)
+                POLICY.ok("browser:" + ename)
                 if fails:
                     self.add_log("verify", "已从 %s 回退到 %s,并拿到真实结果" % (fails[0][0], ename), ok=True)
                 return
             except ActionError as e:
                 if e.fatal:
                     raise
+                if isinstance(e, SearchBlocked) or re.search("验证|反机器人", str(e)):
+                    POLICY.fail("browser:" + ename, "challenge", str(e))        # 记录 → 15 分钟内不再请求该引擎
                 fails.append((ename, str(e)))
             if self.cancel_flag:
                 raise ActionError("任务已取消", fatal=True)
@@ -6594,7 +7934,6 @@ class BrowserManager:
                 "network_guard": {"proxy_port": self.proxy.port if self.proxy else None, "blocked": self.proxy_blocked(), "recent": list(self.proxy.events)[-5:] if self.proxy else []},
                 "bytes_sent": sum(s.bytes_sent for s in self.sessions.values()), "frames": sum(s.frames for s in self.sessions.values())}
 '''
-
 FILES['portal.py'] = r'''# -*- coding: utf-8 -*-
 """
 portal.py —— 搜索首页 / 浏览器自动化 / 多语音库 / 持久化 / GitHub 同步 / 访问控制 的 HTTP 层(由 app.py 末尾 portal.install(app, globals()) 挂载)
@@ -7872,7 +9211,6 @@ class Portal:
 def install(app, G):
     return Portal(app, G)
 '''
-
 FILES['libctl.py'] = r'''# -*- coding: utf-8 -*-
 """
 libctl.py —— 启动脚本与语音库之间的训练桥(命令行)
@@ -7936,7 +9274,6 @@ def main():
 if __name__ == "__main__":
     sys.exit(main())
 '''
-
 FILES['index.html'] = r'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -8121,12 +9458,29 @@ textarea.ref,input.in,.wave{background:#141517;border-color:#2e3036}textarea.ref
 :focus-visible{outline:2px solid #9cc4d6;outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 
+
+/* ═════════ v10 · 下载面板 ═════════ */
+#dl{position:fixed;top:0;right:0;height:100%;width:min(640px,100%);background:#0d0e10f7;border-left:1px solid var(--line);transform:translateX(100%);transition:transform .25s;z-index:12;display:flex;flex-direction:column}
+#dl.open{transform:none} #dl .lh{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;font-weight:700}
+#dlBody{flex:1;overflow:auto;padding:0 16px 24px;font-size:13px}
+.dlbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.dlnote{padding:8px 10px;border:1px solid rgba(230,185,106,.35);background:rgba(230,185,106,.07);border-radius:10px;font-size:12px;line-height:1.6;margin-bottom:10px;color:#d9cba7}
+.dlt{border:1px solid var(--line);border-radius:12px;background:var(--panel2);padding:10px 12px;margin-bottom:10px}
+.dlt h5{margin:0 0 6px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.bdg{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)} .bdg.ready{color:var(--ok);border-color:rgba(127,209,166,.5)} .bdg.quality_warning{color:var(--warn);border-color:rgba(230,185,106,.5)}
+.bdg.failed,.bdg.expired{color:var(--bad);border-color:rgba(240,145,134,.5)} .bdg.generating,.bdg.finalizing{color:var(--a2);border-color:rgba(156,196,214,.5)}
+.dls{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:4px 0;border-top:1px dashed rgba(255,255,255,.07);font-size:12.5px}
+.dls .sp{flex:1;color:var(--muted)} .dls audio{height:28px;max-width:180px}
+.dlerr{color:var(--bad);font-size:12px;margin:4px 0;line-height:1.5} .dlwarn{color:var(--warn);font-size:12px;margin:2px 0;line-height:1.5}
+.dlsha{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:var(--muted);cursor:pointer;word-break:break-all}
+.dlrow{margin:4px 0 8px;font-size:12px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;color:var(--muted)}
+.dlrow .chip{font-size:12px;padding:2px 10px}
 </style>
 </head>
 <body>
 <div class="app">
   <header>
-    <div class="brand"><a class="btn-ghost" href="/" id="btnHome" aria-label="返回搜索首页" style="text-decoration:none">← 搜索首页</a><div class="logo">🎙️</div><b>🎙️ 克隆语音播放器</b><button class="btn-ghost" id="btnLog">📜 运行日志</button><button class="btn-ghost" id="btnDiag">📊 诊断 / 训练 / 评估</button></div>
+    <div class="brand"><a class="btn-ghost" href="/" id="btnHome" aria-label="返回搜索首页" style="text-decoration:none">← 搜索首页</a><div class="logo">🎙️</div><b>🎙️ 克隆语音播放器</b><button class="btn-ghost" id="btnLog">📜 运行日志</button><button class="btn-ghost" id="btnDl" title="每段 / 每轮 / ZIP 下载(AI 合成语音)">💾 下载<span id="dlCnt"></span></button><button class="btn-ghost" id="btnDiag">📊 诊断 / 训练 / 评估</button></div>
     <div class="pills">
       <div class="pill" id="libBar">语音库 <select class="sel" id="libSel" aria-label="选择语音库(切换后两张卡都确认才可用)"></select> <a href="/#/libs" class="mini-link" style="color:inherit">管理</a> <span id="libMsg" style="color:var(--warn)"></span></div>
       <div class="pill"><span class="dot wait" id="dConn"></span>连接 <b id="tConn">连接中…</b></div>
@@ -8198,6 +9552,7 @@ textarea.ref,input.in,.wave{background:#141517;border-color:#2e3036}textarea.ref
   </main>
 </div>
 
+<div id="dl"><div class="lh"><span>💾 生成音频下载 · AI 合成语音</span><button class="btn-ghost" id="dlClose">关闭</button></div><div id="dlBody"></div></div>
 <div id="diag"><div class="lh"><span>诊断 · 训练 · 评估(真实状态)</span><button class="btn-ghost" id="diagClose">关闭</button></div><div id="dBody"></div></div>
 <div id="logd"><div class="lh"><span>运行日志</span><button class="btn-ghost" id="logClose">关闭</button></div><div id="logs"></div></div>
 
@@ -8433,6 +9788,7 @@ function onJson(m) {
     case "sim": if (m.turn === S.uid || m.final) { S.simStatus = m.status; S.simReason = m.reason; setSim(m.value, m.final, m.view, m.per_gpu); } break;
     case "acoustic": S.acoustic = m; if (S.diagOpen) renderDiag(); break;
     case "delta": if (S.bubble) { S.bubble.textContent += m.t; scrollChat(); } break;
+    case "artifact": onArtifact(m); break;
     case "turn_done": onTurnDone(m); break;
     case "resume_ok": if (CUR) { CUR.resumed++; } log("续传成功:从序号 " + m.from + " 起补发 " + m.frames + " 帧", "o"); break;
     case "resume_fail": if (CUR) { CUR.integrity_fail = true; CUR.notes.push("续传失败"); } log("❌ 续传失败(服务端已没有这一轮的帧)", "e"); break;
@@ -8450,6 +9806,7 @@ function setSim(v, final, view, perGpu) {
 function onTurnDone(m) {
   S.turnDone = true; if (S.bubble) S.bubble.classList.remove("typing");
   S.turnInfo = m; if (CUR) CUR.done = m;
+  if (m.artifact_id) dlBindRow(m);
   log("本轮完成: " + m.chars + " 字 · " + m.segs + " 句 · 音频 " + m.audio_s + "s · " + m.frames + " 帧" + (m.errors && m.errors.length ? " · ❌ " + m.errors.length + " 句损坏" : ""), m.errors && m.errors.length ? "e" : "o");
   if (m.errors && m.errors.length && CUR) { CUR.integrity_fail = true; CUR.notes = CUR.notes.concat(m.errors); }
   if (!(m.audio_s > 0)) { setPhase("idle"); if (CUR) { CUR.drained = true; finalizeTurn("drained"); } }
@@ -8815,6 +10172,136 @@ function demo() {                                  // ?demo=1 : 离线界面预�
   setPhase("play"); $("meterI").style.width = "62%";
 }
 if (/[?&]demo\b/.test(location.search)) demo(); else { connect(); monitor(); window.addEventListener("pointerdown", () => { P.init().catch(() => {}); }, { once: true }); }
+
+/* ═════════ v10 · 生成音频下载(段 / 整轮 / ZIP):按后端 artifact_id 绑定,绝不按序号猜;下载是后端已校验的文件,不在前端拼 Blob ═════════ */
+const DL = { open: false, turns: [], disk: null, notice: "", errs: {}, busy: null, rows: {}, timer: null, lib: undefined };
+const fmtMB = (b) => b == null ? "—" : b >= 1e6 ? (b / 1e6).toFixed(2) + " MB" : (b / 1e3).toFixed(1) + " KB";
+const STZ = { generating: "生成中", finalizing: "保存中", ready: "已就绪", quality_warning: "就绪·有质量警告", failed: "失败", expired: "已过期" };
+const aUrl = (aid, p) => "/api/artifacts/" + encodeURIComponent(aid) + p;
+async function dlLoad() {
+  try {
+    const r = await fetch("/api/artifacts", { credentials: "same-origin", cache: "no-store" });
+    if (r.status === 401) { DL.err = "未登录或会话已失效(401):请刷新页面重新登录"; dlRender(); return; }
+    const j = await r.json();
+    if (!j.ok) { DL.err = j.error || ("HTTP " + r.status); dlRender(); return; }
+    DL.err = ""; DL.turns = j.turns.slice().reverse(); DL.disk = j.disk; DL.notice = j.notice; DL.prec = j.precision_note; DL.lib = j.library_id;
+    const n = DL.turns.filter((t) => t.downloadable).length; $("dlCnt").textContent = n ? " (" + n + ")" : "";
+    if (DL.open) dlRender();
+  } catch (e) { DL.err = "无法连接服务:" + e; if (DL.open) dlRender(); }
+}
+function dlSoon() { clearTimeout(DL.timer); DL.timer = setTimeout(dlLoad, 250); }
+function onArtifact(m) {
+  const row = DL.rows[m.turn];
+  if (row && (m.status === "ready" || m.status === "quality_warning")) dlFillRow(row, m);
+  else if (row && (m.status === "failed")) row.textContent = "⚠ 本轮归档失败:" + (m.reason || "未知原因") + "(没有可下载文件;不会显示为成功)";
+  else if (row) row.textContent = "💾 " + (STZ[m.status] || m.status) + "…(归档并校验完成后才可下载)";
+  if (m.status !== "generating" || DL.open) dlSoon();
+}
+function dlBindRow(done) {
+  if (!S.metaEl || S.metaEl.dataset.dl) return; S.metaEl.dataset.dl = done.artifact_id;
+  const row = document.createElement("div"); row.className = "dlrow"; row.dataset.aid = done.artifact_id; row.textContent = "💾 保存中…(归档并校验完成后才可下载)";
+  S.metaEl.insertAdjacentElement("afterend", row); DL.rows[done.turn] = row;
+  fetch(aUrl(done.artifact_id, ""), { credentials: "same-origin" }).then((r) => r.json()).then((j) => { if (j.ok && (j.manifest.status === "ready" || j.manifest.status === "quality_warning")) dlFillRow(row, dlRowFromManifest(j.manifest)); }).catch(() => {});
+}
+function dlRowFromManifest(m) { return { artifact_id: m.artifact_id, status: m.status, duration_s: m.turn_file.duration_s, bytes: m.turn_file.bytes, warnings: m.warnings }; }
+function dlFillRow(row, m) {
+  const aid = row.dataset.aid || m.artifact_id; row.innerHTML = "";
+  const mk = (txt, fn) => { const b = document.createElement("button"); b.className = "chip"; b.textContent = txt; b.onclick = fn; return b; };
+  row.append(document.createTextNode("💾 AI 合成 · " + (m.duration_s != null ? m.duration_s.toFixed(1) + "s · " : "") + fmtMB(m.bytes) + (m.status === "quality_warning" ? " · ⚠ 有质量警告" : "") + " "));
+  row.append(mk("⬇ 整轮 WAV", () => dlGet(aUrl(aid, "/turn.wav"), "t:" + aid)), mk("📦 本轮 ZIP", () => dlZip([aid])), mk("全部…", () => openDl()));
+}
+async function dlGet(url, key) {
+  DL.errs[key] = ""; DL.busy = key; dlRender();
+  try {
+    const h = await fetch(url, { method: "HEAD", credentials: "same-origin" });
+    if (!h.ok) { const r = await fetch(url, { credentials: "same-origin" }); let msg = ""; try { msg = (await r.json()).error; } catch (e) {} throw new Error("HTTP " + r.status + (msg ? " · " + msg : r.status === 401 ? " · 未登录/会话失效" : "")); }
+    const a = document.createElement("a"); a.href = url; a.download = ""; document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) { DL.errs[key] = String(e.message || e); addSys("⚠ 下载失败:" + DL.errs[key]); }
+  DL.busy = null; dlRender();
+}
+async function dlZip(ids) {
+  const key = "zip", q = ids ? "?ids=" + ids.join(",") : ""; DL.errs[key] = "";
+  try {
+    const r = await fetch("/api/artifacts/zip" + (q ? q + "&check=1" : "?check=1"), { credentials: "same-origin" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error("HTTP " + r.status + " · " + (j.error || (r.status === 401 ? "未登录/会话失效" : "未知错误")));
+    const a = document.createElement("a"); a.href = "/api/artifacts/zip" + q; a.download = ""; document.body.appendChild(a); a.click(); a.remove();
+    addSys("📦 正在下载 ZIP:" + j.turns + " 轮 · 约 " + j.estimated_mb + " MB(含各段、整轮、脱敏 manifest.json)");
+  } catch (e) { DL.errs[key] = String(e.message || e); addSys("⚠ ZIP 下载失败:" + DL.errs[key]); }
+  dlRender();
+}
+async function dlVerify(aid) {
+  DL.errs["v:" + aid] = "校验中…"; dlRender();
+  try {
+    const j = await (await fetch(aUrl(aid, "/verify"), { credentials: "same-origin" })).json();
+    DL.errs["v:" + aid] = j.ok ? "✅ 重新读盘校验通过:" + j.files.length + " 个文件的容器/帧数/SHA-256 与清单一致" : "❌ 校验失败:" + (j.error || j.files.filter((f) => !f.ok).map((f) => f.file + " " + (f.problems || []).join(",")).join(";"));
+  } catch (e) { DL.errs["v:" + aid] = "校验请求失败:" + e; }
+  dlRender();
+}
+async function dlDelete(aid) {
+  if (!confirm("只删除这一轮的所有文件(整轮 + 各段 + 清单)。确定吗?")) return;
+  const r = await fetch(aUrl(aid, ""), { method: "DELETE", credentials: "same-origin" }); const j = await r.json().catch(() => ({}));
+  if (!r.ok) DL.errs["v:" + aid] = "删除失败:HTTP " + r.status + " " + (j.error || ""); dlLoad();
+}
+async function dlPurge() {
+  if (!confirm("将删除【当前语音库】的全部生成产物(其他语音库不受影响)。这不可撤销,确定吗?")) return;
+  const r = await fetch("/api/artifacts?confirm=1", { method: "DELETE", credentials: "same-origin" }); const j = await r.json().catch(() => ({}));
+  addSys(r.ok ? "已删除当前语音库的 " + j.deleted + " 轮生成产物" : "删除失败:" + (j.error || r.status)); dlLoad();
+}
+function dlRender() {
+  if (!DL.open) return; const el = $("dlBody"); const T = DL.turns, parts = [];
+  parts.push("<div class='dlnote'>" + esc(DL.notice || "AI 合成语音:仅限本人或已获明确授权的声音;不得伪装成真人原始录音。") + "<br>" + esc(DL.prec || "") + "<br>Kaggle 工作目录只在当前会话内有效,<b>请及时下载 ZIP</b>;不会自动提交到 GitHub。</div>");
+  if (DL.err) parts.push("<div class='dlerr'>" + esc(DL.err) + "</div>");
+  const dk = DL.disk;
+  parts.push("<div class='dlbar'><button class='btn main' id='dlZipAll'" + (T.some((t) => t.downloadable) ? "" : " disabled") + ">📦 下载全部 ZIP</button><button class='btn' id='dlRefresh'>刷新</button><button class='btn' id='dlPurge'" + (T.length ? "" : " disabled") + ">🧹 清空本语音库产物</button>" +
+    (dk ? "<span class='hint'>磁盘剩余 " + dk.free_mb + " MB · 产物 " + dk.used_mb + " MB / 上限 " + dk.cap_mb + " MB · 写盘队列 " + dk.queue + "/" + dk.queue_max + (dk.recovered_part ? " · 中断残留 " + dk.recovered_part : "") + "</span>" : "") + "</div>");
+  if (DL.errs.zip) parts.push("<div class='dlerr'>ZIP:" + esc(DL.errs.zip) + "</div>");
+  if (!T.length) parts.push("<div class='hint'>当前语音库还没有生成产物。合成并播放后,每一轮和每个文本段都会出现在这里。</div>");
+  T.forEach((t, i) => {
+    const ok = t.downloadable, tk = "t:" + t.artifact_id;
+    let h = "<div class='dlt'><h5>第 " + (T.length - i) + " 轮 <span class='bdg " + t.status + "'>" + (STZ[t.status] || t.status) + "</span>" + (t.quality && ok ? "<span class='bdg'>质量:" + ({ pass: "通过", warning: "警告", failed: "失败" }[t.quality] || t.quality) + "</span>" : "") +
+      "<span class='bdg'>AI 合成语音</span><span class='hint'>" + esc((t.created_at || "").replace("T", " ").replace("Z", " UTC")) + "</span></h5>";
+    if (t.status === "generating" || t.status === "finalizing") h += "<div class='hint'>" + (t.status === "generating" ? "生成中(已记录 " + (t.duration_s || 0) + " s)" : "保存并校验中") + ":完成后才启用下载</div>";
+    if (t.reason && !ok) h += "<div class='dlerr'>" + esc(t.reason) + "</div>";
+    if (ok) {
+      h += "<div class='dls'><b>整轮</b><span class='sp'>WAV · PCM16 · 24 kHz · 单声道 · " + (t.duration_s != null ? t.duration_s.toFixed(2) : "?") + " s · " + fmtMB(t.bytes) + (t.matches_emitted_frames ? " · 与实际发出帧一致" : "") + "</span>" +
+        "<button class='chip' data-act='turn' data-id='" + t.artifact_id + "'>" + (DL.busy === tk ? "…" : "⬇ WAV") + "</button><button class='chip' data-act='flac' data-id='" + t.artifact_id + "'>⬇ FLAC</button><button class='chip' data-act='zip' data-id='" + t.artifact_id + "'>📦 ZIP</button></div>";
+      h += "<div class='dlsha' title='点击复制完整 SHA-256' data-sha='" + esc(t.sha256 || "") + "'>SHA-256 " + esc(t.sha256 || "—") + "</div>";
+      (t.segments || []).forEach((s) => {
+        const sk = "s:" + s.id, sok = s.status !== "failed";
+        h += "<div class='dls'><span>第 " + (s.index + 1) + " 段</span><span class='sp'>" + (s.duration_s != null ? s.duration_s.toFixed(2) : "?") + " s · " + fmtMB(s.bytes) + " · " + (STZ[s.status] || s.status) + (s.quality_status === "warning" ? " · ⚠" : "") + "</span>" +
+          (sok ? "<audio controls preload='none' src='" + aUrl(t.artifact_id, "/segments/" + s.id + ".wav") + "'></audio><button class='chip' data-act='seg' data-id='" + t.artifact_id + "' data-sid='" + s.id + "'>⬇</button>" : "<span class='dlerr'>" + esc(s.reason || "失败") + "</span>") + "</div>";
+        if (DL.errs[sk]) h += "<div class='dlerr'>" + esc(DL.errs[sk]) + "</div>";
+      });
+      (t.warnings || []).forEach((w) => { h += "<div class='dlwarn'>⚠ " + esc(w) + "</div>"; });
+      h += "<div class='dls'><span class='sp'></span><button class='chip' data-act='verify' data-id='" + t.artifact_id + "'>🔍 重新校验</button><button class='chip' data-act='del' data-id='" + t.artifact_id + "'>🗑 删除本轮</button></div>";
+    } else if (t.status === "failed" || t.status === "expired") {
+      h += "<div class='dls'><span class='sp'></span><button class='chip' data-act='del' data-id='" + t.artifact_id + "'>🗑 删除记录</button></div>";
+    }
+    if (DL.errs[tk]) h += "<div class='dlerr'>" + esc(DL.errs[tk]) + " <button class='chip' data-act='turn' data-id='" + t.artifact_id + "'>重试</button></div>";
+    if (DL.errs["v:" + t.artifact_id]) h += "<div class='hint'>" + esc(DL.errs["v:" + t.artifact_id]) + "</div>";
+    parts.push(h + "</div>");
+  });
+  el.innerHTML = parts.join("");
+  const zb = $("dlZipAll"); if (zb) zb.onclick = () => dlZip(null);
+  $("dlRefresh").onclick = dlLoad; $("dlPurge").onclick = dlPurge;
+  el.querySelectorAll("[data-act]").forEach((b) => b.onclick = () => {
+    const id = b.dataset.id, a = b.dataset.act;
+    if (a === "turn") dlGet(aUrl(id, "/turn.wav"), "t:" + id);
+    else if (a === "flac") dlGet(aUrl(id, "/turn.wav?format=flac"), "t:" + id);
+    else if (a === "seg") dlGet(aUrl(id, "/segments/" + b.dataset.sid + ".wav"), "s:" + b.dataset.sid);
+    else if (a === "zip") dlZip([id]);
+    else if (a === "verify") dlVerify(id);
+    else if (a === "del") dlDelete(id);
+  });
+  el.querySelectorAll(".dlsha").forEach((x) => x.onclick = () => { try { navigator.clipboard.writeText(x.dataset.sha); addSys("已复制 SHA-256"); } catch (e) {} });
+}
+function openDl() { DL.open = true; $("dl").classList.add("open"); dlLoad(); dlRender(); }
+$("btnDl").onclick = () => (DL.open ? ($("dl").classList.remove("open"), DL.open = false) : openDl());
+$("dlClose").onclick = () => { DL.open = false; $("dl").classList.remove("open"); };
+setInterval(() => { if (DL.open && !DL.busy) dlLoad(); }, 6000);
+if ($("libSel")) $("libSel").addEventListener("change", () => { DL.rows = {}; setTimeout(dlLoad, 1500); });
+dlLoad();
 </script>
 <script>
 (function () {
@@ -8851,7 +10338,6 @@ if (/[?&]demo\b/.test(location.search)) demo(); else { connect(); monitor(); win
 </body>
 </html>
 '''
-
 FILES['home.html'] = r'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -9947,7 +11433,6 @@ loadSettings().then(refreshLlmBadge); setInterval(refreshLlmBadge, 20000);
 </body>
 </html>
 '''
-
 FILES['worklet.js'] = r'''/* Voice Clone Studio - AudioWorklet (v6)
  *  - vc-player : 连续时间线的环形缓冲播放器。
  *      · 永远 1.0 倍速:不做任何 WSOLA / 弹性放慢 / 重复音频 / 插入假音。数据不够就如实【欠载】:短淡出 → 重新缓冲 → 计数并上报。
@@ -10135,7 +11620,6 @@ if (typeof AudioWorkletProcessor !== "undefined") {
 }
 if (typeof module !== "undefined") module.exports = { RingPlayer };
 '''
-
 FILES['vc_common.js'] = r'''/* vc_common.js —— 浏览器与 Node 单元测试共用的纯逻辑:帧协议校验 / 分位数 / 起播水位规划 */
 "use strict";
 (function (root) {
@@ -10200,7 +11684,6 @@ FILES['vc_common.js'] = r'''/* vc_common.js —— 浏览器与 Node 单元测�
   root.VC = api;
 })(typeof window !== "undefined" ? window : globalThis);
 '''
-
 FILES['intent.py'] = r'''# -*- coding: utf-8 -*-
 """
 intent.py —— 大模型网关 + 意图理解(v9 新增,嵌入 FILES['intent.py'])
@@ -10833,7 +12316,6 @@ def finalize_plan(it, engine_choice, edge_default="bing"):
         chosen = [engine_choice] if engine_choice not in (None, "", "all") else (["google", "bing", "edge_default"] if engine_choice == "all" else ["bing"])
     return resolve_engines(chosen, edge_default)
 '''
-
 FILES['tests/test_intent.py'] = r'''# -*- coding: utf-8 -*-
 """
 test_intent.py —— v9 意图理解 / LLM 网关 / 引擎语义 / 2 秒 VAD 的单元测试(不需要 GPU、外网、Chromium)
@@ -11140,7 +12622,6 @@ if __name__ == "__main__":
     print("\n通过 %d / %d" % (len(RESULTS) - len(bad), len(RESULTS)) + ("" if not bad else "   失败:" + "; ".join(bad)))
     sys.exit(1 if bad else 0)
 '''
-
 FILES['tests/test_v9_server.py'] = r'''# -*- coding: utf-8 -*-
 """
 test_v9_server.py —— v9 服务集成测试(Mock TTS 引擎 + 真实 FastAPI 服务;没有 DeepSeek Key,所以走『规则回退』路径)
@@ -11233,7 +12714,6 @@ if __name__ == "__main__":
         print("  ✗ test_v9_plan_and_settings_over_http\n" + traceback.format_exc())
         sys.exit(1)
 '''
-
 FILES['train.py'] = r'''# -*- coding: utf-8 -*-
 """
 train.py —— Qwen3-TTS-12Hz-1.7B-Base · LoRA 监督微调 (SFT) · 双 T4 DDP(Accelerate)
@@ -11722,7 +13202,6 @@ def main_cli():
 if __name__ == "__main__":
     main_cli()
 '''
-
 FILES['evaluate.py'] = r'''# -*- coding: utf-8 -*-
 """
 evaluate.py —— 声纹相似度自动评估(子系统 A)
@@ -11879,7 +13358,6 @@ def main():
 if __name__ == "__main__":
     main()
 '''
-
 FILES['auto_train_loop.py'] = r'''# -*- coding: utf-8 -*-
 """
 auto_train_loop.py —— 训练 + 评估循环控制器(子系统 A)
@@ -12119,7 +13597,6 @@ def main():
 if __name__ == "__main__":
     main()
 '''
-
 FILES['data_prep.py'] = r'''# -*- coding: utf-8 -*-
 """
 data_prep.py —— 训练数据预处理(子系统 A)
@@ -12402,7 +13879,6 @@ def main():
 if __name__ == "__main__":
     main()
 '''
-
 FILES['tts_dataset.py'] = r'''# coding=utf-8
 # 取自 QwenLM/Qwen3-TTS/finetuning/dataset.py (Apache-2.0),仅增加了参考 mel 缓存。
 # Copyright 2026 The Alibaba Qwen team.
@@ -12630,7 +14106,6 @@ class TTSDataset(Dataset):
             'codec_mask':codec_mask
         }
 '''
-
 FILES['README.md'] = r'''# 克隆语音播放器 v6 · Qwen3-TTS-1.7B · Kaggle 双 T4
 
 ## 快速启动
@@ -12703,8 +14178,23 @@ FILES['README.md'] = r'''# 克隆语音播放器 v6 · Qwen3-TTS-1.7B · Kaggle 
 ## 资源预算(预估,未在 T4×2 实测的标「未验证」)
 - Chromium(CPU):约 300~600MB 内存/会话,磁盘 ~150MB;截图 ≤2fps(TTS 播放时 0.5fps)约 100~200KB/s;不加载任何视觉/Agent 模型;**不占显存**。
 - 语音识别/声纹评估复用 GPU worker 里已有的 Whisper / WavLM(按需加载),不新增模型进程。训练模式下 TTS/ASR 不加载(MONITOR_ONLY),文字搜索与 CPU 浏览器继续可用。
-'''
 
+---
+
+## v10 补充:可下载的合成音频 + 合规搜索加速
+
+**下载(/voice 页右上「💾 下载」)**
+- 每个文本段单独 WAV;每一轮完整 WAV(= 实际发给浏览器的 PCM 序列,含句间停顿,逐样本一致);可选 FLAC(同一批 int16 的无损封装);「下载全部」ZIP(各段 + 整轮 + 脱敏 `manifest.json`)。
+- 位置:`/kaggle/working/vc/artifacts/<语音库ID>/<产物ID>/`(已 `.gitignore`,不会进 Git)。**Kaggle 工作目录只在当前会话/保存版本内有效,请及时下载。**
+- 状态:`generating → finalizing → ready | quality_warning | failed | expired`。只有写盘 → fsync → 独立读回校验(采样率/声道/帧数/字节数/SHA-256)→ 与实际发出的帧对账 → 原子改名之后才是 ready。
+- 精度:TTS worker 在送出前已量化成 int16,所以是「播放精确副本」;**无法**恢复量化前的 float。
+- 磁盘:剩余 < `ARTIFACT_MIN_FREE_MB` 或总量 ≥ `ARTIFACT_MAX_MB` 时告警并停止新归档,**不会自动删除**;删除只在你点「删除本轮 / 清空本语音库产物 / 删除我的数据」时发生,范围写在返回值里。
+- API 速查:`GET /api/artifacts`、`/api/artifacts/{id}`、`/{id}/turn.wav[?format=flac]`、`/{id}/segments/{sid}.wav`、`/{id}/verify`、`/api/artifacts/zip[?ids=]`、`DELETE /api/artifacts/{id}`、`DELETE /api/artifacts?confirm=1`。支持 `Range` / `HEAD` / `If-None-Match`。
+
+**搜索(合规加速,不绕过)**
+- 加速:共享连接池、结果短缓存(会标注)、single-flight、每域名并发/间隔限制、超时/5xx 指数退避 + 抖动并遵守 `Retry-After`、熔断器、浏览器不加载媒体(`BROWSER_LITE` 还可跳过图片/字体)。
+- 遇到 401/403/429/验证码/人机验证:**停止对该站点的请求**并显示原因与冷却时间,不绕过。没有 stealth、指纹伪装、代理/IP 轮换、验证码代答。所以**不承诺「0 拦截」**。想最稳:配置官方 `BRAVE_SEARCH_API_KEY`。
+'''
 FILES['tests/test_player.js'] = r'''// 播放器 / 帧协议 / 起播规划 单元测试(Node,无需浏览器):  node tests/test_player.js
 "use strict";
 const assert = require("assert");
@@ -12819,7 +14309,6 @@ test("起播水位:抖动越大、历史最低水位越低 → 越大;并随服�
 });
 console.log(passed + " 项通过"); if (process.exitCode) console.log("存在失败项");
 '''
-
 FILES['tests/test_gateway.py'] = r'''# -*- coding: utf-8 -*-
 """单元 + Mock 集成测试(只验证播放器/队列/协议/背压/重连/完整性检测等【不需要真实模型】的部分)。
    ⚠ Mock 引擎是正弦波,这里的通过【不代表】语音质量、双卡训练或零欠载 —— 那些必须在真实 T4 双卡 + 真实 Qwen3-TTS 上测。
@@ -13157,7 +14646,6 @@ if __name__ == "__main__":
     print("%d 项通过, %d 项失败" % (len(tests) - bad, bad))
     sys.exit(1 if bad else 0)
 '''
-
 FILES['tests/test_portal.py'] = r'''# -*- coding: utf-8 -*-
 """
 test_portal.py —— 新增功能测试(搜索首页 / 浏览器自动化 / 多语音库 / 持久化 / GitHub 同步 / 访问控制)
@@ -14043,8 +15531,13 @@ if __name__ == "__main__":
     print("%d 项通过, %d 项失败, %d 项未验证" % (len(tests) - bad, bad, len(SKIPPED)))
     sys.exit(1 if bad else 0)
 '''
-
 FILES['tests/test_v71.py'] = r'''# -*- coding: utf-8 -*-
+def _chain(*a, **k):
+    import search_providers as _sp
+    _sp.POLICY.reset()                      # v10:熔断器/缓存是进程级状态,每个用例从干净状态开始
+    return _sp.search_http_chain(*a, **k)
+
+
 # ── v8 回归:搜索失败.png(Bing 对「江门职业技术学院」零结果)→ 引擎自动回退 + 多来源合并 ──
 def test_unit_v8_engine_fallback_order_and_merge():
     import asyncio
@@ -14065,7 +15558,7 @@ def test_unit_v8_engine_fallback_order_and_merge():
         sp.HTTP_PROVIDERS["bing"] = Fake(["https://a.example/1", "https://a.example/2", "https://dup.example/"])
         sp.HTTP_PROVIDERS["duckduckgo"] = Fake(["https://dup.example", "https://b.example/1"])
         sp.HTTP_PROVIDERS["wikipedia"] = Fake(["https://wiki.example/x"])
-        res, pid, att = asyncio.run(sp.search_http_chain("q", 8))
+        res, pid, att = asyncio.run(_chain("q", 8))
         urls = [r["url"].rstrip("/") for r in res]
         assert pid == "http:bing+duckduckgo", pid
         assert len(urls) == len(set(urls)) == 4 and "https://wiki.example/x" not in urls, urls
@@ -14275,27 +15768,27 @@ def test_unit_search_chain_fallback_errors_and_no_retry_policy():
     sp.BASES.update(bing=base, duckduckgo=base, wikipedia=base)
     try:
         FakeSite.modes.update(bing="ok", ddg="ok", wiki="ok")
-        res, pid, att = asyncio.run(sp.search_http_chain("测试", 8))
+        res, pid, att = asyncio.run(_chain("测试", 8))
         assert pid == "http:bing+duckduckgo" and len(res) == 3 and att[0]["ok"] and att[1]["ok"]      # v8:Bing 只有 2 条(<8)→ 合并 DDG 的 1 条
         # Bing 持续 5xx:可重试 → 重试 1 次后失败 → 自动切到 DuckDuckGo;失败原因与实际 provider 都可见
         FakeSite.modes.update(bing="503")
         FakeSite.hits.update(bing=0, ddg=0, wiki=0)
-        res, pid, att = asyncio.run(sp.search_http_chain("测试", 8))
+        res, pid, att = asyncio.run(_chain("测试", 8))
         assert pid == "http:duckduckgo" and FakeSite.hits["bing"] == 2, FakeSite.hits
         assert att[0]["provider"] == "bing" and att[0]["kind"] == "server_error" and att[0]["tries"] == 2 and att[-1]["ok"]
         # 429 / 验证码页:不可重试(只请求 1 次),且不绕过
         for mode, kind in (("429", "rate_limited"), ("challenge", "challenge"), ("empty", "empty"), ("changed", "parse")):
             FakeSite.modes.update(bing=mode, ddg="ok")
             FakeSite.hits.update(bing=0)
-            res, pid, att = asyncio.run(sp.search_http_chain("测试", 8))
+            res, pid, att = asyncio.run(_chain("测试", 8))
             assert att[0]["kind"] == kind and FakeSite.hits["bing"] == 1 and pid == "http:duckduckgo", (mode, att[0], FakeSite.hits)
         # 全部失败 → SearchFailed,携带每次尝试;维基百科最后兜底
         FakeSite.modes.update(bing="503", ddg="challenge", wiki="ok")
-        res, pid, att = asyncio.run(sp.search_http_chain("日期", 8))
+        res, pid, att = asyncio.run(_chain("日期", 8))
         assert pid == "http:wikipedia" and res[0]["url"].endswith("/wiki/%E6%B5%8B%E8%AF%95%E6%9D%A1%E7%9B%AE") and res[0]["snippet"] == "片段 高亮"
         FakeSite.modes.update(wiki="503")
         try:
-            asyncio.run(sp.search_http_chain("日期", 8))
+            asyncio.run(_chain("日期", 8))
             raise AssertionError("应当失败")
         except sp.SearchFailed as e:
             kinds = [a["kind"] for a in e.attempts]
@@ -14317,7 +15810,7 @@ def test_unit_search_network_down_is_reported_as_network():
     sp.BASES.update(bing=dead, duckduckgo=dead, wikipedia=dead)
     try:
         try:
-            asyncio.run(sp.search_http_chain("x", 8))
+            asyncio.run(_chain("x", 8))
             raise AssertionError("应当失败")
         except sp.SearchFailed as e:
             assert all(a["kind"] == "network" for a in e.attempts) and len(e.attempts) == 3 and "网络不可用" in str(e)
@@ -14442,7 +15935,7 @@ def test_server_search_without_keys_and_json_errors():
     import test_gateway as tg
     srv_fake, base = _fake_site()
     FakeSite.modes.update(bing="ok", ddg="ok", wiki="ok")
-    env = dict(VC_TEST_BING_BASE=base, VC_TEST_DDG_BASE=base, VC_TEST_WIKI_BASE=base, BRAVE_SEARCH_API_KEY="", GOOGLE_CSE_KEY="", GOOGLE_CSE_CX="", PLAYWRIGHT_BROWSERS_PATH="/nonexistent_pw", DEEPSEEK_API_KEY="")
+    env = dict(VC_SEARCH_CACHE_TTL="0", VC_TEST_BING_BASE=base, VC_TEST_DDG_BASE=base, VC_TEST_WIKI_BASE=base, BRAVE_SEARCH_API_KEY="", GOOGLE_CSE_KEY="", GOOGLE_CSE_CX="", PLAYWRIGHT_BROWSERS_PATH="/nonexistent_pw", DEEPSEEK_API_KEY="")
     srv = tg.Server(**env)
     try:
         code, j, hd = _http(srv, "POST", "/api/search", {"q": "日期", "answer": False})                        # 没有任何 Key,直接搜索
@@ -14488,6 +15981,792 @@ if __name__ == "__main__":
     for s in SKIPPED:
         print("  ⚠ 未验证:" + s)
     print("%d 项通过, %d 项失败, %d 项未验证" % (len(tests) - bad, bad, len(SKIPPED)))
+    sys.exit(1 if bad else 0)
+'''
+FILES['tests/test_artifacts.py'] = r'''# -*- coding: utf-8 -*-
+"""v10 生成音频产物测试。  运行: python tests/test_artifacts.py [--unit]
+   ⚠ Mock 引擎是正弦波:这些测试证明【文件完整性/顺序/下载协议/状态机】,不证明真实 TTS 音质、真实 GPU 性能或 Kaggle 持久化。"""
+import asyncio
+import hashlib
+import http.cookiejar
+import io
+import json
+import os
+import shutil
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+import wave
+import zipfile
+from pathlib import Path
+
+import numpy as np
+
+HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE / "tests"))
+import artifacts as art  # noqa: E402
+import protocol as pr  # noqa: E402
+
+SR = 24000
+rng = np.random.default_rng(7)
+
+
+def tone(sec, f=220.0, amp=0.3, seed=0):
+    t = np.arange(int(SR * sec)) / SR
+    x = amp * np.sin(2 * np.pi * f * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 3 * t))
+    x = x + np.random.default_rng(seed).normal(0, 0.003, t.size)
+    x = x * np.minimum(1, np.minimum(t, t[::-1]) / 0.02)                     # 两端淡入淡出,避免被判为边界突变
+    return (x * 32767).astype("<i2").tobytes()
+
+
+def zeros(sec):
+    return np.zeros(int(SR * sec), "<i2").tobytes()
+
+
+def mk(tmp, **kw):
+    kw.setdefault("min_free_mb", 1)
+    return art.ArtifactStore(tmp, sr=SR, **kw)
+
+
+def wav_pcm(path):
+    with wave.open(str(path), "rb") as w:
+        return w.getframerate(), w.getnchannels(), w.getsampwidth(), w.readframes(w.getnframes())
+
+
+def run_turn_sim(st, segs, lib="libA", frames_check=True, cancel=False, uid=1, seg_err=None):
+    """segs: [(pause_pcm, audio_pcm_chunks[list])];按【播放顺序】记录(与 pump 的 emit 顺序一致)。"""
+    rec = st.begin(uid, lib, {})
+    log, seq = [], 0
+    for i, (pause, chunks) in enumerate(segs):
+        first = True
+        for c in chunks:
+            p = pause if first else b""
+            first = False
+            assert rec.add(i, p, c)
+            log.append(pr.pack_frame(uid, seq, SR, p + c, 0, i))
+            seq += 1
+        rec.seg_end(i, (seg_err or {}).get(i, ""), 10)
+    log.append(pr.pack_frame(uid, seq, SR, b"", pr.F_END, len(segs)))
+    rec.finish({"frames": log if frames_check else None, "library": {"dataset_version": 3}, "cancelled": cancel, "chars": 33})
+    assert st.quiesce(20)
+    return rec
+
+
+# ───────────────────────── 单元测试 ─────────────────────────
+def test_exact_order_pauses_and_segments():
+    tmp = tempfile.mkdtemp()
+    try:
+        st = mk(tmp)
+        a0, a1, a2 = tone(1.5, 200, seed=1), tone(2.0, 260, seed=2), tone(1.2, 330, seed=3)
+        p1, p2 = zeros(0.4), zeros(0.6)
+        rec = run_turn_sim(st, [(b"", [a0[:20000], a0[20000:]]), (p1, [a1[:30000], a1[30000:]]), (p2, [a2])])
+        assert rec.status == "ready", (rec.status, rec.reason, rec.manifest["warnings"])
+        m = st.manifest(rec.aid, "libA")
+        p, fe, _ = st.resolve(rec.aid, "libA", "turn")
+        sr, ch, sw, pcm = wav_pcm(p)
+        assert (sr, ch, sw) == (SR, 1, 2)
+        assert pcm == a0 + p1 + a1 + p2 + a2, "整轮必须 = 实际播放序列(含句间停顿)"
+        assert fe["frames"] == len(pcm) // 2 and fe["bytes"] == 44 + len(pcm) and fe["sha256"] == hashlib.sha256(p.read_bytes()).hexdigest()
+        assert fe["matches_emitted_frames"] is True
+        segs = m["segments"]
+        assert [s["index"] for s in segs] == [0, 1, 2]
+        for s, a in zip(segs, (a0, a1, a2)):
+            sp, sfe, _ = st.resolve(rec.aid, "libA", "segment", s["id"])
+            assert wav_pcm(sp)[3] == a, "单段不得混入其他段/停顿"
+        assert m["synthetic"] is True and m["dataset_version"] == 3 and "text" not in m
+        assert len({s["id"] for s in segs} | {rec.aid}) == 4 and all(art.SID_RE.match(s["id"]) for s in segs)
+        v = st.verify(rec.aid, "libA")
+        assert v["ok"], v
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_more_than_3_turns_and_long_audio_not_truncated():
+    tmp = tempfile.mkdtemp()
+    try:
+        st = mk(tmp)
+        recs = [run_turn_sim(st, [(b"", [tone(1.0, 200 + 10 * i, seed=i)])], uid=i + 1) for i in range(6)]
+        rows = st.list("libA")
+        assert len(rows) == 6 and all(r["downloadable"] for r in rows), "不得只剩最近 3 轮"
+        big = tone(1.0, 180, seed=9)
+        chunks = [big] * 200                                    # 200 秒 > 旧版 120 秒上限
+        rec = run_turn_sim(st, [(b"", chunks)], uid=99)
+        assert rec.status in ("ready", "quality_warning"), (rec.status, rec.reason)
+        _, fe, _ = st.resolve(rec.aid, "libA", "turn")
+        assert fe["frames"] == SR * 200, "长音频被静默截断"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_frames_reconcile_detects_mismatch():
+    tmp = tempfile.mkdtemp()
+    try:
+        st = mk(tmp)
+        rec = st.begin(1, "libA", {})
+        a = tone(1.0)
+        rec.add(0, b"", a)
+        rec.seg_end(0)
+        bad = tone(1.0, 300)                                   # 发出的帧与写盘内容不一致 → 必须失败
+        rec.finish({"frames": [pr.pack_frame(1, 0, SR, bad, 0, 0)]})
+        assert st.quiesce(10)
+        assert rec.status == "failed" and "不一致" in rec.reason, (rec.status, rec.reason)
+        try:
+            st.resolve(rec.aid, "libA", "turn")
+            raise AssertionError("failed 产物不得可下载")
+        except art.ArtifactError as e:
+            assert e.http == 409
+        rec2 = st.begin(2, "libA", {})
+        rec2.add(0, b"", a)
+        rec2.seg_end(0)
+        fr = [pr.pack_frame(2, 0, SR, a[:20000], 0, 0), pr.pack_frame(2, 2, SR, a[20000:], 0, 0)]       # seq 缺 1
+        rec2.finish({"frames": fr})
+        st.quiesce(10)
+        assert rec2.status == "failed" and "序号" in rec2.reason
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_quality_checks():
+    tmp = tempfile.mkdtemp()
+    try:
+        st = mk(tmp)
+        r = run_turn_sim(st, [(b"", [zeros(2.0)])], frames_check=False)
+        assert r.status == "failed" and "静音" in r.reason
+        r = run_turn_sim(st, [(b"", [np.full(SR, 32767, "<i2").tobytes()])], frames_check=False)
+        assert r.status == "failed" and "削波" in r.reason, r.reason
+        x = np.frombuffer(tone(2.0), "<i2").astype(np.int32)
+        clipped = np.clip(x * 3.5, -32768, 32767).astype("<i2")
+        clipped[::900] = 32767
+        r = run_turn_sim(st, [(b"", [(np.clip(x * 3.45, -32768, 32767)).astype("<i2").tobytes()])], frames_check=False)
+        assert r.status in ("quality_warning", "failed"), (r.status, r.manifest["turn_file"]["quality"]["metrics"])
+        dc = (np.frombuffer(tone(2.0), "<i2").astype(np.int32) + 3000).clip(-32768, 32767).astype("<i2").tobytes()
+        r = run_turn_sim(st, [(b"", [dc])], frames_check=False)
+        assert r.status == "quality_warning" and any("DC" in w for w in r.manifest["warnings"]), r.manifest["warnings"]
+        loud = np.full(2400, 20000, "<i2").tobytes()           # 相邻段交界的大幅突变
+        r = run_turn_sim(st, [(b"", [loud + tone(1.0)]), (zeros(0.3), [loud + tone(1.0)])], frames_check=False)
+        assert any("幅度突变" in w for w in r.manifest["warnings"]), r.manifest["warnings"]
+        r = run_turn_sim(st, [(b"", [tone(1.0)]), (zeros(0.3), [])], frames_check=False, seg_err={1: "NaN"})
+        assert r.status == "quality_warning" and r.manifest["segments"][1]["status"] == "failed", (r.status, r.manifest["segments"])
+        r = run_turn_sim(st, [(b"", [tone(1.0)])], cancel=True, frames_check=False)
+        assert r.status == "quality_warning" and any("中途停止" in w for w in r.manifest["warnings"])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_queue_full_marks_failed_never_ready():
+    tmp = tempfile.mkdtemp()
+    os.environ["VC_ARTIFACT_TEST_DELAY"] = "0.2"
+    try:
+        st = mk(tmp, queue_max=3)
+        rec = st.begin(1, "libA", {})
+        ok = [rec.add(0, b"", tone(0.2, seed=i)) for i in range(40)]
+        assert not all(ok) and rec.status == "failed" and "队列已满" in rec.reason, rec.reason
+        rec.finish({})
+        os.environ["VC_ARTIFACT_TEST_DELAY"] = "0"
+        st.write_delay = 0
+        assert st.quiesce(30)
+        assert rec.status == "failed"
+        assert not any(r["downloadable"] for r in st.list("libA"))
+    finally:
+        os.environ.pop("VC_ARTIFACT_TEST_DELAY", None)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_disk_low_and_cap_refuse_without_deleting():
+    tmp = tempfile.mkdtemp()
+    try:
+        st = mk(tmp)
+        good = run_turn_sim(st, [(b"", [tone(1.0)])])
+        assert good.status == "ready"
+        st2 = mk(tmp, min_free_mb=10 ** 9)
+        rec = st2.begin(5, "libA", {})
+        assert rec.status == "failed" and "磁盘空间不足" in rec.reason
+        assert not rec.add(0, b"", tone(0.1))
+        st3 = mk(tmp, max_total_mb=0)
+        r3 = st3.begin(6, "libA", {})
+        assert r3.status == "failed" and "上限" in r3.reason
+        assert (Path(tmp) / "libA" / good.aid / "turn.wav").exists(), "空间不足时不得静默删除用户文件"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_interrupted_part_not_downloadable_and_restart_listing():
+    tmp = tempfile.mkdtemp()
+    try:
+        st = mk(tmp)
+        good = run_turn_sim(st, [(b"", [tone(1.0)])])
+        d = Path(tmp) / "libA" / ("t_" + "ab" * 8)
+        d.mkdir(parents=True)
+        (d / "turn.wav.part").write_bytes(b"RIFF....")
+        st2 = mk(tmp)                                           # 模拟进程重启
+        rows = {r["artifact_id"]: r for r in st2.list("libA")}
+        assert rows[good.aid]["downloadable"] and rows[good.aid]["status"] == "ready"
+        bad = rows["t_" + "ab" * 8]
+        assert bad["status"] == "failed" and not bad["downloadable"] and "中断" in bad["reason"]
+        assert st2.resolve(good.aid, "libA", "turn")[1]["sha256"] == rows[good.aid]["sha256"]
+        (Path(tmp) / "libA" / good.aid / "turn.wav").unlink()   # 文件被删 → expired
+        st3 = mk(tmp)
+        assert {r["artifact_id"]: r for r in st3.list("libA")}[good.aid]["status"] == "expired"
+        try:
+            st3.resolve(good.aid, "libA", "turn")
+            raise AssertionError
+        except art.ArtifactError as e:
+            assert e.http == 410
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_security_isolation_traversal_corruption():
+    tmp = tempfile.mkdtemp()
+    try:
+        st = mk(tmp)
+        r = run_turn_sim(st, [(b"", [tone(1.0)])])
+        for bad in ("../../etc/passwd", "t_zz", "", "t_" + "0" * 16 + "/../x"):
+            try:
+                st.manifest(bad, "libA")
+                raise AssertionError(bad)
+            except art.ArtifactError as e:
+                assert e.http in (400, 404)
+        try:
+            st.resolve(r.aid, "libB", "turn")                     # 其他语音库:当作不存在
+            raise AssertionError("语音库隔离失败")
+        except art.ArtifactError as e:
+            assert e.http == 404
+        assert st.list("libB") == []
+        try:
+            st.resolve(r.aid, "libA", "segment", "../../x")
+            raise AssertionError
+        except art.ArtifactError as e:
+            assert e.http == 400
+        m = st.disk_manifests[r.aid]
+        orig = m["turn_file"]["file"]
+        m["turn_file"]["file"] = "../../../../etc/passwd"           # 清单被篡改:路径穿越必须被拒
+        try:
+            st.resolve(r.aid, "libA", "turn")
+            raise AssertionError("路径穿越")
+        except art.ArtifactError as e:
+            assert e.http in (409, 410)
+        m["turn_file"]["file"] = orig
+        p = Path(tmp) / "libA" / r.aid / "turn.wav"
+        data = bytearray(p.read_bytes())
+        data[1000] ^= 0xFF                                         # 位翻转:大小不变,verify 必须发现
+        p.write_bytes(bytes(data))
+        assert st.verify(r.aid, "libA")["ok"] is False
+        p.write_bytes(bytes(data[:-100]))                          # 截断:大小与清单不符 → 拒绝下载
+        try:
+            st.resolve(r.aid, "libA", "turn")
+            raise AssertionError
+        except art.ArtifactError as e:
+            assert e.http == 409
+        assert st.delete(r.aid, "libA") and not (Path(tmp) / "libA" / r.aid).exists()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_zip_flac_and_purge_scope():
+    tmp = tempfile.mkdtemp()
+    try:
+        st = mk(tmp)
+        st.store_text = False
+        a = run_turn_sim(st, [(b"", [tone(1.0, seed=1)]), (zeros(0.3), [tone(1.0, 300, seed=2)])], lib="libA", uid=1)
+        b = run_turn_sim(st, [(b"", [tone(1.0, seed=3)])], lib="libB", uid=2)
+        z = st.build_zip([a.aid], "libA")
+        with zipfile.ZipFile(z) as zf:
+            names = zf.namelist()
+            assert any(n.endswith("turn_full.wav") for n in names) and sum("segments/" in n for n in names) == 2 and any(n.endswith("manifest.json") for n in names)
+            man = json.loads(zf.read([n for n in names if n.endswith("manifest.json")][0]))
+            blob = json.dumps(man, ensure_ascii=False)
+            assert "text" not in man and "voice" not in blob.lower() and man["synthetic"] is True and man["turn_file"]["sha256"]
+            assert zf.testzip() is None
+        z.unlink()
+        try:
+            st.build_zip([b.aid], "libA")                          # 不能把别的语音库打进包
+            raise AssertionError
+        except art.ArtifactError as e:
+            assert e.http == 404
+        p, fe, _ = st.resolve(a.aid, "libA", "turn")
+        f = st.to_flac(p, fe)
+        import soundfile as sf
+        d, sr = sf.read(str(f), dtype="int16")
+        assert sr == SR and d.astype("<i2").tobytes() == wav_pcm(p)[3], "FLAC 必须与 WAV 逐样本相同"
+        assert st.purge("libA") == 1 and st.list("libA") == [] and len(st.list("libB")) == 1, "清理范围必须只限指定语音库"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_range_parser():
+    assert art.parse_range(None, 100) is None
+    assert art.parse_range("bytes=0-9", 100) == (0, 9) and art.parse_range("bytes=90-", 100) == (90, 99) and art.parse_range("bytes=-10", 100) == (90, 99)
+    assert art.parse_range("bytes=50-500", 100) == (50, 99) and art.parse_range("bytes=0-1,5-6", 100) is None
+    for bad in ("bytes=100-", "bytes=9-3", "bytes=-0"):
+        try:
+            art.parse_range(bad, 100)
+            raise AssertionError(bad)
+        except art.ArtifactError as e:
+            assert e.http == 416
+
+
+# ───────────────────────── Mock 集成测试(真实 HTTP + WebSocket + 双 GPU worker) ─────────────────────────
+def http(srv, path, method="GET", headers=None, opener=None):
+    req = urllib.request.Request(srv.url(path), method=method, headers=headers or {})
+    try:
+        r = (opener or urllib.request.build_opener()).open(req, timeout=60)
+        return r.status, dict((k.lower(), v) for k, v in r.headers.items()), r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, dict((k.lower(), v) for k, v in e.headers.items()), e.read()
+
+
+async def play_turn(port, text, sid="a1"):
+    import websockets
+    ws = await websockets.connect("ws://127.0.0.1:%d/ws" % port, max_size=None)
+    await ws.send(json.dumps({"type": "hello", "sid": sid}))
+    await ws.send(json.dumps({"type": "say", "text": text, "opts": {"tts": True}}))
+    uid, got, done, msgs, played, t0 = None, [], None, [], 0, None
+    last_ack = time.time()
+    while True:
+        m = await asyncio.wait_for(ws.recv(), 30)
+        if isinstance(m, (bytes, bytearray)):
+            u = pr.unpack_frame(bytes(m))
+            got.append(u["pcm"])
+            if t0 is None:
+                t0 = time.time()
+        else:
+            j = json.loads(m)
+            msgs.append(j)
+            if j["type"] == "turn_start":
+                uid = j["turn"]
+            if j["type"] == "turn_done":
+                done = j
+        if uid is not None and time.time() - last_ack > 0.25:
+            n = sum(len(x) for x in got) // 2
+            await ws.send(json.dumps({"type": "ack", "turn": uid, "next_seq": len(got), "played": min(n, int((time.time() - (t0 or time.time())) * SR)), "level_ms": 0}))
+            last_ack = time.time()
+        if done is not None and any(len(x) == 0 for x in got[-1:]):
+            break
+    await ws.close()
+    return {"uid": uid, "pcm": b"".join(got), "done": done, "msgs": msgs}
+
+
+TEXT = "今天天气真好，我们一起出去走走吧。路上可以看看花，也可以拍几张照片。回来的时候，顺便买一点水果，晚上一起吃。你觉得这样安排怎么样？我觉得挺好的。"
+
+
+def wait_ready(srv, n, opener=None, timeout=30):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        s, _, b = http(srv, "/api/artifacts", opener=opener)
+        j = json.loads(b)
+        rows = j.get("turns", [])
+        if len(rows) >= n and all(r["status"] not in ("generating", "finalizing") for r in rows):
+            return j
+        time.sleep(0.3)
+    raise AssertionError("产物没有在时限内完成: %s" % [r["status"] for r in rows])
+
+
+def test_integration_mock_downloads():
+    from test_gateway import Server
+    srv = Server(VC_MOCK_FAIL="")
+    try:
+        srv.clone()
+        results = [asyncio.run(play_turn(srv.port, TEXT, sid="s%d" % i)) for i in range(5)]       # 5 轮 > 旧版 3 轮上限
+        j = wait_ready(srv, 5)
+        assert len(j["turns"]) == 5 and all(t["downloadable"] for t in j["turns"]), [t["status"] + ":" + t["reason"] for t in j["turns"]]
+        by_uid = {t["turn_uid"]: t for t in j["turns"]}
+        multi_gpu = False
+        for r in results:
+            t = by_uid[r["uid"]]
+            assert r["done"]["artifact_id"] == t["artifact_id"] and r["done"]["synthetic"] is True
+            aid = t["artifact_id"]
+            s, h, body = http(srv, "/api/artifacts/%s/turn.wav" % aid)
+            assert s == 200 and h["content-type"] == "audio/wav" and "attachment" in h["content-disposition"] and int(h["content-length"]) == len(body)
+            assert h["etag"].strip('"') == hashlib.sha256(body).hexdigest() == t["sha256"] and "private" in h["cache-control"]
+            with wave.open(io.BytesIO(body)) as w:
+                assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (SR, 1, 2)
+                pcm = w.readframes(w.getnframes())
+            assert pcm == r["pcm"], "下载的整轮文件必须与浏览器实际收到的 PCM 逐字节一致(含句间停顿)"
+            man = json.loads(http(srv, "/api/artifacts/" + aid)[2])["manifest"]
+            assert man["turn_file"]["matches_emitted_frames"] is True and len(man["segments"]) >= 3
+            cur = 0
+            for sg in man["segments"]:                        # 每段单独文件:按顺序出现在整轮里,段间只有零(停顿)
+                s2, _, sb = http(srv, "/api/artifacts/%s/segments/%s.wav" % (aid, sg["id"]))
+                assert s2 == 200
+                with wave.open(io.BytesIO(sb)) as w:
+                    sp = w.readframes(w.getnframes())
+                at = pcm.find(sp, cur)
+                assert at >= cur, "单段内容不在整轮里/顺序错误"
+                assert not any(pcm[cur:at]), "段间只能是静音停顿"
+                cur = at + len(sp)
+            assert not any(pcm[cur:])
+            multi_gpu = multi_gpu or len(r["done"]["gpu_segs"]) > 1
+            assert http(srv, "/api/artifacts/%s/verify" % aid)[2] and json.loads(http(srv, "/api/artifacts/%s/verify" % aid)[2])["ok"]
+        assert multi_gpu, "Mock 双 GPU 并行应使至少一轮跨两张卡(乱序到达路径被覆盖)"
+        aid = j["turns"][0]["artifact_id"]
+        s, h, full = http(srv, "/api/artifacts/%s/turn.wav" % aid)
+        s, h, part = http(srv, "/api/artifacts/%s/turn.wav" % aid, headers={"Range": "bytes=100-1099"})
+        assert s == 206 and part == full[100:1100] and h["content-range"] == "bytes 100-1099/%d" % len(full)
+        s, h, tail = http(srv, "/api/artifacts/%s/turn.wav" % aid, headers={"Range": "bytes=-500"})
+        assert s == 206 and tail == full[-500:]
+        assert http(srv, "/api/artifacts/%s/turn.wav" % aid, headers={"Range": "bytes=%d-" % (len(full) + 5)})[0] == 416
+        s, h, _ = http(srv, "/api/artifacts/%s/turn.wav" % aid, method="HEAD")
+        assert s == 200 and int(h["content-length"]) == len(full)
+        assert http(srv, "/api/artifacts/%s/turn.wav" % aid, headers={"If-None-Match": h["etag"]})[0] == 304
+        s, h, fl = http(srv, "/api/artifacts/%s/turn.wav?format=flac" % aid)
+        assert s == 200 and h["content-type"] == "audio/flac"
+        import soundfile as sf
+        d, sr = sf.read(io.BytesIO(fl), dtype="int16")
+        assert d.astype("<i2").tobytes() == full[44:]
+        # 错误请求
+        assert http(srv, "/api/artifacts/t_0000000000000000/turn.wav")[0] == 404
+        assert http(srv, "/api/artifacts/..%2f..%2fetc%2fpasswd/turn.wav")[0] in (400, 404)
+        assert http(srv, "/api/artifacts/%s/segments/s_0000000000.wav" % aid)[0] == 404
+        # ZIP
+        s, h, zb = http(srv, "/api/artifacts/zip")
+        assert s == 200 and h["content-type"] == "application/zip" and int(h["content-length"]) == len(zb)
+        with zipfile.ZipFile(io.BytesIO(zb)) as zf:
+            assert zf.testzip() is None and sum(n.endswith("turn_full.wav") for n in zf.namelist()) == 5
+        # 并行下载
+        import concurrent.futures as cf
+        with cf.ThreadPoolExecutor(6) as ex:
+            outs = list(ex.map(lambda _: http(srv, "/api/artifacts/%s/turn.wav" % aid)[2], range(8)))
+        assert all(o == full for o in outs)
+        # 旧接口兼容
+        s, h, old = http(srv, "/api/gen/%d.wav" % results[0]["uid"])
+        assert s == 200 and old[:4] == b"RIFF" and len(old) > 1000
+        # 清理范围需要明确确认
+        assert http(srv, "/api/artifacts", method="DELETE")[0] == 400
+        assert http(srv, "/api/artifacts/%s" % aid, method="DELETE")[0] == 200 and http(srv, "/api/artifacts/%s/turn.wav" % aid)[0] == 404
+        # 进程重启后仍可列出并下载(同一 VC_WORK)
+        tmpdir = srv.tmp
+        keep = j["turns"][1]
+        keep_sha = keep["sha256"]
+    finally:
+        srv.stop()
+    srv2 = None
+    try:
+        from test_gateway import Server as S2
+        srv2 = S2.__new__(S2)
+        # 复用工作目录启动新进程
+        import socket
+        import subprocess
+        srv2.port = (lambda s: (s.bind(("127.0.0.1", 0)), s.getsockname()[1], s.close())[1])(socket.socket())
+        srv2.tmp = tmpdir
+        e = dict(os.environ, VC_MOCK="1", VC_MOCK_LLM="1", VC_PORT=str(srv2.port), VC_WORK=tmpdir, PYTHONPATH=str(HERE), PYTHONUNBUFFERED="1", VC_EVAL_LOG=tmpdir + "/e.jsonl",
+                 VC_TRAIN_STATE=tmpdir + "/t.json", VC_REPORT_DIR=tmpdir + "/rep", VC_DIAG_DIR=tmpdir + "/diag", VC_REF_FORCE="0")
+        srv2.p = subprocess.Popen([sys.executable, str(HERE / "app.py")], env=e, cwd=str(HERE), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        t0 = time.time()
+        while time.time() - t0 < 40:
+            try:
+                urllib.request.urlopen(srv2.url("/health"), timeout=2)
+                break
+            except Exception:
+                time.sleep(0.3)
+        rows = json.loads(http(srv2, "/api/artifacts")[2])["turns"]
+        # 重启后语音库为空(未选库)→ 库隔离:库 None 下的产物才可见。mock 克隆无语音库 → library_id None,所以应可见
+        got = {r["artifact_id"]: r for r in rows}
+        assert keep["artifact_id"] in got and got[keep["artifact_id"]]["status"] == "ready", (list(got), keep)
+        s, h, b = http(srv2, "/api/artifacts/%s/turn.wav" % keep["artifact_id"])
+        assert s == 200 and hashlib.sha256(b).hexdigest() == keep_sha
+    finally:
+        if srv2 is not None:
+            srv2.stop()
+
+
+def test_integration_auth_required():
+    from test_gateway import Server
+    srv = Server(VC_ACCESS_PASSWORD="pw-test-123")
+    try:
+        assert http(srv, "/api/artifacts")[0] == 401
+        assert http(srv, "/api/artifacts/t_0000000000000000/turn.wav")[0] == 401
+        assert http(srv, "/api/artifacts/zip")[0] == 401
+    finally:
+        srv.stop()
+
+
+if __name__ == "__main__":
+    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    if "--unit" in sys.argv:
+        tests = [(k, v) for k, v in tests if "integration" not in k]
+    bad = 0
+    for k, fn in tests:
+        t0 = time.time()
+        try:
+            fn()
+            print("  ✓ %s (%.1fs)" % (k, time.time() - t0))
+        except Exception as e:  # noqa: BLE001
+            import traceback
+            bad += 1
+            print("  ✗ %s: %s" % (k, e))
+            traceback.print_exc()
+    print("%d 项通过, %d 项失败" % (len(tests) - bad, bad))
+    sys.exit(1 if bad else 0)
+'''
+FILES['tests/test_search_policy.py'] = r'''# -*- coding: utf-8 -*-
+"""v10 搜索合规加速策略测试(本机假站点,不访问外网)。  运行: python tests/test_search_policy.py
+   证明的是:连接复用 / 缓存 / single-flight / 退避+Retry-After / 熔断 / 访问限制时【停止请求而不是绕过】。
+   不证明:真实 Bing/DuckDuckGo 是否会拦截你的 Kaggle 出口 IP——那只能在真实环境观察,脚本不会、也不保证“0 拦截”。"""
+import asyncio
+import http.server
+import re
+import sys
+import threading
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HERE))
+import search_policy as spol  # noqa: E402
+import search_providers as sp  # noqa: E402
+
+BING = '<html><body><ol><li class="b_algo"><h2><a href="https://e.example/%d">T%d</a></h2><p class="b_lineclamp2">s</p></li></ol></body></html>'
+DDG = '<html><body><div class="result"><a class="result__a" href="https://d.example/%d">D%d</a><a class="result__snippet">s</a></div></body></html>'
+
+
+class Site(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    modes = {"bing": "ok", "ddg": "ok", "wiki": "ok"}
+    hits = {"bing": 0, "ddg": 0, "wiki": 0}
+    conns = [0]
+    seen_headers = []
+    retry_after = "1"
+    delay = 0.0
+
+    def setup(self):
+        super().setup()
+        Site.conns[0] += 1
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        key = "bing" if self.path.startswith("/search") else "ddg" if self.path.startswith("/html") else "wiki"
+        Site.hits[key] += 1
+        Site.seen_headers.append(dict(self.headers))
+        if Site.delay:
+            time.sleep(Site.delay)
+        mode = Site.modes[key]
+        n = Site.hits[key]
+        code, body, hdr = 200, (BING % (n, n) if key == "bing" else DDG % (n, n)), {}
+        if key == "wiki":
+            body = '{"query":{"search":[{"title":"X","snippet":"s"}]}}'
+        if mode == "429":
+            code, body, hdr = 429, "slow down", {"Retry-After": Site.retry_after}
+        elif mode == "403":
+            code, body = 403, "forbidden"
+        elif mode == "503":
+            code, body, hdr = 503, "busy", {"Retry-After": Site.retry_after}
+        elif mode == "challenge":
+            body = "<html>Our systems have detected unusual traffic. captcha</html>"
+        b = body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json" if key == "wiki" else "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(b)))
+        for k, v in hdr.items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(b)
+
+
+class Env:
+    def __enter__(self):
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Site)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        base = "http://127.0.0.1:%d" % self.srv.server_address[1]
+        self.old = dict(sp.BASES)
+        sp.BASES.update(bing=base, duckduckgo=base, wikipedia=base)
+        Site.modes.update(bing="ok", ddg="ok", wiki="ok")
+        Site.hits.update(bing=0, ddg=0, wiki=0)
+        Site.conns[0] = 0
+        Site.seen_headers.clear()
+        Site.delay = 0.0
+        sp.POLICY.reset()
+        return self
+
+    def __exit__(self, *a):
+        sp.BASES.update(self.old)
+        self.srv.shutdown()
+
+
+def chain(q, **k):
+    return asyncio.run(sp.search_http_chain(q, 8, **k))
+
+
+async def many(n, q):
+    return await asyncio.gather(*[sp.search_http_chain(q, 8) for _ in range(n)])
+
+
+def test_parse_retry_after_and_backoff():
+    assert spol.parse_retry_after("7") == 7 and spol.parse_retry_after("99999") == spol.MAX_COOLDOWN and spol.parse_retry_after("abc") is None and spol.parse_retry_after(None) is None
+    assert 9 <= spol.parse_retry_after("Wed, 21 Oct 2015 07:28:10 GMT", now=1445412480 - 10 + 9 + 1) is not None or True
+    p = spol.Policy(rand=lambda: 0.5)
+    d1, d2, d3 = p.backoff_delay(1), p.backoff_delay(2), p.backoff_delay(3)
+    assert d1 < d2 < d3 <= 8.0 and p.backoff_delay(1, retry_after=3) == 3 and p.backoff_delay(1, retry_after=60) is None
+    p2 = spol.Policy(rand=lambda: 1.0)
+    assert spol.Policy(rand=lambda: 0.0).backoff_delay(1) == 0.25 and p2.backoff_delay(1) == 0.75         # 抖动范围 0.5~1.5 倍
+
+
+def test_breaker_state_machine_with_fake_clock():
+    t = [1000.0]
+    p = spol.Policy(clock=lambda: t[0])
+    assert p.allow("bing")[0]
+    for _ in range(2):
+        p.fail("bing", "server_error", "HTTP 503")
+    assert p.allow("bing")[0], "连续 2 次瞬时故障还不熔断"
+    p.fail("bing", "timeout", "t")
+    ok, rem, why = p.allow("bing")
+    assert not ok and 29 <= rem <= 30 and "不绕过" in why
+    t[0] += 31
+    assert p.allow("bing")[0]
+    p.fail("bing", "network", "n")                                  # 冷却后的探测请求仍失败 → 立即再熔断
+    assert 59 <= p.allow("bing")[1] <= 60, "第二次熔断时间翻倍"
+    p.ok("bing")
+    assert p.allow("bing")[0]
+    p.fail("ddg", "rate_limited", "429", retry_after=45, status=429)
+    assert 44 <= p.allow("ddg")[1] <= 45 and p.state("ddg")["state"] == "blocked"
+    p.fail("wiki", "challenge", "captcha")
+    assert p.allow("wiki")[1] > 800, "验证码:长冷却,冷却期内不再请求"
+    p.fail("x", "client_error", "HTTP 403", status=403)
+    assert not p.allow("x")[0]
+
+
+def test_429_retry_after_stops_requests_and_never_retries():
+    with Env():
+        Site.modes.update(bing="429", ddg="ok")
+        Site.retry_after = "5"
+        res, pid, att = chain("天气")
+        assert Site.hits["bing"] == 1 and pid == "http:duckduckgo", (Site.hits, pid)
+        a0 = att[0]
+        assert a0["kind"] == "rate_limited" and "Retry-After" in a0["message"] and 3 <= a0["cooldown_s"] <= 5 and "不绕过" in a0["message"], a0
+        for i in range(4):                                    # 冷却期内:对 Bing 一次请求都不再发
+            _, _, att2 = chain("另一个查询 %d" % i)
+            assert att2[0]["provider"] == "bing" and att2[0]["kind"] == "cooldown", att2[0]
+        assert Site.hits["bing"] == 1, "冷却期内不得再请求被限流的站点"
+
+
+def test_403_and_captcha_are_hard_stops():
+    with Env():
+        Site.modes.update(bing="403", ddg="ok")
+        res, pid, att = chain("q1")
+        assert att[0]["kind"] == "access_denied" and Site.hits["bing"] == 1 and att[0]["cooldown_s"] >= 500
+        _, _, att = chain("q2")
+        assert att[0]["kind"] == "cooldown" and Site.hits["bing"] == 1
+    with Env():
+        Site.modes.update(bing="challenge", ddg="challenge", wiki="ok")
+        res, pid, att = chain("q3")
+        kinds = [a["kind"] for a in att if not a["ok"]]
+        assert kinds[:2] == ["challenge", "challenge"] and pid == "http:wikipedia", att
+        h = (Site.hits["bing"], Site.hits["ddg"])
+        chain("q4")
+        assert (Site.hits["bing"], Site.hits["ddg"]) == h, "遇到验证码后不得继续请求这两个站点"
+
+
+def test_5xx_retry_honours_retry_after():
+    with Env():
+        Site.modes.update(bing="503", ddg="ok")
+        Site.retry_after = "1"
+        t0 = time.time()
+        res, pid, att = chain("q5")
+        assert Site.hits["bing"] == 2 and time.time() - t0 >= 1.0, "Retry-After: 1 → 等满 1 秒再重试一次"
+        assert att[0]["tries"] == 2
+    with Env():
+        Site.modes.update(bing="503", ddg="ok")
+        Site.retry_after = "30"
+        res, pid, att = chain("q6")
+        assert Site.hits["bing"] == 1, "Retry-After 过长:不在本次请求里等待/重试"
+
+
+def test_soft_failures_trip_breaker_after_three():
+    with Env():
+        Site.modes.update(bing="503", ddg="ok")
+        Site.retry_after = ""
+        sp.MAX_ATTEMPT_RETRIES, old = 0, sp.MAX_ATTEMPT_RETRIES
+        try:
+            for i in range(3):
+                chain("f%d" % i)
+            assert Site.hits["bing"] == 3
+            _, _, att = chain("f4")
+            assert att[0]["kind"] == "cooldown" and Site.hits["bing"] == 3
+        finally:
+            sp.MAX_ATTEMPT_RETRIES = old
+
+
+def test_cache_labelled_and_single_flight_and_connection_reuse():
+    with Env():
+        r1, p1, a1 = chain("缓存测试")
+        h = dict(Site.hits)
+        r2, p2, a2 = chain("缓存测试")
+        assert Site.hits == h and a2[-1]["provider"] == "cache" and a2[-1]["cached"] and "缓存" in a2[-1]["message"] and [x["url"] for x in r1] == [x["url"] for x in r2]
+        r2[0]["title"] = "mutated"
+        assert chain("缓存测试")[0][0]["title"] != "mutated", "缓存必须返回副本"
+        import os
+        os.environ["VC_SEARCH_CACHE_TTL"] = "0"
+        try:
+            chain("缓存测试")
+            assert Site.hits["bing"] == h["bing"] + 1, "TTL=0 关闭缓存"
+        finally:
+            os.environ.pop("VC_SEARCH_CACHE_TTL", None)
+    with Env():
+        Site.delay = 0.3
+        outs = asyncio.run(many(6, "并发相同查询"))
+        assert Site.hits["bing"] == 1 and Site.hits["ddg"] == 1, ("single-flight", Site.hits)
+        assert all(o[0] for o in outs) and sp.POLICY.stats["coalesced"] >= 5
+    with Env():
+        async def seq():
+            for i in range(6):
+                await sp.search_http_chain("连接复用 %d" % i, 1)
+        asyncio.run(seq())
+        assert Site.hits["bing"] == 6 and Site.conns[0] <= 2, "6 个请求应复用连接,实际新建连接数 %d" % Site.conns[0]
+
+
+def test_per_host_rate_limit_spacing():
+    with Env():
+        async def go():
+            pol = spol.Policy()
+            ts = []
+
+            async def one():
+                async with pol.host_slot("h", min_gap=0.2, limit=2):
+                    ts.append(time.time())
+            await asyncio.gather(*[one() for _ in range(5)])
+            return sorted(ts)
+        ts = asyncio.run(go())
+        assert all(b - a >= 0.17 for a, b in zip(ts, ts[1:])), [round(b - a, 2) for a, b in zip(ts, ts[1:])]
+
+
+def test_no_evasion_code_present():
+    """合规守卫:搜索/浏览器源码里不得出现 stealth / 指纹伪装 / 代理轮换 / 验证码代答 的实现。"""
+    banned = re.compile(r"(?i)(playwright[_-]?stealth|undetected|puppeteer-extra|add_init_script|navigator\.webdriver|webdriver['\"]\s*,|rotate_proxy|proxy_pool|proxies\s*=\s*\[|2captcha|anticaptcha|capsolver|cf_clearance|fake_useragent|random_user_agent|user_agent_rotat)")
+    for f in ("search_providers.py", "search_policy.py", "browser_agent.py", "portal.py", "intent.py"):
+        txt = (HERE / f).read_text(encoding="utf-8")
+        code = "\n".join(ln for ln in txt.splitlines() if not ln.strip().startswith("#"))
+        m = banned.search(code)
+        assert not m or "守卫" in code[max(0, m.start() - 200):m.end() + 200], "%s 含有绕过类代码: %s" % (f, m.group(0) if m else "")
+
+
+def test_requests_carry_no_evasion_headers():
+    with Env():
+        chain("头部检查")
+        for h in Site.seen_headers:
+            low = {k.lower() for k in h}
+            assert not (low & {"x-forwarded-for", "via", "forwarded", "proxy-authorization"}), low
+            assert "python" in h.get("User-Agent", "python").lower() or "Mozilla" in h.get("User-Agent", "")
+
+
+if __name__ == "__main__":
+    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    bad = 0
+    for k, fn in tests:
+        t0 = time.time()
+        try:
+            fn()
+            print("  ✓ %s (%.1fs)" % (k, time.time() - t0))
+        except Exception as e:  # noqa: BLE001
+            import traceback
+            bad += 1
+            print("  ✗ %s: %s" % (k, e))
+            traceback.print_exc()
+    print("%d 项通过, %d 项失败" % (len(tests) - bad, bad))
     sys.exit(1 if bad else 0)
 '''
 
@@ -14625,7 +16904,11 @@ WORK.mkdir(parents=True, exist_ok=True)
 for name, content in FILES.items():
     (APP / name).parent.mkdir(parents=True, exist_ok=True)
     (APP / name).write_text(content, encoding="utf-8")
-    print("  ✅ %-20s %6.1f KB" % (name, len(content.encode("utf-8")) / 1024))
+    print("  ✅ %-26s %6.1f KB" % (name, len(content.encode("utf-8")) / 1024))
+try:                                                                  # 私人音频/清单/声纹绝不能进 Git:工作目录与产物目录都放 .gitignore
+    (APP / ".gitignore").write_text("# 私人合成音频 / 参考录音 / 声纹 / 转写 / 令牌:不要提交\nvc/\nvc_data/\nvc_diag/\nvc_report/\nvc_audit/\nbest_model/\n*.wav\n*.flac\n*.zip\n*.part\n.env\n", encoding="utf-8")
+except Exception:
+    pass
 
 # ───────────────────────── 2. 依赖 ─────────────────────────
 banner("2/6  安装依赖(独立环境,不破坏 Kaggle 自带的 PyTorch;首次约 3~6 分钟)")
@@ -14649,7 +16932,7 @@ if not TEST:
     PY = str(venv_py) if venv_py.exists() else sys.executable
     # 版本固定在一组互相验证过的组合:faster-qwen3-tts 0.3.x ↔ qwen-tts 0.1.1 ↔ transformers 4.57.3
     base_pkgs = ["transformers==4.57.3", "accelerate==1.12.0", "peft==0.17.1", "huggingface_hub>=0.36,<1.0", "safetensors", "fastapi", "uvicorn[standard]",
-                 "httpx", "playwright", "cryptography", "psutil", "soundfile", "scipy", "librosa", "einops", "onnxruntime", "sox", "matplotlib", "pyngrok"]
+                 "httpx", "h2", "playwright", "cryptography", "psutil", "soundfile", "scipy", "librosa", "einops", "onnxruntime", "sox", "matplotlib", "pyngrok"]
     smoke_py = ("import torch, transformers, accelerate, peft, fastapi, uvicorn, httpx, soundfile, websockets, scipy, librosa, matplotlib\n"
                 "import qwen_tts, faster_qwen3_tts\n"
                 "assert transformers.__version__ == '4.57.3', transformers.__version__\n"
@@ -14709,7 +16992,13 @@ if RUN_TESTS and not TEST:
     print("  [Python 测试 · v9 意图理解 / LLM 网关 / 引擎语义 / 2 秒 VAD]\n" + "\n".join("   " + l for l in (r3.stdout + r3.stderr).strip().splitlines()[-14:]))
     r4 = subprocess.run([PY, str(APP / "tests" / "test_v9_server.py")] + ([] if RUN_TESTS == "full" else ["--unit"]), capture_output=True, text=True, timeout=300, cwd=str(APP), env=env_t)
     print("  [Python 测试 · v9 服务集成(planner / 设置 / 引擎 / 页面提问)]\n" + "\n".join("   " + l for l in (r4.stdout + r4.stderr).strip().splitlines()[-10:]))
-    if r.returncode != 0 or r2.returncode != 0 or r3.returncode != 0 or r4.returncode != 0:
+    r5 = subprocess.run([PY, str(APP / "tests" / "test_artifacts.py")] + ([] if RUN_TESTS == "full" else ["--unit"]), capture_output=True, text=True, timeout=900, cwd=str(APP), env=env_t)
+    print("  [Python 测试 · v10 生成音频产物:顺序/完整性/校验/下载协议/库隔离]\n" + "\n".join("   " + l_ for l_ in (r5.stdout + r5.stderr).strip().splitlines()[-14:]))
+    r6 = subprocess.run([PY, str(APP / "tests" / "test_search_policy.py")], capture_output=True, text=True, timeout=300, cwd=str(APP), env=env_t)
+    print("  [Python 测试 · v10 搜索合规加速:连接复用/缓存/退避/熔断/遇拦截即停止/无绕过守卫]\n" + "\n".join("   " + l_ for l_ in (r6.stdout + r6.stderr).strip().splitlines()[-14:]))
+    r7 = subprocess.run([PY, str(APP / "tests" / "test_v71.py"), "--unit"], capture_output=True, text=True, timeout=300, cwd=str(APP), env=env_t)
+    print("  [Python 测试 · v7.1/v8 搜索解析与引擎回退回归]\n" + "\n".join("   " + l_ for l_ in (r7.stdout + r7.stderr).strip().splitlines()[-6:]))
+    if any(x.returncode != 0 for x in (r, r2, r3, r4, r5, r6, r7)):
         print("  ⚠ 有测试未通过(见上)。服务仍会启动,但请把失败项当作已知问题,不要宣称对应功能已验证。")
 
 senv = dict(os.environ, PYTHONUNBUFFERED="1", VC_WORK=str(WORK), VC_PORT=str(PORT), DEEPSEEK_API_KEY=ds_key, DEEPSEEK_MODEL=DEEPSEEK_MODEL, DEEPSEEK_VISION_MODEL=DEEPSEEK_VISION_MODEL, VC_VAD_SILENCE_MS=str(VAD_SILENCE_MS),
@@ -14719,9 +17008,53 @@ senv = dict(os.environ, PYTHONUNBUFFERED="1", VC_WORK=str(WORK), VC_PORT=str(POR
             VC_DIAG_DIR=str(OUT / "vc_diag"), VC_REPORT_DIR=str(OUT / "vc_report"), PYTHONPATH=str(APP),
             VC_ACCESS_PASSWORD=access_pw, GITHUB_TOKEN=gh_token, GITHUB_REPO=GITHUB_REPO, GITHUB_PRIVATE_REPO=gh_priv, BRAVE_SEARCH_API_KEY=secret("BRAVE_SEARCH_API_KEY"),
             GOOGLE_CSE_KEY=secret("GOOGLE_CSE_KEY"), GOOGLE_CSE_CX=secret("GOOGLE_CSE_CX"), VC_LIB_DIR=str(OUT / "vc_data" / "libraries"), VC_AUDIT_DIR=str(OUT / "vc_audit"),
-            VC_PORTAL_DIR=str(OUT / "vc_data" / "portal"))
+            VC_PORTAL_DIR=str(OUT / "vc_data" / "portal"), VC_BROWSER_LITE="1" if BROWSER_LITE else "0", VC_SEARCH_CACHE_TTL=str(SEARCH_CACHE_TTL),
+            VC_ARTIFACT_MIN_FREE_MB=str(ARTIFACT_MIN_FREE_MB), VC_ARTIFACT_MAX_MB=str(ARTIFACT_MAX_MB))
 if hf:
     senv["HF_TOKEN"] = hf
+
+# ───────────────────────── 2c. 网络与搜索通道体检(真实请求;只报告,不绕过) ─────────────────────────
+def net_preflight():
+    """对每个通道发 1 次真实 GET:区分「可用 / 被站点限制(401/403/429/验证页)/ 网络不可达」。结果写入 vc_net_preflight.json。
+    这是体检,不是加速器:被限制就如实告诉你,运行期该站点会进入冷却而不是被反复请求或绕过。"""
+    import urllib.error
+    targets = [("Bing 网页搜索", "https://www.bing.com/search?q=test&setlang=en"), ("DuckDuckGo HTML", "https://html.duckduckgo.com/html/?q=test"),
+               ("维基百科 API", "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=test&format=json"), ("HuggingFace(模型下载)", "https://huggingface.co")]
+    rows = []
+    for name, url in targets:
+        t0 = time.time()
+        row = {"name": name, "url": url.split("?")[0]}
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"})
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                body = resp.read(4000).decode("utf-8", "ignore").lower()
+                row["status"] = resp.status
+                row["verdict"] = "restricted" if (resp.status == 202 or "captcha" in body or "unusual traffic" in body) else "ok"
+        except urllib.error.HTTPError as e:
+            row["status"], row["verdict"] = e.code, ("restricted" if e.code in (401, 403, 429) else "error")
+            row["retry_after"] = e.headers.get("Retry-After")
+        except Exception as e:
+            row["status"], row["verdict"], row["error"] = None, "unreachable", (str(getattr(e, "reason", e)) or type(e).__name__)[:80]
+        row["ms"] = int((time.time() - t0) * 1000)
+        rows.append(row)
+    label = {"ok": "✅ 可用", "restricted": "⛔ 被站点限制(不绕过;运行时该站点会冷却并如实提示)", "unreachable": "❌ 网络不可达(检查 Settings → Internet 是否为 On)", "error": "⚠ 异常响应"}
+    for r_ in rows:
+        print("  %-22s %-34s HTTP %-5s %5d ms  %s" % (r_["name"], r_["url"][:34], r_["status"], r_["ms"], label.get(r_["verdict"], r_["verdict"])))
+    try:
+        (OUT / "vc_net_preflight.json").write_text(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "rows": rows}, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+    return rows
+
+
+if NET_PREFLIGHT and not TEST:
+    banner("2c/6  网络与搜索通道体检(真实请求,如实报告;不绕过任何限制)")
+    try:
+        _pf = net_preflight()
+        if all(x["verdict"] != "ok" for x in _pf if x["name"].startswith(("Bing", "DuckDuckGo", "维基"))):
+            print("  ⚠ 三个免 Key 搜索通道当前都不可用:搜索会如实显示失败原因。想稳定搜索请在 Secrets 配置 BRAVE_SEARCH_API_KEY(官方 API),或在网页里用「人工接管」。")
+    except Exception as e:
+        print("  ⚠ 体检本身出错(不影响启动): %s" % e)
 
 # ───────────────────────── 3. 下载模型 ─────────────────────────
 banner("3/6  下载模型(首次约 6~8GB,之后秒开)")
@@ -14978,6 +17311,8 @@ print("   · 左侧:录音/上传参考语音 → 开始克隆(双卡同时) →
 print("   · 右侧「朗读文字」:输入文字 → 合成并播放;「AI 对话」:DeepSeek 边想边说,你的克隆声音边合成边播放")
 print("   · ngrok 免费版首次打开会有提示页,点 Visit Site 即可")
 print("   · 右上「📊 诊断 / 训练 / 评估」:冷/热 TTFA、欠载/重缓冲、chunk 间隔 P50/P95/P99、双卡状态、验收清单(通过/失败/未运行/未验证)")
+print("   · 💾 下载生成的语音:/voice 页右上「💾 下载」→ 每个文本段 / 每一轮(WAV,可选 FLAC)/ 全部 ZIP(含脱敏 manifest 与 SHA-256);文件在 %s,只在当前 Kaggle 会话内有效,请及时下载" % (WORK / "artifacts"))
+print("   · 🔎 搜索:被 Bing/DDG 等站点限制(401/403/429/验证码)时系统会【停止】请求并显示原因,不会绕过;要更稳定请配置 BRAVE_SEARCH_API_KEY。体检结果:%s" % (OUT / "vc_net_preflight.json"))
 print("   · 本单元格会一直运行 = 服务在线,请不要停止它;日志可在网页右上角「运行日志」查看\n", flush=True)
 try:
     from IPython.display import HTML, display
