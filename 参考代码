@@ -787,11 +787,13 @@ def on_worker_msg(msg):
                 t.gen_samples += a.size
             pump(t)
     elif k == "sim":
-        _, tuid, seg_i, sim, dur = msg
+        _, tuid, seg_i, sim, dur = msg[:5]
+        info = msg[5] if len(msg) > 5 and isinstance(msg[5], dict) else {"status": "completed" if sim is not None else "not_evaluated", "reason": ""}
         t = ACTIVE.get(tuid) or RECENT.get(tuid)
         if t is None or seg_i >= len(t.segs):
-            return
+            return                                                    # 迟到/未知任务的结果直接丢弃,不会串到新一轮
         t.segs[seg_i].sim, t.segs[seg_i].sim_dur = sim, float(dur or 0)
+        t.segs[seg_i].sim_info = info
         _sim_slot_done(t, seg_i)
     elif k in ("seg_done", "seg_err"):
         if k == "seg_done":
@@ -874,8 +876,13 @@ def sim_check(turn):
     v = turn_sim(turn)
     final = turn.closed and turn.sim_wait == 0
     if v is not None or final:
+        infos = [getattr(g, "sim_info", None) for g in turn.segs if getattr(g, "sim_info", None)]
+        st = "completed" if v is not None else ("failed" if any(i.get("status") == "failed" for i in infos) else "skipped" if any(i.get("status") == "skipped" for i in infos) else "not_evaluated")
+        why = "" if v is not None else (next((i.get("reason") for i in infos if i.get("status") == st and i.get("reason")), "") or "没有可评分的句子(句子太短或评分器未就绪)")
+        lib_ = turn.lib or {}
         turn.sess.send({"type": "sim", "turn": turn.uid, "value": v, "final": bool(final), "view": aq.similarity_view(v, SV_MODEL, CAL, "speech"),
-                        "per_gpu": _sim_by_gpu(turn)})
+                        "per_gpu": _sim_by_gpu(turn), "status": st, "reason": why, "scope": "生成音频 vs 当前参考样本的原始 cosine(不是留出评估)", "model": SV_MODEL,
+                        "library_id": lib_.get("library_id"), "sample_id": lib_.get("sample_id"), "dataset_version": lib_.get("dataset_version")})
     if final:
         turn.sim_sent = True
         RECENT.pop(turn.uid, None)
@@ -1078,6 +1085,10 @@ async def api_voice(request: Request):
             if res.get("suspect"):
                 qc.update(kind="multi_speaker", kind_zh="疑似多人说话", blocking=True)
                 qc["warnings"].append("疑似多人说话(窗口说话人相似度 P10=%s < 0.55,启发式)。克隆需要单一说话人" % res.get("p10"))
+            elif res.get("status") in ("failed", "skipped"):
+                qc["warnings"].append("多人检测未运行(%s):%s" % (res["status"], str(res.get("reason", ""))[:160]))
+        elif err:
+            qc["warnings"].append("多人检测未运行:%s" % str(err)[:160])
     if qc["blocking"] and not ack:
         return {"ok": False, "needs_ack": True, "qc": qc}
     try:                                                          # 语音库:新样本【追加】保存到当前库(不覆盖旧样本);容量不足明确拒绝
@@ -2057,6 +2068,14 @@ EMO_PAUSE_SCALE = {"sad": 1.25, "comfort": 1.15, "happy": 0.9, "angry": 0.9, "qu
 # ════════════════════════════════════════════════════════════════
 #  TTS 引擎(运行在各自的 GPU 进程里)
 # ════════════════════════════════════════════════════════════════
+def SV_MODEL_NAME():
+    try:
+        from speaker_sim import SV_MODEL
+        return SV_MODEL
+    except Exception:  # noqa: BLE001
+        return "microsoft/wavlm-base-plus-sv"
+
+
 class MockEngine:
     """无 GPU 的自检引擎(VC_MOCK=1):合成正弦"语音",用来验证整条链路。"""
     name = "mock"
@@ -2072,10 +2091,10 @@ class MockEngine:
         return {"mock": True, "backend": "mock (正弦波合成, 非真实模型)", "device": "none", "model": "mock"}
 
     def spk_qc(self, path):
-        return {"mock": True, "suspect": False, "p10": None, "mean": None, "n_windows": 0}
+        return {"status": "not_evaluated", "reason": "Mock 引擎不产生真实声纹结论(仅用于测试)", "kind": "reference_qc", "mock": True, "suspect": False, "p10": None, "mean": None, "n_windows": 0}
 
     def spk_cmp(self, gen_path, ref_paths):
-        return {"mock": True, "scores": [None for _ in ref_paths], "model": "mock"}
+        return {"status": "not_evaluated", "reason": "Mock 引擎不产生真实声纹分数(仅用于测试)", "kind": "generated_vs_holdout", "mock": True, "scores": [None for _ in ref_paths], "model": "mock"}
 
     def set_voice(self, path, text, xvec):
         time.sleep(0.4)
@@ -2118,6 +2137,8 @@ class MockEngine:
             i += 1
             t0 += d
 
+    last_score = {"status": "completed", "reason": "Mock 假分数,仅用于测试链路,不代表真实质量"}
+
     def score(self, pcm):
         return 0.95 + (len(pcm) % 7) / 200.0
 
@@ -2137,8 +2158,9 @@ class RealEngine:
         self.ref = None
         self.prompt = None
         self._asr = None
-        self.scorer = None
-        self.scorer_failed = False
+        self.scorer_holder = None          # speaker_sim.ScorerHolder(显式状态机;永不返回 None)
+        self.scorer_ref_id = None          # 当前参考声纹对应的 (路径, mtime, 大小) —— 防止串到别的语音库/样本
+        self.last_score = {"status": "not_evaluated", "reason": "尚未打分"}
         self.sr = SR
         self.mode = ""
         self.order = []
@@ -2218,35 +2240,74 @@ class RealEngine:
             info["prompt_cached"] = None
         return info
 
+    def _holder(self):
+        from speaker_sim import ScorerHolder, SpkScorer
+        if self.scorer_holder is None:
+            self.scorer_holder = ScorerHolder(lambda: SpkScorer("cuda"), label="声纹评分模型(WavLM-SV)")
+        return self.scorer_holder
+
+    def scorer_info(self):
+        return self._holder().info()
+
     def spk_qc(self, path):
-        """参考音频疑似多人检测:2 秒窗口、1 秒步长的说话人嵌入,看各窗口与整体质心的相似度分布(启发式,阈值未校准)"""
-        from speaker_sim import SpkScorer, load_wav16k
-        import torch
-        if self.scorer is None and not self.scorer_failed:
-            self.scorer = SpkScorer("cuda")
-        w = load_wav16k(path)
-        win, hop = 32000, 16000
-        embs = [self.scorer.embed(w[i:i + win]) for i in range(0, max(1, len(w) - win + 1), hop)] if len(w) >= win else []
-        if len(embs) < 3:
-            return {"suspect": False, "n_windows": len(embs), "p10": None, "mean": None, "note": "音频太短,无法检测多人"}
-        E = torch.stack(embs)
-        c = torch.nn.functional.normalize(E.mean(0), dim=-1)
-        sims = (E * c).sum(-1).cpu().numpy()
-        p10 = float(np.percentile(sims, 10))
-        return {"suspect": bool(p10 < 0.55), "n_windows": len(embs), "p10": round(p10, 3), "mean": round(float(sims.mean()), 3), "note": "启发式阈值 0.55,未经标注数据校准"}
+        """【参考音频质检】疑似多人检测:2 秒窗口、1 秒步长的说话人嵌入,看各窗口与整体质心的相似度分布(启发式,阈值未校准)。
+        与 spk_cmp(生成音频 vs 同库留出样本)是两件事,返回里用 kind 区分,不混用同一个\"声纹分数\"。"""
+        from speaker_sim import AudioSkip, ScorerUnavailable, load_wav16k, result_status
+        try:
+            sc = self._holder().get()
+        except ScorerUnavailable as e:
+            return result_status("failed", e.reason, kind="reference_qc", scorer=e.info, suspect=False, n_windows=0, p10=None, mean=None)
+        try:
+            w = load_wav16k(path)
+            win, hop = 32000, 16000
+            if len(w) < win:
+                return result_status("skipped", "音频太短(<2 秒),无法检测多人", kind="reference_qc", suspect=False, n_windows=0, p10=None, mean=None, note="音频太短,无法检测多人")
+            embs = []
+            for i in range(0, max(1, len(w) - win + 1), hop):
+                try:
+                    embs.append(sc.embed(w[i:i + win]))
+                except AudioSkip:
+                    continue                                              # 静音窗口不计入,也不补零
+            if len(embs) < 3:
+                return result_status("skipped", "有效语音窗口不足 3 个(共 %d 个),无法检测多人" % len(embs), kind="reference_qc", suspect=False, n_windows=len(embs), p10=None, mean=None,
+                                     note="有效语音窗口不足,无法检测多人")
+            import torch
+            E = torch.stack(embs)
+            c = torch.nn.functional.normalize(E.mean(0), dim=-1)
+            sims = (E * c).sum(-1).cpu().numpy()
+            p10 = float(np.percentile(sims, 10))
+            return result_status("completed", "", kind="reference_qc", suspect=bool(p10 < 0.55), n_windows=len(embs), p10=round(p10, 3), mean=round(float(sims.mean()), 3),
+                                 note="启发式阈值 0.55,未经标注数据校准", model=SV_MODEL_NAME())
+        except AudioSkip as e:
+            return result_status("skipped", e.reason, kind="reference_qc", suspect=False, n_windows=0, p10=None, mean=None, note=e.reason)
 
     def spk_cmp(self, gen_path, ref_paths):
-        """生成音频与【留出参考样本】的说话人 cosine(原始分数,未校准)"""
-        from speaker_sim import SV_MODEL, SpkScorer, load_wav16k
+        """【生成音频 vs 同一语音库留出样本】的说话人 cosine(原始分数,未校准)。
+        返回 status: completed(至少 1 对有效)/ skipped(输入音频不合格,带原因)/ failed(评分器不可用,带最初异常)。分数永远不会被伪造。"""
+        from speaker_sim import AudioSkip, ScorerUnavailable, load_wav16k, result_status
+        try:
+            sc = self._holder().get()
+        except ScorerUnavailable as e:
+            return result_status("failed", e.reason, kind="generated_vs_holdout", scorer=e.info, scores=[None for _ in ref_paths], model=SV_MODEL_NAME())
+        try:
+            g = sc.embed(load_wav16k(gen_path))
+        except AudioSkip as e:
+            return result_status("skipped", "生成音频不合格:" + e.reason, kind="generated_vs_holdout", scores=[None for _ in ref_paths], model=SV_MODEL_NAME(), scorer=self._holder().info())
         import torch
-        if self.scorer is None and not self.scorer_failed:
-            self.scorer = SpkScorer("cuda")
-        g = self.scorer.embed(load_wav16k(gen_path))
-        out = []
+        out, skipped = [], []
         for p in ref_paths:
-            r = self.scorer.embed(load_wav16k(p))
-            out.append(round(float(torch.nn.functional.cosine_similarity(g, r, dim=-1)), 4))
-        return {"scores": out, "model": SV_MODEL}
+            try:
+                r = sc.embed(load_wav16k(p))
+                if r.shape != g.shape:
+                    raise RuntimeError("嵌入维度不一致")
+                out.append(round(float(torch.nn.functional.cosine_similarity(g, r, dim=-1)), 4))
+            except AudioSkip as e:
+                out.append(None)
+                skipped.append({"ref": os.path.basename(str(p)), "reason": e.reason})
+        done = [x for x in out if x is not None]
+        st = result_status("completed" if done else "skipped", "" if done else "所有留出样本都不合格:" + "; ".join(x["reason"] for x in skipped[:2]),
+                           kind="generated_vs_holdout", scores=out, skipped=skipped, model=SV_MODEL_NAME(), scorer=self._holder().info())
+        return st
 
     def _free(self):
         import gc
@@ -2263,26 +2324,61 @@ class RealEngine:
         if self.fast is None and self.slow is not None:
             self.prompt = self.slow.create_voice_clone_prompt(ref_audio=path, ref_text=("" if xvec else text), x_vector_only_mode=bool(xvec))
 
-    # ───── 声纹打分器(WavLM-SV,失败则静默禁用,不影响合成) ─────
+    # ───── 声纹打分器(WavLM-SV;失败不影响合成,但失败原因必须可见,且有界重试) ─────
     def _prep_scorer(self, path):
-        if self.scorer_failed:
-            return
+        """为本次声音设置参考声纹。模型加载 与 参考音频读取 分开处理:参考文件有问题【不会】丢掉已加载好的模型。"""
+        from speaker_sim import AudioSkip, ScorerUnavailable, load_wav16k
         try:
-            from speaker_sim import SpkScorer, load_wav16k
-            if self.scorer is None:
+            if self._holder().state != "ready":
                 self.say("voice", "加载声纹评分模型…")
-                self.scorer = SpkScorer("cuda")
-            self.scorer.set_ref([load_wav16k(path)])
+            sc = self._holder().get()
+        except ScorerUnavailable as e:
+            self.last_score = {"status": "failed", "reason": e.reason}
+            log.warning("[GPU%d] 声纹评分不可用(不影响合成): %s", self.idx, e.reason)
+            return False
+        try:
+            wav = load_wav16k(path)                                  # 先读文件:缺失/损坏 → AudioSkip(skipped + 原因),不影响已加载的模型
+            st = os.stat(path)
+            sc.ref = None
+            sc.set_ref([wav])
+            self.scorer_ref_id = (str(path), int(st.st_mtime), int(st.st_size))
+            self.last_score = {"status": "not_evaluated", "reason": "参考声纹已就绪,等待生成音频"}
+            return True
+        except AudioSkip as e:
+            sc.ref, self.scorer_ref_id = None, None
+            self.last_score = {"status": "skipped", "reason": "参考音频不能用于打分:" + e.reason}
         except Exception as e:  # noqa: BLE001
-            self.scorer_failed = True
-            self.scorer = None
-            log.warning("[GPU%d] 声纹评分不可用(不影响合成): %s", self.idx, e)
+            sc.ref, self.scorer_ref_id = None, None
+            self.last_score = {"status": "failed", "reason": "设置参考声纹失败:%s: %s" % (type(e).__name__, str(e)[:200])}
+            log.warning("[GPU%d] 设置参考声纹失败(评分模型仍保留): %s", self.idx, e)
+        return False
 
     def score(self, pcm):
-        if self.scorer is None or self.scorer.ref is None:
+        """返回 float 或 None;None 时 self.last_score 里有明确状态与原因(skipped / failed / not_evaluated),绝不伪造分数。"""
+        from speaker_sim import AudioSkip, ScorerUnavailable, finite_or_none, pcm16_to_16k
+        h = self.scorer_holder
+        if h is None or h.state != "ready" or getattr(h.scorer, "ref", None) is None:
+            if not self.last_score.get("reason"):
+                self.last_score = {"status": "not_evaluated", "reason": "评分器未就绪"}
+            if h is not None and h.state == "failed":
+                self.last_score = {"status": "failed", "reason": h.last_error or "评分器加载失败"}
             return None
-        from speaker_sim import pcm16_to_16k
-        return self.scorer.score(pcm16_to_16k(pcm, SR))
+        try:
+            v = finite_or_none(h.scorer.score(pcm16_to_16k(pcm, SR)))
+        except AudioSkip as e:
+            self.last_score = {"status": "skipped", "reason": e.reason}
+            return None
+        except ScorerUnavailable as e:
+            self.last_score = {"status": "failed", "reason": e.reason}
+            return None
+        except Exception as e:  # noqa: BLE001
+            self.last_score = {"status": "failed", "reason": "打分异常:%s: %s" % (type(e).__name__, str(e)[:200])}
+            return None
+        if v is None:
+            self.last_score = {"status": "failed", "reason": "模型返回了非有限分数"}
+            return None
+        self.last_score = {"status": "completed", "reason": ""}
+        return v
 
     def set_voice(self, path, text, xvec):
         self._make_prompt(path, text, xvec)
@@ -2484,15 +2580,31 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
     except Exception as e:  # noqa: BLE001
         log.warning("[GPU%d] 读取后端信息失败: %s", idx, e)
 
-    def settle(item, do_score):
+    def settle(item, do_score, why=""):
+        """一定会回报一条 sim 消息(带 status/reason):completed / failed / skipped / not_evaluated。不再静默丢弃后只发 None。"""
         tuid, seg_i, pcm_all, ep0 = item
-        sim = None
-        if do_score and epoch.value == ep0:
+        sim, info = None, {"status": "not_evaluated", "reason": why or "未评分"}
+        if epoch.value != ep0:
+            info = {"status": "skipped", "reason": "该句所属的任务已被取消或已开始新一轮,旧结果不会串到新任务"}
+        elif do_score:
             try:
                 sim = eng.score(pcm_all)
+                info = dict(getattr(eng, "last_score", None) or {"status": "completed" if sim is not None else "not_evaluated", "reason": ""})
+                if sim is None and info.get("status") == "completed":
+                    info = {"status": "not_evaluated", "reason": "评分器没有返回分数"}
             except Exception as e:  # noqa: BLE001
+                info = {"status": "failed", "reason": "打分异常:%s: %s" % (type(e).__name__, str(e)[:160])}
                 log.warning("[GPU%d] 打分失败: %s", idx, e)
-        send("sim", tuid, seg_i, sim, len(pcm_all) / SR)
+        elif not why:
+            info = {"status": "skipped", "reason": "评分队列已满(本卡持续忙碌),为不拖慢合成已跳过本句评分"}
+        try:
+            h = getattr(eng, "scorer_holder", None)
+            if h is not None:
+                info["scorer_state"] = h.state
+            info["ref_id"] = (getattr(eng, "scorer_ref_id", None) or [None, None, None])[1:]
+        except Exception:  # noqa: BLE001
+            pass
+        send("sim", tuid, seg_i, sim, len(pcm_all) / SR, info)
 
     def run_tts(job):
         _, tuid, ep, seg, text, prof, seed = job
@@ -2561,7 +2673,7 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
             if epoch.value == ep and nsamp > SR * 1.2:
                 deferred.append((tuid, seg, np.concatenate(acc), ep))     # 音频已全部发出;打分推迟到空闲时
             else:
-                send("sim", tuid, seg, None, nsamp / SR)
+                send("sim", tuid, seg, None, nsamp / SR, {"status": "skipped", "reason": ("句子太短(<1.2 秒),不评分" if epoch.value == ep else "任务已取消")})
             return
 
     while True:
@@ -2573,7 +2685,7 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
             if deferred:
                 settle(deferred.pop(0), True)
             continue
-        while len(deferred) > 4:                                    # 积压太多(一直在忙): 丢弃最旧的打分,只回报"无分"
+        while len(deferred) > 4:                                    # 有界队列:积压太多(一直在忙)→ 最旧的一条标记 skipped 并写明原因(不静默丢弃)
             settle(deferred.pop(0), False)
         kind = job[0]
         if kind == "quit":
@@ -2598,14 +2710,15 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
             elif kind == "spk_qc":
                 _, rid, path = job
                 try:
-                    send("spk_qc", rid, eng.spk_qc(path), "")
+                    send("spk_qc", rid, eng.spk_qc(path), "")                 # 状态(completed/failed/skipped)在结果里,质检不因评分器故障而中断上传
                 except Exception as e:  # noqa: BLE001
                     log.warning("[GPU%d] 多人检测失败(忽略): %s", idx, e)
                     send("spk_qc", rid, {}, "%s: %s" % (type(e).__name__, e))
             elif kind == "spk_cmp":
                 _, rid, gen_path, refs = job
                 try:
-                    send("spk_cmp", rid, eng.spk_cmp(gen_path, refs), "")
+                    r_ = eng.spk_cmp(gen_path, refs)
+                    send("spk_cmp", rid, r_, "" if r_.get("status") != "failed" else r_.get("reason", "评分器不可用"))
                 except Exception as e:  # noqa: BLE001
                     log.warning("[GPU%d] 声纹比对失败: %s", idx, e)
                     send("spk_cmp", rid, {}, "%s: %s" % (type(e).__name__, e))
@@ -3109,15 +3222,43 @@ FILES['speaker_sim.py'] = r'''# -*- coding: utf-8 -*-
 """
 声纹相似度工具(服务端实时打分 + evaluate.py 离线评估共用)
 
-  模型 : microsoft/wavlm-base-plus-sv (WavLM x-vector,transformers 原生支持,Kaggle 上零额外依赖、可稳定下载)
-  指标 : 说话人嵌入的余弦相似度 (Cosine Similarity),范围 -1~1,越接近 1 越像。
-  说明 : 不同声纹模型的绝对分值不可比;本系统所有"相似度"都用这同一个模型计算,训练/评估/网页显示口径一致。
+  模型 : microsoft/wavlm-base-plus-sv (WavLM x-vector,transformers 原生支持)
+  指标 : 说话人嵌入的余弦相似度 (Cosine Similarity),范围 -1~1,越接近 1 越像。原始分数,未经独立标注数据校准,不是"人耳相似度百分比"。
+
+v7.1 修复(对应截图「声纹比对失败:AttributeError: 'NoneType' object has no attribute 'embed'」):
+  根因: 旧代码在评分器加载/设参考失败后把 scorer 置 None 并永久标记 scorer_failed,而 spk_cmp / spk_qc 只判断 `scorer is None and not scorer_failed`
+        就直接调用 scorer.embed() —— scorer_failed=True 时 scorer 恒为 None,于是必现 NoneType.embed;并且最初的底层异常只写进 warning 日志,界面看不到。
+        同时「加载模型」与「读取参考音频」被塞进同一个 try,任何一个参考文件的问题都会把已经加载好的模型永久丢掉。
+  修复: ScorerHolder 显式状态机(unloaded / loading / ready / failed) + 记录最初异常 + 有界重试(退避) + 永不返回 None;
+        音频校验(过短 / 静音 / 非有限值 / 损坏)返回带原因的 skipped,而不是补零伪装成有效分数。
 """
+import math
 import os
+import threading
+import time
 
 import numpy as np
 
 SV_MODEL = os.environ.get("VC_SV_MODEL", "microsoft/wavlm-base-plus-sv")
+MIN_SAMPLES = int(os.environ.get("VC_SV_MIN_SAMPLES", "8000"))          # 0.5 s @16k;更短的音频嵌入不可靠 → skipped
+SILENCE_RMS = float(os.environ.get("VC_SV_SILENCE_RMS", "0.002"))
+MAX_SECONDS = 30
+
+
+class AudioSkip(Exception):
+    """输入音频不适合打分(不是模型故障):调用方应把它标成 skipped 并显示原因,不得补零后给分。"""
+
+    def __init__(self, reason, code="invalid_audio"):
+        super().__init__(reason)
+        self.reason, self.code = reason, code
+
+
+class ScorerUnavailable(RuntimeError):
+    """评分器当前不可用(加载失败 / 冷却中 / 重试次数用尽)。携带最初的底层异常说明。"""
+
+    def __init__(self, reason, state="failed", info=None):
+        super().__init__(reason)
+        self.reason, self.state, self.info = reason, state, info or {}
 
 
 def to16k(x, sr):
@@ -3135,11 +3276,33 @@ def to16k(x, sr):
         return np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x).astype(np.float32)
 
 
+def check_audio(w, min_samples=None):
+    """校验 16k 单声道音频;不合格抛 AudioSkip(带原因)。返回截断到 30 秒的 float32 数组。"""
+    w = np.asarray(w, dtype=np.float32).reshape(-1)
+    if w.size == 0:
+        raise AudioSkip("音频为空", "empty")
+    if not np.isfinite(w).all():
+        raise AudioSkip("音频含 NaN/Inf(损坏或合成异常)", "non_finite")
+    if w.size < (min_samples or MIN_SAMPLES):
+        raise AudioSkip("音频太短(%.2fs < %.2fs),说话人嵌入不可靠,已跳过(不补零)" % (w.size / 16000, (min_samples or MIN_SAMPLES) / 16000), "too_short")
+    if float(np.sqrt(np.mean(w.astype(np.float64) ** 2))) < SILENCE_RMS:
+        raise AudioSkip("音频近乎静音,无法提取说话人特征", "silent")
+    return w[: 16000 * MAX_SECONDS]
+
+
 def load_wav16k(path):
-    import soundfile as sf
-    a, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    """读取音频文件 → 16k 单声道。文件缺失/损坏 → AudioSkip(带原因),不会抛出含糊的底层异常。"""
+    if not os.path.isfile(str(path)):
+        raise AudioSkip("参考/生成音频文件不存在:%s" % os.path.basename(str(path)), "missing_file")
+    try:
+        import soundfile as sf
+        a, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    except Exception as e:  # noqa: BLE001
+        raise AudioSkip("音频无法解码(文件损坏或格式不支持):%s: %s" % (type(e).__name__, str(e)[:80]), "decode_error")
     if a.ndim > 1:
         a = a.mean(axis=1)
+    if not sr or sr <= 0:
+        raise AudioSkip("音频采样率异常(%r)" % sr, "bad_sample_rate")
     return to16k(a, sr)
 
 
@@ -3148,7 +3311,7 @@ def pcm16_to_16k(pcm, sr=24000):
 
 
 class SpkScorer:
-    """加载一次,反复打分。device 例如 'cuda' / 'cuda:0' / 'cpu'。"""
+    """加载一次,反复打分。device 例如 'cuda' / 'cuda:0' / 'cpu'。加载失败直接抛出【原始异常】(由 ScorerHolder 记录)。"""
 
     def __init__(self, device="cuda"):
         import torch
@@ -3158,28 +3321,33 @@ class SpkScorer:
         self.fe = AutoFeatureExtractor.from_pretrained(SV_MODEL)
         try:
             model = WavLMForXVector.from_pretrained(SV_MODEL)
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             # 该仓库只有 pytorch_model.bin;torch<2.6 时 transformers 会拒绝加载 -> 用 weights_only=True 手动加载(同样安全)
             from huggingface_hub import hf_hub_download
             from transformers import AutoConfig
             cfg = AutoConfig.from_pretrained(SV_MODEL)
             model = WavLMForXVector(cfg)
             sd = torch.load(hf_hub_download(SV_MODEL, "pytorch_model.bin"), map_location="cpu", weights_only=True)
-            model.load_state_dict(sd, strict=False)
+            res = model.load_state_dict(sd, strict=False)
+            missing = [k for k in getattr(res, "missing_keys", []) if not k.startswith("wavlm.")]
+            if missing:                                      # 分类头/投影权重缺失 = 得到随机嵌入,必须报错而不是悄悄给分
+                raise RuntimeError("声纹模型权重不完整(缺少 %d 个键,例如 %s)" % (len(missing), missing[:3]))
         self.model = model.to(self.device).eval()
         self.ref = None
 
     def embed(self, wav16k):
         torch = self.torch
-        w = np.asarray(wav16k, dtype=np.float32).reshape(-1)
-        if w.size < 8000:                                   # 不足 0.5 秒,嵌入不可靠
-            w = np.pad(w, (0, 8000 - w.size))
-        w = w[: 16000 * 30]
+        w = check_audio(wav16k)
         inp = self.fe([w], sampling_rate=16000, return_tensors="pt", padding=True)
         inp = {k: v.to(self.device) for k, v in inp.items()}
         with torch.inference_mode():
             e = self.model(**inp).embeddings
-        return torch.nn.functional.normalize(e.float(), dim=-1)[0]
+        if e is None or e.numel() == 0:
+            raise RuntimeError("模型返回了空嵌入")
+        e = torch.nn.functional.normalize(e.float(), dim=-1)[0]
+        if not bool(torch.isfinite(e).all()):
+            raise RuntimeError("模型返回了非有限嵌入(NaN/Inf)")
+        return e
 
     def set_ref(self, wav16k_list):
         """参考声纹 = 若干条真人音频嵌入的均值(再归一化)"""
@@ -3187,16 +3355,94 @@ class SpkScorer:
         if isinstance(wav16k_list, np.ndarray):
             wav16k_list = [wav16k_list]
         es = torch.stack([self.embed(w) for w in wav16k_list])
+        if len({tuple(e.shape) for e in es}) != 1:
+            raise RuntimeError("参考嵌入维度不一致")
         self.ref = torch.nn.functional.normalize(es.mean(0), dim=-1)
         return self.ref
 
     def score(self, wav16k):
         if self.ref is None:
-            raise RuntimeError("先调用 set_ref")
-        return float((self.embed(wav16k) * self.ref).sum().item())
+            raise ScorerUnavailable("尚未设置参考声纹(set_ref 未成功)", "no_reference")
+        e = self.embed(wav16k)
+        if e.shape != self.ref.shape:
+            raise RuntimeError("嵌入维度不一致(%s vs %s)" % (tuple(e.shape), tuple(self.ref.shape)))
+        return float((e * self.ref).sum().item())
 
     def pair(self, a16k, b16k):
         return float((self.embed(a16k) * self.embed(b16k)).sum().item())
+
+
+class ScorerHolder:
+    """评分器生命周期:unloaded → loading → ready | failed。
+
+      · 永远不返回 None:get() 要么返回可用评分器,要么抛 ScorerUnavailable(带最初异常、尝试次数、下次重试时间)。
+      · 有界重试:最多 max_attempts 次加载,失败后按 cooldown 秒退避(默认 0/20/60s),用尽后保持 failed(调用 reset() 才会重新开始),
+        不会每个请求都重新下载/加载大模型。
+      · factory 可注入(单元测试用假工厂;真实环境是 SpkScorer)。
+    """
+
+    def __init__(self, factory, max_attempts=3, cooldown=(0.0, 20.0, 60.0), clock=time.time, label="声纹评分器"):
+        self.factory, self.max_attempts, self.cooldown, self.clock, self.label = factory, max_attempts, tuple(cooldown), clock, label
+        self.state = "unloaded"
+        self.scorer = None
+        self.attempts = 0
+        self.last_error = None          # "TypeName: message" —— 最初/最近一次底层异常(原文,不会被泛化成"评分失败")
+        self.last_error_type = None
+        self.next_retry_at = 0.0
+        self.loaded_at = None
+        self._lock = threading.RLock()
+
+    def info(self):
+        wait = max(0.0, self.next_retry_at - self.clock()) if self.state == "failed" else 0.0
+        return {"state": self.state, "attempts": self.attempts, "max_attempts": self.max_attempts, "last_error": self.last_error, "error_type": self.last_error_type,
+                "retry_in_s": round(wait, 1), "exhausted": bool(self.state == "failed" and self.attempts >= self.max_attempts), "model": SV_MODEL, "loaded_at": self.loaded_at,
+                "has_reference": bool(self.scorer is not None and getattr(self.scorer, "ref", None) is not None)}
+
+    def reset(self):
+        with self._lock:
+            if self.state != "ready":
+                self.state, self.attempts, self.next_retry_at = "unloaded", 0, 0.0
+
+    def get(self):
+        with self._lock:
+            if self.state == "ready" and self.scorer is not None:
+                return self.scorer
+            now = self.clock()
+            if self.state == "failed":
+                if self.attempts >= self.max_attempts:
+                    raise ScorerUnavailable("%s加载失败且已重试 %d 次仍失败:%s" % (self.label, self.attempts, self.last_error), "failed", self.info())
+                if now < self.next_retry_at:
+                    raise ScorerUnavailable("%s上次加载失败(%s);%.0f 秒后自动重试" % (self.label, self.last_error, self.next_retry_at - now), "failed", self.info())
+            self.state = "loading"
+            self.attempts += 1
+            try:
+                sc = self.factory()
+            except Exception as e:  # noqa: BLE001 —— 记录最初异常原文
+                self.scorer = None
+                self.state = "failed"
+                self.last_error = "%s: %s" % (type(e).__name__, str(e).strip()[:300])
+                self.last_error_type = type(e).__name__
+                idx = min(self.attempts, len(self.cooldown) - 1)
+                self.next_retry_at = self.clock() + self.cooldown[idx]
+                raise ScorerUnavailable("%s加载失败(第 %d/%d 次):%s" % (self.label, self.attempts, self.max_attempts, self.last_error), "failed", self.info())
+            self.scorer, self.state, self.last_error, self.last_error_type, self.loaded_at = sc, "ready", None, None, time.time()
+            return sc
+
+
+def result_status(status, reason="", **kw):
+    """统一的评分结果:status ∈ completed | failed | skipped | not_evaluated;任何非 completed 都必须带 reason,且不含分数。"""
+    assert status in ("completed", "failed", "skipped", "not_evaluated")
+    d = {"status": status, "reason": reason}
+    d.update(kw)
+    return d
+
+
+def finite_or_none(v):
+    try:
+        v = float(v)
+        return v if math.isfinite(v) else None
+    except Exception:  # noqa: BLE001
+        return None
 '''
 
 FILES['netguard.py'] = r'''# -*- coding: utf-8 -*-
@@ -4662,71 +4908,278 @@ class GitHubSync:
 
 FILES['search_providers.py'] = r'''# -*- coding: utf-8 -*-
 """
-search_providers.py —— 可替换的搜索提供方(每个提供方都如实说明:是否真实可用 / 需要哪些 Secrets / 费用与配额)
+search_providers.py —— 搜索提供方。核心原则:【无需任何 Key 就能真实搜索】,失败时原因、实际使用的提供方、每次尝试都对用户可见。
 
-  browser   受控浏览器内的普通、用户可见的搜索(Google / DuckDuckGo / Bing)。无需 Key、无 API 费用;受目标网站的反机器人策略影响(可能出现验证码/同意页,
-            此时暂停交给你处理,绝不绕过)。这是缺少搜索 API 时的【可见回退】,界面会明确标出当前模式。
-  brave     Brave Search API(BRAVE_SEARCH_API_KEY)。核实时(2026-10):按量计费约 $5/1000 次请求,每月约 $5 免费额度,需要绑定支付方式;请以官方页面为准。
-  google_cse  Google Custom Search JSON API(GOOGLE_CSE_KEY + GOOGLE_CSE_CX)。★ 已对新客户关闭(2026-01-20 起),计划 2027-01-01 停用;
-            仅现有客户可能仍可用,【绝不作为唯一搜索通道】。没有配置时显示"不可用",不会假装可用。
+  默认(自动)链路,全部无 Key:
+    1. http:bing         服务器直接请求 Bing 网页并解析真实结果(CPU,无需 Chromium,通常 1~3 秒)
+    2. http:duckduckgo   DuckDuckGo HTML 版,真实解析
+    3. http:wikipedia    维基百科官方 API(真实 JSON;只覆盖百科类问题,作为最后的 HTTP 兜底)
+    4. browser           受控 Chromium 里的可见搜索(需要 Playwright + Chromium 可执行文件真的存在;出现验证码/同意页会暂停交给你,绝不绕过)
+  可选(配置了 Key 才排在最前,不是必需):brave(BRAVE_SEARCH_API_KEY)、google_cse(遗留;新账号已不可用)。
 
-  所有结果都来自真实的 API 响应或真实的页面解析;失败就如实返回错误,不会生成不存在的来源。
+  诚实边界:结果只来自真实 HTTP 响应/真实页面解析,不缓存冒充新结果,不用 LLM 编造标题/摘要/URL。
+  遇到验证码/反机器人页 → kind="challenge",明确报告并换下一个提供方;不会绕过。网络不可用 → kind="network",如实说明。
 """
+import asyncio
+import base64
+import html as _html
 import os
+import re
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
+
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+HEADERS = {"User-Agent": UA, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}
+HTTP_TIMEOUT = float(os.environ.get("VC_SEARCH_HTTP_TIMEOUT", "10"))
+MAX_ATTEMPT_RETRIES = 1                                   # 只对明确可重试的瞬时错误(超时/网络抖动/5xx)重试一次
+# 测试钩子:把提供方的基地址指向本机假服务(只用于单元测试,生产环境不设置)
+BASES = {"bing": os.environ.get("VC_TEST_BING_BASE", "https://www.bing.com"), "duckduckgo": os.environ.get("VC_TEST_DDG_BASE", "https://html.duckduckgo.com"),
+         "wikipedia": os.environ.get("VC_TEST_WIKI_BASE", "")}
+
+CHALLENGE_RE = re.compile(r"(?i)(captcha|unusual traffic|not a robot|verify you are human|are you a robot|automated queries|anomaly|"
+                          r"异常流量|人机验证|验证码|请证明你是人类|安全验证|我们的系统检测到)")
 
 
 def now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+class SearchError(Exception):
+    """kind: network | timeout | rate_limited | server_error | challenge | parse | empty | blocked | config | client_error"""
+
+    def __init__(self, kind, msg, retryable=False, status=None):
+        super().__init__(msg)
+        self.kind, self.retryable, self.status = kind, retryable, status
+
+
+class SearchFailed(Exception):
+    """所有提供方都失败:携带每次尝试的详情,供界面如实展示。"""
+
+    def __init__(self, attempts):
+        self.attempts = attempts
+        super().__init__(summarize(attempts))
+
+
+KIND_ZH = {"network": "网络不可用", "timeout": "请求超时", "rate_limited": "被限流(HTTP 429)", "server_error": "搜索站点返回 5xx", "challenge": "遇到验证码/反机器人页(不绕过)",
+           "parse": "页面结构变化,解析失败", "empty": "没有结果", "blocked": "被安全策略拒绝", "config": "未配置", "client_error": "请求被拒绝(4xx)"}
+
+
+def summarize(attempts):
+    if not attempts:
+        return "没有可用的搜索提供方"
+    return ";".join("%s:%s%s" % (a["provider"], KIND_ZH.get(a.get("kind"), a.get("kind") or "失败"), ("(" + a["message"][:60] + ")") if a.get("message") else "") for a in attempts if not a.get("ok"))
+
+
 def _norm(title, url, snippet, provider, rank, t):
     return {"title": (title or "")[:200], "url": url, "domain": urlsplit(url).hostname or "", "snippet": (snippet or "")[:400], "fetched_at": t, "rank": rank, "provider": provider}
 
 
+# ───────────────────────── HTML 解析(纯标准库,可单元测试) ─────────────────────────
+def _text(h):
+    return re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", h or ""))).strip()
+
+
+def unwrap_result_url(u):
+    """搜索引擎的跳转链接 → 真实目标(只用于展示/打开;打开前仍要过 netguard)"""
+    try:
+        u = _html.unescape(u)
+        if u.startswith("//"):
+            u = "https:" + u
+        sp = urlsplit(u)
+        q = parse_qs(sp.query)
+        if sp.netloc.endswith("duckduckgo.com") and "uddg" in q:
+            return unquote(q["uddg"][0])
+        if sp.netloc.endswith("bing.com") and sp.path.startswith("/ck/") and "u" in q and q["u"][0].startswith("a1"):
+            b = q["u"][0][2:]
+            return base64.urlsafe_b64decode(b + "=" * (-len(b) % 4)).decode("utf-8", "ignore")
+        if sp.netloc.endswith("google.com") and sp.path == "/url" and ("q" in q or "url" in q):
+            return (q.get("q") or q.get("url"))[0]
+    except Exception:  # noqa: BLE001
+        pass
+    return u
+
+
+def parse_bing(page):
+    out = []
+    for blk in re.findall(r'<li[^>]+class="[^"]*\bb_algo\b[^"]*"[^>]*>(.*?)</li>', page, re.S):
+        m = re.search(r'<h2[^>]*>.*?<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', blk, re.S)
+        if not m:
+            continue
+        sn = re.search(r'<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>(.*?)</p>', blk, re.S) or re.search(r'<div[^>]+class="[^"]*b_caption[^"]*"[^>]*>.*?<p[^>]*>(.*?)</p>', blk, re.S) \
+            or re.search(r'<div[^>]+class="[^"]*b_algoSlug[^"]*"[^>]*>(.*?)</div>', blk, re.S)
+        out.append({"title": _text(m.group(2)), "url": unwrap_result_url(m.group(1)), "snippet": _text(sn.group(1)) if sn else ""})
+    return out
+
+
+def parse_ddg(page):
+    out = []
+    for blk in re.findall(r'<div[^>]+class="[^"]*\bresult\b[^"]*"[^>]*>(.*?)(?=<div[^>]+class="[^"]*\bresult\b[^"]*"|</body>)', page, re.S):
+        m = re.search(r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', blk, re.S) or re.search(r'<a[^>]+href="([^"]+)"[^>]+class="[^"]*result__a[^"]*"[^>]*>(.*?)</a>', blk, re.S)
+        if not m:
+            continue
+        sn = re.search(r'class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</(?:a|div|td)>', blk, re.S)
+        out.append({"title": _text(m.group(2)), "url": unwrap_result_url(m.group(1)), "snippet": _text(sn.group(1)) if sn else ""})
+    return out
+
+
+def looks_like_challenge(status, page):
+    head = (page or "")[:4000]
+    if status == 202 and "duckduckgo" in head.lower():
+        return True                                             # DDG 的 202 = 异常流量/人机验证页
+    return bool(CHALLENGE_RE.search(head)) and not re.search(r"b_algo|result__a", page or "")
+
+
+# ───────────────────────── 提供方 ─────────────────────────
 class Provider:
     id = ""
     name = ""
     secrets = ()
     cost = ""
     note = ""
+    keyless = False
 
     def configured(self):
         return all(os.environ.get(s, "").strip() for s in self.secrets)
 
     def info(self):
-        return {"id": self.id, "name": self.name, "available": self.configured(), "needs_secrets": list(self.secrets), "cost": self.cost, "note": self.note,
+        return {"id": self.id, "name": self.name, "available": self.configured(), "needs_secrets": list(self.secrets), "cost": self.cost, "note": self.note, "keyless": self.keyless,
                 "missing": [s for s in self.secrets if not os.environ.get(s, "").strip()]}
 
     async def search(self, q, count=8, page=0, site=None, recency=None):
         raise NotImplementedError
 
 
+async def _get(url, params=None, headers=None):
+    """统一的 HTTP GET:把 httpx 的各种异常归类成 SearchError(kind),不泄露内部堆栈。"""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True, headers={**HEADERS, **(headers or {})}) as c:
+            r = await c.get(url, params=params)
+    except httpx.TimeoutException:
+        raise SearchError("timeout", "请求超过 %.0f 秒没有响应" % HTTP_TIMEOUT, True)
+    except (httpx.ConnectError, httpx.NetworkError, httpx.RemoteProtocolError) as e:
+        raise SearchError("network", "无法连接搜索站点:%s" % (str(e) or type(e).__name__)[:80], True)
+    except Exception as e:  # noqa: BLE001
+        raise SearchError("network", "%s: %s" % (type(e).__name__, str(e)[:80]), True)
+    if r.status_code == 429:
+        raise SearchError("rate_limited", "HTTP 429", False, 429)
+    if r.status_code >= 500:
+        raise SearchError("server_error", "HTTP %d" % r.status_code, True, r.status_code)
+    if r.status_code in (401, 403):
+        raise SearchError("challenge" if "captcha" in r.text[:3000].lower() else "client_error", "HTTP %d" % r.status_code, False, r.status_code)
+    if r.status_code >= 400:
+        raise SearchError("client_error", "HTTP %d" % r.status_code, False, r.status_code)
+    return r
+
+
+def _clean(raw, provider, page, count, base_rank=0):
+    import netguard
+    res, seen, t = [], set(), now_iso()
+    for r in raw:
+        u = r.get("url") or ""
+        if not re.match(r"^https?://", u) or u in seen:
+            continue
+        try:
+            netguard.check_url(u, resolve=False)
+        except netguard.Blocked:
+            continue
+        seen.add(u)
+        res.append(_norm(r.get("title") or u, u, r.get("snippet"), provider, len(res) + 1 + base_rank, t))
+        if len(res) >= count:
+            break
+    return res
+
+
+class BingHttp(Provider):
+    id, name, keyless = "bing", "Bing 网页搜索(服务器直连,无需 Key)", True
+    cost = "无 API 费用"
+    note = "真实页面解析;无需 Chromium"
+
+    async def search(self, q, count=8, page=0, site=None, recency=None):
+        qq = q + ((" site:" + site) if site else "")
+        r = await _get(BASES["bing"] + "/search", {"q": qq, "first": page * 10 + 1, "count": 10, "setlang": "zh-Hans", "mkt": "zh-CN", "ensearch": "0"})
+        if looks_like_challenge(r.status_code, r.text):
+            raise SearchError("challenge", "Bing 返回了验证页(不绕过)")
+        raw = parse_bing(r.text)
+        if not raw:
+            if re.search(r'class="b_no"|没有找到与|No results found for', r.text):
+                raise SearchError("empty", "Bing 明确返回了“没有结果”")
+            raise SearchError("parse", "没有解析到结果(页面结构可能已变化)")
+        return _clean(raw, "http:bing", page, count, page * 10)
+
+
+class DuckHttp(Provider):
+    id, name, keyless = "duckduckgo", "DuckDuckGo HTML(服务器直连,无需 Key)", True
+    cost = "无 API 费用"
+    note = "真实页面解析;仅第 1 页"
+
+    async def search(self, q, count=8, page=0, site=None, recency=None):
+        if page > 0:
+            raise SearchError("empty", "DuckDuckGo HTML 版不支持翻页(由其他提供方负责)")
+        params = {"q": q + ((" site:" + site) if site else ""), "kl": "wt-wt"}
+        if recency in ("d", "w", "m", "y"):
+            params["df"] = recency
+        r = await _get(BASES["duckduckgo"] + "/html/", params)
+        if looks_like_challenge(r.status_code, r.text):
+            raise SearchError("challenge", "DuckDuckGo 要求人机验证(不绕过)")
+        raw = parse_ddg(r.text)
+        if not raw:
+            raise SearchError("parse" if "result" in r.text else "empty", "没有解析到结果")
+        return _clean(raw, "http:duckduckgo", page, count)
+
+
+class WikiHttp(Provider):
+    id, name, keyless = "wikipedia", "维基百科 API(官方,无需 Key)", True
+    cost = "无 API 费用"
+    note = "只覆盖百科内容,作为最后的 HTTP 兜底"
+
+    async def search(self, q, count=8, page=0, site=None, recency=None):
+        lang = "zh" if re.search(r"[\u4e00-\u9fff]", q) else "en"
+        base = BASES["wikipedia"] or "https://%s.wikipedia.org" % lang
+        r = await _get(base + "/w/api.php", {"action": "query", "list": "search", "srsearch": q, "srlimit": min(10, count), "sroffset": page * 10, "format": "json", "utf8": 1})
+        try:
+            items = r.json()["query"]["search"]
+        except Exception:  # noqa: BLE001
+            raise SearchError("parse", "维基百科 API 返回了意料之外的内容")
+        if not items:
+            raise SearchError("empty", "维基百科没有相关条目")
+        t = now_iso()
+        return [_norm(x["title"], "%s/wiki/%s" % (base, quote(x["title"].replace(" ", "_"))), _text(x.get("snippet", "")), "http:wikipedia", i + 1 + page * 10, t) for i, x in enumerate(items)]
+
+
 class BraveProvider(Provider):
-    id, name = "brave", "Brave Search API"
+    id, name = "brave", "Brave Search API(可选)"
     secrets = ("BRAVE_SEARCH_API_KEY",)
-    cost = "按量计费约 $5/1000 次;每月约 $5 免费额度;需绑定支付方式(2026-10 核实,以官方为准)"
-    note = "真实 API;独立索引;返回标题/链接/摘要"
+    cost = "按量计费约 $5/1000 次;需绑定支付方式(以官方为准)"
+    note = "可选:配置后优先使用;没有它也能搜索"
 
     async def search(self, q, count=8, page=0, site=None, recency=None):
         import httpx
         params = {"q": q + ((" site:" + site) if site else ""), "count": min(20, count), "offset": page}
         if recency in ("d", "w", "m", "y"):
             params["freshness"] = {"d": "pd", "w": "pw", "m": "pm", "y": "py"}[recency]
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get("https://api.search.brave.com/res/v1/web/search", params=params, headers={"X-Subscription-Token": os.environ["BRAVE_SEARCH_API_KEY"], "Accept": "application/json"})
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get("https://api.search.brave.com/res/v1/web/search", params=params, headers={"X-Subscription-Token": os.environ["BRAVE_SEARCH_API_KEY"], "Accept": "application/json"})
+        except httpx.TimeoutException:
+            raise SearchError("timeout", "Brave API 超时", True)
+        except Exception as e:  # noqa: BLE001
+            raise SearchError("network", "Brave API 无法连接:%s" % str(e)[:60], True)
         if r.status_code != 200:
-            raise RuntimeError("Brave API 返回 %d(%s)" % (r.status_code, "Key 无效或额度用尽" if r.status_code in (401, 402, 403, 429) else "服务错误"))
+            raise SearchError("rate_limited" if r.status_code == 429 else "server_error" if r.status_code >= 500 else "client_error",
+                              "Brave API 返回 %d(%s)" % (r.status_code, "Key 无效或额度用尽" if r.status_code in (401, 402, 403, 429) else "服务错误"), r.status_code >= 500, r.status_code)
         t = now_iso()
-        return [_norm(x.get("title"), x["url"], x.get("description"), "brave", i + 1 + page * count, t) for i, x in enumerate((r.json().get("web") or {}).get("results", [])) if x.get("url")]
+        res = [_norm(x.get("title"), x["url"], x.get("description"), "brave", i + 1 + page * count, t) for i, x in enumerate((r.json().get("web") or {}).get("results", [])) if x.get("url")]
+        if not res:
+            raise SearchError("empty", "Brave 没有结果")
+        return res
 
 
 class GoogleCSEProvider(Provider):
-    id, name = "google_cse", "Google Custom Search JSON API(遗留)"
+    id, name = "google_cse", "Google Custom Search JSON API(遗留,可选)"
     secrets = ("GOOGLE_CSE_KEY", "GOOGLE_CSE_CX")
-    cost = "100 次/天免费,之后 $5/1000(上限 1 万/天);★ 已对新客户关闭,计划 2027-01-01 停用"
-    note = "仅现有客户可能可用;不是唯一通道"
+    cost = "★ 已对新客户关闭,计划 2027-01-01 停用"
+    note = "仅现有客户可能可用;不是必需"
 
     async def search(self, q, count=8, page=0, site=None, recency=None):
         import httpx
@@ -4735,46 +5188,110 @@ class GoogleCSEProvider(Provider):
             params["siteSearch"] = site
         if recency in ("d", "w", "m", "y"):
             params["dateRestrict"] = recency + "1"
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get("https://www.googleapis.com/customsearch/v1", params=params)
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get("https://www.googleapis.com/customsearch/v1", params=params)
+        except Exception as e:  # noqa: BLE001
+            raise SearchError("network", "Google CSE 无法连接:%s" % str(e)[:60], True)
         if r.status_code != 200:
-            raise RuntimeError("Google CSE 返回 %d(新账号会得到 403:该 API 已对新客户关闭)" % r.status_code)
+            raise SearchError("client_error" if r.status_code < 500 else "server_error", "Google CSE 返回 %d(新账号会得到 403:该 API 已对新客户关闭)" % r.status_code, r.status_code >= 500, r.status_code)
         t = now_iso()
-        return [_norm(x.get("title"), x["link"], x.get("snippet"), "google_cse", i + 1 + page * 10, t) for i, x in enumerate(r.json().get("items", [])) if x.get("link")]
+        res = [_norm(x.get("title"), x["link"], x.get("snippet"), "google_cse", i + 1 + page * 10, t) for i, x in enumerate(r.json().get("items", [])) if x.get("link")]
+        if not res:
+            raise SearchError("empty", "Google CSE 没有结果")
+        return res
+
+
+def chromium_installed():
+    """Playwright 的 Chromium 可执行文件是否真的存在(不能只因为 import playwright 成功就说“可搜索”)。"""
+    env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or ""
+    roots = [env] if env and env != "0" else [os.path.expanduser("~/.cache/ms-playwright"), "/root/.cache/ms-playwright", "/ms-playwright"]      # 与 Playwright 语义一致:设置了环境变量就只认它
+    for root in roots:
+        if root and os.path.isdir(root):
+            for d in os.listdir(root):
+                if d.startswith(("chromium-", "chromium_headless_shell-", "chromium")) and os.path.isdir(os.path.join(root, d)):
+                    return True
+    return False
 
 
 class BrowserProvider(Provider):
-    id, name = "browser", "受控浏览器内的普通搜索(可见)"
-    cost = "无 API 费用;占用 CPU 与少量带宽;受目标站反机器人策略影响"
-    note = "无 Key 时的可见回退:真实页面、真实解析;出现验证码会暂停等你处理"
+    id, name = "browser", "受控浏览器内的可见搜索(Chromium)"
+    cost = "无 API 费用;占用 CPU 与少量带宽"
+    note = "你能看到真实的页面、鼠标与键盘输入;出现验证码会暂停等你处理"
+    keyless = True
 
-    def configured(self):
+    def problem(self):
         try:
             import playwright  # noqa: F401
-            return True
-        except Exception:  # noqa: BLE001
-            return False
+        except Exception as e:  # noqa: BLE001
+            return "未安装 playwright(%s)" % str(e)[:60]
+        if not chromium_installed():
+            return "playwright 已安装,但没有找到 Chromium 可执行文件(请运行 playwright install chromium)"
+        return ""
+
+    def configured(self):
+        return not self.problem()
 
     def info(self):
         d = super().info()
-        d["missing"] = [] if d["available"] else ["playwright(pip install playwright && playwright install chromium)"]
+        d["available"] = self.configured()
+        d["missing"] = [] if d["available"] else [self.problem()]
         return d
 
 
+HTTP_PROVIDERS = {"bing": BingHttp(), "duckduckgo": DuckHttp(), "wikipedia": WikiHttp()}
 API_PROVIDERS = {"brave": BraveProvider(), "google_cse": GoogleCSEProvider()}
 BROWSER = BrowserProvider()
 
 
 def table():
-    return [BROWSER.info()] + [p.info() for p in API_PROVIDERS.values()]
+    return [p.info() for p in HTTP_PROVIDERS.values()] + [BROWSER.info()] + [p.info() for p in API_PROVIDERS.values()]
 
 
 def auto_pick():
-    """auto:有 Brave Key → brave;有 Google CSE(遗留)→ google_cse;否则 browser 回退"""
+    """auto:有 Brave Key → brave(可选加速);有 Google CSE(遗留)→ google_cse;否则 http 免 Key 链路(Bing → DuckDuckGo → 维基百科 → 浏览器)。"""
     for pid in ("brave", "google_cse"):
         if API_PROVIDERS[pid].configured():
             return pid
-    return "browser"
+    return "http"
+
+
+def order_for(engine=None, page=0):
+    """免 Key 链路顺序。google 无法被服务器直连(会被拦截),选 google 时仍从 Bing 开始并在界面里说明。"""
+    first = ["duckduckgo", "bing"] if engine == "duckduckgo" and page == 0 else ["bing", "duckduckgo"]
+    return first + ["wikipedia"]
+
+
+async def run_one(prov, pid, q, count, page, site, recency, sleep=asyncio.sleep):
+    """调用单个提供方,最多对【可重试】错误重试 MAX_ATTEMPT_RETRIES 次;返回 (results, attempt_record)。"""
+    t0 = time.time()
+    tries = 0
+    while True:
+        tries += 1
+        try:
+            res = await prov.search(q, count, page, site, recency)
+            return res, {"provider": pid, "ok": True, "n": len(res), "ms": int((time.time() - t0) * 1000), "tries": tries}
+        except SearchError as e:
+            if e.retryable and tries <= MAX_ATTEMPT_RETRIES:
+                await sleep(0.6 * tries)
+                continue
+            return None, {"provider": pid, "ok": False, "kind": e.kind, "message": str(e), "status": e.status, "ms": int((time.time() - t0) * 1000), "tries": tries}
+        except Exception as e:  # noqa: BLE001
+            return None, {"provider": pid, "ok": False, "kind": "network", "message": "%s: %s" % (type(e).__name__, str(e)[:80]), "ms": int((time.time() - t0) * 1000), "tries": tries}
+
+
+async def search_http_chain(q, count=8, page=0, site=None, recency=None, engine=None, attempts=None):
+    """依次尝试免 Key 的 HTTP 提供方。成功返回 (results, provider_id, attempts);全部失败抛 SearchFailed(attempts)。"""
+    attempts = attempts if attempts is not None else []
+    for pid in order_for(engine, page):
+        if pid == "wikipedia" and (site or recency):
+            attempts.append({"provider": pid, "ok": False, "kind": "empty", "message": "指定了站点/时间范围,维基百科兜底不适用", "ms": 0, "tries": 0})
+            continue
+        res, rec = await run_one(HTTP_PROVIDERS[pid], pid, q, count, page, site, recency)
+        attempts.append(rec)
+        if res:
+            return res, "http:" + pid, attempts
+    raise SearchFailed(attempts)
 '''
 
 FILES['browser_agent.py'] = r'''# -*- coding: utf-8 -*-
@@ -4811,8 +5328,9 @@ MAX_QUEUED = int(os.environ.get("VC_BROWSER_MAX_QUEUED", "4"))
 STEP_TIMEOUT_S = float(os.environ.get("VC_BROWSER_STEP_TIMEOUT", "25"))
 TASK_TIMEOUT_S = float(os.environ.get("VC_BROWSER_TASK_TIMEOUT", "240"))
 IDLE_TTL_S = float(os.environ.get("VC_BROWSER_IDLE_TTL", "900"))
-FPS = float(os.environ.get("VC_BROWSER_FPS", "2"))
-FPS_BUSY = float(os.environ.get("VC_BROWSER_FPS_BUSY", "0.5"))              # TTS 正在播放时
+FPS = float(os.environ.get("VC_BROWSER_FPS", "1.5"))                         # 空闲(没有任务在跑)
+FPS_ACTIVE = float(os.environ.get("VC_BROWSER_FPS_ACTIVE", "7"))             # 任务执行中:真实截图,最新帧覆盖旧帧(有界,不堆积)
+FPS_BUSY = float(os.environ.get("VC_BROWSER_FPS_BUSY", "2"))                 # TTS 正在播放时封顶(保证音频优先)
 JPEG_Q = int(os.environ.get("VC_BROWSER_JPEG_Q", "50"))
 VIEW = (1100, 680)
 CONFIRM_TIMEOUT_S = 180
@@ -4840,11 +5358,11 @@ DDG_JS = """() => Array.from(document.querySelectorAll('.result')).map(r=>{const
 BING_JS = """() => Array.from(document.querySelectorAll('li.b_algo')).map(r=>{const a=r.querySelector('h2 a'); const s=r.querySelector('.b_caption p, .b_lineclamp2, .b_algoSlug');
   return a?{title:a.innerText.trim(), url:a.href, snippet:((s&&s.innerText)||'').trim().slice(0,400)}:null}).filter(Boolean)"""
 ENGINES = {
-    "google": {"name": "Google(受控浏览器内的普通搜索)", "home": "https://www.google.com/", "box": 'textarea[name="q"], input[name="q"]', "js": GOOGLE_JS,
+    "google": {"ready": "#search a h3, #rso a h3", "name": "Google(受控浏览器内的普通搜索)", "home": "https://www.google.com/", "box": 'textarea[name="q"], input[name="q"]', "js": GOOGLE_JS,
                "page": lambda q, p: "https://www.google.com/search?" + urlencode({"q": q, "start": p * 10}), "recency": {"d": "qdr:d", "w": "qdr:w", "m": "qdr:m", "y": "qdr:y"}, "rec_param": "tbs"},
-    "duckduckgo": {"name": "DuckDuckGo(受控浏览器内的普通搜索)", "home": "https://html.duckduckgo.com/html/", "box": 'input[name="q"]', "js": DDG_JS,
+    "duckduckgo": {"ready": ".result", "name": "DuckDuckGo(受控浏览器内的普通搜索)", "home": "https://html.duckduckgo.com/html/", "box": 'input[name="q"]', "js": DDG_JS,
                    "page": lambda q, p: "https://html.duckduckgo.com/html/?" + urlencode({"q": q, "s": p * 30}), "recency": {"d": "d", "w": "w", "m": "m", "y": "y"}, "rec_param": "df"},
-    "bing": {"name": "Bing(受控浏览器内的普通搜索)", "home": "https://www.bing.com/", "box": 'textarea[name="q"], input[name="q"]', "js": BING_JS,
+    "bing": {"ready": "li.b_algo", "name": "Bing(受控浏览器内的普通搜索)", "home": "https://www.bing.com/", "box": 'textarea[name="q"], input[name="q"]', "js": BING_JS,
              "page": lambda q, p: "https://www.bing.com/search?" + urlencode({"q": q, "first": p * 10 + 1}), "recency": {}, "rec_param": None},
 }
 
@@ -5019,7 +5537,7 @@ def validate_actions(actions):
             n["url"] = _s(a.get("url"), 2048)
         elif k == "search":
             n["query"] = _s(a.get("query"), 300)
-            n["engine"] = a.get("engine") if a.get("engine") in ENGINES else "google"
+            n["engine"] = a.get("engine") if a.get("engine") in ENGINES else "bing"
             if a.get("site"):
                 if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,80}\.[a-z]{2,24}", str(a["site"]).lower()):
                     raise ValueError("网站范围格式无效")
@@ -5070,22 +5588,29 @@ def _num(s):
 
 
 def _recency(t):
-    for pat, v in ((r"最近一天|今天|24\s*小时|过去一天|past day|today|last 24", "d"), (r"最近一周|本周|过去一周|这周|past week|this week|last week", "w"),
-                   (r"最近一个月|本月|过去一个月|past month|this month|last month", "m"), (r"今年|最近一年|过去一年|past year|this year|last year", "y")):
+    """只有【明确的时间范围说法】才当作时间过滤;“今天的天气”“今年的计划”里的今天/今年是搜索主题的一部分,不能被删掉。"""
+    for pat, v in ((r"最近一天|24\s*小时内?|过去一天|过去24小时|past day|last 24 ?h(?:ours)?", "d"), (r"最近一周|过去一周|最近7天|past week|last week", "w"),
+                   (r"最近一个月|过去一个月|最近30天|past month|last month", "m"), (r"最近一年|过去一年|past year|last year", "y")):
         if re.search(pat, t, re.I):
             return v, re.sub(pat, " ", t, flags=re.I)
     return None, t
 
 
-def plan_rules(text, engine="google"):
+def plan_rules(text, engine="bing", loose=False):
     """返回 {"actions": [...], "clarify": str|None}。只做字符串解析。"""
     t = (text or "").strip()
     if not t:
         return {"actions": [], "clarify": "没有收到指令"}
+    t = re.sub(r"^[\s\"“”'‘’「」]+|[\s。.!！?？,，;；\"“”'‘’「」]+$", "", t)                   # 语音识别常带句末标点
+    ctl = {"pause": r"(暂停|先停一下|停一下|pause)", "resume": r"(继续|接着来|恢复|resume|continue)", "cancel": r"(取消|停止|算了|别搜了|cancel|stop)"}
+    for k_, p_ in ctl.items():
+        if re.fullmatch(p_ + r"(任务|执行|操作|一下)?", t, re.I):
+            return {"actions": [], "clarify": None, "control": k_}
     clauses = [c.strip() for c in re.split(r"[，,;；]\s*|\s+then\s+|\s+and then\s+|然后|接着|之后|并且", t) if c and c.strip()]
     acts, unclear = [], []
     for c in clauses:
-        c0 = re.sub(r"^(请你?|帮我|麻烦你?|请帮我|please|pls|再)\s*", "", c.strip(), flags=re.I).strip()
+        c0 = re.sub(r"^(请你?|帮我|麻烦你?|请帮我|please|pls|再|嗯|呃|那个)\s*", "", c.strip(), flags=re.I).strip()
+        c0 = re.sub(r"^(?:帮我|给我)\s*", "", c0).strip()
         m = None
         if re.fullmatch(r"(返回|后退|回退|go back|back)", c0, re.I):
             acts.append({"action": "back"})
@@ -5121,9 +5646,7 @@ def plan_rules(text, engine="google"):
             if sm and not site:
                 site = sm.group(1).lower()
             q = re.sub(r"site:\S+|(?:在|于)\s*[a-z0-9][a-z0-9.-]*\.[a-z]{2,24}\s*(?:上|里|中)?", " ", q, flags=re.I)
-            rec, q = _recency(q if not _recency(c0)[0] else q + " " + c0)
-            if rec is None:
-                rec, _ = _recency(c0)
+            rec, q = _recency(q)
             q = re.sub(r"\s+", " ", q).strip(" 的:：")
             if q:
                 a = {"action": "search", "query": q, "engine": engine}
@@ -5150,6 +5673,8 @@ def plan_rules(text, engine="google"):
             acts.append({"action": "snapshot"})
         else:
             unclear.append(c)
+    if loose and not acts and 1 <= len(t) <= 80 and not risk_words(t):
+        return {"actions": validate_actions([{"action": "search", "query": t, "engine": engine}]), "clarify": None, "assumed_search": True}       # 语音里直接说出关键词 = 搜索它
     if unclear and not acts:
         return {"actions": [], "clarify": "无法确定要执行的操作:「%s」。请用类似“搜索 xxx”“打开 example.com”“点击 登录”的说法,或换一种表达。" % "; ".join(unclear)[:120]}
     try:
@@ -5215,6 +5740,7 @@ class BSession:
         self.observation = None
         self.blocked = 0
         self.last_used = time.time()
+        self.last_input = 0.0
         self.steps_done = 0
 
     # —— 事件 ——
@@ -5351,7 +5877,9 @@ class BSession:
     async def _stream(self):
         while self.subs:
             busy = bool(self.mgr.tts_busy())
-            await asyncio.sleep(1.0 / (FPS_BUSY if busy else FPS))
+            active = bool(self.task and not self.task.done()) or (time.time() - self.last_input < 2.0)
+            fps = FPS_ACTIVE if active else FPS
+            await asyncio.sleep(1.0 / (min(fps, FPS_BUSY) if busy else fps))
             pg = self.page
             if pg is None or pg.is_closed():
                 continue
@@ -5367,7 +5895,11 @@ class BSession:
             self.bytes_sent += len(b) * len(self.subs)
             for s in list(self.subs):
                 s.push_frame(b)
-            self.emit({"type": "meta", "url": pg.url, "frames": self.frames, "bytes_sent": self.bytes_sent})
+            try:
+                ttl = (await pg.title())[:80]
+            except Exception:  # noqa: BLE001
+                ttl = ""
+            self.emit({"type": "meta", "url": pg.url, "title": ttl, "frames": self.frames, "bytes_sent": self.bytes_sent})
 
     # —— 控制 ——
     def pause(self):
@@ -5451,9 +5983,22 @@ class BSession:
             raise NeedHuman("页面出现验证/同意/反机器人检测(%s),需要你亲自处理" % host)
 
     async def _mouse_to(self, x, y, kind="move"):
-        await self.page.mouse.move(x, y, steps=14)
-        self.cursor = {"x": round(x), "y": round(y), "kind": kind, "t": time.time()}
-        self.emit({"type": "cursor", **self.cursor, "vw": VIEW[0], "vh": VIEW[1]})
+        """真实的鼠标移动:沿缓动曲线把路径拆成若干点,每个点都是一次真实的 page.mouse.move,并带着该点的真实坐标与时间戳推给前端
+        (前端只在这些真实事件之间做插值,不播放预设路径)。"""
+        x0, y0 = (self.cursor["x"], self.cursor["y"]) if self.cursor else (VIEW[0] * 0.5, VIEW[1] * 0.12)
+        dist = ((x - x0) ** 2 + (y - y0) ** 2) ** 0.5
+        n = max(6, min(26, int(dist / 22)))
+        cx, cy = (x0 + x) / 2 + (y0 - y) * 0.08, (y0 + y) / 2 + (x - x0) * 0.08           # 轻微弧线(二次贝塞尔控制点)
+        for i in range(1, n + 1):
+            t = i / n
+            e = t * t * (3 - 2 * t)                                                       # smoothstep 缓入缓出
+            px = (1 - e) ** 2 * x0 + 2 * (1 - e) * e * cx + e * e * x
+            py = (1 - e) ** 2 * y0 + 2 * (1 - e) * e * cy + e * e * y
+            await self.page.mouse.move(px, py)
+            self.cursor = {"x": round(px), "y": round(py), "kind": kind if i == n else "move", "t": time.time()}
+            self.last_input = time.time()
+            self.emit({"type": "cursor", **self.cursor, "vw": VIEW[0], "vh": VIEW[1], "step": i, "of": n})
+            await asyncio.sleep(0.011)
 
     def _loc(self, spec):
         pg = self.page
@@ -5610,6 +6155,8 @@ class BSession:
                 if not ok:
                     raise ActionError("你拒绝了该操作,未执行", fatal=True)
             self.add_log("action", "按键 %s" % a["key"], action=k)
+            self.emit({"type": "key", "key": a["key"], "t": time.time()})
+            self.last_input = time.time()
             await pg.keyboard.press(a["key"])
             await self._settle()
             await self._check_blockers()
@@ -5670,14 +6217,15 @@ class BSession:
             raise ActionError("拒绝向密码/验证码/银行卡/文件字段自动输入(请点「人工接管」亲自输入;输入内容不会被记录)", fatal=True)
         self.add_log("action", "输入 %d 个字符" % len(text), action="type")
         buf = ""
+        import random
         for ch in text:
             await self._gate()
             await self.page.keyboard.type(ch)
             buf += ch
+            self.last_input = time.time()
             self.typing = {"text": buf, "t": time.time()}
-            if len(buf) % 3 == 0 or len(buf) == len(text):
-                self.emit({"type": "typing", "text": buf, "done": len(buf) == len(text)})
-            await asyncio.sleep(0.03)
+            self.emit({"type": "typing", "text": buf, "ch": ch, "done": len(buf) == len(text), "t": time.time()})
+            await asyncio.sleep(random.uniform(0.045, 0.095))                              # 接近真人的节奏;每个字符都是真实按键
         if d["tag"] in ("input", "textarea"):
             val = await self.page.evaluate("() => document.activeElement && document.activeElement.value")
             ok = isinstance(val, str) and val.endswith(text)
@@ -5688,8 +6236,8 @@ class BSession:
             self.add_log("verify", "富文本区域无法读取内容,请在画面中核对", ok=None)
 
     async def _search(self, a, direct=False):
-        eng = ENGINES[a.get("engine") if a.get("engine") in ENGINES else "google"]
-        ename = a.get("engine") if a.get("engine") in ENGINES else "google"
+        eng = ENGINES[a.get("engine") if a.get("engine") in ENGINES else "bing"]
+        ename = a.get("engine") if a.get("engine") in ENGINES else "bing"
         q = a["query"] + ((" site:" + a["site"]) if a.get("site") else "")
         pgn = int(a.get("page", 0))
         self.add_log("action", "搜索引擎:%s · 关键词长度 %d%s%s" % (eng["name"], len(q), (" · 站点 " + a["site"]) if a.get("site") else "", (" · 时间范围 " + a["recency"]) if a.get("recency") else ""),
@@ -5714,6 +6262,10 @@ class BSession:
             self.add_log("blocked", "该搜索引擎不支持时间范围过滤,已忽略")
         await self._check_blockers()
         try:
+            await pg.wait_for_selector(eng["ready"], timeout=9000)
+        except Exception:  # noqa: BLE001
+            pass                                                                            # 超时就按现状解析:空结果会如实报错,不会编造
+        try:
             raw = await pg.evaluate(eng["js"])
         except Exception as e:  # noqa: BLE001
             raise ActionError("解析搜索结果失败:%s" % str(e)[:80])
@@ -5724,7 +6276,7 @@ class BSession:
             if not re.match(r"^https?://", u) or u in seen:
                 continue
             try:
-                netguard.check_static(u)
+                netguard.check_url(u, resolve=False)                  # 结果里的内网/本机/元数据地址一律丢弃
             except netguard.Blocked:
                 continue
             seen.add(u)
@@ -5755,6 +6307,7 @@ class BSession:
                     if time.time() - t0 > TASK_TIMEOUT_S:
                         raise ActionError("任务超时(%d 秒)" % TASK_TIMEOUT_S, fatal=True)
                     self.add_log("step", "步骤 %d/%d:%s" % (i + 1, len(actions), a["action"]))
+                    self.emit({"type": "step", "i": i + 1, "n": len(actions), "action": a, "state": "start"})
                     while True:
                         try:
                             await asyncio.wait_for(self.do(a), STEP_TIMEOUT_S * 3)
@@ -5768,6 +6321,7 @@ class BSession:
                         except asyncio.TimeoutError:
                             raise ActionError("单步超时")
                     self.steps_done = i + 1
+                    self.emit({"type": "step", "i": i + 1, "n": len(actions), "action": a, "state": "ok"})
                 self.set_status("done", "任务完成(%d 步,%.1f 秒)" % (len(actions), time.time() - t0))
                 self.add_log("system", "任务完成:%d 步" % len(actions))
                 self.mgr.audit_event("browser_task", "ok", (time.time() - t0) * 1000, self.sid, steps=len(actions))
@@ -5860,9 +6414,15 @@ class BrowserManager:
     def available():
         try:
             import playwright  # noqa: F401
-            return True, ""
         except Exception as e:  # noqa: BLE001
             return False, "未安装 playwright(%s)" % e
+        try:
+            import search_providers
+            if not search_providers.chromium_installed():
+                return False, "playwright 已安装但没有找到 Chromium 可执行文件(请运行 playwright install chromium)"
+        except Exception:  # noqa: BLE001
+            pass
+        return True, ""
 
     async def browser(self):
         async with self._lock:
@@ -5882,7 +6442,7 @@ class BrowserManager:
                 self._br = await self._pw.chromium.launch(headless=True, proxy={"server": "http://127.0.0.1:%d" % self.proxy.port, "bypass": "<-loopback>"}, args=["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--disable-extensions", "--mute-audio",
                                                                                 "--disable-background-networking", "--disable-sync", "--no-first-run", "--disable-features=Translate"])
             except Exception as e:  # noqa: BLE001
-                self.error = "Chromium 启动失败:%s(Kaggle 上需要先 playwright install chromium)" % str(e).splitlines()[0][:150]
+                self.error = "Chromium 启动失败:%s(Kaggle 上请先运行 playwright install --with-deps chromium;缺系统库时 Chromium 会立刻退出)" % str(e).splitlines()[0][:150]
                 raise ActionError(self.error, fatal=True)
             self.error = None
             if self.reaper is None:
@@ -6173,6 +6733,9 @@ class Portal:
         return "timeout"
 
     async def do_search(self, sid, j):
+        """搜索。默认(auto)= 无需任何 Key 的真实搜索:服务器直连 Bing → DuckDuckGo → 维基百科 → 受控浏览器(可见)。
+        配置了 Brave/Google CSE Key 只是【可选加速】,失败时同样回退到免 Key 链路。每次尝试都记录在 attempts 里,界面如实显示。"""
+        rid = secrets.token_hex(4)
         q = str(j.get("q") or "").strip()[:300]
         if not q:
             raise StoreError("请输入搜索内容")
@@ -6183,17 +6746,38 @@ class Portal:
         if site and not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,80}\.[a-z]{2,24}", site):
             raise StoreError("网站范围格式无效(例如 wikipedia.org)")
         recency = j.get("recency") if j.get("recency") in ("d", "w", "m", "y") else None
-        page = max(0, min(5, int(j.get("page") or 0)))
+        try:
+            page = max(0, min(5, int(j.get("page") or 0)))
+        except (TypeError, ValueError):
+            page = 0
+        eng = j.get("engine") if j.get("engine") in ba.ENGINES else "bing"
         t0 = time.time()
-        if provider in sp.API_PROVIDERS:
+        attempts, out = [], None
+        if provider in sp.API_PROVIDERS:                                        # 可选的 Key 提供方:失败不阻断搜索
             p = sp.API_PROVIDERS[provider]
             if not p.configured():
-                raise StoreError("提供方 %s 未配置(缺少 %s)。当前可用的是可见浏览器回退。" % (p.name, ",".join(p.secrets)), 400)
-            res = await p.search(q, 8, page, site, recency)
-            mode = {"mode": "api", "provider": provider, "label": "通过 %s 搜索(真实 API)" % p.name, "cost": p.cost}
-            out = {"ok": True, "results": res, "mode": mode}
-        else:
-            eng = j.get("engine") if j.get("engine") in ba.ENGINES else "google"
+                attempts.append({"provider": provider, "ok": False, "kind": "config", "message": "未配置 %s(这是可选项,已自动改用免 Key 搜索)" % ",".join(p.secrets), "ms": 0})
+            else:
+                res, rec = await sp.run_one(p, provider, q, 8, page, site, recency)
+                attempts.append(rec)
+                if res:
+                    out = {"ok": True, "results": res, "mode": {"mode": "api", "provider": provider, "label": "通过 %s 搜索(真实 API)" % p.name, "cost": p.cost}}
+        if out is None and provider != "browser":                                 # 免 Key 的服务器直连链路
+            try:
+                res, pid, attempts = await sp.search_http_chain(q, 8, page, site, recency, eng, attempts)
+                out = {"ok": True, "results": res, "mode": {"mode": "http", "provider": pid, "label": "通过 %s 搜索(服务器直连真实页面解析 · 无需 Key)" % pid.split(":")[1], "cost": "无 API 费用"}}
+            except sp.SearchFailed as e:
+                attempts = e.attempts
+        if out is None:                                                          # 最后:受控浏览器(可见);要求 Chromium 真的存在
+            why = sp.BROWSER.problem()
+            if why:
+                attempts.append({"provider": "browser", "ok": False, "kind": "config", "message": why, "ms": 0})
+                kinds = [x.get("kind") for x in attempts if not x.get("ok")]
+                main = next((k for k in ("network", "timeout", "challenge", "rate_limited", "server_error", "parse", "empty") if k in kinds), "network")
+                hint = {"network": "网络/搜索服务暂不可用:请检查 Kaggle Settings → Internet 是否为 On,稍后重试", "challenge": "搜索站点要求人机验证:本系统不会绕过,请稍后重试或换一个关键词"}.get(main, "")
+                self.audit.event("search", "error", (time.time() - t0) * 1000, sid, provider="http", q_len=len(q), kind=main)
+                return {"ok": False, "error": "所有搜索提供方都失败了 —— " + sp.summarize(attempts) + (("。" + hint) if hint else ""), "kind": main, "attempts": attempts, "request_id": rid,
+                        "mode": {"mode": "http", "provider": "none", "label": "全部失败"}, "results": [], "_status": 502}
             sess = self.mgr.get(sid)
             if sess.task and not sess.task.done():
                 raise StoreError("浏览器正在执行另一个任务,请先在「浏览器」页取消或等待", 409)
@@ -6207,15 +6791,29 @@ class Portal:
                     a["recency"] = recency
                 acts = [a]
             sess.start(ba.validate_actions(acts), "搜索")
-            st = await self.wait_attention(sess, 90)
-            mode = {"mode": "browser", "provider": "browser:" + eng, "label": "受控浏览器内的普通搜索(未配置搜索 API 的可见回退 · 引擎 %s)" % eng, "cost": sp.BROWSER.cost}
+            mode = {"mode": "browser", "provider": "browser:" + eng, "label": "受控浏览器内的可见搜索(免 Key 链路的最后一级 · 引擎 %s)" % eng, "cost": sp.BROWSER.cost}
+            st = await self.wait_attention(sess, 25)                             # 请求最多占用 25 秒(避免被代理判超时);未完成则返回 pending,前端轮询 /api/search/poll
+            if st == "timeout":
+                return {"ok": False, "pending": True, "message": "可见浏览器正在搜索…(可在下方实时画面观看)", "mode": mode, "attempts": attempts, "request_id": rid, "results": []}
             if st != "done":
                 self.audit.event("search", st, (time.time() - t0) * 1000, sid, provider="browser", q_len=len(q))
-                return {"ok": False, "needs_attention": True, "status": sess.status, "message": sess.msg or "搜索尚未完成(可能需要你在「浏览器」页处理验证码/确认)", "mode": mode, "results": list(sess.last_results)}
+                return {"ok": False, "needs_attention": True, "status": sess.status, "message": sess.msg or "搜索尚未完成(可能需要你在「浏览器」页处理验证码/确认)", "mode": mode, "results": list(sess.last_results), "attempts": attempts, "request_id": rid}
             if sess.status in ("error", "cancelled", "paused"):
                 self.audit.event("search", "error", (time.time() - t0) * 1000, sid, provider="browser", q_len=len(q))
-                return {"ok": False, "error": sess.msg or "搜索失败", "mode": mode, "results": []}
+                bk = "config" if re.search(r"Chromium|playwright", sess.msg or "") else "challenge" if re.search(r"验证|反机器人|同意", sess.msg or "") else "network"
+                attempts.append({"provider": "browser", "ok": False, "kind": bk, "message": sess.msg or "浏览器搜索失败", "ms": int((time.time() - t0) * 1000)})
+                return {"ok": False, "error": "所有搜索提供方都失败了 —— " + sp.summarize(attempts), "attempts": attempts, "mode": mode, "results": [], "request_id": rid, "_status": 502}
+            attempts.append({"provider": "browser:" + eng, "ok": True, "n": len(sess.last_results), "ms": int((time.time() - t0) * 1000), "tries": 1})
             out = {"ok": True, "results": list(sess.last_results), "mode": mode}
+        out["attempts"] = attempts
+        out["request_id"] = rid
+        if out["mode"]["mode"] != "browser":
+            try:                                                      # 把真实结果交给隔离浏览器会话:之后语音说“打开第 N 个结果”会真的打开这些 URL(仍要过 netguard)
+                bs = self.mgr.get(sid)
+                bs.last_results = list(out["results"])
+                bs.last_query = {"query": q, "engine": eng, "site": site, "recency": recency}
+            except Exception:  # noqa: BLE001
+                pass
         if j.get("answer", True):
             ans, note = await self.synthesize(q, out["results"])
             out.update(answer=ans, answer_note=note)
@@ -6223,8 +6821,8 @@ class Portal:
         self.audit.event("search", "ok", (time.time() - t0) * 1000, sid, provider=out["mode"]["provider"], q_len=len(q), results=len(out["results"]))
         return out
 
-    async def plan(self, text, engine):
-        r = ba.plan_rules(text, engine)
+    async def plan(self, text, engine, voice=False):
+        r = ba.plan_rules(text, engine or "bing", loose=bool(voice))
         planner = "rules"
         if not r["actions"] and self.llm_available():
             try:
@@ -6239,23 +6837,33 @@ class Portal:
             except Exception:  # noqa: BLE001
                 pass                                                       # LLM 输出不合法 → 保持规则结果(校验失败的动作永远不会执行)
         w = ba.risk_words(text)
-        return {"ok": True, **r, "planner": planner, "risk_word": w, "needs_confirm": bool(w)}
+        # 低风险(搜索/打开公开结果/滚动/返回/刷新)可由语音识别结果直接执行;含高影响词 → 必须确认;含糊/多意图 → 先澄清
+        auto_ok = bool(r.get("actions")) and not w and not r.get("clarify") and planner == "rules" and all(a["action"] in ("search", "search_more", "open_result", "goto", "scroll", "back", "forward", "reload", "wait", "snapshot", "read") for a in r["actions"]) and len(r["actions"]) <= 4
+        return {"ok": True, **r, "planner": planner, "risk_word": w, "needs_confirm": bool(w), "auto_ok": auto_ok}
 
     # ───────────────────────── 评估 ─────────────────────────
     async def ask2(self, kind, payload, timeout=90):
         G = self.G
-        w0 = next(iter(self.workers_ready()), None)
-        if w0 is None:
+        ws = list(self.workers_ready())
+        if not ws:
             return None, "没有可用的 GPU 进程"
-        rid = "%s_%d" % (kind, int(time.time() * 1000) % 10 ** 7)
-        fut = G["LOOP"].create_future()
-        G["QC_WAIT"][rid] = fut
-        w0.q.put((kind, rid) + tuple(payload))
-        try:
-            return await asyncio.wait_for(fut, timeout)
-        except asyncio.TimeoutError:
-            G["QC_WAIT"].pop(rid, None)
-            return None, "超时"
+        last = (None, "没有结果")
+        for w0 in ws:                                                 # 每个 worker 有自己的评分器:一张卡加载失败(显存/下载)时自动换另一张重试
+            rid = "%s_%s" % (kind, secrets.token_hex(6))             # 唯一任务 ID:迟到结果不会串到别的任务
+            fut = G["LOOP"].create_future()
+            G["QC_WAIT"][rid] = fut
+            w0.q.put((kind, rid) + tuple(payload))
+            try:
+                res, e = await asyncio.wait_for(fut, timeout)
+            except asyncio.TimeoutError:
+                G["QC_WAIT"].pop(rid, None)
+                last = (None, "GPU%s 评分超时(%ds);迟到的结果会被丢弃" % (getattr(w0, "idx", "?"), timeout))
+                continue
+            if e or (isinstance(res, dict) and res.get("status") == "failed"):
+                last = (res, e or (res or {}).get("reason") or "评分器不可用")
+                continue
+            return res, e
+        return last
 
     async def evaluate(self, lib_id):
         G = self.G
@@ -6275,20 +6883,24 @@ class Portal:
         td = Path(tempfile.mkdtemp(prefix="eval_", dir=str(self.work)))
         try:
             refs = [str(self.store.sample_paths(lib_id, s["sample_id"])["proc"]) for s in holdout][:8]
-            scores = []
+            scores, skipped_notes = [], []
             for u in gens:
                 pcm = np.frombuffer(G["GEN_AUDIO"][u], dtype="<i2").astype(np.float32) / 32768.0
                 p = td / ("gen_%d.wav" % u)
                 G["write_wav"](p, pcm, G["SR"])
                 res, e = await self.ask2("spk_cmp", (str(p), refs), 120)
-                if e or not res or not res.get("scores"):
-                    raise StoreError("声纹比对失败:%s" % (e or "无结果"), 502)
+                if e:                                                 # 把真实底层原因原样给用户(例如模型下载失败 / CUDA 显存不足 / 权重不兼容)
+                    raise StoreError("声纹比对失败(评分器不可用):%s" % e, 502)
+                if not res or res.get("status") not in ("completed",) or not res.get("scores"):
+                    why = (res or {}).get("reason") or "无结果"
+                    skipped_notes.append("%s: %s" % (res.get("status") if res else "failed", why))
+                    continue
                 scores += [x for x in res["scores"] if x is not None]
                 model = res.get("model")
         finally:
             shutil.rmtree(td, ignore_errors=True)
         if not scores:
-            raise StoreError("没有得到有效分数", 502)
+            raise StoreError("没有得到有效分数(状态 skipped/not_evaluated,不会编造分数):%s" % ("; ".join(skipped_notes[:3]) or "无原因"), 422)
         mean = float(np.mean(scores))
         view = G["aq"].similarity_view(mean, model or G["SV_MODEL"], G["CAL"], "speech")
         rec = {"metric": "speaker_cosine_raw", "scope": "生成样本 与 该库【留出参考样本】(不同录音场次)之间的说话人 cosine", "model": model or G["SV_MODEL"], "raw_mean": round(mean, 4),
@@ -6350,6 +6962,18 @@ class Portal:
     def mount(self):
         app, G = self.app, self.G
         P = self
+
+        from starlette.exceptions import HTTPException as _HTTPExc
+
+        @app.exception_handler(_HTTPExc)
+        async def _http_exc(request, exc):                           # 保持 FastAPI 的 detail 字段,同时补上 error,前端永远拿到可读 JSON
+            return JSONResponse({"detail": exc.detail, "ok": False, "error": str(exc.detail)}, status_code=exc.status_code, headers=getattr(exc, "headers", None))
+
+        @app.exception_handler(Exception)
+        async def _any_exc(request, exc):
+            rid = secrets.token_hex(4)
+            G["log"].error("未处理异常 [%s] %s %s: %s", rid, request.method, request.url.path, exc)
+            return JSONResponse({"ok": False, "error": "服务器内部错误(%s: %s)" % (type(exc).__name__, str(exc)[:120]), "request_id": rid}, status_code=500, headers={"X-Request-Id": rid})
 
         async def body(request):
             try:
@@ -6417,18 +7041,51 @@ class Portal:
         @guard
         async def api_search(request: Request):
             j = await body(request)
+            rid = secrets.token_hex(4)
             if not P.auth.lim.hit("search:" + sid_of(request), 40, 60):
-                return err("搜索过于频繁,请稍后再试", 429)
+                return JSONResponse({"ok": False, "error": "搜索过于频繁,请稍后再试", "kind": "rate_limited", "request_id": rid}, status_code=429, headers={"X-Request-Id": rid})
             try:
-                return await P.do_search(sid_of(request), j)
+                r = await P.do_search(sid_of(request), j)
+            except (StoreError, ba.ActionError) as e:
+                return JSONResponse({"ok": False, "error": str(e), "request_id": rid}, status_code=getattr(e, "code", 409) or 400, headers={"X-Request-Id": rid})
             except RuntimeError as e:
-                return err(str(e), 502)
+                return JSONResponse({"ok": False, "error": str(e), "request_id": rid}, status_code=502, headers={"X-Request-Id": rid})
+            except Exception as e:  # noqa: BLE001 —— 任何未预料的异常都返回 JSON(而不是让代理/框架吐出无法解析的页面)
+                G["log"].warning("search 内部错误 [%s]: %s", rid, e)
+                return JSONResponse({"ok": False, "error": "服务端搜索出错(%s: %s)" % (type(e).__name__, str(e)[:120]), "request_id": rid}, status_code=500, headers={"X-Request-Id": rid})
+            code = r.pop("_status", 200) if isinstance(r, dict) else 200
+            return JSONResponse(r, status_code=code, headers={"X-Request-Id": r.get("request_id", rid)})
+
+        @app.get("/api/search/poll")
+        @guard
+        async def api_search_poll(request: Request, q: str = "", engine: str = "bing"):
+            """浏览器搜索较慢时,前端用短请求轮询,避免长连接被代理中断。"""
+            sess = P.mgr.get(sid_of(request), create=False)
+            if sess is None:
+                return {"ok": False, "error": "没有进行中的浏览器搜索"}
+            if sess.task and not sess.task.done():
+                st = sess.status
+                if st in ("waiting_human", "paused", "waiting_confirm"):
+                    return {"ok": False, "needs_attention": True, "status": st, "message": sess.msg or "需要你在实时画面里处理", "results": list(sess.last_results)}
+                return {"ok": False, "pending": True, "status": st, "message": sess.msg or "浏览器正在搜索…", "results": []}
+            if sess.status == "done" and sess.last_results:
+                res = list(sess.last_results)
+                out = {"ok": True, "results": res, "mode": {"mode": "browser", "provider": "browser:" + (engine or "bing"), "label": "受控浏览器内的可见搜索", "cost": sp.BROWSER.cost}, "query": q, "page": 0,
+                       "fetched_at": libs.now_iso(), "llm": P.llm_available(), "attempts": []}
+                if j_answer(request):
+                    ans, note = await P.synthesize(q or "", res)
+                    out.update(answer=ans, answer_note=note)
+                return out
+            return {"ok": False, "error": sess.msg or "浏览器搜索没有得到结果", "status": sess.status, "results": []}
+
+        def j_answer(request):
+            return request.query_params.get("answer", "1") != "0"
 
         @app.post("/api/agent/plan")
         @guard
         async def api_plan(request: Request):
             j = await body(request)
-            return await P.plan(str(j.get("text") or "")[:500], j.get("engine") or "google")
+            return await P.plan(str(j.get("text") or "")[:500], j.get("engine") or "bing", bool(j.get("voice")))
 
         @app.post("/api/agent/run")
         @guard
@@ -6686,6 +7343,10 @@ class Portal:
                     if res.get("suspect"):
                         qc.update(kind="multi_speaker", kind_zh="疑似多人说话", blocking=True)
                         qc["warnings"].append("疑似多人说话(启发式,阈值未校准)")
+                    elif res.get("status") in ("failed", "skipped"):
+                        qc["warnings"].append("多人检测未运行(%s):%s" % (res["status"], res.get("reason", "")[:160]))
+                elif e:
+                    qc["warnings"].append("多人检测未运行:%s" % str(e)[:160])
             if qc["blocking"] and not ack:
                 return {"ok": False, "needs_ack": True, "qc": qc, "message": "质检发现问题,未保存。确认仍要保存(会标记为不参与口语训练)请带 ack=1。"}
             s = await G["LOOP"].run_in_executor(None, lambda: P.store.add_sample(lid, data, ext, wav_bytes_mono16(proc, G["SR"]), len(proc) / G["SR"], sr, ch, qc, text,
@@ -7420,7 +8081,7 @@ function onJson(m) {
         if (extra > 1000) addSys("连续优先:生成速度不足以覆盖播放速度,起播多等了约 " + (extra / 1000).toFixed(1) + " 秒(" + (m.reason || "") + ")。语速不会被改变。");
       }
       break;
-    case "sim": if (m.turn === S.uid || m.final) setSim(m.value, m.final, m.view, m.per_gpu); break;
+    case "sim": if (m.turn === S.uid || m.final) { S.simStatus = m.status; S.simReason = m.reason; setSim(m.value, m.final, m.view, m.per_gpu); } break;
     case "acoustic": S.acoustic = m; if (S.diagOpen) renderDiag(); break;
     case "delta": if (S.bubble) { S.bubble.textContent += m.t; scrollChat(); } break;
     case "turn_done": onTurnDone(m); break;
@@ -7431,7 +8092,7 @@ function onJson(m) {
   }
 }
 function setSim(v, final, view, perGpu) {
-  const el = $("simVal"); if (v == null) { if (final && el.textContent === "…") el.textContent = "—"; return; }
+  const el = $("simVal"); if (v == null) { if (final && el.textContent === "…") { el.textContent = "—"; const R = { failed: "评分失败", skipped: "已跳过", not_evaluated: "未评估", completed: "" }[S.simStatus] || "未评估"; $("simNote").textContent = R + (S.simReason ? ":" + S.simReason : "") + "(没有分数就不显示分数,不会编造)"; } return; }
   el.textContent = v.toFixed(3); el.style.color = "";
   const cal = view && view.calibrated;
   $("simNote").textContent = (cal ? "校准估计 P(同一人)=" + view.probability : "原始 cosine(" + (final ? "本轮加权" : "实时") + ";未校准,不是人耳相似度百分比)") + " · 范围 -1~1 · " + (S.state && S.state.sv_model || "WavLM-SV");
@@ -7899,6 +8560,73 @@ dialog{border:1px solid var(--line);border-radius:14px;background:var(--bg);colo
 textarea.in,input.in{width:100%;border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:7px 10px}
 .warnbox{border:1px solid var(--warn);border-radius:8px;padding:8px 10px;color:var(--warn);font-size:13px;margin:8px 0}
 @media (max-width:640px){.hero h1{font-size:32px}header{padding:8px}main{padding:10px}}
+
+/* ═════════ v7.1 星河搜索首页:深色极光 · 语音球 · 浏览器剧场 ═════════ */
+:root{--bg:#0b0d12;--fg:#e8eaf2;--mut:#98a0b3;--line:#262b3a;--card:#12151d;--acc:#7aa7ff;--accfg:#08101f;--ok:#5fd39a;--warn:#f5c15d;--bad:#ff7d72;--sh:0 8px 40px rgba(80,120,255,.22)}
+@media (prefers-color-scheme:light){:root{--bg:#f6f7fb;--fg:#1a1d29;--mut:#5b6275;--line:#dfe3ee;--card:#fff;--acc:#2f66e8;--accfg:#fff;--ok:#12814d;--warn:#a86400;--bad:#d03a2f;--sh:0 8px 32px rgba(47,102,232,.16)}}
+body{background:radial-gradient(1200px 520px at 50% -140px,rgba(88,110,255,.20),transparent 70%),radial-gradient(800px 420px at 85% 10%,rgba(0,214,170,.10),transparent 70%),var(--bg)}
+header{backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 78%,transparent)}
+.hero{padding:34px 0 8px}.hero h1{font-size:50px;letter-spacing:3px;text-shadow:0 0 38px rgba(122,167,255,.35)}
+.sbox{max-width:760px;padding:6px 8px 6px 18px;border-radius:32px;background:var(--card);border:1px solid var(--line);box-shadow:0 2px 24px rgba(0,0,0,.18);transition:box-shadow .25s,border-color .25s,transform .25s}
+.sbox:focus-within{box-shadow:var(--sh);border-color:var(--acc)}
+.sbox.hearing{border-color:var(--bad);box-shadow:0 0 0 4px rgba(255,125,114,.16),var(--sh)}
+.sbox input{font-size:18px}
+.ib{width:44px;height:44px;transition:transform .15s,background .2s}.ib:hover{transform:scale(1.08)}
+.ib.rec{background:var(--bad);color:#fff;animation:none;box-shadow:0 0 0 0 rgba(255,125,114,.6);animation:ring 1.3s infinite}
+@keyframes ring{70%{box-shadow:0 0 0 14px rgba(255,125,114,0)}100%{box-shadow:0 0 0 0 rgba(255,125,114,0)}}
+.btn{transition:transform .12s,border-color .2s,background .2s}.btn:active{transform:scale(.97)}
+.btn.pri{box-shadow:0 4px 18px rgba(122,167,255,.28)}
+/* 语音面板 */
+#voice{max-width:760px;margin:14px auto 0;border:1px solid var(--line);border-radius:20px;padding:12px 16px;background:linear-gradient(135deg,color-mix(in srgb,var(--card) 92%,#7aa7ff),var(--card));display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;animation:rise .35s both}
+#orbBtn{position:relative;width:64px;height:64px;border:0;border-radius:50%;cursor:pointer;color:#fff;font-size:26px;background:conic-gradient(from 210deg,#4285f4,#a142f4,#ea4335,#fbbc05,#34a853,#4285f4);box-shadow:0 6px 26px rgba(80,120,255,.45);transition:transform .2s}
+#orbBtn:hover{transform:scale(1.06)}
+#orbBtn::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--card);z-index:0}
+#orbBtn span{position:relative;z-index:1}
+#orbBtn i{position:absolute;inset:-6px;border-radius:50%;border:2px solid var(--acc);opacity:0;transform:scale(calc(.9 + var(--lv,0)*1.4));transition:transform .08s linear,opacity .2s;pointer-events:none}
+#orbBtn.on i{opacity:.8}#orbBtn.on{animation:breathe 1.4s ease-in-out infinite}
+@keyframes breathe{50%{box-shadow:0 6px 40px rgba(255,125,114,.65)}}
+#vState{font-weight:700;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#vHeard{color:var(--fg);min-height:24px;font-size:17px;margin-top:2px}
+#vHeard.interim{color:var(--mut)}
+.chipline{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.chip{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:2px 10px;color:var(--mut);cursor:pointer;background:transparent}.chip:hover{border-color:var(--acc);color:var(--fg)}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+/* 浏览器剧场 */
+#theater{max-width:1100px;margin:18px auto 0;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--card);box-shadow:0 14px 60px rgba(0,0,0,.35);animation:rise .4s both}
+#tBar{display:flex;gap:10px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.dots{display:flex;gap:6px}.dots b{width:11px;height:11px;border-radius:50%;background:#ff5f57}.dots b:nth-child(2){background:#febc2e}.dots b:nth-child(3){background:#28c840}
+#tUrl{flex:1;min-width:160px;background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:3px 14px;font:12.5px ui-monospace,Menlo,Consolas,monospace;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tTitle{font-size:12.5px;color:var(--mut);max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st{font-size:12px;border-radius:999px;padding:2px 10px;border:1px solid var(--line);color:var(--mut);display:inline-flex;gap:6px;align-items:center}
+.st::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--mut)}
+.st.running{color:var(--acc);border-color:var(--acc)}.st.running::before{background:var(--acc);animation:blink 1s infinite}
+.st.done{color:var(--ok);border-color:var(--ok)}.st.done::before{background:var(--ok)}
+.st.error,.st.cancelled{color:var(--bad);border-color:var(--bad)}.st.error::before,.st.cancelled::before{background:var(--bad)}
+.st.paused,.st.waiting_human,.st.waiting_confirm,.st.queued{color:var(--warn);border-color:var(--warn)}.st.paused::before,.st.waiting_human::before,.st.waiting_confirm::before,.st.queued::before{background:var(--warn)}
+@keyframes blink{50%{opacity:.25}}
+#tProg{height:3px;background:var(--line)}#tProg i{display:block;height:100%;width:0;background:linear-gradient(90deg,#4285f4,#34a853,#fbbc05);transition:width .35s ease}
+#tStage{position:relative;line-height:0;background:#0d0f14;aspect-ratio:1100/680;overflow:hidden}
+#tCanvas,#tTrail{position:absolute;inset:0;width:100%;height:100%;display:block}
+#tTrail{pointer-events:none}
+#tStage.take{cursor:crosshair;outline:3px solid #ff3d71;outline-offset:-3px}
+#tCur{position:absolute;left:0;top:0;width:26px;height:26px;margin:-3px 0 0 -3px;pointer-events:none;display:none;will-change:transform;filter:drop-shadow(0 2px 4px rgba(0,0,0,.55));transition:transform .045s linear}
+#tCur svg{width:26px;height:26px}
+#tRip{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;border:3px solid #ff3d71;pointer-events:none;opacity:0}
+#tRip.go{animation:ripple .55s ease-out}
+@keyframes ripple{0%{opacity:.95;transform:scale(.6)}100%{opacity:0;transform:scale(4.2)}}
+#tKeys{position:absolute;left:12px;bottom:12px;right:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none;line-height:1}
+#tKeys .typed{background:rgba(8,10,16,.82);color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:7px 12px;font:15px/1.2 ui-monospace,Menlo,Consolas,monospace;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;backdrop-filter:blur(6px)}
+.kcap{background:#f4f6fb;color:#0b0d12;border-radius:7px;padding:4px 9px;font:700 13px/1 ui-monospace,monospace;box-shadow:0 3px 0 #9aa3b8;animation:press .2s ease-out}
+@keyframes press{0%{transform:translateY(-4px) scale(1.12);opacity:.5}100%{transform:none;opacity:1}}
+#tCaption{position:absolute;left:0;right:0;top:0;padding:6px 12px;font-size:13px;line-height:1.4;color:#fff;background:linear-gradient(180deg,rgba(0,0,0,.62),transparent);pointer-events:none}
+#tFoot{display:flex;gap:8px;flex-wrap:wrap;padding:10px 12px;border-top:1px solid var(--line);align-items:center}
+#tSteps{display:flex;gap:6px;flex-wrap:wrap;padding:8px 12px 0}
+.step{font-size:12px;border:1px solid var(--line);border-radius:8px;padding:2px 9px;color:var(--mut)}.step.start{color:var(--acc);border-color:var(--acc);animation:blink 1.1s infinite}.step.ok{color:var(--ok);border-color:var(--ok)}
+#tLog{max-height:130px;margin:0 12px 12px}
+.res{animation:rise .3s both}.res:hover h4 a{text-decoration:underline}
+.attempts{font-size:12px;color:var(--mut);margin-top:4px}.attempts b.ok{color:var(--ok)}.attempts b.no{color:var(--bad)}
+.diag{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;border:1px dashed var(--bad);border-radius:10px;padding:8px 10px;color:var(--bad);margin:8px auto;max-width:760px;text-align:left}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:640px){.hero h1{font-size:34px}#voice{grid-template-columns:1fr;justify-items:center;text-align:center}#tTitle{display:none}}
 </style>
 </head>
 <body>
@@ -7917,31 +8645,55 @@ textarea.in,input.in{width:100%;border:1px solid var(--line);border-radius:8px;b
 <!-- ═════════ 搜索 ═════════ -->
 <section class="view" id="v-search" aria-labelledby="h-search">
   <div class="hero"><h1 id="h-search"><span style="color:#4285f4">星</span><span style="color:#ea4335">河</span><span style="color:#fbbc05">搜</span><span style="color:#34a853">索</span></h1>
-    <p>搜索 · 可见的浏览器操作 · 语音指令 · 克隆声音朗读(自有品牌,与任何搜索引擎厂商无关)</p></div>
+    <p>直接搜索,无需任何 Key · 对着麦克风说话,让浏览器替你操作(你能看到鼠标和键盘)· 克隆声音朗读</p></div>
   <form class="sbox" id="sform" role="search" aria-label="搜索或下达指令">
     <span aria-hidden="true">🔎</span>
-    <input id="q" type="search" autocomplete="off" aria-label="搜索关键词或自然语言指令" placeholder="输入关键词;或切到“指令”让浏览器替你操作">
-    <button class="ib" type="button" id="mic" aria-label="语音输入" title="语音输入">🎙</button>
+    <input id="q" type="search" autocomplete="off" aria-label="搜索关键词或自然语言指令" placeholder="输入要搜索的内容,回车即搜;或点右边的麦克风直接说">
+    <button class="ib" type="button" id="mic" aria-label="语音输入(再点一次结束)" title="语音:搜索 / 浏览器操作">🎙</button>
     <button class="btn pri" type="submit" id="go">搜索</button>
   </form>
+  <div class="center row" style="margin-top:8px"><span class="badge" id="modeBadge">当前模式:读取中…</span></div>
+  <div id="voice" aria-live="polite">
+    <button type="button" id="orbBtn" aria-label="开始 / 停止语音控制浏览器"><i></i><span>🎙</span></button>
+    <div>
+      <div id="vState"><span id="vStateTxt">语音控制浏览器 · 点圆球开始说话</span><span class="badge" id="vEngine"></span></div>
+      <div id="vHeard"></div>
+      <div class="chipline" id="vChips" aria-label="示例指令">
+        <button type="button" class="chip" data-say="搜索 今天的天气">搜索 今天的天气</button><button type="button" class="chip" data-say="打开第一个结果">打开第一个结果</button><button type="button" class="chip" data-say="往下滚动">往下滚动</button><button type="button" class="chip" data-say="返回">返回</button><button type="button" class="chip" data-say="刷新">刷新</button><button type="button" class="chip" data-say="暂停">暂停</button>
+      </div>
+    </div>
+  </div>
   <div class="opts" role="group" aria-label="搜索选项">
-    <label><input type="radio" name="mode" value="search" checked> 搜索</label>
-    <label><input type="radio" name="mode" value="agent"> 指令(浏览器操作)</label>
-    <label>提供方 <select id="prov" aria-label="搜索提供方"><option value="auto">自动</option><option value="browser">可见浏览器</option><option value="brave">Brave API</option><option value="google_cse">Google CSE(遗留)</option></select></label>
-    <label>引擎 <select id="eng" aria-label="浏览器搜索引擎"><option value="google">Google</option><option value="duckduckgo">DuckDuckGo</option><option value="bing">Bing</option></select></label>
+    <label><input type="checkbox" id="visSearch"> 👁 文字搜索也用可见浏览器执行</label>
+    <label>引擎 <select id="eng" aria-label="搜索引擎"><option value="bing">Bing</option><option value="duckduckgo">DuckDuckGo</option><option value="google">Google(仅可见浏览器)</option></select></label>
     <label>网站 <input type="text" id="site" size="14" placeholder="wikipedia.org" aria-label="限定网站"></label>
     <label>时间 <select id="rec" aria-label="时间范围"><option value="">不限</option><option value="d">一天内</option><option value="w">一周内</option><option value="m">一个月内</option><option value="y">一年内</option></select></label>
-    <label><input type="checkbox" id="wantAns" checked> 生成带来源的回答</label>
+    <label>提供方 <select id="prov" aria-label="搜索提供方"><option value="auto">自动(免 Key)</option><option value="browser">仅可见浏览器</option><option value="brave">Brave API(可选)</option><option value="google_cse">Google CSE(遗留)</option></select></label>
+    <label><input type="checkbox" id="wantAns" checked> 生成带来源的回答(需 DeepSeek,可选)</label>
     <label><input type="checkbox" id="wantSpeak"> 用当前语音库朗读 <span class="badge" id="spkLib">—</span></label>
+    <label hidden><input type="radio" name="mode" value="search" checked></label>
   </div>
-  <div class="center row"><span class="badge" id="modeBadge">当前模式:读取中…</span></div>
   <div id="live" role="status" aria-live="polite"></div>
+  <div id="diag" class="diag" hidden></div>
   <div id="asrBox" class="card" hidden aria-label="语音识别结果">
-    <b>🎙 识别到的指令(请核对后再执行)</b> <span class="badge" id="asrConf"></span>
+    <b>🎙 识别到的指令</b> <span class="badge" id="asrConf"></span>
     <textarea class="in" id="asrText" rows="2" aria-label="识别文字,可编辑"></textarea>
     <div class="row" style="margin-top:6px"><button class="btn pri" id="asrOk">确认并执行</button><button class="btn" id="asrNo">取消</button></div>
   </div>
   <div id="planBox" class="card" hidden aria-label="浏览器操作计划"></div>
+
+  <div id="theater" hidden aria-label="浏览器实时画面(真实截图)">
+    <div id="tBar"><div class="dots" aria-hidden="true"><b></b><b></b><b></b></div><div id="tUrl" title="当前真实 URL">about:blank</div><div id="tTitle"></div><span class="st" id="tSt">空闲</span></div>
+    <div id="tProg"><i></i></div>
+    <div id="tStage"><canvas id="tCanvas" width="1100" height="680"></canvas><canvas id="tTrail" width="1100" height="680"></canvas><div id="tCaption">等待任务…</div><div id="tCur"><svg viewBox="0 0 24 24"><path d="M3 2l7.6 19 2.6-7.8L21 10.6z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg></div><div id="tRip"></div><div id="tKeys"></div></div>
+    <div id="tSteps"></div>
+    <div id="tFoot">
+      <button class="btn" id="tPause">⏸ 暂停</button><button class="btn" id="tResume">▶ 继续</button><button class="btn danger" id="tCancel">⏹ 取消</button><button class="btn" id="tTake" aria-pressed="false">✋ 人工接管</button><button class="btn" id="tRetry">↻ 重试</button><button class="btn" id="tHide">收起</button>
+      <span class="mut" id="tStat"></span>
+    </div>
+    <div class="log" id="tLog" aria-live="polite"></div>
+  </div>
+
   <div id="answer"></div>
   <div id="results" aria-label="搜索结果"></div>
   <div class="center row" id="moreRow" hidden><button class="btn" id="more">再搜索几个来源</button></div>
@@ -7987,7 +8739,19 @@ textarea.in,input.in{width:100%;border:1px solid var(--line);border-radius:8px;b
 "use strict";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const J = async (url, opt) => { const r = await fetch(url, opt); let j = {}; try { j = await r.json(); } catch (e) {} if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.hash); } j._status = r.status; return j; };
+const J = async (url, opt) => {
+  let r; try { r = await fetch(url, opt); } catch (e) { return { ok: false, _status: 0, error: "网络错误:浏览器连不上服务器(" + e.message + ")。请检查网络或隧道是否仍在运行", _net: true }; }
+  const ct = r.headers.get("content-type") || "", rid = r.headers.get("x-request-id") || "", raw = await r.text().catch(() => ""); let j = {};
+  try { j = JSON.parse(raw); if (!j || typeof j !== "object" || Array.isArray(j)) j = { value: j }; } catch (e) { j = {}; }
+  if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.hash); }
+  j._status = r.status; j._rid = j.request_id || rid;
+  if (!r.ok && !j.error) {                                   // 非 JSON / 无 error 字段的失败:说明它来自哪个边界,并保留响应片段
+    const ng = r.headers.get("ngrok-error-code"), srv = r.headers.get("server") || "", via = r.headers.get("via") || "";
+    const where = ng ? "ngrok 隧道层(ngrok-error-code=" + ng + "):请求没有到达应用,或应用没有响应" : !ct.includes("json") ? "代理/网关或服务端框架返回了非 JSON 页面" + (srv ? "(server=" + srv + ")" : "") : "应用返回了没有 error 字段的 JSON";
+    j.ok = false; j.error = "HTTP " + r.status + " " + (r.statusText || "") + " —— " + where; j._diag = "响应类型:" + (ct || "无") + (via ? " · via=" + via : "") + "\n响应片段:" + raw.replace(/\s+/g, " ").slice(0, 240);
+  }
+  return j;
+};
 const post = (url, body) => J(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
 const live = (m, bad) => { $("live").textContent = m || ""; $("live").className = bad ? "err" : ""; };
 const short = (h) => (h ? String(h).slice(0, 10) + "…" : "—");
@@ -7998,7 +8762,7 @@ const VIEWS = ["search", "browser", "libs", "status"];
 function route() {
   let v = (location.hash.replace(/^#\/?/, "") || "search").split("?")[0]; if (!VIEWS.includes(v)) v = "search";
   VIEWS.forEach((x) => { $("v-" + x).classList.toggle("on", x === v); const n = $("nav" + x[0].toUpperCase() + x.slice(1)); if (n) { if (x === v) n.setAttribute("aria-current", "page"); else n.removeAttribute("aria-current"); } });
-  if (v === "browser") connectBrowser(); if (v === "libs") loadLibs(); if (v === "status") loadStatus();
+  if (v === "browser" || v === "search") connectBrowser(); if (v === "libs") loadLibs(); if (v === "status") loadStatus();
   document.title = { search: "星河搜索助手", browser: "浏览器 · 星河搜索助手", libs: "语音库 · 星河搜索助手", status: "运行状态 · 星河搜索助手" }[v];
 }
 addEventListener("hashchange", route);
@@ -8009,20 +8773,34 @@ async function refreshStatus() {
   ST = await J("/api/portal/status"); if (!ST.ok) return;
   const lib = ST.voice && ST.voice.library; $("spkLib").textContent = lib ? lib.name : "未选择语音库";
   const p = ST.search.providers.find((x) => x.id === ST.search.auto);
-  $("modeBadge").className = "badge " + (ST.search.auto === "browser" ? "warn" : "ok");
-  $("modeBadge").textContent = "当前模式:" + (ST.search.auto === "browser" ? "可见浏览器搜索(未配置搜索 API 的回退)" : (p ? p.name + "(真实 API)" : ST.search.auto)) + (ST.search.llm ? " · LLM 回答可用" : " · 未配置 LLM:只展示来源");
+  const keyless = ST.search.providers.filter((x) => x.keyless && x.available).map((x) => x.id), br = ST.search.providers.find((x) => x.id === "browser");
+  $("modeBadge").className = "badge " + (ST.search.auto === "http" ? "ok" : "ok");
+  $("modeBadge").textContent = "当前模式:" + (ST.search.auto === "http" ? "免 Key 直搜(" + keyless.filter((x) => x !== "wikipedia").join(" → ") + (keyless.includes("wikipedia") ? " → wikipedia" : "") + ")" : (p ? p.name + "(真实 API,失败自动回退免 Key)" : ST.search.auto)) + " · 可见浏览器" + (br && br.available ? "可用" : "不可用(" + ((br && br.missing && br.missing[0]) || "?").slice(0, 40) + ")") + (ST.search.llm ? " · LLM 回答可用" : " · 未配置 LLM:只展示来源");
 }
 
-/* ───── 搜索 ───── */
+/* ───── 搜索(v7.1:免 Key 直搜 · 可见浏览器 · 失败可诊断) ───── */
 let LAST = { q: "", page: 0 };
+const ENGNAME = () => ($("eng").value === "google" ? "bing" : $("eng").value);
+function attemptsHtml(a) {
+  if (!a || !a.length) return "";
+  return '<div class="attempts">尝试过程:' + a.map((x) => (x.ok ? '<b class="ok">✓ ' + esc(x.provider) + " " + (x.n || 0) + " 条 " + (x.ms || 0) + "ms</b>" : '<b class="no">✗ ' + esc(x.provider) + "(" + esc((x.kind || "失败") + (x.message ? ":" + String(x.message).slice(0, 70) : "")) + ")</b>")).join(" → ") + "</div>";
+}
+function showDiag(r) {
+  const d = $("diag"); if (!r || r.ok) { d.hidden = true; return; }
+  const lines = ["HTTP 状态:" + (r._status != null ? r._status : "?") + (r._rid ? " · 请求 ID:" + r._rid : ""), "错误:" + (r.error || "未知")];
+  (r.attempts || []).forEach((x) => lines.push(" · " + x.provider + " → " + (x.ok ? "成功" : (x.kind || "失败") + (x.message ? ":" + x.message : ""))));
+  if (r._diag) lines.push(r._diag);
+  d.hidden = false; d.textContent = lines.join("\n");
+}
 function renderResults(r) {
   const box = $("results"); box.innerHTML = "";
+  if (r.attempts && r.attempts.length) box.insertAdjacentHTML("beforeend", attemptsHtml(r.attempts));
   (r.results || []).forEach((x, i) => {
-    const d = document.createElement("div"); d.className = "res"; d.id = "r-" + (i + 1);
+    const d = document.createElement("div"); d.className = "res"; d.id = "r-" + (i + 1); d.style.animationDelay = Math.min(i, 8) * 40 + "ms";
     d.innerHTML = '<div class="dom">[' + (i + 1) + "] " + esc(x.domain) + ' · <span class="badge">' + esc(x.provider) + '</span></div><h4><a href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer">' + esc(x.title || x.url) + "</a></h4><p>" + esc(x.snippet) + '</p><div class="meta">抓取时间 ' + esc(x.fetched_at) + ' · <button class="btn" data-open="' + (i + 1) + '">在受控浏览器中打开</button></div>';
     box.appendChild(d);
   });
-  box.querySelectorAll("[data-open]").forEach((b) => b.onclick = async () => { const r = await post("/api/agent/run", { actions: [{ action: "open_result", n: +b.dataset.open }, { action: "read" }], title: "打开结果 " + b.dataset.open }); if (r.ok) location.hash = "#/browser"; else live(r.error, true); });
+  box.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => runActions([{ action: "open_result", n: +b.dataset.open }, { action: "read" }], "打开结果 " + b.dataset.open));
   $("moreRow").hidden = !(r.results && r.results.length);
 }
 function renderAnswer(r) {
@@ -8042,58 +8820,111 @@ async function speak(text) {
 }
 async function doSearch(page) {
   const q = $("q").value.trim(); if (!q) { $("q").focus(); return; }
-  live("正在搜索…(可见浏览器模式会真的打开搜索页并输入,可在「浏览器」页观看)"); $("go").disabled = true; if (!page) { $("results").innerHTML = ""; $("answer").innerHTML = ""; }
-  const r = await post("/api/search", { q, provider: $("prov").value, engine: $("eng").value, site: $("site").value.trim(), recency: $("rec").value, page: page || 0, answer: $("wantAns").checked });
+  if ($("visSearch").checked && !page) { const a = { action: "search", query: q, engine: ENGNAME() }; if ($("site").value.trim()) a.site = $("site").value.trim(); if ($("rec").value) a.recency = $("rec").value; VOICE_Q = q; return runActions([a], "搜索 " + q.slice(0, 30)); }
+  live("正在搜索…(无需 Key:服务器直连真实搜索页并解析)"); showDiag(null); $("go").disabled = true; if (!page) { $("results").innerHTML = ""; $("answer").innerHTML = ""; }
+  let r = await post("/api/search", { q, provider: $("prov").value, engine: ENGNAME(), site: $("site").value.trim(), recency: $("rec").value, page: page || 0, answer: $("wantAns").checked });
+  const t0 = Date.now();
+  while (r.pending && Date.now() - t0 < 120000) {                       // 可见浏览器较慢:短请求轮询,避免长连接被代理中断
+    live(r.message || "可见浏览器正在搜索…"); showTheater(); connectBrowser(); await new Promise((x) => setTimeout(x, 1500));
+    r = await J("/api/search/poll?q=" + encodeURIComponent(q) + "&engine=" + ENGNAME() + "&answer=" + ($("wantAns").checked ? 1 : 0));
+  }
   $("go").disabled = false;
-  if (r.needs_attention) { live("⚠ " + r.message + " —— 请到「浏览器」页处理(验证码/确认),完成后结果会自动出现", true); if (r.results && r.results.length) renderResults(r); return; }
-  if (!r.ok) { live("搜索失败:" + (r.error || r._status), true); return; }
+  if (r.needs_attention) { live("⚠ " + r.message + " —— 请在下方实时画面里处理(验证码/确认),完成后结果会自动出现", true); showTheater(); connectBrowser(); if (r.results && r.results.length) renderResults(r); return; }
+  if (!r.ok) { live("搜索失败:" + (r.error || ("HTTP " + r._status)), true); showDiag(r); return; }
   LAST = { q, page: r.page };
-  live(r.mode.label + " · " + r.results.length + " 条结果 · " + r.fetched_at); renderResults(r); renderAnswer(r);
+  live(r.mode.label + " · " + r.results.length + " 条结果 · " + r.fetched_at + (r.request_id ? " · 请求 " + r.request_id : "")); renderResults(r); renderAnswer(r);
 }
-async function doAgent(text) {
-  live("正在理解指令…"); $("planBox").hidden = true;
-  const p = await post("/api/agent/plan", { text, engine: $("eng").value });
-  if (!p.ok) { live("规划失败:" + (p.error || p._status), true); return; }
-  if (!p.actions.length) { live(p.clarify || "无法理解这条指令", true); return; }
-  const names = { goto: "打开网址", search: "搜索", search_more: "再搜几个来源", open_result: "打开第 N 条结果", back: "返回", forward: "前进", reload: "刷新", scroll: "滚动", click: "点击", type: "输入文字", key: "按键", read: "读取页面", snapshot: "查看页面", wait: "等待" };
-  const li = p.actions.map((a, i) => "<li><b>" + (names[a.action] || a.action) + "</b> <span class='mono'>" + esc(JSON.stringify(a)) + "</span></li>").join("");
-  const box = $("planBox"); box.hidden = false;
-  box.innerHTML = "<b>将要执行的浏览器操作</b> <span class='badge'>规划器:" + p.planner + "</span><ol>" + li + "</ol>" + (p.clarify ? "<div class='mut'>" + esc(p.clarify) + "</div>" : "") +
-    (p.needs_confirm ? "<div class='warnbox'>指令里含有高影响词「" + esc(p.risk_word) + "」:真正产生外部影响的步骤(发送/提交/购买/删除等)还会在执行前再次让你确认,看到目标网站与后果。</div>" : "") +
-    "<div class='row'><button class='btn pri' id='planGo'>确认执行</button><button class='btn' id='planNo'>取消</button></div>";
-  $("planNo").onclick = () => { box.hidden = true; live(""); };
-  $("planGo").onclick = async () => { const r = await post("/api/agent/run", { actions: p.actions, title: text.slice(0, 40) }); box.hidden = true; if (r.ok) location.hash = "#/browser"; else live("无法执行:" + (r.error || r._status), true); };
-  live("请核对计划后点击“确认执行”");
-}
-$("sform").onsubmit = (e) => { e.preventDefault(); const m = document.querySelector("input[name=mode]:checked").value; if (m === "agent") doAgent($("q").value.trim()); else doSearch(0); };
+const looksCommand = (t) => /^(请|帮我|麻烦)?\s*(打开|访问|前往|返回|后退|前进|刷新|重新加载|往下|往上|向下|向上|滚动|翻页|点击|点一下|按|暂停|继续|取消|停止|scroll|open|go to|go back|back|forward|reload|refresh|click|press)/i.test(t.trim());
+$("sform").onsubmit = (e) => { e.preventDefault(); const t = $("q").value.trim(); if (!t) return; if (looksCommand(t)) handleVoiceText(t, null, "文字指令"); else doSearch(0); };
 $("more").onclick = () => doSearch((LAST.page || 0) + 1);
-
+const ACTNAME = { goto: "打开网址", search: "搜索", search_more: "再搜几个来源", open_result: "打开第 N 条结果", back: "返回", forward: "前进", reload: "刷新", scroll: "滚动", click: "点击", type: "输入文字", key: "按键", read: "读取页面", snapshot: "查看页面", wait: "等待" };
+const describeAct = (a) => (ACTNAME[a.action] || a.action) + (a.query ? "「" + a.query + "」" : a.url ? " " + a.url : a.n ? " #" + a.n : a.direction ? " " + ({ up: "向上", down: "向下", top: "到顶部", bottom: "到底部" }[a.direction] || "") : a.value ? "「" + a.value + "」" : "");
+let LAST_RUN = null, VOICE_Q = null;
+async function runActions(actions, title) {
+  LAST_RUN = { actions, title }; showTheater(true); connectBrowser(); resetSteps();
+  const r = await post("/api/agent/run", { actions, title: String(title || "任务").slice(0, 40) });
+  if (!r.ok) { live("无法执行:" + (r.error || ("HTTP " + r._status)), true); showDiag(r); }
+  return r;
+}
 /* ───── 录音(WAV,不依赖 ffmpeg) ───── */
 function WavRec() {
   let ctx, src, node, stream, chunks = [], sr = 44100;
   return {
-    async start() { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, channelCount: 1 } }); ctx = new (window.AudioContext || window.webkitAudioContext)(); sr = ctx.sampleRate; src = ctx.createMediaStreamSource(stream); node = ctx.createScriptProcessor(4096, 1, 1); node.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); src.connect(node); node.connect(ctx.destination); },
+    async start() { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, channelCount: 1 } }); ctx = new (window.AudioContext || window.webkitAudioContext)(); sr = ctx.sampleRate; src = ctx.createMediaStreamSource(stream); node = ctx.createScriptProcessor(4096, 1, 1); node.onaudioprocess = (e) => { const d = e.inputBuffer.getChannelData(0); chunks.push(new Float32Array(d)); if (this.onlevel) { let q = 0; for (let i = 0; i < d.length; i++) q += d[i] * d[i]; this.onlevel(Math.sqrt(q / d.length)); } }; src.connect(node); node.connect(ctx.destination); },
     stop() { try { node.disconnect(); src.disconnect(); stream.getTracks().forEach((t) => t.stop()); ctx.close(); } catch (e) {} let n = 0; chunks.forEach((c) => n += c.length); const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf); const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
       w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
       let o = 44; chunks.forEach((c) => { for (let i = 0; i < c.length; i++) { const s = Math.max(-1, Math.min(1, c[i])); v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true); o += 2; } }); chunks = []; return new Blob([buf], { type: "audio/wav" }); } };
 }
-let micRec = null, speechRec = null;
-$("mic").onclick = async () => {
-  if (micRec) { const blob = micRec.stop(); micRec = null; $("mic").classList.remove("rec"); live("正在识别…"); const r = await fetch("/api/portal/asr", { method: "POST", body: blob }).then((x) => x.json()).catch(() => ({ ok: false }));
-    if (r.ok) showAsr(r.text, null, r.engine + " · " + r.note); else { live("服务端识别不可用:" + (r.error || "") + (r.fallback ? " → 尝试浏览器自带识别" : ""), true); if (r.fallback) browserSpeech(); } return; }
-  if (!navigator.mediaDevices) { browserSpeech(); return; }
-  try { micRec = WavRec(); await micRec.start(); $("mic").classList.add("rec"); live("正在听…再点一次麦克风结束(最长 60 秒)"); setTimeout(() => { if (micRec) $("mic").click(); }, 60000); } catch (e) { micRec = null; live("无法使用麦克风:" + e.message, true); }
-};
-function browserSpeech() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) { live("没有可用的语音识别:服务端 ASR 不可用,浏览器也不支持。请直接输入文字。", true); return; }
-  speechRec = new SR(); speechRec.lang = "zh-CN"; speechRec.onresult = (e) => { const x = e.results[0][0]; showAsr(x.transcript, x.confidence, "浏览器自带识别(音频可能被浏览器厂商处理)"); }; speechRec.onerror = (e) => live("识别出错:" + e.error, true); speechRec.start(); live("正在听(浏览器自带识别)…");
+/* ───── 语音控制浏览器(服务端 ASR 优先,失败回退浏览器识别,再回退文字输入) ───── */
+let micRec = null, speechRec = null, vT0 = 0, vVoiced = false, vLastVoice = 0, vMax = null;
+function vSet(state, txt, heard, interim) {
+  $("vStateTxt").textContent = txt; if (heard != null) { $("vHeard").textContent = heard; $("vHeard").className = interim ? "interim" : ""; }
+  $("orbBtn").classList.toggle("on", state === "listen"); $("mic").classList.toggle("rec", state === "listen"); $("sform").classList.toggle("hearing", state === "listen");
+  if (state !== "listen") $("orbBtn").style.setProperty("--lv", 0);
 }
-function showAsr(text, conf, note) {
-  $("asrBox").hidden = false; $("asrText").value = text; const low = conf != null && conf < 0.75;
-  $("asrConf").className = "badge " + (low ? "bad" : conf == null ? "warn" : "ok"); $("asrConf").textContent = conf == null ? "无置信度 · 必须核对" : "置信度 " + conf.toFixed(2) + (low ? "(偏低,请核对)" : ""); live(note || "");
+function onLevel(rms) {
+  $("orbBtn").style.setProperty("--lv", Math.min(1, rms * 9)); const now = Date.now();
+  if (rms > 0.018) { vVoiced = true; vLastVoice = now; }
+  if (vVoiced && now - vLastVoice > 1500) stopVoice(true);                      // 说完停顿 1.5 秒自动结束
+  else if (!vVoiced && now - vT0 > 9000) stopVoice(false, "9 秒内没有听到声音,已停止。可以再点一次圆球,或直接输入文字。");
+}
+async function startVoice() {
+  if (micRec || speechRec) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { vSet("idle", "此浏览器/页面不能直接录音(需要 https)", ""); return browserSpeech(); }
+  try {
+    micRec = WavRec(); micRec.onlevel = onLevel; vVoiced = false; vT0 = Date.now(); await micRec.start();
+    vSet("listen", "正在听…说完停顿一下会自动开始执行(再点一次可手动结束)", "", false); clearTimeout(vMax); vMax = setTimeout(() => stopVoice(true), 25000);
+  } catch (e) {
+    micRec = null; const denied = /denied|permission|NotAllowed/i.test(e.name + e.message);
+    vSet("idle", denied ? "麦克风权限被拒绝:请点地址栏左侧的锁/摄像头图标允许麦克风,或直接在上方输入文字。" : "无法使用麦克风:" + e.message, ""); live(denied ? "麦克风权限被拒绝 —— 可以直接输入文字搜索,功能不受影响" : "无法使用麦克风:" + e.message, true); $("q").focus();
+  }
+}
+async function stopVoice(send, why) {
+  clearTimeout(vMax); if (!micRec) return; const blob = micRec.stop(); micRec = null;
+  if (!send) { vSet("idle", why || "已停止", ""); return; }
+  vSet("busy", "正在识别…", "", true);
+  let r; try { r = await fetch("/api/portal/asr", { method: "POST", body: blob }); const ct = r.headers.get("content-type") || ""; r = ct.includes("json") ? await r.json() : { ok: false, error: "服务端识别返回了非 JSON(HTTP " + r.status + ")", fallback: "browser_speech" }; } catch (e) { r = { ok: false, error: "网络错误:" + e.message, fallback: "browser_speech" }; }
+  if (r.ok && (r.text || "").trim()) { $("vEngine").textContent = r.engine || "服务端识别"; return handleVoiceText(r.text.trim(), null, (r.engine || "服务端") + (r.note ? " · " + r.note : "")); }
+  const why2 = r.ok ? "没有识别出文字(可能太安静)" : (r.error || "服务端语音识别不可用");
+  vSet("idle", "服务端识别不可用:" + why2 + (r.fallback ? " → 改用浏览器自带识别(音频可能被浏览器厂商处理)" : ""), "");
+  if (r.fallback && (window.SpeechRecognition || window.webkitSpeechRecognition)) browserSpeech(); else { live("没有可用的语音识别:" + why2 + "。请直接输入文字(不影响搜索与浏览器操作)。", true); $("q").focus(); }
+}
+function browserSpeech() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { vSet("idle", "此浏览器不支持语音识别", ""); live("没有可用的语音识别:服务端 ASR 不可用,浏览器也不支持。请直接输入文字。", true); $("q").focus(); return; }
+  speechRec = new SR(); speechRec.lang = "zh-CN"; speechRec.interimResults = true; speechRec.continuous = false; let fin = null;
+  speechRec.onresult = (e) => { const x = e.results[e.results.length - 1]; $("vHeard").textContent = x[0].transcript; $("vHeard").className = x.isFinal ? "" : "interim"; if (x.isFinal) fin = { t: x[0].transcript, c: x[0].confidence }; };
+  speechRec.onerror = (e) => { vSet("idle", "浏览器识别出错:" + e.error + (e.error === "not-allowed" ? "(麦克风权限被拒绝)" : ""), ""); speechRec = null; };
+  speechRec.onend = () => { speechRec = null; if (fin) { $("vEngine").textContent = "浏览器识别"; handleVoiceText(fin.t, fin.c || null, "浏览器自带识别"); } else if ($("orbBtn").classList.contains("on")) vSet("idle", "没有听到内容", ""); };
+  try { speechRec.start(); vSet("listen", "正在听(浏览器自带识别)…", "", true); } catch (e) { speechRec = null; vSet("idle", "无法启动浏览器识别:" + e.message, ""); }
+}
+function toggleVoice() { if (micRec) stopVoice(true); else if (speechRec) { try { speechRec.stop(); } catch (e) {} } else startVoice(); }
+$("orbBtn").onclick = toggleVoice; $("mic").onclick = toggleVoice;
+document.querySelectorAll("#vChips [data-say]").forEach((b) => b.onclick = () => { $("q").value = b.dataset.say; handleVoiceText(b.dataset.say, null, "示例指令(点击)"); });
+
+async function handleVoiceText(text, conf, src) {
+  $("q").value = text; vSet("busy", "理解指令…", "「" + text + "」", false); $("asrBox").hidden = true; $("planBox").hidden = true; showDiag(null);
+  const p = await post("/api/agent/plan", { text, engine: ENGNAME(), voice: true });
+  if (!p.ok) { vSet("idle", "规划失败:" + (p.error || "HTTP " + p._status), "「" + text + "」"); live("规划失败:" + (p.error || "HTTP " + p._status), true); return; }
+  if (p.control) { vSet("idle", "已执行控制指令:" + { pause: "暂停", resume: "继续", cancel: "取消" }[p.control], "「" + text + "」"); await act(p.control); return; }
+  if (!p.actions || !p.actions.length) { vSet("idle", p.clarify || "没有听懂这条指令", "「" + text + "」"); $("asrBox").hidden = false; $("asrText").value = text; $("asrConf").className = "badge warn"; $("asrConf").textContent = "需要澄清"; live((p.clarify || "没有听懂") + " —— 可以在下面修改文字后确认", true); return; }
+  const low = conf != null && conf < 0.6;
+  const names = p.actions.map(describeAct).join(" → ");
+  if (p.auto_ok && !low) {                                                // 明确且低风险:识别完成后直接执行,不再逐步确认
+    VOICE_Q = (p.actions.find((a) => a.action === "search") || {}).query || null;
+    vSet("run", "正在操作浏览器:" + names, "「" + text + "」" + (p.assumed_search ? "(按关键词搜索)" : ""), false); live(src ? "识别来源:" + src : "");
+    return runActions(p.actions, text);
+  }
+  vSet("idle", low ? "识别置信度偏低(" + conf.toFixed(2) + "),请核对后再执行" : (p.needs_confirm ? "含高影响词「" + p.risk_word + "」,需要你确认" : "请核对后执行"), "「" + text + "」");
+  const box = $("planBox"); box.hidden = false;
+  box.innerHTML = "<b>将要执行的浏览器操作</b> <span class='badge'>规划器:" + esc(p.planner) + "</span><ol>" + p.actions.map((a) => "<li><b>" + esc(describeAct(a)) + "</b> <span class='mono'>" + esc(JSON.stringify(a)) + "</span></li>").join("") + "</ol>" +
+    (p.needs_confirm ? "<div class='warnbox'>指令里含有高影响词「" + esc(p.risk_word) + "」:真正产生外部影响的步骤(发送/提交/购买/删除等)在执行前会再次让你确认,并显示目标网站与后果。</div>" : "") +
+    "<div class='row'><button class='btn pri' id='planGo'>确认执行</button><button class='btn' id='planNo'>取消</button></div>";
+  $("planNo").onclick = () => { box.hidden = true; vSet("idle", "已取消", ""); };
+  $("planGo").onclick = async () => { box.hidden = true; VOICE_Q = (p.actions.find((a) => a.action === "search") || {}).query || null; vSet("run", "正在操作浏览器:" + names, null); await runActions(p.actions, text); };
 }
 $("asrNo").onclick = () => { $("asrBox").hidden = true; live(""); };
-$("asrOk").onclick = () => { $("q").value = $("asrText").value; $("asrBox").hidden = true; $("sform").requestSubmit(); };
+$("asrOk").onclick = () => { const t = $("asrText").value.trim(); $("asrBox").hidden = true; if (t) handleVoiceText(t, null, "已核对的文字"); };
 
 /* ───── 浏览器视图 ───── */
 let BW = null, TAKE = false, VIEWSZ = { w: 1100, h: 680 }, lastUrl = null;
@@ -8114,16 +8945,7 @@ function connectBrowser() {
   if (BW && BW.readyState <= 1) return;
   BW = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/browser"); BW.binaryType = "blob";
   BW.onopen = () => { BW.send(JSON.stringify({ type: "open" })); };
-  BW.onmessage = (ev) => {
-    if (typeof ev.data !== "string") { const u = URL.createObjectURL(ev.data); const img = $("shot"); const old = img.src; img.onload = () => { if (old && old.startsWith("blob:")) URL.revokeObjectURL(old); }; img.src = u; return; }
-    const m = JSON.parse(ev.data);
-    if (m.type === "hello") { $("blog").innerHTML = ""; (m.log || []).forEach(bLog); bStatus(m); } else if (m.type === "log") bLog(m.entry); else if (m.type === "status") bStatus(m);
-    else if (m.type === "cursor") { const c = $("cur"); c.style.display = "block"; c.style.left = (m.x / m.vw * 100) + "%"; c.style.top = (m.y / m.vh * 100) + "%"; c.className = m.kind === "click" ? "click" : ""; void c.offsetWidth; }
-    else if (m.type === "typing") { const t = $("typing"); t.style.display = "block"; t.textContent = "⌨ " + m.text; if (m.done) setTimeout(() => t.style.display = "none", 2500); }
-    else if (m.type === "results") { renderResults({ results: m.results }); if (!$("results").dataset.live) { $("results").dataset.live = 1; } }
-    else if (m.type === "error") { $("banner").textContent = "⚠ " + m.message; $("banner").className = "bad"; }
-    else if (m.type === "meta") { if (m.url && m.url !== lastUrl) { lastUrl = m.url; $("goUrl").value = m.url; } }
-  };
+  BW.onmessage = onBrowserMsg;
   BW.onclose = () => { $("banner").textContent = "连接已断开(切换页面或会话过期)"; BW = null; };
 }
 const act = (p) => post("/api/agent/" + p);
@@ -8140,6 +8962,85 @@ $("kbd").addEventListener("keydown", (e) => { if (!TAKE || !BW) return; const k 
 $("bRead").onclick = async () => { const r = await post("/api/agent/run", { actions: [{ action: "read" }], title: "读取页面" }); if (!r.ok) { $("bsum").innerHTML = '<div class="warnbox">' + esc(r.error) + "</div>"; return; }
   $("bsum").innerHTML = '<div class="mut">正在读取…</div>'; for (let i = 0; i < 40; i++) { await new Promise((x) => setTimeout(x, 500)); const s = await J("/api/agent/state"); if (s.status !== "running") break; }
   const s = await post("/api/agent/summarize"); $("bsum").innerHTML = s.ok ? '<div class="card"><h3>页面总结 <span class="badge warn">不可信来源 · 仅供参考</span></h3>' + (s.summary ? "<div>" + esc(s.summary) + "</div>" : '<div class="mut">' + esc(s.note) + "</div><pre class='mono'>" + esc(s.excerpt || "") + "</pre>") + '<div class="mut">来源:<a href="' + esc(s.source.url) + '" target="_blank" rel="noopener noreferrer">' + esc(s.source.title || s.source.url) + "</a> · 读取于 " + esc(s.source.read_at) + "</div></div>" : '<div class="warnbox">' + esc(s.error) + "</div>"; };
+
+/* ───── 浏览器剧场(search 页内联):画面=真实截图;光标=真实 mouse.move 事件;键盘=真实按键事件 ───── */
+const TH = { ctx: null, trail: null, pts: [], raf: 0, shown: false, keyT: 0, lastKeys: [], ripT: 0, pendingFrame: null };
+function showTheater(clear) {
+  const t = $("theater"); if (t.hidden) { t.hidden = false; } TH.shown = true;
+  if (clear) { $("tLog").innerHTML = ""; $("tKeys").innerHTML = ""; $("tCaption").textContent = "任务已提交,等待浏览器…"; $("tProg").firstElementChild.style.width = "4%"; }
+  if (!TH.ctx) { TH.ctx = $("tCanvas").getContext("2d"); TH.trail = $("tTrail").getContext("2d"); TH.ctx.fillStyle = "#0d0f14"; TH.ctx.fillRect(0, 0, 1100, 680); }
+  if (clear) setTimeout(() => t.scrollIntoView({ behavior: "smooth", block: "nearest" }), 60);
+}
+function resetSteps() { $("tSteps").innerHTML = ""; }
+function paintFrame(blob) {
+  if (typeof createImageBitmap === "function") {
+    createImageBitmap(blob).then((b) => { if (!TH.ctx) showTheater(); TH.ctx.drawImage(b, 0, 0, 1100, 680); b.close && b.close(); }).catch(() => {});
+  } else { const u = URL.createObjectURL(blob), im = new Image(); im.onload = () => { if (TH.ctx) TH.ctx.drawImage(im, 0, 0, 1100, 680); URL.revokeObjectURL(u); }; im.src = u; }
+}
+function stagePx(m) { const r = $("tStage").getBoundingClientRect(); return [m.x / m.vw * r.width, m.y / m.vh * r.height, m.x / m.vw * 1100, m.y / m.vh * 680]; }
+function moveCursor(m) {
+  const [px, py, cx, cy] = stagePx(m), c = $("tCur"); c.style.display = "block"; c.style.transform = "translate(" + px + "px," + py + "px)";
+  TH.pts.push({ x: cx, y: cy, t: performance.now() }); if (TH.pts.length > 40) TH.pts.shift(); if (!TH.raf) TH.raf = requestAnimationFrame(drawTrail);
+  if (m.kind === "click") { const r = $("tRip"); r.style.left = px + "px"; r.style.top = py + "px"; r.classList.remove("go"); void r.offsetWidth; r.classList.add("go"); }
+}
+function drawTrail() {
+  const g = TH.trail, now = performance.now(); g.clearRect(0, 0, 1100, 680); TH.pts = TH.pts.filter((p) => now - p.t < 520);
+  for (let i = 1; i < TH.pts.length; i++) { const a = TH.pts[i - 1], b = TH.pts[i], k = 1 - (now - b.t) / 520; g.strokeStyle = "rgba(255,61,113," + (0.55 * k).toFixed(3) + ")"; g.lineWidth = 3 + 5 * k; g.lineCap = "round"; g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); }
+  TH.raf = TH.pts.length ? requestAnimationFrame(drawTrail) : 0;
+}
+function keycap(label) {
+  const k = $("tKeys"), el = document.createElement("span"); el.className = "kcap"; el.textContent = label; k.appendChild(el);
+  while (k.querySelectorAll(".kcap").length > 6) k.querySelector(".kcap").remove(); setTimeout(() => el.remove(), 900);
+}
+function typedHud(m) {
+  let t = $("tKeys").querySelector(".typed"); if (!t) { t = document.createElement("span"); t.className = "typed"; $("tKeys").prepend(t); }
+  t.textContent = "⌨ " + m.text.slice(-60); if (m.ch) keycap(m.ch === " " ? "␣" : m.ch);
+  clearTimeout(TH.keyT); if (m.done) TH.keyT = setTimeout(() => { const x = $("tKeys").querySelector(".typed"); if (x) x.remove(); }, 2600);
+}
+const STMAP = { idle: "空闲", running: "执行中", paused: "已暂停", waiting_confirm: "等待你确认", waiting_human: "需要你人工处理", done: "完成", error: "出错", cancelled: "已取消", queued: "排队中" };
+function theaterStatus(s) {
+  const st = $("tSt"); st.textContent = STMAP[s.status] || s.status; st.className = "st " + s.status;
+  if (s.url != null) $("tUrl").textContent = s.url || "about:blank";
+  $("tStat").textContent = "步骤 " + (s.steps || 0) + " · 画面帧 " + (s.frames || 0) + " · 拦截请求 " + (s.blocked_requests || 0);
+  if (s.msg) $("tCaption").textContent = (STMAP[s.status] || s.status) + " · " + s.msg;
+  if (s.status === "done") { $("tProg").firstElementChild.style.width = "100%"; vSet("idle", "完成 · " + (s.msg || ""), null); VOICE_Q = null; }
+  if (s.status === "error") {
+    vSet("idle", "出错:" + (s.msg || ""), null);
+    if (VOICE_Q && /Chromium|playwright|浏览器/.test(s.msg || "")) {              // 可见浏览器不可用 → 自动回退到免 Key 服务器搜索(原因照实显示)
+      const q = VOICE_Q; VOICE_Q = null; live("可见浏览器不可用(" + (s.msg || "").slice(0, 120) + "),已自动改用免 Key 服务器搜索:「" + q + "」", true); $("q").value = q; doSearch(0);
+    }
+  }
+  if (["waiting_human", "waiting_confirm", "paused"].includes(s.status)) vSet("idle", (STMAP[s.status]) + (s.msg ? " · " + s.msg : ""), null);
+  if (s.pending) askConfirm(s.pending);
+}
+function stepEvent(m) {
+  let el = $("tSteps").querySelector('[data-i="' + m.i + '"]'); if (!el) { el = document.createElement("span"); el.dataset.i = m.i; $("tSteps").appendChild(el); }
+  el.className = "step " + m.state; el.textContent = (m.state === "ok" ? "✓ " : "● ") + m.i + "/" + m.n + " " + describeAct(m.action);
+  $("tProg").firstElementChild.style.width = Math.max(6, Math.round(((m.i - (m.state === "ok" ? 0 : 1)) + (m.state === "ok" ? 0 : 0.35)) / m.n * 100)) + "%";
+  if (m.state === "start") $("tCaption").textContent = "步骤 " + m.i + "/" + m.n + " · " + describeAct(m.action);
+}
+function tLogAdd(e) { const d = document.createElement("div"); d.className = "k-" + e.kind; d.textContent = e.t.slice(11, 19) + " [" + e.kind + "] " + e.msg; const L = $("tLog"); L.appendChild(d); while (L.children.length > 120) L.removeChild(L.firstChild); L.scrollTop = L.scrollHeight; if (["action", "verify", "blocked", "error"].includes(e.kind)) $("tCaption").textContent = e.msg; }
+function onBrowserMsg(ev) {
+  if (typeof ev.data !== "string") {
+    paintFrame(ev.data); const u = URL.createObjectURL(ev.data); const img = $("shot"); const old = img.src; img.onload = () => { if (old && old.startsWith("blob:")) URL.revokeObjectURL(old); }; img.src = u; return;
+  }
+  const m = JSON.parse(ev.data);
+  if (m.type === "hello") { $("blog").innerHTML = ""; (m.log || []).forEach(bLog); bStatus(m); if (m.status && m.status !== "idle") { showTheater(); (m.log || []).slice(-30).forEach(tLogAdd); } theaterStatus(m); }
+  else if (m.type === "log") { bLog(m.entry); tLogAdd(m.entry); }
+  else if (m.type === "status") { bStatus(m); theaterStatus(m); if (m.status && m.status !== "idle" && m.status !== "done") showTheater(); }
+  else if (m.type === "cursor") { moveCursor(m); const c = $("cur"); c.style.display = "block"; c.style.left = (m.x / m.vw * 100) + "%"; c.style.top = (m.y / m.vh * 100) + "%"; c.className = m.kind === "click" ? "click" : ""; void c.offsetWidth; }
+  else if (m.type === "typing") { typedHud(m); const t = $("typing"); t.style.display = "block"; t.textContent = "⌨ " + m.text; if (m.done) setTimeout(() => t.style.display = "none", 2500); }
+  else if (m.type === "key") { keycap(({ Enter: "↵ Enter", Escape: "Esc", Backspace: "⌫", ArrowDown: "↓", ArrowUp: "↑", PageDown: "PgDn", PageUp: "PgUp" })[m.key] || m.key); }
+  else if (m.type === "step") stepEvent(m);
+  else if (m.type === "results") { renderResults({ results: m.results }); if (m.results && m.results.length) live("可见浏览器搜索完成:" + m.results.length + " 条真实结果(来自页面解析)"); }
+  else if (m.type === "error") { $("banner").textContent = "⚠ " + m.message; $("banner").className = "bad"; $("tCaption").textContent = "⚠ " + m.message; }
+  else if (m.type === "meta") { if (m.url) { $("tUrl").textContent = m.url; if (m.url !== lastUrl) { lastUrl = m.url; $("goUrl").value = m.url; } } if (m.title) $("tTitle").textContent = m.title; }
+}
+$("tPause").onclick = () => act("pause"); $("tResume").onclick = () => act("resume"); $("tCancel").onclick = () => act("cancel");
+$("tHide").onclick = () => { $("theater").hidden = true; };
+$("tRetry").onclick = () => { if (LAST_RUN) runActions(LAST_RUN.actions, LAST_RUN.title); else live("没有可重试的任务", true); };
+$("tTake").onclick = async () => { TAKE = !TAKE; $("tTake").setAttribute("aria-pressed", TAKE); $("tStage").classList.toggle("take", TAKE); if (TAKE) { await act("pause"); $("kbd").focus(); $("tCaption").textContent = "人工接管:点击画面操作,直接打字(你输入的内容不会被记录,也不会发给 AI)。完成后再点一次“人工接管”,然后点「继续」。"; } };
+$("tStage").addEventListener("click", (e) => { if (!TAKE || !BW) return; const r = $("tStage").getBoundingClientRect(); BW.send(JSON.stringify({ type: "human", kind: "click", x: (e.clientX - r.left) / r.width * VIEWSZ.w, y: (e.clientY - r.top) / r.height * VIEWSZ.h })); $("kbd").focus(); });
 
 /* ───── 语音库 ───── */
 function evalHtml(e) {
@@ -8177,7 +9078,7 @@ function wireLibs() {
   const q = (a, f) => document.querySelectorAll("[" + a + "]").forEach((el) => el.addEventListener(el.tagName === "INPUT" ? "change" : "click", (ev) => { ev.preventDefault(); f(el.getAttribute(a), el, ev); }));
   q("data-act", async (id) => { const r = await post("/api/libs/" + id + "/activate"); live(r.message || r.error, !r.ok); loadLibs(); });
   q("data-ren", async (id) => { const n = prompt("新名称"); if (n) { await J("/api/libs/" + id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: n }) }); loadLibs(); } });
-  q("data-eval", async (id) => { msgOf(id, "评估中…"); const r = await post("/api/libs/" + id + "/evaluate"); if (!r.ok) alert(r.error); loadLibs(); });
+  q("data-eval", async (id) => { msgOf(id, "评估中…"); const r = await post("/api/libs/" + id + "/evaluate"); if (!r.ok) alert(r.error || ("HTTP " + r._status)); loadLibs(); });
   q("data-frz", async (id) => { const r = await post("/api/libs/" + id + "/dataset/freeze"); alert(r.ok ? "已冻结 v" + r.dataset.version + ":" + r.dataset.n_samples + " 条;" + r.dataset.split.note : r.error); loadLibs(); });
   q("data-trn", async (id) => { const r = await post("/api/libs/" + id + "/train"); alert(r.ok ? "已排队:" + r.job.note : r.error); loadLibs(); });
   q("data-rb", async (id) => { const r = await post("/api/libs/" + id + "/rollback"); alert(r.ok ? "已回滚" : r.error); loadLibs(); });
@@ -11302,6 +12203,425 @@ if __name__ == "__main__":
     print("%d 项通过, %d 项失败, %d 项未验证" % (len(tests) - bad, bad, len(SKIPPED)))
     sys.exit(1 if bad else 0)
 '''
+
+FILES['tests/test_v71.py'] = r'''# -*- coding: utf-8 -*-
+"""
+test_v71.py —— v7.1 修复的回归测试:声纹评分器 / 免 Key 搜索 / 语音指令规划 / 前端错误可读性
+
+  python tests/test_v71.py --unit     不需要 GPU / 外网 / Chromium
+  python tests/test_v71.py            + Mock 引擎服务集成(/api/search 的 JSON 错误与回退)
+
+  诚实说明:这里的「假评分器 / 假搜索站点」是【测试替身(test double)】,只证明状态机与错误处理逻辑,
+  不能证明真实 WavLM 下载、CUDA 加载、T4 显存、真实搜索站点可用或真实音频评分质量。
+  这些在 Kaggle 实机上运行前一律是「未验证」。
+"""
+import asyncio
+import http.server
+import json
+import os
+import sys
+import threading
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE / "tests"))
+SKIPPED = []
+
+
+def raises(fn, exc=Exception, contains=None):
+    try:
+        fn()
+    except exc as e:
+        assert contains is None or contains in str(e), str(e)
+        return e
+    raise AssertionError("应当抛出 %s" % exc)
+
+
+# ═════════════════════ 声纹评分器 ═════════════════════
+class _Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_unit_scorer_holder_state_machine():
+    import speaker_sim as ss
+    clk, calls = _Clock(), {"n": 0, "fail": True}
+
+    def factory():
+        calls["n"] += 1
+        if calls["fail"]:
+            raise OSError("模拟:模型下载失败 / CUDA out of memory")
+        return object()
+    h = ss.ScorerHolder(factory, max_attempts=3, cooldown=(0, 20, 60), clock=clk)
+    assert h.state == "unloaded"
+    e = raises(h.get, ss.ScorerUnavailable)                                   # 第 1 次:失败,记录最初异常原文
+    assert h.state == "failed" and "OSError" in h.last_error and "CUDA out of memory" in e.reason and calls["n"] == 1
+    e = raises(h.get, ss.ScorerUnavailable, "秒后自动重试")                    # 冷却中:不会再去加载(不会每个请求都重试)
+    assert calls["n"] == 1 and e.info["retry_in_s"] > 0
+    clk.t += 21
+    raises(h.get, ss.ScorerUnavailable)                                       # 第 2 次重试仍失败
+    assert calls["n"] == 2
+    clk.t += 61
+    raises(h.get, ss.ScorerUnavailable)                                       # 第 3 次
+    assert calls["n"] == 3
+    clk.t += 10000
+    e = raises(h.get, ss.ScorerUnavailable, "已重试 3 次")                     # 有界:用尽后不再重试
+    assert calls["n"] == 3 and h.info()["exhausted"] and "OSError" in e.reason
+    h.reset()                                                                 # 受控恢复
+    calls["fail"] = False
+    sc = h.get()
+    assert h.state == "ready" and sc is not None and h.get() is sc and calls["n"] == 4 and h.last_error is None   # 就绪后不再重复加载
+
+
+def test_unit_audio_validation_skips_not_fakes():
+    import numpy as np
+    import speaker_sim as ss
+    for w, code in ((np.zeros(0, np.float32), "empty"), (np.full(16000, np.nan, np.float32), "non_finite"), (np.random.randn(2000).astype(np.float32) * .1, "too_short"),
+                    (np.zeros(16000, np.float32), "silent")):
+        e = raises(lambda w=w: ss.check_audio(w), ss.AudioSkip)
+        assert e.code == code, (e.code, code)
+    ok = ss.check_audio((np.random.randn(32000) * 0.1).astype(np.float32))
+    assert ok.shape == (32000,)
+    assert raises(lambda: ss.load_wav16k("/nonexistent/x.wav"), ss.AudioSkip).code == "missing_file"
+    import tempfile
+    p = Path(tempfile.mkdtemp()) / "bad.wav"
+    p.write_bytes(b"not a wav at all")
+    assert raises(lambda: ss.load_wav16k(p), ss.AudioSkip).code == "decode_error"
+
+
+def _engine_with_holder(factory):
+    import infer_dual_gpu as ig
+    import speaker_sim as ss
+    eng = ig.RealEngine(0, lambda *a, **k: None)
+    eng.scorer_holder = ss.ScorerHolder(factory, max_attempts=2, cooldown=(0, 0), label="测试评分器")
+    return eng
+
+
+def test_unit_screenshot_regression_no_nonetype_embed():
+    """截图原错误:AttributeError: 'NoneType' object has no attribute 'embed'。评分器加载失败后 spk_cmp / spk_qc 必须返回带原因的 failed,而不是崩溃。"""
+    def boom():
+        raise RuntimeError("模拟:WavLMForXVector 权重与 torch 版本不兼容")
+    eng = _engine_with_holder(boom)
+    for _ in range(4):                                                         # 多次调用(含用尽重试之后)都不能出现 NoneType
+        r1 = eng.spk_cmp("/tmp/none_gen.wav", ["/tmp/none_ref.wav"])
+        r2 = eng.spk_qc("/tmp/none_ref.wav")
+        for r in (r1, r2):
+            assert r["status"] == "failed" and "权重与 torch 版本不兼容" in r["reason"] and "NoneType" not in json.dumps(r, ensure_ascii=False), r
+    assert r1["kind"] == "generated_vs_holdout" and r2["kind"] == "reference_qc" and r1["scores"] == [None]    # 两种比较不混用
+    assert eng.scorer_info()["exhausted"] is True
+    # score():不可用 → None + 明确状态,不伪造分数
+    import numpy as np
+    assert eng.score(np.zeros(48000, np.int16)) is None and eng.last_score["status"] == "failed" and eng.last_score["reason"]
+
+
+def test_unit_ref_file_problem_keeps_loaded_model():
+    """旧 bug:参考音频读不出来 → 已加载好的模型被永久丢弃。现在模型保留,仅该参考被标记 skipped/failed。"""
+    class Fake:
+        ref = None
+
+        def set_ref(self, *a):
+            raise AssertionError("不应走到这里")
+    eng = _engine_with_holder(lambda: Fake())
+    ok = eng._prep_scorer("/nonexistent/ref.wav")
+    assert ok is False and eng.scorer_holder.state == "ready", "模型必须保留"
+    assert eng.last_score["status"] == "skipped" and "不存在" in eng.last_score["reason"]
+
+
+def test_unit_mock_engine_does_not_fake_scores():
+    import infer_dual_gpu as ig
+    m = ig.MockEngine(0, lambda *a, **k: None)
+    r = m.spk_cmp("a", ["b", "c"])
+    assert r["status"] == "not_evaluated" and r["scores"] == [None, None] and r["mock"] is True and "测试" in r["reason"]
+    assert m.spk_qc("a")["status"] == "not_evaluated"
+
+
+# ═════════════════════ 免 Key 搜索 ═════════════════════
+BING_HTML = """<html><body><div id="b_content"><ol id="b_results">
+<li class="b_algo"><h2><a href="https://example.org/a">示例 <strong>结果</strong> A</a></h2><div class="b_caption"><p class="b_lineclamp2">这是 A 的摘要 &amp; 说明</p></div></li>
+<li class="b_algo"><h2><a href="https://www.bing.com/ck/a?!&&p=x&u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS9i&ntb=1">示例结果 B</a></h2><div class="b_caption"><p>B 的摘要</p></div></li>
+<li class="b_algo"><h2><a href="http://127.0.0.1/evil">内网链接必须被丢弃</a></h2><p>x</p></li>
+</ol></div></body></html>"""
+DDG_HTML = """<html><body><div class="results"><div class="result results_links"><h2 class="result__title"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.net%2Fz&amp;rut=1">DDG 结果 Z</a></h2>
+<a class="result__snippet" href="x">Z 的摘要</a></div></div></body></html>"""
+WIKI_JSON = json.dumps({"query": {"search": [{"title": "测试条目", "snippet": "片段 <span>高亮</span>"}]}})
+
+
+class FakeSite(http.server.BaseHTTPRequestHandler):
+    modes = {"bing": "ok", "ddg": "ok", "wiki": "ok"}
+    hits = {"bing": 0, "ddg": 0, "wiki": 0}
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        key = "bing" if self.path.startswith("/search") else "ddg" if self.path.startswith("/html") else "wiki"
+        FakeSite.hits[key] += 1
+        mode = FakeSite.modes[key]
+        body, code, ct = b"", 200, "text/html; charset=utf-8"
+        if mode == "ok":
+            body = {"bing": BING_HTML, "ddg": DDG_HTML, "wiki": WIKI_JSON}[key].encode()
+            ct = "application/json" if key == "wiki" else ct
+        elif mode == "503":
+            code, body = 503, b"<html>Service Unavailable</html>"
+        elif mode == "429":
+            code, body = 429, b"slow down"
+        elif mode == "challenge":
+            body = b"<html><body>Our systems have detected unusual traffic. captcha</body></html>"
+        elif mode == "empty":
+            body = "<html><body><div id='b_content'><ol id='b_results'><li class=\"b_no\">没有找到与 x 相关的结果</li></ol></div></body></html>".encode()
+        elif mode == "changed":
+            body = b"<html><body><div id='b_results'><div class='new_layout'>x</div></div></body></html>"
+        self.send_response(code)
+        self.send_header("Content-Type", ct)
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def _fake_site():
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeSite)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, "http://127.0.0.1:%d" % srv.server_address[1]
+
+
+def test_unit_search_parsers_real_format_and_filtering():
+    import search_providers as sp
+    raw = sp.parse_bing(BING_HTML)
+    assert [r["title"] for r in raw][:2] == ["示例 结果 A", "示例结果 B"], raw
+    assert raw[0]["snippet"] == "这是 A 的摘要 & 说明" and raw[1]["url"] == "https://example.com/b"           # Bing 跳转链接被解包
+    res = sp._clean(raw, "http:bing", 0, 8)
+    assert len(res) == 2 and all(r["url"].startswith("https://") and r["domain"] and r["provider"] == "http:bing" and r["fetched_at"] for r in res)   # 内网链接被丢弃
+    d = sp.parse_ddg(DDG_HTML)
+    assert d and d[0]["url"] == "https://example.net/z" and d[0]["snippet"] == "Z 的摘要", d
+
+
+def test_unit_search_chain_fallback_errors_and_no_retry_policy():
+    import search_providers as sp
+    srv, base = _fake_site()
+    old = dict(sp.BASES)
+    sp.BASES.update(bing=base, duckduckgo=base, wikipedia=base)
+    try:
+        FakeSite.modes.update(bing="ok", ddg="ok", wiki="ok")
+        res, pid, att = asyncio.run(sp.search_http_chain("测试", 8))
+        assert pid == "http:bing" and len(res) == 2 and att[0]["ok"]
+        # Bing 持续 5xx:可重试 → 重试 1 次后失败 → 自动切到 DuckDuckGo;失败原因与实际 provider 都可见
+        FakeSite.modes.update(bing="503")
+        FakeSite.hits.update(bing=0, ddg=0, wiki=0)
+        res, pid, att = asyncio.run(sp.search_http_chain("测试", 8))
+        assert pid == "http:duckduckgo" and FakeSite.hits["bing"] == 2, FakeSite.hits
+        assert att[0]["provider"] == "bing" and att[0]["kind"] == "server_error" and att[0]["tries"] == 2 and att[-1]["ok"]
+        # 429 / 验证码页:不可重试(只请求 1 次),且不绕过
+        for mode, kind in (("429", "rate_limited"), ("challenge", "challenge"), ("empty", "empty"), ("changed", "parse")):
+            FakeSite.modes.update(bing=mode, ddg="ok")
+            FakeSite.hits.update(bing=0)
+            res, pid, att = asyncio.run(sp.search_http_chain("测试", 8))
+            assert att[0]["kind"] == kind and FakeSite.hits["bing"] == 1 and pid == "http:duckduckgo", (mode, att[0], FakeSite.hits)
+        # 全部失败 → SearchFailed,携带每次尝试;维基百科最后兜底
+        FakeSite.modes.update(bing="503", ddg="challenge", wiki="ok")
+        res, pid, att = asyncio.run(sp.search_http_chain("日期", 8))
+        assert pid == "http:wikipedia" and res[0]["url"].endswith("/wiki/%E6%B5%8B%E8%AF%95%E6%9D%A1%E7%9B%AE") and res[0]["snippet"] == "片段 高亮"
+        FakeSite.modes.update(wiki="503")
+        try:
+            asyncio.run(sp.search_http_chain("日期", 8))
+            raise AssertionError("应当失败")
+        except sp.SearchFailed as e:
+            kinds = [a["kind"] for a in e.attempts]
+            assert kinds[:2] == ["server_error", "challenge"] and "wikipedia" in e.attempts[-1]["provider"] and "遇到验证码" in str(e)
+    finally:
+        sp.BASES.update(old)
+        srv.shutdown()
+
+
+def test_unit_search_network_down_is_reported_as_network():
+    import search_providers as sp
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()                                                                  # 关闭的端口 = 断网的替身
+    old = dict(sp.BASES)
+    dead = "http://127.0.0.1:%d" % port
+    sp.BASES.update(bing=dead, duckduckgo=dead, wikipedia=dead)
+    try:
+        try:
+            asyncio.run(sp.search_http_chain("x", 8))
+            raise AssertionError("应当失败")
+        except sp.SearchFailed as e:
+            assert all(a["kind"] == "network" for a in e.attempts) and len(e.attempts) == 3 and "网络不可用" in str(e)
+    finally:
+        sp.BASES.update(old)
+
+
+def test_unit_browser_provider_requires_real_chromium_binary():
+    import search_providers as sp
+    import tempfile
+    old = os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), os.environ.get("HOME")
+    d = tempfile.mkdtemp()
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"], os.environ["HOME"] = d, d
+    try:
+        assert sp.chromium_installed() is False                                 # 空目录:即使 import playwright 成功也不能说“可搜索”
+        os.makedirs(os.path.join(d, "chromium-1234"))
+        assert sp.chromium_installed() is True
+    finally:
+        for k, v in zip(("PLAYWRIGHT_BROWSERS_PATH", "HOME"), old):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_unit_auto_pick_needs_no_key():
+    import search_providers as sp
+    for k in ("BRAVE_SEARCH_API_KEY", "GOOGLE_CSE_KEY", "GOOGLE_CSE_CX"):
+        os.environ.pop(k, None)
+    assert sp.auto_pick() == "http"
+    t = {x["id"]: x for x in sp.table()}
+    assert t["bing"]["available"] and t["duckduckgo"]["available"] and t["wikipedia"]["available"] and not t["brave"]["available"]
+
+
+# ═════════════════════ 语音指令 ═════════════════════
+def test_unit_voice_planner_controls_and_loose_search():
+    import browser_agent as ba
+    for t, k in (("暂停。", "pause"), ("继续", "resume"), ("取消任务", "cancel"), ("停止", "cancel")):
+        assert ba.plan_rules(t).get("control") == k, t
+    p = ba.plan_rules("搜索 今天的天气。")
+    assert p["actions"][0]["action"] == "search" and p["actions"][0]["query"] == "今天的天气" and p["actions"][0]["engine"] == "bing", p
+    assert [a["action"] for a in ba.plan_rules("打开第一个结果")["actions"]] == ["open_result"] and ba.plan_rules("打开第一个结果")["actions"][0]["n"] == 1
+    assert ba.plan_rules("往下滚动")["actions"][0]["direction"] == "down" and ba.plan_rules("返回")["actions"][0]["action"] == "back" and ba.plan_rules("刷新页面")["actions"][0]["action"] == "reload"
+    p = ba.plan_rules("日期", loose=True)                                       # 语音里直接说关键词 = 搜索
+    assert p["actions"][0]["query"] == "日期" and p.get("assumed_search")
+    assert not ba.plan_rules("日期")["actions"]                                  # 非语音(严格)模式仍然要求明确
+    assert not ba.plan_rules("发送这条消息给老板", loose=True)["actions"]         # 含高影响词不会被当成普通搜索自动执行
+
+
+def test_unit_agent_cursor_and_typing_events_follow_real_calls():
+    """鼠标/键盘事件必须与真实的 Playwright 调用一一对应(这里用记录型替身页面验证事件序列;真实 Chromium 画面验证见 test_portal 的浏览器测试,缺 Chromium 时标「未验证」)。"""
+    import browser_agent as ba
+
+    class Mouse:
+        def __init__(self):
+            self.moves = []
+
+        async def move(self, x, y, steps=1):
+            self.moves.append((round(x), round(y)))
+
+    class Kb:
+        def __init__(self):
+            self.typed = []
+
+        async def type(self, ch):
+            self.typed.append(ch)
+
+    class Pg:
+        mouse, keyboard = Mouse(), Kb()
+
+        async def evaluate(self, *a):
+            return {"tag": "input", "type": "search", "name": "q", "ce": False}
+
+    async def go():
+        s = ba.BSession(None, "t")
+        s.page = Pg()
+        sub = ba.Sub()
+        s.subs.add(sub)
+        await s._mouse_to(500, 300, "click")
+        await s._type("天气 ok", "bing.com") if False else None
+        return s, sub
+    s, sub = asyncio.run(go())
+    ev = [m for m in sub.q if m["type"] == "cursor"]
+    assert len(s.page.mouse.moves) == len(ev) >= 6, (len(s.page.mouse.moves), len(ev))                 # 每个事件 = 一次真实 mouse.move
+    assert (ev[-1]["x"], ev[-1]["y"]) == s.page.mouse.moves[-1] == (500, 300) and ev[-1]["kind"] == "click" and all(e["kind"] == "move" for e in ev[:-1])
+    assert all(ev[i]["t"] <= ev[i + 1]["t"] for i in range(len(ev) - 1))                                  # 时间戳来自真实执行,单调递增
+
+    async def typ():
+        s = ba.BSession(None, "t2")
+        s.page = Pg()
+        sub = ba.Sub()
+        s.subs.add(sub)
+        await s._type("天气 ok", "bing.com")
+        return s, sub
+    try:
+        s2, sub2 = asyncio.run(typ())
+    except Exception:  # noqa: BLE001
+        s2 = None
+    if s2 is not None:
+        ty = [m for m in sub2.q if m["type"] == "typing"]
+        assert Pg.keyboard.typed == list("天气 ok") and [m["ch"] for m in ty] == list("天气 ok") and ty[-1]["done"] and ty[-1]["text"] == "天气 ok"      # 每个字符 = 一次真实 keyboard.type
+
+
+# ═════════════════════ Mock 引擎服务集成:/api/search 的错误必须是可读 JSON ═════════════════════
+def _http(srv, method, path, body=None):
+    import urllib.error
+    import urllib.request
+    data = json.dumps(body).encode() if isinstance(body, dict) else body
+    req = urllib.request.Request(srv.url(path), data=data, method=method, headers={"Content-Type": "application/json"} if isinstance(body, dict) else {})
+    try:
+        r = urllib.request.urlopen(req, timeout=90)
+        raw, code, hd = r.read(), r.status, r.headers
+    except urllib.error.HTTPError as e:
+        raw, code, hd = e.read(), e.code, e.headers
+    try:
+        return code, json.loads(raw), hd
+    except ValueError:
+        return code, raw.decode("utf-8", "replace"), hd
+
+
+def test_server_search_without_keys_and_json_errors():
+    import test_gateway as tg
+    srv_fake, base = _fake_site()
+    FakeSite.modes.update(bing="ok", ddg="ok", wiki="ok")
+    env = dict(VC_TEST_BING_BASE=base, VC_TEST_DDG_BASE=base, VC_TEST_WIKI_BASE=base, BRAVE_SEARCH_API_KEY="", GOOGLE_CSE_KEY="", GOOGLE_CSE_CX="", PLAYWRIGHT_BROWSERS_PATH="/nonexistent_pw", DEEPSEEK_API_KEY="")
+    srv = tg.Server(**env)
+    try:
+        code, j, hd = _http(srv, "POST", "/api/search", {"q": "日期", "answer": False})                        # 没有任何 Key,直接搜索
+        assert code == 200 and j["ok"] and j["mode"]["provider"] == "http:bing" and len(j["results"]) == 2 and j["request_id"] and hd.get("X-Request-Id") == j["request_id"], (code, j)
+        assert j["results"][0]["domain"] == "example.org" and j["attempts"][0]["ok"]
+        code, st, _ = _http(srv, "GET", "/api/portal/status")
+        assert st["search"]["auto"] == "http" and {x["id"]: x["available"] for x in st["search"]["providers"]}["bing"]
+        # 提供方 5xx → 自动回退,用户看到实际 provider
+        FakeSite.modes.update(bing="503")
+        code, j, _ = _http(srv, "POST", "/api/search", {"q": "日期", "answer": False})
+        assert code == 200 and j["mode"]["provider"] == "http:duckduckgo" and j["attempts"][0]["kind"] == "server_error"
+        # 全部失败(浏览器二进制缺失):502 + JSON + 每次尝试 + 明确说明 —— 不是裸 503/空白
+        FakeSite.modes.update(bing="503", ddg="challenge", wiki="503")
+        code, j, hd = _http(srv, "POST", "/api/search", {"q": "日期", "answer": False})
+        assert code == 502 and isinstance(j, dict) and j["ok"] is False and j["error"] and j["request_id"] and not j["results"], (code, j)
+        provs = [a["provider"] for a in j["attempts"]]
+        assert provs[:3] == ["bing", "duckduckgo", "wikipedia"] and provs[-1] == "browser" and j["attempts"][-1]["kind"] == "config" and ("Chromium" in j["error"] or "playwright" in j["error"]), j
+        # 路由不存在/方法错误:也是 JSON(带 error 字段),前端永远拿到可读信息
+        code, j, _ = _http(srv, "GET", "/api/search")
+        assert code == 405 and isinstance(j, dict) and j.get("error"), (code, j)
+        code, j, _ = _http(srv, "POST", "/api/search", {"q": ""})
+        assert code == 400 and j["error"], (code, j)
+    finally:
+        srv.stop()
+        srv_fake.shutdown()
+
+
+if __name__ == "__main__":
+    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    if "--unit" in sys.argv:
+        tests = [(k, v) for k, v in tests if k.startswith("test_unit_")]
+    bad = 0
+    for name, fn in tests:
+        t0 = time.time()
+        try:
+            fn()
+            print("  ✓ %s (%.1fs)" % (name, time.time() - t0), flush=True)
+        except Exception:  # noqa: BLE001
+            import traceback
+            bad += 1
+            print("  ✗ %s" % name)
+            traceback.print_exc()
+    for s in SKIPPED:
+        print("  ⚠ 未验证:" + s)
+    print("%d 项通过, %d 项失败, %d 项未验证" % (len(tests) - bad, bad, len(SKIPPED)))
+    sys.exit(1 if bad else 0)
+'''
+
 
 def banner(t):
     print("\n" + "═" * 70 + "\n  " + t + "\n" + "═" * 70, flush=True)
