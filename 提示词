@@ -1,1 +1,128 @@
+# 开发任务提示词：星河搜索助手隔离浏览器精准强化与加速优化（基于 bizuming1-ui/111 参考代码 v11，无损增强）
 
+## 1. 项目背景与强制约束
+你是一名顶级专业软件工程师 + 系统架构师，精通 Playwright、Chromium CDP、远程浏览器隔离（RBI）、实时流媒体、Web 性能优化、沙箱安全与 Kaggle/云 notebook 环境。
+
+**参考代码唯一权威来源**：https://github.com/bizuming1-ui/111 （主文件“参考代码”，约 1.15MB 的完整 Kaggle 一体化 Python 脚本，v11）。必须先完整下载、解析、理解整个脚本结构（尤其是 FILES['browser_agent.py']、search_policy 相关、portal、intent、netguard、截图 WebSocket /ws/browser、动作白名单、_snapshot_state、mouse.click 验证、BROWSER_PROFILE/LITE、画质档位、视觉定位确认流程、测试 tests/test_v11_browser.py 与 test_v11_ui.py）。所有改动必须是**最小必要增量**，严格遵循“在 v11 之上最小必要改动；不重写、不破坏 TTS / 训练 / 语音库 / 搜索 / 持久化 / 鉴权 / 音频协议 / 现有单元测试与集成测试”。
+
+**绝对红线（破坏即失败）**：
+- 不得删除、重写或降低现有任何已成功功能（TTS 流式、背压、artifacts 完整性校验、LoRA 训练监控、语音库隔离、DeepSeek 意图/视觉、搜索多引擎回退 + 缓存 + 熔断、访问密码 + sid 隔离、GitHub 脱敏同步、netguard SSRF、动作白名单与高影响确认、验证码暂停交人、敏感字段拦截等）。
+- 不得引入 stealth/指纹伪装/代理轮换/验证码绕过/偷 Cookie/任意 JS 执行/shell/内网访问。
+- 不得占用 T4 GPU 给浏览器（浏览器必须纯 CPU）。
+- 所有新功能必须有对应真实 Chromium 测试 + 诚实声明（Kaggle 实测 vs 沙箱）。
+- 保持深灰设计系统、全视口工作台、侧栏折叠、状态实测显示。
+- Kaggle 环境约束：Internet On、GPU T4 x2 仅 TTS、磁盘/working 有限、无 root 任意、启动自动安装 Playwright+Chromium。
+
+**用户核心真实需求（必须 100% 达成）**：
+- 无论隔离浏览器内显示任何内容，或用户点击/交互任何浏览器内元素/区域，都必须**精准执行**真实 Chromium 原生事件（与真实桌面浏览器无差异）。
+- 确保每一次点击/交互**都必须有现实浏览应用的变化**，并有明确可观察反馈（页面状态、日志、视觉确认）；无变化时智能处理（不盲点、暂停+解释+可选重试/人工）。
+- 可**自动索取**浏览器或搜索引擎的资源（智能预取、缓存、连接复用、关键资源优先）。
+- 隔离浏览器的使用体验与真实浏览器**没有任何不同**（鼠标键盘完整、拖拽、右键、滚轮、多标签、下载/上传受控、渲染真实、网络行为真实、焦点/事件冒泡完整、全屏/缩放/1:1 无坐标偏移）。
+- **再优化加速器**，显著提升隔离浏览器速度（页面加载、交互响应、画面流畅度、搜索到结果、截图流 fps），无论用什么合规方法必须成功。
+- 最终系统可直接在 Kaggle Notebook 一键运行（粘贴脚本 → Shift+Enter），通过 ngrok 暴露，支持语音/文字控制浏览器。
+
+## 2. 当前参考代码关键机制精确摘要（必须保留并增强）
+- 隔离：playwright.chromium.launch + 每 sid 独立 BrowserContext（Cookie/存储隔离，超时/注销销毁）。
+- 画面：/ws/browser 实时流，先 JSON 元数据（frame_id/ts/URL/title/CSS viewport/像素/DPR/状态）+ JPEG（page.screenshot），最新帧优先、慢客户端跳过、TTS 降 fps、断线重连补帧。画质：compat 1280×800 / hd 1600×1000 默认 / uhd 1920×1200 (DPR 1.5)。四种尺寸严格分离，坐标 = 归一化比例 → 当前 CSS 视口换算（无 DPR 乘除，已实测无偏移）。
+- 点击：语义 Locator (text/role/label/ARIA) 优先 + scroll_into_view + bounding_box 中心 + page.mouse.move/click；视觉定位（授权后 DeepSeek 返回归一化坐标+置信度+frame_id，严格校验后执行）。点击前 _snapshot_state（url + title + sig=body.innerText.length:scrollY），后 _settle + 再 snapshot，changed = url 或 sig 变；无变 log + 暂停。
+- 其他动作：goto/type（真实逐键）/key/scroll/open_result/back/forward/reload，全部白名单 + 风险分级确认 + 后置验证 + blockers 检查（验证码等暂停交人）。
+- 加速：search_policy（keep-alive 池、TTL 缓存、single-flight、限流、退避、熔断）、BROWSER_LITE（跳图片/字体）、服务器直连搜索优先、自适应截图降质/降帧。
+- 安全：netguard 全请求检查、无任意代码执行、敏感拦截、高影响确认。
+- UI：全视口工作台 + 可折叠侧栏（语音/文字/日志/状态）+ 工具栏（画质/缩放/全屏）+ 深灰设计。
+
+## 3. 必须实现的精准功能增强（优先级排序，增量实现）
+### P0：点击精准执行 + 强制真实变化反馈（核心，必须 100%）
+- 扩展客户端画面支持完整 pointer 事件：左/右/中键、down/move/up 序列、dblclick、wheel（delta）、modifiers（Ctrl/Shift/Alt/Meta）、拖拽手势识别。
+- 服务端暴露完整 mouse API（page.mouse.move/down/up/click/dblclick/wheel）+ keyboard，坐标始终归一化 → CSS 视口。支持 locator 或纯坐标 click_at。
+- **增强 _snapshot_state 与验证**：
+  - 多维度 sig：现有 length:scrollY + outerHTML.length 或关键区域（main/content）textContent hash 短摘要 + 可见元素数 + activeElement 信息 + 模态/dialog 数量 + scrollX + 简单 classList checksum。
+  - 可选轻量 MutationObserver（点击前注入，收集 childList/attributes/characterData 计数，后读结果并清理）。
+  - 可选视觉 diff（授权时，点击前后 CSS 小图 perceptual hash 或 pixel 变化比例，阈值可配）。
+  - 分层：快速 sig → 无变则深 DOM/视觉 → 仍无变则“软暂停 + 详细原因 + 用户选择（继续/重试/人工接管/忽略此类型）”。对已知纯 UI toggle 可配置白名单放宽。
+  - 变化反馈：日志 + 状态条 + 客户端高亮显示变化类型（导航/DOM 内容/视觉/焦点/滚动/无变化）。
+- 点击后必须核对页面真实变化，绝不盲点；输入框额外验证 focus。
+- 测试：扩展 test_v11_browser.py 覆盖 SPA、模态、canvas 简易、动态列表、iframe（安全范围内）、拖拽目标等真实页面。
+
+### P1：完整真实浏览器交互能力（使体验无差异）
+- Drag-and-drop：locator.dragTo 或 manual mouse down-move-up；支持文件 drop（set_input_files 或 DataTransfer 模拟，白名单路径）。
+- 右键/中键/contextmenu 模拟；基本菜单处理或暂停交用户。
+- 多 page/tab 管理：context.pages 列表、受控 new_page/close/switch，UI 显示 tab bar（简化），状态同步。
+- 下载：page.on('download') 监听 + 安全保存到 artifacts（用户可下载），禁止自动危险执行。
+- 上传/file_chooser/dialog/popup：白名单确认后处理。
+- 滚轮精确、hover 持久、焦点管理、事件完整冒泡（Playwright 原生）。
+- iframe 穿透定位（同 origin 优先）。
+- 保持所有现有安全检查。
+
+### P2：自动索取资源 + 加速器大幅优化（必须显著更快）
+- 扩展 search_policy.py：DNS 预解析、preconnect/prefetch 关键引擎、更智能分层 cache（按查询类型/引擎/ETag）、并行安全多源、HTTP/2 最大化、资源 hint。
+- 页面资源：route 智能拦截（非关键分析/广告/跟踪可配跳过，关键图/字体保留选项）；lazy 优先；预取搜索结果页常见资源。
+- 截图流加速：增量/区域截图（CDP 或 dirty rect）、WebP/高质量压缩可选、客户端 delta 预测、基于 RTT/CPU/ cap_ema 的动态 fps（交互 8-15fps 目标，静态低）、shot_scale 更智能。
+- Chromium launch args 优化包（可配）：--disable-dev-shm-usage --disable-gpu --disable-software-rasterizer --mute-audio --disable-background-networking --disable-extensions --no-sandbox --disable-setuid-sandbox --hide-scrollbars --disable-renderer-backgrounding 等（实测减内存/启动/CPU，记录对比）。
+- Browser/Context 池与复用（semaphore 限并发，适配 Kaggle 内存）；预热常用引擎页。
+- 启动时扩展网络体检 + 加速指标面板（加载时间、cache hit、fps、带宽、截图耗时）。
+- BROWSER_LITE 分级：off / smart（关键保留）/ aggressive。
+- 目标可量化：搜索到首结果 < 现有 50%、交互到画面反馈延迟显著降、超清档可用帧率提升、整体 CPU/内存不爆。
+
+### P3：一致性与高级（可选但推荐）
+- 可选用户偏好指纹（UA/locale/timezone/viewport 匹配，但不伪装绕过）。
+- 基本触摸模拟（移动档位）。
+- 会话配置持久（localStorage 偏好 + 可选服务端，安全销毁默认）。
+- 错误恢复：自动重试低风险动作、智能 settle、断线后状态恢复。
+- UI 增强：更完整工具栏（tab、下载列表、加速开关、变化高亮）、手势支持、全屏无缝。
+
+## 4. 多种实现方案对比与择优（AI 必须自动执行）
+你必须自动下载、安装、对比至少 3-5 种方案/沙盒/模拟器，在隔离环境（Docker 或本地 venv + 真实 Chromium）中跑基准测试（页面加载时间、点击到变化延迟、截图 fps、内存/CPU、交互完整性、与真实 Chrome 行为 diff），择优集成或混合，记录对比报告到日志/artifacts。
+
+**推荐对比资源（必须 clone/研究并测试适用部分）**：
+- 核心保留增强：当前 Playwright 直接 launch（https://playwright.dev）。
+- 远程隔离/流： 
+  - verge-browser（https://github.com/zzzgydi/verge-browser）：Self-hosted Chromium + CDP/Playwright + noVNC/Xpra + 持久 + human takeover。适合对比流与接管。
+  - BrowserBox（https://github.com/browserbox/browserbox）：成熟 RBI，60FPS 流、安全策略。
+  - fresh-session-remote-browser（https://github.com/Ryan-PG/fresh-session-remote-browser）：compositor 帧（非纯截图）、真实输入、每会话销毁。
+  - OrbitBrowser（https://github.com/vastsa/OrbitBrowser）：本地优先控制平面、profiles、proxies、artifacts、MCP。
+  - VirtualBrowser（https://github.com/Virtual-Browser/VirtualBrowser）：指纹隔离多环境（学习隔离，但不引入绕过）。
+  - browser-bridge / openbrowser / chrome-driverless / BrowserPane 等（搜索最新 GitHub）。
+- 性能/池：Playwright 官方性能实践、Chromium flags 列表、Browser pool 模式。
+- 其他：CDP 直接（Page.captureScreenshot、Input.dispatch*）、httpx/aiohttp 高级连接池、WebP 库。
+- 沙盒：Docker 内跑 Chromium（对比 Kaggle 限制）、可选 microVM 如果环境允许。
+- 测试基准页：真实 Google/Bing/复杂 SPA（React/Vue）、canvas 示例、拖拽 demo、模态表单、懒加载列表。
+
+**择优标准**：在 Kaggle 兼容性（CPU、无额外 GPU、自动安装、磁盘）、速度提升、交互完整性、安全不降、与现有代码最小侵入、稳定性 下综合最高分。优先“增强现有 Playwright + 选择性吸收远程流/池优点”，而非整体替换。最终方案必须可一键在 Kaggle 运行，并提供切换开关。
+
+## 5. 实现方法与架构指导（详细步骤）
+1. **研究阶段**：完整解析参考代码，提取 browser_agent、截图循环、动作执行、验证、UI HTML/JS、测试。画出当前数据流（客户端 pointer → WS/API → 归一化 → mouse → snapshot 验证 → 流反馈）。
+2. **设计**：增量模块（e.g. enhanced_input.py、snapshot_enhanced.py、accelerator_v2.py、multi_page.py）。保持 FILES 嵌入风格或模块化。
+3. **交互层**：扩展 /ws/browser 或新 /ws/input 支持完整事件；客户端 canvas/img 上绑定 pointerdown/move/up/wheel/contextmenu，计算归一化，发送；服务端校验 + 执行 + 验证 + 回传 cursor/变化。
+4. **验证增强**：重构 _snapshot_state 为可扩展多 sig + observer + optional vision_diff；统一 post_action_verify 钩子。
+5. **加速**：重构/扩展 search_policy 与 browser launch/context 创建；截图循环加入增量逻辑与动态参数；加指标收集。
+6. **多 tab/文件**：安全封装 context.pages 与 download/upload 事件。
+7. **UI**：扩展工作台（tab 条、下载面板、加速开关、变化指示器、手势提示），保持响应式全视口 + 侧栏。
+8. **测试与自检**：扩展现有 tests；新增真实页面 e2e（点击任意 → 变化确认、拖拽、右键、多 tab、加速前后对比）；RUN_TESTS 支持；启动时加速体检。
+9. **文档与诚实**：更新脚本头注释（v12 变更列表）、验收清单、已知限制（Kaggle IP 验证码、资源上限、无 100% 零延迟承诺）、对比报告。
+10. **安装与运行**：保持 INSTALL_BROWSER、Secrets 读取、ngrok、一键粘贴运行。提供 MODE 或配置开关启用新增强。
+11. **安全与性能监控**：所有新路径走白名单/confirm/netguard；实时显示 fps/延迟/内存；过载降级。
+
+**技术词汇与最佳实践**：使用 Playwright Locator 优先于纯坐标；CDP session 辅助高级输入/截图；asyncio 信号量控并发；指数退避；frame_id 时效校验；perceptual hash（imagehash 或自实现）；WebSocket 背压；Kaggle 兼容 nest_asyncio 如果需要。
+
+## 6. 验收标准（必须全部通过才算成功）
+- 功能：任意点击（坐标/语义/视觉）精准执行真实事件 + 强制变化验证反馈；拖拽/右键/滚轮/多 tab/受控下载上传可用；资源自动索取高效；体验与真实 Chrome 无感差异（侧测对比）。
+- 加速：量化提升（日志报告前后对比：加载时间、fps、延迟、cache hit）；超清可用；不增加 GPU 占用。
+- 无损：所有原有 TTS/搜索/语音/鉴权/测试 100% 通过；新测试全绿。
+- 安全：无红线违规；验证码仍暂停；敏感拦截。
+- 运行：Kaggle 一键成功；UI 全视口流畅；状态实测准确；坐标无偏移（多 DPR/缩放/全屏实测）。
+- 文档：完整变更、对比报告、使用说明、诚实限制。
+- 多方案：有自动对比日志 + 择优理由。
+
+## 7. 输出要求
+- 产出完整可运行的增强脚本（或模块化文件 + 主脚本），可直接替换/追加到参考代码风格。
+- 详细变更日志（v12）。
+- 测试报告 + 加速对比数据。
+- 如果引入外部项目，注明 URL 与集成方式（优先 vendoring 或自动 pip/git clone 在启动时）。
+- 最终给用户：一键复制的完整提示词已执行后的系统，确保“无论点击什么都精准 + 有变化 + 加速 + 真实无异”。
+
+## 8. 自我提问与迭代（开发中强制）
+开发过程中持续自问：这个改动是否最小必要？是否破坏现有？坐标/验证在边缘 case 是否精准？加速是否真实可测？Kaggle 是否能跑？安全是否保持？与真实浏览器 diff 是什么？直到 100% 信心。
+
+现在立即开始：1. 下载并深度分析 https://github.com/bizuming1-ui/111 参考代码；2. 调研并 clone 上述开源项目进行本地对比测试；3. 设计增量方案；4. 实现 P0→P1→P2；5. 全量测试与优化；6. 产出最终完美系统。
+
+确保成功！目标是用户复制此提示词后，AI 能产出完美可用的增强版。
