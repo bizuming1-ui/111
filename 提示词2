@@ -1,0 +1,448 @@
+# 【总任务提示词】Kaggle 双 T4 · 克隆语音「高相似 · 零损坏 · 零沙沙 · 零爆音 · 零停顿 · 首声快」极致优化（在 v14 基础上做可回退的增量）
+
+> 本文件可直接作为 AI 工程师（Claude Code / Cursor / Codex / Gemini CLI 等）的完整开发任务书，整段复制即可使用。
+> 文中所有「实测」数字均来自我对仓库 `bizuming1-ui/111` 中 6 段克隆 WAV、2 个 ZIP（24 段分句 + manifest）、`参考语音1.webm`、`参考代码`（约 25,000 行单文件 Kaggle 脚本，自称 v14）的真实下载与离线声学分析；未实测的内容一律标注「待实测」，**不得当作结论**。
+
+---
+
+## 0. 角色、工作方式与最高规则
+
+**你的角色**：语音合成 / 音频 DSP / Web Audio / GPU 推理优化方向的首席工程师。
+
+**工作方式（强制）**：
+1. 先在 Kaggle（2×Tesla T4，16GB×2）里**自动搭建沙盒**，把现有 v14 当作「对照组」原样跑通，**先复现基线数据，再动手改**。
+2. 每一个优化点都是**独立开关（feature flag）**，默认关闭；通过「非劣效闸门」后才允许默认开启；任何一项失败可一键回退到 v14 行为。
+3. 所有结论必须来自**自己跑出来的数据**（JSON 报告 + 图），不得凭印象、不得宣称「已达标」而没有数据。
+4. 多方案并行：用「方案 A~G」（见第 6 节）在沙盒中**同一批测试语料、同一批参考语音、同一套指标**对比，**择优**；择优规则见 6.3。
+5. 遇到不确定的信息：**先查官方仓库 / 论文 / Issue，再实验验证，不要猜**。
+
+**最高规则（不可违反）**：
+- R1 **不破坏、不降级**已成功的功能（见第 2.3 节「冻结清单」）。任何改动都必须通过「回归金标准」（第 7.4 节）。
+- R2 **零停顿优先于一切**：宁可首声晚 300ms，也不允许出现「播放—停顿—播放」。（用桥接音库、滚动视界起播、双卡流水线来兼顾首声速度。）
+- R3 **不得用「降低音质」换取速度或相似度**；不得用压缩/变速/重复音频/插入假音掩盖欠载。
+- R4 **诚实**：无法在沙盒里验证的（例如人耳主观听感），要明确标注「需人工 ABX 验收」，并提供验收页面。
+- R5 **合规**：声音只限本人或已获明确授权；保留「AI 合成」标记、脱敏 manifest、SHA-256；不绕过任何网站限制。
+
+---
+
+## 1. 目标与量化验收指标（全部以数据说话）
+
+### 1.1 用户的真实诉求（逐条翻译为可测指标）
+
+| 用户诉求 | 可测指标 | 验收线（初稿，沙盒里按基线数据校准后写死） |
+|---|---|---|
+| 克隆语音要和参考语音「十分相似」，无论给什么参考语音 | **SECS（说话人嵌入余弦）**：用 3 个独立说话人模型（WavLM‑base‑plus‑sv、ECAPA‑TDNN / ECAPA2、ERes2NetV2 或 CAM++）各算一次，取**最小值**作为「保守分」 | 保守分 ≥ 「参考语音自身不同切片之间 SECS 的第 10 百分位（P10）」；且相对 v14 基线**显著提升**（配对检验 p<0.05） |
+| 音色、音质不能损坏 | UTMOS、DNSMOS(OVRL/SIG/BAK)、NISQA、torchaudio‑SQUIM(STOI/PESQ/SI‑SDR 估计)；频谱距离（LTAS 偏差、MCD） | 所有无参考 MOS 指标 **不低于基线**，且 UTMOS ≥ 参考语音自身 UTMOS − 0.2 |
+| 不能有沙沙声 | **Hiss 指数**（见 4.4：静音帧相对语音 RMS 的底噪、6–12kHz 能量波动、谱平坦度）+ DNSMOS‑BAK | 静音帧底噪 ≤ 语音 RMS −34dB；6–12kHz 带能量在不同句之间的标准差 ≤ 2dB |
+| 不能有爆音/咔哒 | **接缝检测**（见 4.3）：chunk 接缝阶跃/二阶差分/高频突发；削波；真峰值 | 10 分钟连续语音中接缝瑕疵 = 0；削波样本 = 0；真峰值 ≤ −2 dBTP |
+| 一定不能出现停顿 | 播放端 **underrun = 0、rebuffer = 0、最小水位 ≥ 300ms**（200 句浸泡测试 + 弱网/后台标签页/蓝牙场景） | 全部场景 underrun = 0 |
+| 首声要快 | **TTFA**（冷/热，P50/P95）= 从点击到第一个非静音样本被播放 | 热启动 P50 ≤ 0.8s、P95 ≤ 1.5s（在不违反零停顿前提下；T4 实测后校准） |
+| 清晰 | WER/CER（Whisper‑large‑v3 + SenseVoice/FunASR 双识别取较差）、STOI | CER 不高于基线，且 ≤ 1.5% |
+| 不能降级 | 回归金标准（第 7.4 节） | 100% 通过 |
+
+### 1.2 冲突时的优先级
+不降级 > 零停顿 > 无损坏（沙沙/爆音）> 相似度 > 首声速度。（首声速度靠「桥接音库 + 滚动视界」解决，不靠牺牲前面几项。）
+
+---
+
+## 2. 对仓库与参考代码的研究结论（事实部分）
+
+### 2.1 仓库内容（`https://github.com/bizuming1-ui/111`）
+- `参考语音1.webm`：浏览器录制，**Opus 48kHz 立体声，27.18 秒**。
+- `克隆语音1~6.wav` 与 `克隆语音1~6.zip`：系统输出。WAV 为 **24kHz / 单声道 / int16**；ZIP 内含 `turn_full.wav`、`segments/segment_xxx.wav`（分句）、`manifest.json`（含 SHA‑256、质检结果）。
+- `参考代码`：一个 Python 文件，运行后把全部模块写到磁盘（`FILES['app.py']`、`infer_dual_gpu.py`、`v13.py`、`v14.py`、`v14_dialog.py`、`worklet.js`、`audio_qc.py`、`speaker_sim.py`、`train.py`、`auto_train_loop.py`、`data_prep.py` 等）。`提示词` 文件目前是空的。
+
+### 2.2 参考代码的真实架构（读代码得出，不是猜测）
+- **模型**：`Qwen/Qwen3-TTS-12Hz-1.7B-Base`（12.5Hz 码本，每帧 80ms = 1920 样本 @24kHz，16 个码本）；说话人评分 `microsoft/wavlm-base-plus-sv`；识别 `openai/whisper-large-v3-turbo`；对话 DeepSeek；隧道 **ngrok**（刻意不用 Cloudflare，因其缓冲流式响应）。
+- **推理**：`faster-qwen3-tts`（CUDA Graph 逐帧生成）+ 自研「两相流式」：逐帧生成 → 按调度表重新分块 → 每块带 **25 帧（≈2 秒）滑动左上下文**解码，取 `n_ctx × (样本数/帧数)` 之后的部分。分块调度（continuous 模式）：首批 `[4,4,6,8]` 帧，其后 `[6,8,12]`，再之后每块 12 帧。
+- **双 T4**：每张 GPU 一个 TTS 进程，句子级并行；网关实测每帧生成时间 F、每块解码开销 D，模拟全程到达时间线，**算出所需起播水位**；v13「滚动视界起播」+「桥接音库（用户自己声音预合成的短语）」；T4 无 bf16 张量核，优先 fp16。
+- **采样参数**：temperature 0.7、top_p 0.9、top_k 50、repetition_penalty 1.05、每句种子 = hash(基础种子, 声音版本, 句序, 文本)。
+- **参考音频预处理**（`prepare_reference`）：去直流、去首尾静音、**峰值归一到 0.7（≈ −3dBFS）**、重采样 24kHz、超过 30 秒在 20–30 秒内能量最低处截断；声音默认用 **ICL 模式（参考音频 + 参考文本）**，没有文本时走 Whisper 转写，或退回 x‑vector‑only。
+- **后处理**：v13 `Leveler`（目标有声 RMS ≈ −19dBFS，增益 ±6dB，压低 1.0dB/100ms、抬高 0.5dB/100ms，3ms 近似前视限幅 **−1dBFS**，int16 输出）；`Trimmer`（首尾静音裁剪 + 线性淡入淡出）；`fade_out` 20ms。
+- **播放端**（`worklet.js`，`RingPlayer`）：环形缓冲；欠载时**淡出→静音→重新缓冲（rebufMs 800）并计数**；**输入 24kHz 与设备采样率不同时使用「有状态线性插值」重采样**；起播水位 `startMs`。
+- **质检**（`audio_qc.py`）：削波、DC、静音、chunk 接缝 `joins`、**「相邻块响度突变 > 12dB」告警**。
+- **训练链路**：`data_prep.py` → `auto_train_loop.py` → LoRA 双卡微调；使用微调模型时默认 `VC_REF_XVEC=1`（**即只用 x‑vector，丢掉 ICL 的参考码本**）。
+
+### 2.3 冻结清单（这些已成功的功能，必须逐项保持，不得降级）
+双 T4 并行合成与 CUDA Graph 预热；ngrok 零缓冲直连；AudioWorklet 环形缓冲「不变速、不重复、不造假音、如实计欠载」；滚动视界起播 + 桥接音库；v13 帧预算/坏尾拦截/重试阶梯；v13 恒定音量；v14 实时对话（本地 VAD、回声估计、先压低再确认打断）；声纹锁；口语化文本（数字/日期/单位）；失败不丢句（抢救/跨卡重试）；下载 WAV/FLAC/ZIP + manifest；语音库/持久化；搜索工作台与浏览器自动化；诊断页（TTFA、欠载、chunk 间隔 P50/P95/P99）；看门狗/心跳/磁盘保护。
+
+---
+
+## 3. 对 6 段克隆语音与参考语音的实测声学分析（我已亲自跑过）
+
+> 方法：Python（numpy/scipy/soundfile）+ ffmpeg 解码参考 webm；20ms 帧能量、Welch 频谱、自相关基频、LPC 共振峰、chunk 接缝检测（按代码调度表还原接缝位置，24 段分句共 163 个接缝）。
+> **重要局限**：我是通过数据而非人耳分析，**无法替代人工听感**；下面的「指标」是客观代理量，最终仍需 ABX 盲测（第 7.6 节）。
+
+### 3.1 基本参数
+
+| 文件 | 时长 | 采样率 | 峰值 dBFS | RMS dBFS | 削波 | DC | ≥150ms 内部静音段 | 静音帧底噪 dBFS | 底噪低于语音 RMS | F0 中位 Hz |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **参考语音1（解码）** | 27.18s | 48k 立体声 Opus | **−15.9** | **−33.4** | 0 | 0 | 仅开头 380ms | **−66.0** | **32.6 dB** | **105.7** |
+| 克隆1 | 4.90s | 24k | −1.13 | −21.0 | 0 | 1e‑4 | 0 | −75.4（含首尾静音） | — | 101.9 |
+| 克隆2 | 109.4s | 24k | −1.00 | −19.1 | 0 | 1e‑4 | 0 | −49.3 | 30.2 dB | 104.3 |
+| 克隆3 | 15.4s | 24k | −1.14 | −19.3 | 0 | 8e‑5 | 0 | −50.3 | 31.0 dB | 105.7 |
+| 克隆4 | 25.6s | 24k | −1.00 | −19.1 | 0 | 1e‑4 | 0 | **−45.8** | **26.7 dB** | 101.7 |
+| 克隆5 | 19.3s | 24k | −1.00 | −19.3 | 0 | 1e‑4 | 0 | **−45.9** | **26.6 dB** | 103.0 |
+| 克隆6 | 25.2s | 24k | −1.00 | −19.8 | 0 | 1e‑4 | 0 | −54.1 | 34.3 dB | 102.1 |
+
+### 3.2 频带能量（有声帧，相对 100Hz–8kHz 总能量，dB）
+
+| 频带 | 参考 | 克隆1 | 克隆2 | 克隆3 | 克隆4 | 克隆5 | 克隆6 |
+|---|---|---|---|---|---|---|---|
+| 0–200Hz | −5.7 | −4.2 | −7.3 | −8.2 | −8.1 | −6.8 | −6.2 |
+| 200–500Hz | −2.0 | −4.3 | −2.2 | −2.2 | −2.1 | −2.0 | −2.5 |
+| 500–1kHz | −10.6 | −6.0 | −7.6 | −7.0 | −7.7 | −8.3 | −7.9 |
+| 1–2kHz | −17.9 | −13.9 | −14.6 | −13.5 | −13.2 | −17.1 | −14.2 |
+| 2–3kHz | −18.4 | −17.9 | −18.5 | −18.2 | −18.5 | −19.3 | −18.0 |
+| 3–4kHz | −29.5 | −31.6 | −31.3 | −27.9 | −31.1 | −30.5 | −29.0 |
+| 4–6kHz | −29.9 | −31.8 | −28.9 | −33.1 | −28.4 | −29.8 | −25.8 |
+| **6–8kHz** | −29.6 | −36.4 | −32.2 | **−37.6** | −31.4 | −32.9 | **−27.9** |
+| **8–12kHz** | −26.7 | −35.3 | −33.0 | −35.4 | −31.8 | −34.1 | −30.3 |
+
+### 3.3 chunk 接缝（按代码调度表还原，24 段分句、163 个接缝）
+- 接缝处「样本阶跃 / 局部 RMS」：P50 = 0.065，P95 = 0.32，**最大 1.6**（说明确有真实波形阶跃）。
+- 接缝处高频（>4kHz）能量突发倍数：P50 = 0.26，P95 = 1.6，**最大 5.7×**。
+- 被判可疑的接缝 **4 / 163（≈2.5%）**，对应 manifest 中「第 14/18 句：1 个 chunk 边界有轻微跳变」。
+- manifest 总状态均为 `quality_warning`；克隆2 的 21 句里 **16 句**带「相邻块响度突变 13.3~27.8 dB」。该规则用的是**块 RMS**（块只有 320–960ms，天然会跨音节/停顿），**极可能大量是误报**，但它同时会淹没真正的接缝问题 → 需要重做质检（第 8 节 M9）。
+
+### 3.4 我从数据得出的结论（诚实版）
+1. **没有削波、没有直流、没有内部长静音**；基频中心与参考接近（101.7–105.7Hz vs 105.7Hz，最大偏差约 −4%）。→ **「不像」主要不是基频问题**，应重点查**频谱包络/共振峰、声带质感（气声/嘎裂）、语速与韵律、嗓音随句子漂移**。
+2. **所有克隆的峰值恰好卡在 −1.00 dBFS、RMS 恒定在 −19~−21 dBFS**：说明限幅器/响度控制器在持续工作；24kHz int16 无抖动量化；−1dBFS 的采样峰值经重采样或有损编码（AAC/蓝牙/浏览器重采样）后**真峰值可能 > 0 dBTP → 潜在爆音源**。
+3. **500Hz–2kHz 相对能量比参考高约 2~5dB**（克隆1、3、4、6 明显），说明共振峰区域能量分配与参考不同 → **音色偏「鼻/闷/厚」的可能性**；这是比基频更可信的「不像」线索。
+4. **6–12kHz 高频带在不同克隆之间波动 ≥ 9.7dB**（克隆3 −37.6 vs 克隆6 −27.9）：同一个声音在不同句子里「亮度」不一致 → 既影响相似度，也是**沙沙感/嘶嘶感**的可能来源之一（高频不稳定的 codec 噪声）。
+5. **静音帧底噪**：克隆4/5 仅比语音低 26.6~26.7dB（参考 32.6dB）；Leveler 最高 +6dB 增益会把底噪一起抬起 → 「沙沙」的另一个可量化来源。
+6. 播放端使用**线性插值重采样**（24k→常见 48k）：线性插值在 6~12kHz 有 2~4dB 滚降（高频发暗），并在 12~24kHz 产生**镜像**（嘶嘶声）。**这是我从代码里确认的、可以直接用数据验证的怀疑点**。
+7. Qwen3‑TTS 解码器输出固定 24kHz，**物理上 >12kHz 没有内容**；参考录音是 48k Opus（带宽更宽），两者「空气感」天然不同。
+8. 参考录音本身：**RMS −33.4dBFS（很小）**、浏览器录音可能已开启回声消除/降噪（代码里 `noiseSuppression: true`，降噪会留下「水声/音乐噪声」并**被克隆进去**）、立体声下混、开头 380ms 静音。
+9. **TTFA 与 RTF 在 manifest 里没有记录 → 无法从现有文件判断首声速度，必须在沙盒里实测**。`faster-qwen3-tts` 官方 README 给出的 T4 数据（0.6B）为 CUDA Graph **RTF≈1.07、TTFA≈0.9s**；1.7B 在 T4 上预计更慢（**待实测**），这就是「零停顿」与「首声快」天然冲突、需要大段预缓冲的根因。
+
+---
+
+## 4. 问题根因假设清单（每条都有验证方法与修复方向）
+
+### 4.1 「不像」假设（按可能性排序）
+| 编号 | 假设 | 沙盒验证方法 | 修复方向 |
+|---|---|---|---|
+| H1 | 参考音频质量/长度/内容不理想（立体声下混、低电平、降噪残留、27 秒过长导致 ICL 前缀漂移、含呼吸/杂音） | 把同一参考切成 3/6/10/15/20/27 秒多个版本，及「原始/去噪/不去噪/峰值归一/LUFS 归一」组合，跑相同文本 → 比较保守 SECS | **参考音频策展器**（M1）：自动挑选最优 8–15 秒片段 |
+| H2 | ICL 的 `ref_text` 不准（Whisper 转写错字/标点），导致文本‑音频对齐偏移 | 人工校对文本 vs Whisper 文本 vs 强制对齐校验，比较 SECS 与 CER | **参考文本校验器**（M2）：双 ASR + 强制对齐，不过关则提示/回退 |
+| H3 | 采样随机性导致每句音色漂移（每句不同种子） | 同一句 N 个种子，测 SECS 方差；扫温度/top_p/top_k/重复惩罚网格 | **候选重排**（M3）：N 选优，用 SECS+UTMOS+CER 打分 |
+| H4 | 零样本模型能力上限（1.7B Base） | 与挑战者模型（方案 E）同语料对比 | 方案 C 音色精修 / 方案 D 微调 / 方案 E 换引擎 |
+| H5 | Codec 重建上限（Qwen3‑TTS‑Tokenizer‑12Hz 本身会丢声纹细节） | **参考语音自编码再解码**，算「重建 vs 原始」SECS = 管线理论上限 | 若上限 < 0.95：必须用方案 C/E，仅调采样无济于事 |
+| H6 | 微调模型走 x‑vector‑only，丢失 ICL 信息 | 同一微调模型对比 xvec / ICL / 两者结合 | 允许组合模式并实测 |
+| H7 | Leveler/限幅/量化改变了音色（动态增益、−1dBFS 限幅） | 同一段 float 输出：关闭 vs 开启后处理，对比 SECS/UTMOS | 浮点全链路 + 真峰值限幅 + 抖动 |
+| H8 | 播放端线性插值重采样改变高频 | 以 `OfflineAudioContext` 复现播放端：线性插值 vs 多相/窗函数 sinc，测高频响应与镜像 | 播放端高质量重采样（M8） |
+| H9 | 韵律/语速与本人差异（相似度不只是音色） | 提取 F0 轮廓/语速/停顿分布，对比参考 | 参考中含多样句式；必要时加韵律描述 |
+
+### 4.2 「沙沙声」假设
+S1 播放端线性插值镜像；S2 int16 无抖动量化 + 淡出尾巴；S3 Leveler 把底噪抬高；S4 声码器/codec 高频噪声不稳定；S5 fp16 数值误差（T4 无 bf16，需对比 fp16 / fp32 的解码器输出）；S6 参考带降噪「音乐噪声」被克隆；S7 ngrok/浏览器端额外编码（确认走 PCM，不走有损编码）。
+→ **逐项消融（ablation）实验**：每次只关一项，量化 Hiss 指数变化，**找到真正元凶后只修元凶，不乱加降噪**。
+
+### 4.3 「爆音/咔哒」假设
+B1 chunk 接缝（切片点取整 `round(n_ctx*spf)`、上下文不足、块间增益变化）；B2 限幅器硬削/前视不足；B3 `flush`/裁剪/淡出点；B4 int16 溢出；B5 重采样器在块边界不连续；B6 重新缓冲恢复点；B7 **真峰值超 0dBTP**（−1dBFS 采样峰值经重采样后过冲）。
+检测方法：接缝阶跃（|x[b]−x[b−1]|/局部 RMS）、二阶差分比、>4kHz 高频突发、过冲（4× 过采样估计真峰值）。
+
+### 4.4 Hiss 指数（统一量化「沙沙」）
+静音帧（VAD 判非语音）RMS 相对有声 RMS 的 dB 差；6–12kHz 带能量均值与句间标准差；谱平坦度；DNSMOS‑BAK；再叠加人工 ABX。
+
+### 4.5 「停顿」假设
+P1 T4 上 1.7B 的 RTF < 1，持续生成速度不足；P2 句间 GPU 切换/首块解码开销；P3 网络抖动与 ngrok 背压；P4 浏览器后台标签页节流、蓝牙设备采样率变化；P5 起播水位估算过乐观；P6 重缓冲 800ms 阈值使一次欠载变成长静音；P7 Python 事件循环阻塞（Leveler 的逐帧 Python 循环、QC）。
+→ 全部要用**浸泡测试（200 句、≥30 分钟）+ 弱网注入 + 后台标签页**验证，目标 underrun = 0。
+
+---
+
+## 5. 自问自答决策记录（一次一问，逐步追问，直至 100% 确定需求）
+
+**Q1. 你的真实目标到底是什么？哪几项必须同时满足？**
+答：相似度更高 + 无任何损坏（沙沙/爆音/失真）+ 全程零停顿 + 首声快 + 不破坏已成功功能。五者同时满足；冲突时按 1.2 节优先级。
+追问 → 现状究竟坏在哪？
+
+**Q2. 现有 6 段克隆语音物理上损坏了吗？**
+答：没有削波/DC/内部静音，F0 接近；但存在 ① 约 2.5% 的 chunk 接缝可疑（最大阶跃 1.6×局部 RMS、高频突发 5.7×）；② 峰值恒贴 −1dBFS；③ 高频带句间波动 ≥ 9.7dB；④ 部分克隆静音底噪仅比语音低 26.6dB。
+追问 → 「不像」是不是基频问题？
+
+**Q3. 「不像」的主因是音高吗？**
+答：不是（F0 偏差 ≤ 4%）。更可能是共振峰区能量（500Hz–2kHz 偏高 2~5dB）、高频亮度不稳、韵律/语速、嗓音质感。
+追问 → 这些差异是模型造成的，还是参考音频造成的？
+
+**Q4. 参考音频本身有没有拖后腿？**
+答：有嫌疑：RMS −33.4dBFS 偏小、立体声下混、Opus 压缩、浏览器降噪、27 秒偏长、开头静音。必须做「参考策展 + 质量报告」，并对多种参考（干净/噪声/混响/电话/短/长/异性/异语种）做鲁棒性测试，才能满足「无论给什么参考语音」。
+追问 → ICL 和 x‑vector 哪个更好？
+
+**Q5. 克隆走 ICL 还是 x‑vector‑only？**
+答：官方说明 x‑vector‑only「不需要参考文本，但克隆质量可能下降」。默认 ICL（参考文本必须准确）；微调模型的 xvec 模式要和 ICL 同台实测，不再默认。
+追问 → ICL 的参考文本准吗？
+
+**Q6. 参考文本怎么保证准确？**
+答：双 ASR（Whisper‑large‑v3 + SenseVoice/FunASR）交叉验证 + WhisperX/MFA 强制对齐；两者 CER > 阈值则要求用户确认文本；对齐后裁剪到句子边界。
+追问 → 采样参数是否造成每句音色漂移？
+
+**Q7. 采样参数与随机种子怎么处理？**
+答：对 temperature/top_p/top_k/repetition_penalty 做网格 + 多种子实验，**以 SECS 方差和 UTMOS 为目标**，不凭经验；每句生成 N 个候选（N 由第二块 GPU 的空闲算力决定），用多模型 SECS + UTMOS + CER 打分选最优。
+追问 → 候选重排会不会拖慢首声、造成停顿？
+
+**Q8. 重排与零停顿矛盾吗？**
+答：不矛盾，规则：**首句不重排（保首声）**；从第 2 句起，仅当「播放头之后剩余缓冲 ≥ 预计重排耗时 + 安全余量」才启用 N>1；否则降级为 N=1。缓冲不足时绝不为质量牺牲连续性。
+追问 → 生成上限（codec）够不够？
+
+**Q9. 如何知道 codec 是不是上限？**
+答：把参考语音 `encode → decode` 后与原音算 SECS 与 UTMOS；这是整个 Qwen 管线的**理论上限**。上限低 → 说明只调采样无效，必须引入音色精修（方案 C）或换引擎（方案 E）。
+追问 → 微调能不能解决？
+
+**Q10. 用 27 秒参考微调（LoRA）可行吗？**
+答：数据太少，容易过拟合/丢失泛化。决策规则：<3 分钟数据 → **不微调**，走策展+重排+精修；3–10 分钟 → 小 rank LoRA + 留出集 SECS 验证；≥10 分钟 → 完整训练流程并保留回滚。官方微调入口：`QwenLM/Qwen3-TTS/finetuning`。
+追问 → 要不要换模型？
+
+**Q11. 要不要换掉 Qwen3‑TTS？**
+答：不盲目换。把 CosyVoice 2/3、IndexTTS‑2、F5‑TTS、Fish‑Speech/OpenAudio、GPT‑SoVITS v4、Chatterbox、Higgs Audio v2、XTTS‑v2 等作为**挑战者**放进沙盒，同语料同指标 + 必须在 T4 上满足 RTF 与零停顿；仅当「统计显著」优于基线才切换，否则保留 Qwen 作为默认。
+追问 → 零停顿的物理条件是什么？
+
+**Q12. T4 上怎样才能物理上保证零停顿？**
+答：设持续生成速度 RTF（秒生成/秒音频）。若 RTF<1 则流式边生成边播放理论上可连续；若 RTF≥1 必须预缓冲 `(RTF−1)×总时长`。T4（0.6B CUDA Graph 官方 RTF≈1.07）预计 1.7B 更差 → 必须靠 **双卡流水线（一卡生成、一卡解码/增强/重排）+ 句级并行 + 滚动视界起播 + 桥接音库 + 批量解码（batch>1 提高 T4 吞吐）+ prompt 前缀 KV 缓存**。实测 F、D 后用模拟器算水位，不拍脑袋。
+追问 → 首声怎样又快又不停？
+
+**Q13. 首声快与零停顿如何兼得？**
+答：① 起播水位用「滚动视界」：只要求「预测整轮不欠载」所需的最小前置，而不是固定值；② 预先合成的**用户自己声音的桥接短语**（「好的，」「我想想，」）在预测会欠载时先播；③ 保持 GPU 热（定期空转、CUDA Graph 预捕获、参考 prompt 缓存）；④ 首批块更小但**仅当实测 RTF 允许**；⑤ 对话场景「边想边说」：LLM 首个完整短句一到就送合成。
+追问 → 第二块 T4 怎么用到极致？
+
+**Q14. 双 T4 的最佳分工？**
+答：沙盒里同时对比三种拓扑：(T1) 现有「两卡各生成交替句」；(T2) **GPU0 生成 codec 码、GPU1 做 codec 解码 + 后处理 + 重排评分**；(T3) 混合（首句双卡竞速取先到者，后续 T2）。按「TTFA、RTF、underrun、显存、稳定性」评分选型。显存不跨卡共享；评分模型（WavLM/ECAPA/UTMOS）常驻 GPU1。
+追问 → 后处理哪些能做、怎么证明没有降级？
+
+**Q15. 什么样的后处理才允许上线？**
+答：采用**非劣效闸门**：对每个后处理模块，在同一批 float 输出上 A/B：SECS 变化 ≥ −0.005、UTMOS/DNSMOS 不下降、频谱失真在界内、CER 不升。不通过 = 不上线。默认**不加降噪**（降噪会伤音色），只做：浮点全链路、接缝重写、真峰值限幅、抖动、受约束的底噪门/谱匹配（见 M5）。
+追问 → 沙沙声会不会来自播放端？
+
+**Q16. 播放端怎么保证质量与不停顿？**
+答：把「线性插值」换成**多相/窗函数 sinc 重采样（有状态、跨块连续）**，或让 `AudioContext` 直接用 24kHz 由浏览器重采样（沙盒里实测哪种更好）；AudioWorklet 用 `SharedArrayBuffer` + `Atomics` 环形缓冲（需 COOP/COEP 或回退 postMessage）；欠载恢复阈值改为「恢复水位 = 当前 RTF 推算的最小安全值」而不是固定 800ms；监听 `devicechange`/蓝牙采样率变化并重建上下文；页面隐藏时用 Web Locks/静音保活防节流。
+追问 → 质检会不会误报？
+
+**Q17. 质检怎么改？**
+答：废弃「块 RMS 响度突变>12dB」告警（误报多），改用**接缝局部指标**：阶跃/二阶差分/高频突发/过冲；响度用 3 秒短期 LUFS 滑窗（pyloudnorm / BS.1770）。质检的目的变成「能定位到毫秒级的瑕疵并自动修复或重生成该句」。
+追问 → 怎么证明「无论什么参考语音都像」？
+
+**Q18. 评测集怎么设计才有说服力？**
+答：参考语音矩阵 ≥ 12 个：用户的 `参考语音1.webm` + 男/女/童 + 干净/带噪/混响/电话带宽/低音量 + 3 秒短/10 秒/30 秒长 + 中/英/混合；文本集 ≥ 60 句（长短、数字、英文、疑问/感叹、长句）；每个组合多种子。**参考内部切片之间的 SECS 分布**作为「人和自己的相似度天花板」，用来定义「十分相似」。
+追问 → 人耳主观怎么验收？
+
+**Q19. AI 听不到声音，主观验收怎么办？**
+答：生成**盲测 ABX 页面**（本地 HTML）：随机顺序呈现 参考/基线/新版，用户选「更像哪个」「有无沙沙/爆音」「有无停顿」；至少 20 组，记录并做符号检验。AI 只能宣称「客观指标通过」，主观通过由用户 ABX 结果决定。
+追问 → 风险与回退？
+
+**Q20. 如何确保不破坏已成功功能？**
+答：全部新增模块放在 `v15_*.py` / `v15_player.js`，用 `VC_V15=0` 总开关 + 每模块子开关；默认配置 = v14 逐字节一致（用 SHA‑256 对金标准验证）；每次改动跑回归金标准；保留一键回滚；失败自动降级到 v14 路径并记录原因。
+追问 → Kaggle 有哪些硬约束？
+
+**Q21. Kaggle 环境约束？**
+答：2×T4（各 15GB 可用）、约 29GB 内存、磁盘 ~20GB（模型 6–8GB）、会话 ≤ 12 小时、T4 无 bf16、免费 ngrok 同时 1 个会话、依赖冲突常见。→ **每个候选方案用独立虚拟环境（`uv venv`）+ 子进程隔离 + `CUDA_VISIBLE_DEVICES` 绑卡**；结果写 JSON 到 `/kaggle/working`；保存 Version 才能跨会话保留；模型缓存挂载为 Dataset。
+追问 → 如何真正「自动对比择优」？
+
+**Q22. 沙盒/模拟器怎么落地？**
+答：写一个 `sandbox_bench`：统一接口 `synthesize(ref, ref_text, text) → float32@24k+`，每个方案一个适配器；统一指标流水线；输出 `report.json/csv/html`（含图表）；用硬闸门 + 加权评分自动选优；再对 Top‑2 在「流式真实管线」里跑浸泡测试。浏览器侧用 headless Chromium（Playwright）+ `OfflineAudioContext` 复现播放端、注入弱网/后台节流。
+追问 → 最终决策是什么？
+
+**Q23. 最终决策（我最满意的答案）**
+答：**以 Qwen3‑TTS 为主干，保持 v14 全部功能不变，叠加 v15 增量**：参考策展 + 参考文本校验 → 采样网格最优配置 + 候选重排 → 接缝重写（重叠相加 + 右上下文 + 精确切片）→ float32 全链路 + 真峰值限幅 + 抖动 → 受约束底噪门/谱匹配 → 播放端高质量重采样与自适应恢复 → 重做质检 → 双卡拓扑择优；**并行**评估「音色精修（Seed‑VC/OpenVoice/kNN‑VC）」「微调」「换引擎」三条增强路线，只在沙盒证明显著有益且不引入停顿时才并入。
+追问 → 我是否 100% 理解了需求？
+
+**Q24. 自检：还有没有我没理解/没覆盖的？**
+答：①「无论什么参考」→ 已用参考矩阵与自动策展覆盖；②「一定成功」→ 用「多方案并行 + 硬闸门 + 回退」保证**交付一定可用**，同时诚实声明：主观听感必须 ABX，无法用数据代替；③「首声要快」→ 有 TTFA 指标与桥接策略；④「不能降级」→ 回归金标准；⑤「用到 T4×2」→ 双卡拓扑择优；⑥「提示词可含多方案并让 AI 自动装沙盒对比」→ 第 6、7 节。确认完整。
+
+---
+
+## 6. 多方案并行与自动择优
+
+### 6.1 候选方案矩阵
+
+| 方案 | 内容 | 预期收益 | 风险 | 成本 |
+|---|---|---|---|---|
+| **A 冻结基线** | v14 原样（对照组，必须先跑出基线） | — | 无 | 低 |
+| **B Qwen 主干强化** | 参考策展 + 参考文本校验 + 采样网格 + 候选重排 + 接缝重写 + float32 全链路 + 真峰值限幅/抖动 + 播放端 sinc 重采样 + 新质检 | **相似度/稳定性中等提升，爆音/沙沙显著下降** | 低（可开关） | 中 |
+| **C B + 音色精修** | 在 B 之后接零样本音色转换：Seed‑VC（v1 whisper‑small 22.05k 离线版 / xlsr‑tiny 实时版 / v2）、OpenVoice v2 Tone Color Converter、kNN‑VC（WavLM + 参考库） | 相似度可能显著提升 | 增加延迟与失真风险，采样率 22.05k，须确认不增加欠载 | 中高 |
+| **D B + 微调** | LoRA / 全量对用户数据微调；xvec / ICL / 两者结合；EMA 权重；留出集早停 | 数据足够时最大幅度提升 | 数据少会过拟合；T4 训练慢 | 高 |
+| **E 换引擎挑战者** | CosyVoice 2/3、IndexTTS‑2、F5‑TTS v1、Fish‑Speech / OpenAudio、GPT‑SoVITS v4、Chatterbox、Higgs Audio v2、XTTS‑v2、Spark‑TTS、MaskGCT（Amphion）、VibeVoice | 可能更像/更快 | 依赖冲突、许可证、流式支持差异、T4 速度 | 高 |
+| **F 多引擎集成重排** | 多个引擎各生成候选，用 SECS+UTMOS+CER 择优逐句拼接 | 相似度上限最高 | 算力/延迟大，音色拼接一致性需验证 | 很高 |
+| **G 后级增强** | 谨慎试验：DeepFilterNet3（限 `atten_lim_db`）、Resemble‑Enhance、ClearerVoice（MossFormer2）、AudioSR / FlashSR 做 24k→48k 带宽扩展 | 清晰度/空气感 | **最容易伤音色**，默认关闭，需严格非劣效 | 中 |
+
+### 6.2 解码/声码层子方案（在方案 B 内做 A/B）
+- D1 现状：25 帧左上下文、切片取整。
+- D2 **精确切片**（用 codec 固定上采样倍数 1920 样本/帧，不用 `round(n_ctx*spf)`）。
+- D3 **加大左上下文**到 40–50 帧（看吞吐代价）。
+- D4 **右上下文 1–2 帧 + 5–10ms 等功率交叉淡化**（+80–160ms 延迟，仅首块之后启用）。
+- D5 **整句一致性校验**：对一部分句子做「整句一次解码」与「流式拼接」逐样本比对，最大差值必须 < 阈值，否则接缝有 bug。
+- D6 fp16 vs fp32 解码器输出对比（Hiss 指数/频谱）。
+- D7 参考论文/实现：BigVGAN v2、Vocos 作为**对比声码器**，仅在确认 codec 是瓶颈时尝试。
+
+### 6.3 择优规则（自动执行）
+1. **硬闸门**（任一不过直接淘汰）：回归金标准通过；削波=0；接缝瑕疵=0；underrun=0（浸泡）；T4 上 RTF 与显存可承受；许可证允许；CER 不高于基线。
+2. **加权总分**（通过硬闸门后）：保守 SECS 40% + UTMOS/DNSMOS 20% + Hiss/接缝指标 15% + TTFA 10% + 稳定性（无 OOM/无崩溃）10% + 资源占用 5%。
+3. 取 Top‑2 做 **200 句 × 30 分钟浸泡 + 弱网 + 后台标签页** 实测，再择优；**把胜出方案并入 v15 默认**，其余保留为可选开关。
+4. 所有对比生成 `report.html`（表格 + 频谱图 + SECS 箱线图 + 接缝图），**附原始 JSON**，由我复核。
+
+---
+
+## 7. 沙盒实验协议（Kaggle 双 T4）
+
+### 7.1 环境
+- Notebook 加速器选 **GPU T4 ×2**，开启 Internet；Secrets：`NGROK_TOKEN`、`ACCESS_PASSWORD`、可选 `BRAVE_SEARCH_API_KEY`、`HF_TOKEN`。
+- 每个候选方案一个独立 `uv venv`（或 `python -m venv`），避免 torch / transformers 版本冲突；用 `CUDA_VISIBLE_DEVICES` 绑卡；子进程超时 + 显存监控；失败只记录不影响其他方案。
+- 模型缓存放 Dataset 或 `/kaggle/working/hf_cache`，下载失败自动重试；磁盘 < 12GB 提前告警。
+
+### 7.2 测试数据
+- 参考语音矩阵（见 Q18）+ 文本集（≥60 句，含数字/日期/单位/英文/长句/疑问句）。
+- 用户上传的 `参考语音1.webm` 为**必测**参考；6 段克隆 WAV/ZIP 作为**基线金标准**。
+
+### 7.3 指标流水线（离线、可复现）
+说话人：WavLM‑base‑plus‑sv、ECAPA‑TDNN（speechbrain）或 ECAPA2、ERes2NetV2/CAM++（3D‑Speaker）。
+质量：UTMOS（SpeechMOS）、DNSMOS、NISQA、torchaudio‑SQUIM。
+可懂度：Whisper‑large‑v3 + SenseVoice → CER/WER。
+声学：Parselmouth（F0/共振峰/HNR/jitter/shimmer）、pyloudnorm（LUFS/LRA）、4× 过采样真峰值、LTAS（1/3 倍频程）、谱平坦度、Hiss 指数、接缝检测。
+管线：TTFA、RTF、每块解码耗时、chunk 间隔 P50/P95/P99、underrun、最小水位。
+
+### 7.4 回归金标准（保证不降级）
+对 6 段基线克隆（同参考、同文本、同种子）：新版在「开关全关」时输出与 v14 **逐样本一致**（SHA‑256）；「开关全开」时各指标**不劣于**基线；冻结清单功能做端到端冒烟测试（含 Chromium：起播、打断、下载、声纹锁、搜索页）。
+
+### 7.5 浏览器侧测试
+Playwright + Chromium：复现 `AudioWorklet` 播放；`OfflineAudioContext` 比较重采样器；网络节流（CDP）注入抖动/丢包；页面后台化；蓝牙/设备切换事件；记录 underrun、resumed、水位曲线。
+
+### 7.6 人工验收（唯一能证明「听感相似」的环节）
+自动生成 ABX 盲测页面：参考 vs 基线 vs 新版，随机顺序；问「哪个更像参考」「是否有沙沙/爆音/停顿」；≥20 组；输出符号检验结果。**只有 ABX 通过才可宣称「更像」。**
+
+---
+
+## 8. 最终系统设计要点（逐模块，仅描述，不含代码）
+
+**M1 参考音频策展器（Reference Curator）**
+读任意格式（webm/opus/m4a/mp3/wav）→ 立体声下混（能量/相位一致性检查）→ 去直流 → Silero‑VAD 切分 → 对每个候选片段计算：信噪比（SQUIM/DNSMOS‑BAK）、有声比例、混响（C50 估计）、削波、带宽、语速、音素覆盖多样性 → 自动选出 **8–15 秒最佳片段**（多个备选）→ 电平归一到统一 LUFS（避免极小电平影响编码）→ 输出质量报告（红/黄/绿 + 修复建议）。**严禁默认降噪**（会留下音乐噪声被克隆）；仅在报告判定严重噪声时，用 DeepFilterNet3（限制衰减量）做可选处理，并用非劣效闸门验证 SECS 不降。
+
+**M2 参考文本校验器**
+双 ASR 交叉 + WhisperX/MFA 强制对齐；标点与停顿规范化；不确定词标注；CER 超阈值要求确认。
+
+**M3 生成层**
+采样参数取沙盒网格实验得到的最优值（不拍脑袋）；每句 N 候选（受播放缓冲余量约束）；打分 = 保守 SECS + UTMOS + CER + 接缝检测；首句不重排；候选种子可复现并写入 manifest。
+
+**M4 编解码与接缝（爆音根治）**
+精确切片；必要时加大左上下文；右上下文 + 等功率交叉淡化（仅首块后）；全链路 float32，**不在中途量化为 int16**；整句一致性校验；检测到瑕疵 → 局部重解码 → 仍不过则重生成该句（跨卡重试，沿用现有「失败不丢句」机制）。
+
+**M5 后处理（受约束、可开关、非劣效）**
+- 响度：BS.1770 短期响度估计，增益变化更平滑，**不抬高静音底噪**（静音帧不放大）。
+- 限幅：**真峰值限幅（4× 过采样，上限 −2 dBTP）**，取代当前「采样峰值 −1dBFS」。
+- 量化：仅在导出 16‑bit 时做 **TPDF 抖动**；传输尽量 float32 / 24‑bit。
+- 底噪门：VAD 指示的非语音段做**有上限（≤ 10~12dB）、带前视的下行扩展**，时间常数 20ms 起/100ms 释放，避免「呼吸感」。
+- 谱匹配：把克隆输出的长时平均谱与**参考的有声长时平均谱**做「约束式最小相位 EQ」（每频带最大 ±3dB，且仅在 500Hz–8kHz 内），用于纠正 500Hz–2kHz 偏高与高频句间漂移；必须通过非劣效闸门，否则关闭。
+- 绝不做：压缩、变速、重复音频、插入假音、盲目降噪。
+
+**M6 音色精修（方案 C，择优后才并入）**
+零样本 VC 作为第二阶段：以 TTS 输出为内容、参考语音为目标音色；优先评估 Seed‑VC 的实时模型（`seed-uvit-tat-xlsr-tiny`，22.05kHz）与离线模型（`seed-uvit-whisper-small-wavenet`，BigVGAN），OpenVoice v2 TCC，kNN‑VC（WavLM 特征 + 参考库）。部署在 GPU1，**块级流式**；增加的延迟计入起播水位；任何一次评估如导致欠载或 SECS 不升，直接淘汰。
+
+**M7 调度与吞吐（T4×2）**
+拓扑择优（T1/T2/T3）；批量生成/解码（提高 T4 吞吐）；参考 prompt 与前缀 KV 缓存；保持 GPU 热；Leveler/QC 等 Python 热点用 numpy 向量化或放到独立线程/进程，避免阻塞事件循环；评估 vLLM（Qwen3‑TTS 官方 README 提到 vLLM 用法）、GGML/`qwentts.cpp` 后端（faster‑qwen3‑tts 提供）、权重量化（INT8/FP8 在 T4 上的可行性需实测）。
+
+**M8 播放端**
+有状态多相/窗函数 sinc 重采样（块边界连续），或 24kHz `AudioContext` 交给浏览器；`SharedArrayBuffer` 环形缓冲（不满足跨源隔离时回退）；欠载恢复水位自适应；设备/蓝牙变化重建；后台标签页保活；诊断面板展示水位曲线、underrun、重采样器类型。
+
+**M9 质检重做**
+接缝局部指标 + 过冲 + 短期 LUFS；废弃块 RMS 突变误报；定位到毫秒并可自动修复/重生成；manifest 记录每句的 SECS、UTMOS、接缝数、候选数、种子。
+
+**M10 可观测性、回归、回滚**
+所有开关写入 manifest；诊断页新增「v15 开关状态 + 每项实测数据」；金标准回归脚本；一键回滚；Kaggle 单元格保持「一键运行」；沙盒报告与 ABX 页面随输出一起保存。
+
+---
+
+## 9. 诚实规则与禁止事项
+- 不得声称「已达标」而没有数据；不得用「看起来更好」代替指标；无法验证的写「未验证」。
+- 不得通过降低采样率、压缩动态、变速、重复或插入假音来「消除停顿」。
+- 不得默认启用降噪/增强（除非非劣效闸门通过）。
+- 不得破坏冻结清单；不得更改已有 API 的语义；不得删除现有开关与诊断。
+- 不得把声纹/参考音频推送到公开仓库；日志脱敏。
+- 遇到依赖冲突，优先隔离环境，而不是升级/降级全局包导致已有功能崩溃。
+
+---
+
+## 10. 交付物清单
+1. `v15_*.py` / `v15_player.js`（增量模块，开关齐全，默认关闭可回退）。
+2. `sandbox_bench/`：适配器、指标流水线、自动择优脚本、`report.html/json/csv`。
+3. `abx.html`：盲测验收页面（自动记录并统计）。
+4. 更新后的 Kaggle 一体化脚本（保持原有 `MODE` 配置习惯）与 `README`：包含开关说明、基线 vs 新版对比表、已知局限。
+5. 回归金标准与 SHA‑256 清单；冻结清单冒烟测试报告。
+6. 最终总结：**选中的方案、被淘汰的方案及原因（附数据）**、仍需人工 ABX 的项目。
+
+---
+
+## 11. 参考资源（可直接打开；AI 需按需阅读并择优采用）
+
+**模型与推理（主干）**
+- Qwen3‑TTS 官方：https://github.com/QwenLM/Qwen3-TTS （微调目录：https://github.com/QwenLM/Qwen3-TTS/tree/main/finetuning ）
+- 模型卡：https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base ；Tokenizer：https://huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz
+- faster‑qwen3‑tts（CUDA Graph / 流式 / GGML 后端，含 T4 数据）：https://github.com/andimarafioti/faster-qwen3-tts
+
+**音色精修 / 音色转换**
+- Seed‑VC：https://github.com/Plachtaa/seed-vc （论文 arXiv 2411.09943）
+- OpenVoice v2：https://github.com/myshell-ai/OpenVoice
+- kNN‑VC：https://github.com/bshall/knn-vc
+
+**挑战者 TTS 引擎（方案 E / F）**
+- CosyVoice：https://github.com/FunAudioLLM/CosyVoice
+- IndexTTS：https://github.com/index-tts/index-tts
+- F5‑TTS：https://github.com/SWivid/F5-TTS
+- Fish‑Speech / OpenAudio：https://github.com/fishaudio/fish-speech
+- GPT‑SoVITS：https://github.com/RVC-Boss/GPT-SoVITS
+- Chatterbox：https://github.com/resemble-ai/chatterbox
+- Higgs Audio：https://github.com/boson-ai/higgs-audio
+- Spark‑TTS：https://github.com/SparkAudio/Spark-TTS
+- Amphion（MaskGCT 等）：https://github.com/open-mmlab/Amphion
+- Coqui XTTS（社区维护）：https://github.com/idiap/coqui-ai-TTS
+- VibeVoice：https://github.com/microsoft/VibeVoice
+
+**声码器 / 增强 / 带宽扩展（方案 G，谨慎）**
+- Vocos：https://github.com/gemelo-ai/vocos ；BigVGAN：https://github.com/NVIDIA/BigVGAN
+- DeepFilterNet：https://github.com/Rikorose/DeepFilterNet
+- Resemble‑Enhance：https://github.com/resemble-ai/resemble-enhance
+- ClearerVoice‑Studio：https://github.com/modelscope/ClearerVoice-Studio
+- AudioSR：https://github.com/haoheliu/versatile_audio_super_resolution ；FlashSR：https://github.com/jakeoneijk/FlashSR_Inference
+- Demucs：https://github.com/facebookresearch/demucs
+
+**评测指标**
+- WavLM‑SV：https://huggingface.co/microsoft/wavlm-base-plus-sv
+- SpeechBrain ECAPA‑TDNN：https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb
+- ECAPA2：https://huggingface.co/Jenthe/ECAPA2
+- 3D‑Speaker（CAM++ / ERes2NetV2）：https://github.com/modelscope/3D-Speaker
+- UTMOS（SpeechMOS）：https://github.com/tarepan/SpeechMOS
+- DNSMOS：https://github.com/microsoft/DNS-Challenge/tree/master/DNSMOS
+- NISQA：https://github.com/gabrielmittag/NISQA
+- torchaudio SQUIM：https://pytorch.org/audio/stable/tutorials/squim_tutorial.html
+- Seed‑TTS‑Eval（SIM/WER 评测）：https://github.com/BytedanceSpeech/seed-tts-eval
+- pyloudnorm（BS.1770）：https://github.com/csteinmetz1/pyloudnorm
+- Parselmouth（Praat）：https://github.com/YannickJadoul/Parselmouth
+
+**识别 / 对齐 / VAD**
+- Whisper：https://github.com/openai/whisper ；WhisperX：https://github.com/m-bain/whisperX
+- Montreal Forced Aligner：https://github.com/MontrealCorpusTools/Montreal-Forced-Aligner
+- SenseVoice / FunASR：https://github.com/FunAudioLLM/SenseVoice
+- Silero‑VAD：https://github.com/snakers4/silero-vad
+
+**Web Audio / 播放端**
+- AudioWorklet：https://developer.mozilla.org/en-US/docs/Web/API/AudioWorklet
+- Chrome AudioWorklet 设计模式（环形缓冲 + SharedArrayBuffer）：https://developer.chrome.com/blog/audio-worklet-design-pattern
+- Web Audio 样例库：https://github.com/GoogleChromeLabs/web-audio-samples
+- libsamplerate（WASM 重采样可选）：https://github.com/aolsenjazz/libsamplerate-js
+- Playwright：https://github.com/microsoft/playwright
+
+**平台**
+- Kaggle GPU 使用说明：https://www.kaggle.com/docs/efficient-gpu-usage
+- ngrok：https://ngrok.com/docs
+- uv（隔离环境）：https://github.com/astral-sh/uv
+
+---
+
+## 12. 最终执行指令（给 AI）
+
+请严格按以下顺序执行，并在每一步产出可复核的数据文件：
+1. 下载并通读 `https://github.com/bizuming1-ui/111` 的 `参考代码`、全部克隆 WAV/ZIP、`参考语音1.webm`；复现第 3 节的全部实测数字（误差应很小），复现失败要说明原因。
+2. 在 Kaggle 双 T4 上跑通 v14 基线，测出 TTFA（冷/热）、RTF（0.6B/1.7B 各一份，如可）、chunk 间隔、underrun、保守 SECS、UTMOS、Hiss 指数、接缝数 → 固化为「基线金标准」。
+3. 做 **codec 重建上限实验（H5）** 与 **消融实验（S1~S7、B1~B7、P1~P7）**，找出真正的元凶，并据此排序后续工作。
+4. 搭建 `sandbox_bench`，并行评估方案 A~G，按 6.3 自动择优；对 Top‑2 做浸泡测试。
+5. 把胜出方案以 `v15` 增量并入，全部带开关与回滚；跑回归金标准与冻结清单冒烟测试。
+6. 生成 `report.html` 与 `abx.html`，交给用户做最终 ABX 验收。
+7. 输出最终总结（选中/淘汰方案及数据依据、已验证与未验证项）。
+
+**成功定义**：客观指标全部过线 + 回归 100% 通过 + ABX 验收通过。任何一项未达成，必须继续迭代，不得宣布完成。
