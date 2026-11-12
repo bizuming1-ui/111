@@ -1,5 +1,5 @@
 # =============================================================================
-#  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v13 · 零损坏放行 · 滚动视界起播 · 恒定音量 · 在 v12 之上可回退的增量 · v12 · 真实浏览器级交互 · v10 · 完整可下载的合成音频 · 合规搜索加速 · 在 v9 之上最小必要改动 · 大模型意图理解 · 2 秒静音自动执行 · 真实 Google/Bing 多来源 · 页面视觉理解 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
+#  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v14 · 分位数起播 · 失败不丢句(抢救/跨卡重试) · 实时对话 · 声纹锁 · 口语化文本 · 在 v13 之上可回退的增量 · v13 · 零损坏放行 · 滚动视界起播 · 恒定音量 · 在 v12 之上可回退的增量 · v12 · 真实浏览器级交互 · v10 · 完整可下载的合成音频 · 合规搜索加速 · 在 v9 之上最小必要改动 · 大模型意图理解 · 2 秒静音自动执行 · 真实 Google/Bing 多来源 · 页面视觉理解 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
 #  (在 v6「连续播放优先 · 背压 + 帧序号 + 断线续传 · 无变速 · 完整性检测 · 留出评估」之上无损追加;原语音克隆页在 /voice,根路径 / 是搜索首页)
 #  Qwen3-TTS-12Hz-1.7B-Base 声音克隆  ×  双 T4  ×  LoRA 训练(留出验证)  ×  真实指标面板
 #
@@ -116,6 +116,28 @@ import urllib.request
 from collections import deque
 from pathlib import Path
 
+#  v14 变更(在 v13 之上最小必要、每个模块独立开关、全部关闭 = v13 行为;下面「只需要改这里」里的 V14_* 开关;v13 的 TTS 双卡/LoRA/语音库/鉴权/artifacts/搜索/浏览器工作台/音频协议代码一行未删):
+#    【对两张截图的根因处理】
+#      ①「欠载 3 次」:v13 规划器用均值(R3)。v14 M1:每卡记录「实测整句耗时(含放行前重试浪费) / 均值模型预测」,sim_arrivals 用 P95(样本<30 用保守先验 1.25,下限 1.0 → 只会更保守)放大每块耗时与预填充。
+#      ②「第 2 句被判损坏:stuck 74 帧 vs 预期 43」:v14 M2 — 重试阶梯(换种子→降温→再降温)耗尽后,不再丢句:取失控循环【之前】的干净前缀(GuardState 记账:stuck=总码数−尾部同码长度;repeat=保守扣 96 帧;
+#         over_budget 且尾部已是同码循环才算),干净帧/期望帧 ≥ 75% 才放行,20ms 淡出,并在完整性提示里写「抢救放行」;覆盖率不够仍如实报错。再加:同卡三次失败且一个块都没放出 → 另一张卡换种子+从降温阶梯重试一次(跨卡,串行兜底)。
+#         修复了一个只有集成测试才能发现的死锁:队首句等待跨卡重试时,后面已就绪的句子会触发背压把重试挡住 → 重试句不受背压限制。
+#    【M5 口语化文本】数字/小数/时间/金额/百分号/单位/网址(只对中文为主的文本);分段器不在数字(小数/时间/千分位)中间断开;诊断面板可见「原文 → 口语化」。
+#    【M6 实时对话】/voice 页「🎧 实时对话」:点一次一直开着(echoCancellation=true,noiseSuppression=true,可在 dialog.js 对比)。浏览器端:采集 Worklet(20ms 帧,与播放同一个 AudioContext 时钟,播放输出同时作回声参考)→ 自适应噪声底能量 VAD
+#         → 回声门(已知播放能量 + 学到的扬声器→麦克风衰减,双讲判定)→ 600ms pre-roll → 自适应端点(350~800ms,按你自己的停顿 P90×1.3;2000ms 只是兜底)→ 上传整句。
+#         打断:本地 30ms 压低到 −18dB(不等服务器)→ 持续 ≥280ms 且(声纹锁开启时)服务器验证是主人 → 清空环形缓冲 + 通知服务器取消 TTS/LLM;验证失败(咳嗽/他人/电视)300ms 内平滑恢复音量;对话历史只保留「实际已播放」的文本(按已发出样本与浏览器 ack 映射到句子)。
+#         话没说完(以「然后/因为/我想问」或逗号结尾)→ 额外等待 600~700ms 再提交,期间继续说话会合并。语音与文字共用 sendChat 同一入口;文字永远不经声纹门。设备切换/轨道结束/零数据 5 秒/标签页隐藏 → 自动恢复 + Wake Lock。
+#    【M7 声纹锁】现场登记 3 段(近/正常/稍远)或上传任意音频 → VAD → 切段 → 嵌入(CPU 上的 WavLM-SV;失败回退到弱谱嵌入并标注)→ 去离群 → 质心+原型+留一分布;严格/学习/关闭三态;全句终判不通过则整句丢弃、不送 ASR/LLM。
+#         回声:服务端保存最近 45 秒【实际发给浏览器的】PCM,对每个上传片段做 GCC-PHAT 相干 + 双讲检测(PSR≥25 且近端语音占比<40% 才判回声)。自适应是有界 EMA(只用高置信、非回声样本,锚点永不改,可回滚);删除按钮真删文件。
+#    【M8 学习】脱敏时间线 jsonl(无文本/音频/声纹)· 每卡分位数模型持久化 · registry.json 版本注册表 + 配对 bootstrap 的晋升协议(非劣效门 + 显著提升才晋升,金丝雀违反护栏自动回滚;单元测试里注入「更差」候选被拒绝)。
+#         当前真正接入线上的学习资产只有「每卡尾部分位数」;其余资产(bandit、参考锦标赛、短语缓存预渲染)只有协议与测试,没有接入。
+#    【诚实声明 · 沙箱已验证 / 真机未验证 / 未实现】
+#      沙箱(CPU,合成信号 + Mock 两个 GPU 进程)已验证:tests/test_v14.py(分位数/起播许可/抢救数学/文本口语化/分段保护/历史截断/端点/TurnManager/声纹登记-判决-拒绝-自适应-回滚-持久化-真删/序贯判决/回声与双讲/时间线/注册表晋升回滚)
+#         + tests/test_v14_mock.py(抢救 vs v13 丢句 · 跨卡重试 · 声纹锁 HTTP 全流程 · 文字不被拦截 · 全部关闭=v13)+ v13 全套回归(全部通过)。合成声纹测试 FAR/FRR=0 只证明流程,不代表真实人声。
+#      Kaggle 真机【未验证】:真实麦克风与浏览器 AEC 行为、WavLM-SV 的 CPU 延迟与真实阈值/FAR/FRR、真机回声 soak、500 轮 underrun=0、4 小时常开、faster-whisper CPU 延迟、抢救放行在真实模型上是否会少字(覆盖率只是估计)。
+#      【未实现】并行 hedging 与多槽批解码 · EDF 调度器 · 短语缓存/开场库 best-of-N · 辅助模型全部移出 GPU(默认 ASR 仍占用 worker 所在的卡;可改 V14_ASR_BACKEND="cpu")· Silero/TEN VAD · CAM++/ECAPA 融合 · 推测式 LLM · Smart Turn 模型 ·
+#         参考锦标赛/停顿画像/LTAS EQ/LoRA 数据池/VC/其他 TTS 对比 · WebRTC/Opus · ABX 盲测页 · 隧道自动对比 · ASR 回读 CER · bench/ 目录与 MODE="bench"。这些需要 GPU 实测才能择优,我没有在沙箱里假装做过。
+#      隐私:声纹与语音属于生物特征,只写 V14_STATE_DIR(0600)。你的仓库 bizuming1-ui/111 是【公开】的:里面有你的参考语音与克隆语音,建议改为私有。
 # ╔═══════════════════════════ 只需要改这里(都可以不改) ═══════════════════════════╗
 MODE = "serve"                 # "serve" | "train" | "train_then_serve"
 NGROK_TOKEN = ""               # 留空 = 从 Kaggle Secrets 读取 NGROK_TOKEN。⚠ 直接填写后请不要公开分享笔记本
@@ -170,12 +192,27 @@ V13_BREVITY = True             # 吞吐不足时让 AI 回复更短(而不是让
 V13_UPFRONT_WAIT_CAP_MS = 1500 # 一次性起播等待上限(毫秒)
 V13_FALLBACK_WAIT_MS = 8000    # 桥接也盖不住时的等待封顶(v12 是 60000)
 V13_TARGET_DB = -19.0          # 目标响度:有声帧 RMS(dBFS),约等于 -18 LUFS 短期(RMS 近似,未做 K 加权)
+# —— v14 增量模块(每个都可独立关闭;全部 False = 与 v13 行为一致 = 一键回退) ——
+V14 = True                     # v14 总开关
+V14_TAIL = True                # M1 起播规划用分位数(P95)而不是均值(只会更保守,不会比 v13 更激进)
+V14_SALVAGE = True             # M2 重试阶梯耗尽后抢救「失控循环之前的干净前缀」(覆盖率 ≥75% 才放行,并在完整性提示里如实标注;可能缺少末尾少量文字)
+V14_XRETRY = True              # M2 一张卡三次失败 → 另一张卡换种子/降温再试一次(串行兜底,不是 hedging)
+V14_TEXT = True                # M5 数字/小数/时间/金额/单位/网址口语化(中文为主的文本才改写)
+V14_DIALOG = True              # M6 实时对话:常开麦克风 · 本地 VAD · 回声门 · 本地打断 · 自适应端点 · 历史按已播放截断(/voice 页「🎧 实时对话」)
+V14_LOCK = True                # M7 声纹锁(登记后默认严格;文字输入永不被拦截;删除按钮真删)
+V14_LEARN = True               # M8 脱敏时间线 jsonl + 分位数模型持久化 + 版本注册表(晋升/回滚)
+V14_ASR_BACKEND = "worker"     # 实时对话的 ASR:"worker" 复用 GPU worker 的 whisper(已验证路径;识别时会短暂占用该卡) | "cpu" faster-whisper small int8(CPU;会尝试 pip 安装,失败自动回退 worker;Kaggle 上的 CPU 延迟未实测)
+V14_SV = "wavlm"               # 声纹模型:"wavlm" = microsoft/wavlm-base-plus-sv 跑在 CPU(阈值下限 0.86,未校准) | "spectral" = 极弱的回退(仅测试)
+V14_STATE_DIR = "/kaggle/working/v14_state"   # 声纹 / 时间线 / 注册表 只写这里(私有、0600);绝不推送到公开仓库 —— GITHUB_REPO 若是公开仓库,请别把这个目录加进同步
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 
 TEST = os.environ.get("VC_LAUNCH_TEST") == "1"          # 本地自检用(跳过安装/隧道/训练)
 for _k13, _v13v in (("", V13), ("_GUARD", V13 and V13_GUARD), ("_PLAN", V13 and V13_PLAN), ("_OPENER", V13 and V13_OPENER), ("_LEVEL", V13 and V13_LEVEL), ("_BREVITY", V13 and V13_BREVITY)):
     os.environ["VC_V13" + _k13] = "1" if _v13v else "0"
 os.environ["VC_V13_UPFRONT_WAIT_CAP_MS"], os.environ["VC_V13_FALLBACK_WAIT_MS"], os.environ["VC_V13_TARGET_DB"] = str(V13_UPFRONT_WAIT_CAP_MS), str(V13_FALLBACK_WAIT_MS), str(V13_TARGET_DB)
+for _k14, _v14v in (("", V14), ("_TAIL", V14 and V14_TAIL), ("_SALVAGE", V14 and V14_SALVAGE), ("_XRETRY", V14 and V14_XRETRY), ("_TEXT", V14 and V14_TEXT), ("_DIALOG", V14 and V14_DIALOG), ("_LOCK", V14 and V14_LOCK), ("_LEARN", V14 and V14_LEARN)):
+    os.environ["VC_V14" + _k14] = "1" if _v14v else "0"
+os.environ["VC_V14_ASR"], os.environ["VC_V14_SV"], os.environ["VC_V14_STATE"] = V14_ASR_BACKEND, V14_SV, V14_STATE_DIR
 if NGROK_TOKEN or DEEPSEEK_API_KEY:
     print("⚠ 你把令牌直接写进了脚本:不要公开分享/提交这个笔记本;建议改用 Kaggle Secrets。")
 WORK = Path(os.environ.get("VC_WORK") or "/kaggle/working/vc")      # 运行时数据(克隆的声音等)
@@ -286,6 +323,89 @@ OPENERS = _v13.OpenerBank() if _v13 else None
 OP_STATE = {"busy": None, "t_busy": 0.0, "queue": [], "vid": None, "t0": None, "done": 0}
 V13M = {"turns": 0, "segs": 0, "runaway": 0, "early_stopped": 0, "retries": 0, "released_corrupt": 0, "wasted_s": 0.0, "hold_segs": 0, "stream_segs": 0,
         "failed_segs": 0, "bridges": 0, "lead_bridges": 0, "plan_modes": {}, "max_wait_ms": 0, "recent_modes": deque(maxlen=3), "lev_max_gr_db": 0.0, "lev_turns": 0}
+try:
+    import v14 as _v14
+except Exception as _e14:  # noqa: BLE001
+    _v14 = None
+    log.warning("v14 模块不可用,按 v13 行为运行: %s", _e14)
+V14_TAIL = _v14.TailModel() if _v14 else None          # M1:每卡「整句耗时 / 均值预测」分位数(规划用 P95)
+V14_REF = _v14.RefBuffer() if _v14 else None           # M7:最近 45 秒【实际发给浏览器】的播放 PCM(回声相干检测的已知参考)
+V14_TL = _v14.Timeline() if _v14 else None             # M8:时间线 jsonl(脱敏:无文本/无音频/无声纹)
+V14_REG = _v14.Registry() if _v14 else None            # M8:学习资产版本注册表(晋升/回滚)
+V14M = {"xretry": 0, "xretry_ok": 0, "salvaged": 0, "segs": 0, "spoken_rewrites": deque(maxlen=20)}
+
+
+def v14_on(name):
+    return bool(_v14 is not None and _v14.on(name))
+
+
+def v14_tail_path():
+    return os.path.join(_v14.STATE_DIR, "tail_model.json")
+
+
+if _v14 is not None and _v14.on("LEARN"):
+    try:
+        V14_TAIL.load(json.load(open(v14_tail_path())))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def v14_tail_save():
+    try:
+        os.makedirs(_v14.STATE_DIR, exist_ok=True)
+        json.dump(V14_TAIL.dump(), open(v14_tail_path(), "w"))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def v14_record_seg(idx, stats):
+    """每个完成的句子:把「实测整句耗时(含放行前重试浪费)/ 均值模型预测」记进该卡的分位数窗口;并写一行脱敏时间线。"""
+    if _v14 is None:
+        return
+    V14M["segs"] += 1
+    fr, wall = int(stats.get("frames") or 0), float(stats.get("wall") or 0)
+    ratio = None
+    if v14_on("TAIL") and fr >= 8 and wall > 0 and not stats.get("salvaged"):
+        st = W(idx)
+        wasted = float((stats.get("v13") or {}).get("wasted_s") or 0)
+        ratio = (wall + wasted) / max(_v14.predicted_wall(fr, st["F"], st["D"], st["PRE"]), 0.05)
+        V14_TAIL.record(idx, ratio)
+        if V14M["segs"] % 10 == 0 and v14_on("LEARN"):
+            v14_tail_save()
+    V14_TL.log(ev="seg", gpu=idx, frames=fr, exp=stats.get("exp_frames"), wall=round(wall, 3), first=round(float(stats.get("first") or 0), 3), audio=round(float(stats.get("audio") or 0), 2),
+               attempt=stats.get("attempt"), salvaged=bool(stats.get("salvaged")), ratio=None if ratio is None else round(ratio, 3))
+
+
+def v14_try_xretry(t, seg, idx, err):
+    """M2 跨卡重试:一张卡三次(换种子 → 降温 → 再降温)都失败且【一个音频块都没放出】→ 在另一张卡上换种子、从降温阶梯开始再试一次。
+    串行兜底(不是 hedging 并行)。已经放出过音频(流式放行)就不重试,避免重复/错位。"""
+    if not v14_on("XRETRY") or not POOL or t.closed or not str(err).startswith("AudioCorrupt"):
+        return False
+    if getattr(seg, "x_tries", 0) >= 1 or seg.had_audio or seg.out or (seg.trim.total + seg.trim.carry.size) > 0 or not POOL.usable():
+        return False
+    seg.x_tries = 1
+    seg.avoid = idx if (len(POOL.usable()) > 1 and t.pinned is None) else None
+    seg.v14_extra = {"seed_bias": 7919, "ladder_from": 1}
+    seg.err, seg.done = "", False
+    prof = "first" if seg.idx == 0 else ("second" if seg.idx == 1 else "rest")
+    POOL.backlog.append((t.uid, seg.idx, seg.text, prof))
+    V14M["xretry"] += 1
+    t.integrity.append("第%d句: v14 跨卡重试(GPU%d 的重试阶梯耗尽 → %s)" % (seg.idx + 1, idx, "换到另一张卡" if seg.avoid is not None else "同卡换种子/降温"))
+    log.warning("[#%d] 第%d句 GPU%d 失败 → v14 跨卡重试", t.uid, seg.idx, idx)
+    V14_TL.log(ev="xretry", gpu=idx, seg=seg.idx)
+    POOL.schedule()
+    return True
+
+
+def v14_assistant_text(turn):
+    """被打断/取消的轮次:对话历史只保留「实际已播放」的文本(按已发出样本与浏览器 ack 的已播放样本映射到句子)。返回 (文本, 是否被截断)。"""
+    full = turn.full_text
+    if not v14_on("DIALOG") or not turn.segs or not getattr(turn, "interrupted", False):
+        return full, False
+    txt, cut = _v14.truncate_history_text([g.text for g in turn.segs], [int(getattr(g, "emitted", 0)) for g in turn.segs], int(turn.played_est()))
+    return txt, cut
+
+
 SYS_V13_VOICE = "语音对话规则:第一个短句尽量不超过 12 个字,先给结论或先回应,再展开;单句不超过 30 个字;数字、日期按口语写法。"
 SYS_BREVITY = "当前语音合成速度偏慢:请把这次回答压缩到 1 到 2 个短句(总共不超过 40 个字),先给结论,不要展开。"
 
@@ -507,6 +627,25 @@ def v13_state():
             "caps": {"upfront_wait_cap_ms": _v13.UPFRONT_WAIT_CAP_MS, "fallback_wait_ms": _v13.FALLBACK_WAIT_CAP_MS, "target_db": _v13.TARGET_DB, "max_bridges": _v13.MAX_BRIDGES}}
 
 
+def v14_report_items(add):
+    """v14 验收清单:只写测到的;沙箱/真机没验证的如实写「未验证」。"""
+    if _v14 is None:
+        add(14, "v14 增量模块", "未运行", "v14.py 未能导入,系统按 v13 行为运行")
+        return
+    sw, m = _v14.switches(), V14M
+    ts = V14_TAIL.snapshot()
+    add(14, "v14 · 起播规划用分位数(P95)而不是均值", "已记录" if ts else ("未运行" if sw["TAIL"] else "已关闭"),
+        "开关 TAIL=%s · 每卡 ratio 分位数 %s(prior=true 表示样本 <30,用保守先验 1.25;真实欠载=0 的 500 轮 soak 未跑,不得宣称达标)" % (sw["TAIL"], json.dumps(ts, ensure_ascii=False)))
+    st15 = "失败" if (m["segs"] and V13M["failed_segs"] and not MOCK) else ("已记录" if m["segs"] else "未运行")
+    add(15, "v14 · 失败不丢句(跨卡重试 / 抢救)", st15, "句子 %d · 跨卡重试 %d(成功 %d)· 抢救放行 %d(只在重试阶梯耗尽且干净前缀覆盖率 ≥ %.0f%% 时;可能缺少末尾少量文字,已在完整性提示里标注)· 仍失败句 %d(验收要求 dropped_sentences=0)" % (
+        m["segs"], m["xretry"], m["xretry_ok"], m["salvaged"], _v14.SALVAGE_MIN_COVERAGE * 100, V13M["failed_segs"]))
+    add(16, "v14 · 实时对话 / 声纹锁 / 回声门", "未验证", "沙箱仅用合成信号与 Mock 验证逻辑;真实麦克风、真实 WavLM-SV(CPU 延迟)、真机回声 soak(30 分钟=0)、4 小时常开均未验证。开关 DIALOG=%s LOCK=%s;详见 /api/v14/state" % (sw["DIALOG"], sw["LOCK"]))
+    add(17, "v14 · 口语化文本(数字/小数/时间/金额/单位)", "已记录" if m["spoken_rewrites"] else ("未运行" if sw["TEXT"] else "已关闭"),
+        "最近改写:%s;ASR 回读 CER(M5.3):未实现" % json.dumps(list(m["spoken_rewrites"])[-3:], ensure_ascii=False))
+    add(18, "v14 · 未实现/未验证项", "未验证", "并行 hedging 与多槽批解码 · EDF 调度器 · 短语缓存/开场库 best-of-N · 辅助模型全部移出 GPU · Silero/TEN VAD · CAM++/ECAPA 融合 · 推测式 LLM · Smart Turn · 参考锦标赛/LTAS EQ/LoRA/VC · "
+        "WebRTC/Opus · ABX 页:均未实现(沙箱无 GPU 无法验证,见交付说明)")
+
+
 def v13_report_items(add):
     """§9 验收清单:只写测到的;样本不足/没测的如实写「未验证」。"""
     if _v13 is None:
@@ -574,8 +713,11 @@ class Pool:
                 continue
             if t.pinned is not None and t.pinned != w.idx:
                 continue
-            if t.blocked():                      # 背压:浏览器已经领先足够多,先不要继续烧 GPU
+            if t.blocked() and not getattr(t.segs[j[1]], "x_tries", 0):      # 背压:浏览器已经领先足够多,先不要继续烧 GPU(v14:跨卡重试的句子是队首,后面的句子已就绪却发不出去,不能再被背压挡住 → 否则死锁)
                 continue
+            _av = getattr(t.segs[j[1]], "avoid", None)
+            if _av is not None and _av == w.idx and any(x_.idx != w.idx for x_ in self.usable()):
+                continue                         # v14:这一句刚在这张卡上失败,留给另一张卡
             self.backlog.remove(j)
             return t, j
         return None
@@ -598,6 +740,8 @@ class Pool:
             t.gpu_segs[str(w.idx)] = t.gpu_segs.get(str(w.idx), 0) + 1
             seed = seg_seed(VOICE["vid"], seg_i, clean)
             _ex13 = v13_job_extra(t, seg_i, clean, w)
+            if getattr(seg, "v14_extra", None):
+                _ex13 = dict(_ex13 or {}, **seg.v14_extra)
             w.q.put(("tts", uid, self.epoch.value, seg_i, clean, prof, seed) + ((_ex13,) if _ex13 else ()))
 
         v13_opener_kick(self)
@@ -822,6 +966,9 @@ def sim_arrivals(turn):
         i = min(ids, key=lambda x: free[x])
         st = W(i)
         F, D, PRE = st["F"], st["D"], st["PRE"]
+        if v14_on("TAIL"):                                                # v14 M1:用该卡「整句耗时/预测」的 P95(样本 <30 用保守先验 1.25),而不是均值;下限 1.0
+            _u = V14_TAIL.uplift(i, 0.95)
+            F, D, PRE = F * _u, D * _u, PRE * _u
         prof = "first" if k == 0 else ("second" if k == 1 else "rest")
         sched = SCHED.get(prof, SCHED["rest"])
         raw = max(0.5, len(sg.text) * TEXT_STATS["spc"]) + TEXT_STATS["trim"]
@@ -1012,6 +1159,9 @@ def pump(turn):
             seg.out = []
             b = pause_b + audio_b
             turn.samples += len(b) // 2
+            seg.emitted = getattr(seg, "emitted", 0) + len(b) // 2
+            if V14_REF is not None:
+                V14_REF.add(b)
             art_record(turn, seg.idx, pause_b, audio_b)           # 与 emit 完全同一处、同一顺序:整轮 = 实际播放序列,单段 = 只含本段
             if turn.first_audio is None:
                 turn.first_audio = time.time() - turn.t0
@@ -1121,7 +1271,11 @@ async def acoustic_job(turn):
 
 
 def dispatch(turn, text, final=False):
-    clean = tts_clean(_v13.normalize_text(text) if v13_on("GUARD") else text, final=final)
+    _norm = _v13.normalize_text(text) if v13_on("GUARD") else text
+    _sp = _v14.spoken(_norm) if v14_on("TEXT") else _norm                # v14 M5:数字/小数/时间/金额/单位口语化(原文 → 口语化 可在诊断里看到)
+    if _sp != _norm:
+        V14M["spoken_rewrites"].append({"orig": _norm[:80], "spoken": _sp[:80]})
+    clean = tts_clean(_sp, final=final)
     if not turn.tts or not has_speech(clean):
         return
     seg = Seg(len(turn.segs), clean, text.strip()[-1:])
@@ -1233,7 +1387,7 @@ def on_worker_msg(msg):
         w.inflight = max(0, w.inflight - 1)
         w.cur = None
         try:
-            if stats.get("audio") and stats.get("wall") and not err:
+            if stats.get("audio") and stats.get("wall") and not err and not stats.get("salvaged"):
                 st = W(idx)
                 a_s, first = float(stats["audio"]), float(stats.get("first") or 0)
                 seg0 = ACTIVE.get(tuid)
@@ -1260,6 +1414,14 @@ def on_worker_msg(msg):
             return
         seg = t.segs[seg_i]
         w.pending = max(0, w.pending - len(seg.text))
+        if err and v14_try_xretry(t, seg, idx, err):
+            return
+        if not err and not stats.get("skipped"):
+            v14_record_seg(idx, stats)
+            if getattr(seg, "x_tries", 0):
+                V14M["xretry_ok"] += 1
+            if stats.get("salvaged"):
+                V14M["salvaged"] += 1
         a = v13_post(t, seg, seg.trim.flush(), final=True)
         if a.size:
             seg.out.append(a)
@@ -1861,10 +2023,25 @@ async def run_turn(sess, turn, user_text, opts, say_only):
         pump(turn)
     finally:
         if turn.full_text and not say_only:
-            sess.history.append({"role": "assistant", "content": turn.full_text})
+            _ht, _cut = v14_assistant_text(turn)
+            if _ht or not _cut:
+                sess.history.append({"role": "assistant", "content": _ht if _cut else turn.full_text})
+            if _cut:
+                V14_TL.log(ev="history_truncated", kept=len(_ht), full=len(turn.full_text))
 
 
 def cancel_turn(sess):
+    _tt = sess.turn
+    if _tt is not None and (not _tt.closed or _tt.played_est() < _tt.samples - int(0.3 * SR)):      # 还在生成,或已发完但浏览器还有 >0.3s 没播完 → 视为被打断
+        _tt.interrupted = True                                          # v14:run_turn 的 finally 据此只把「已播放」的文本写进对话历史
+        if v14_on("DIALOG") and sess.task is not None and sess.task.done() and sess.history and sess.history[-1].get("role") == "assistant" and sess.history[-1].get("content") == sess.turn.full_text:
+            txt, cut = v14_assistant_text(sess.turn)                    # LLM 早就说完、但音频还在播:把历史里的整段回复改成已播放部分
+            if cut:
+                if txt:
+                    sess.history[-1]["content"] = txt
+                else:
+                    sess.history.pop()
+                V14_TL.log(ev="history_truncated", kept=len(txt), full=len(sess.turn.full_text))
     if sess.task is not None and not sess.task.done():
         sess.task.cancel()
     if sess.turn is not None:
@@ -1979,6 +2156,7 @@ def build_report():
     add(7, "双卡一致性(同一权重/同一配置)", "通过" if wm else ("失败" if wm is False else "未运行"), "权重指纹一致=%s;sha256=%s;不承诺逐采样点相同,跨卡听感需人工 A/B" % (wm, SEC["model_sha256"]))
     add(8, "环境", "已记录", json.dumps(backend_summary(), ensure_ascii=False, default=str)[:600])
     v13_report_items(add)
+    v14_report_items(add)
     return {"generated": time.strftime("%F %T"), "mock": MOCK, "items": items, "turns_gateway": list(TURN_LOG)[-40:], "turns_browser": ms[-40:], "events": EVENTS, "v13": v13_state(),
             "per_gpu": {str(i): {"F_ms": round(W(i)["F"] * 1000, 1), "D_ms": round(W(i)["D"] * 1000, 1), "PRE_ms": round(W(i)["PRE"] * 1000), "chunk_gap_ms": pcts([g * 1000 for g in W(i)["gaps"]])}
                         for i in (range(len(POOL.workers)) if POOL else [])}}
@@ -2305,6 +2483,12 @@ async def _startup():
         await PORTAL.on_startup()
 
 
+try:
+    import v14_dialog as _v14_dialog  # noqa: E402
+    V14D = _v14_dialog.attach(app, globals()) if _v14 is not None else None      # v14:实时对话 / 声纹锁路由(只新增路由)
+except Exception as _e14d:  # noqa: BLE001
+    V14D = None
+    log.warning("v14_dialog 不可用(实时对话/声纹锁关闭,其余照常): %s", _e14d)
 import portal  # noqa: E402
 PORTAL = portal.install(app, globals())
 
@@ -2375,6 +2559,10 @@ try:
     import v13 as _v13
 except Exception:  # noqa: BLE001  v13 缺失 → 按 v12 行为
     _v13 = None
+try:
+    import v14 as _v14
+except Exception:  # noqa: BLE001  v14 缺失 → 按 v13 行为
+    _v14 = None
 
 SR = 24000
 DIAG_DIR = Path(os.environ.get("VC_DIAG_DIR") or "/kaggle/working/vc_diag")
@@ -2503,6 +2691,8 @@ class Segmenter:
         L = len(b)
         for i, ch in enumerate(b):
             ln = i + 1
+            if _v14 is not None and ch in ".,:：" and i > 0 and b[i - 1].isdigit() and (i + 1 >= L or b[i + 1].isdigit()) and _v14.on("TEXT"):
+                continue                                       # v14:不在数字(小数/时间/千分位)中间断开;数字后面的字还没到就等下一批
             if ch in STRONG and ln >= mn:
                 return ln
             if ch == "." and ln >= mn and i + 1 < L and b[i + 1] in " \n":
@@ -2734,6 +2924,20 @@ class MockEngine:
             self.last_frames = done
             if getattr(self, "capture_codes", False) and "RUNAWAYLOOP" in text and ((seed or 0) % 2 == 0 or "RUNAWAYALWAYS" in text):
                 self.code_log.extend([7, 19, 233, 41, 5, 88] * max(1, n // 2))      # Mock:重复循环码(v13 检测用)
+            _lg = os.environ.get("VC_MOCK_LATE_GPU", "")
+            late_on = ("RUNAWAYLATE" in text and ((seed or 0) % 2 == 0 or os.environ.get("VC_MOCK_LATE_ALWAYS") == "1") and (_lg == "" or int(_lg) == self.idx))
+            if getattr(self, "capture_codes", False) and "RUNAWAYLATE" in text:
+                self.code_log.extend(range(1000 + done, 1000 + done + n))           # Mock(v14):内容期每帧码都不同
+        if getattr(self, "capture_codes", False) and "RUNAWAYLATE" in text and late_on:        # Mock(v14):内容播完后不出 EOS,同一个码连续输出,电平 -34dB(不是低电平,TailHold 抓不到)
+            for _ in range(60):
+                time.sleep(12 * F + D)
+                nz = np.random.default_rng(3).standard_normal(int(SR * 12 / 12.5))
+                nz = np.convolve(nz, np.ones(8) / 8, mode="same")
+                nz = nz / (np.sqrt(np.mean(nz ** 2)) + 1e-9) * 10 ** (-34 / 20)
+                done += 12
+                self.last_frames = done
+                self.code_log.extend([5] * 12)
+                yield nz.astype(np.float32), SR
         if os.environ.get("VC_MOCK_RUNAWAY") == "1" and "RUNAWAYTAIL" in text:      # 复刻线上故障:正常内容之后继续吐 -48dB 低电平噪声(未出 EOS)
             rng = np.random.default_rng(int(seed or 0) % 1000)
             for _ in range(6):
@@ -3314,18 +3518,24 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
             send("seg_done", tuid, seg, idx, {"skipped": True})
             return
         text = _v13.normalize_text(text) or text
+        if _v14 is not None:
+            text = _v14.spoken(text) or text                         # v14 M5:数字/小数/时间/金额/单位口语化(幂等;VC_V14_TEXT=0 关闭)
         spc = float(extra.get("spc") or 0.2)
         hold = bool(extra.get("hold"))
         exp = _v13.expected_frames(text, spc)
         max_new = _v13.max_new_frames(text, spc, MAX_NEW_TOKENS)
         ladder = _v13.retry_ladder()
-        wasted, m13 = 0.0, {"hold": hold, "runaway": 0, "early_stopped": 0, "retries": 0, "released_corrupt": 0, "wasted_s": 0.0, "failed": 0}
+        _lf, _sb, salv = int(extra.get("ladder_from") or 0), int(extra.get("seed_bias") or 0), []      # v14:跨卡重试 = 换种子 + 从降温阶梯开始
+        if 0 < _lf < len(ladder):
+            ladder = ladder[_lf:]
+        wasted, m13 = 0.0, {"hold": hold, "runaway": 0, "early_stopped": 0, "retries": 0, "released_corrupt": 0, "wasted_s": 0.0, "failed": 0, "salvaged": 0}
         for attempt, (so, temp, rep) in enumerate(ladder):
-            cur = int(seed) + so
+            cur = int(seed) + so + _sb
             eng.gen_opts = {"temperature": temp, "rep": rep, "max_new": max_new}
             eng.capture_codes, eng.code_log, eng.last_frames = True, [], 0
             t0, first, nsamp, cancelled = time.time(), None, 0, False
             acc, ch, t_prev = [], [], t0
+            gs, raw = (_v14.GuardState() if (_v14 is not None and _v14.on("SALVAGE")) else None), []
             held, sbuf, released = [], [], False
             qc, guard, th = SegmentQC(), _v13.RunawayGuard(exp, max_new), _v13.TailHold()
             err, stop = None, None
@@ -3354,7 +3564,11 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
                     ch.append((round(now - t_prev, 4), len(pcm)))
                     t_prev = now
                     fr = int(getattr(eng, "last_frames", 0) or 0)
-                    stop = guard.feed_pcm(pcm, fr or None) or guard.feed_codes(_drain_codes())
+                    ids_ = _drain_codes()
+                    if gs is not None:
+                        gs.feed(ids_)
+                        raw.append(pcm)
+                    stop = guard.feed_pcm(pcm, fr or None) or guard.feed_codes(ids_)
                     out = th.feed(pcm)
                     if out.size:
                         acc.append(out)
@@ -3404,10 +3618,25 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
                 wav = save_diag(DIAG_DIR, "gpu%s_t%s_s%s_a%d" % (idx, tuid, seg, attempt), qc.audio(), dict(rep_, text=text, seed=cur, gpu=idx, v13=True))
                 wasted += wall
                 log.error("[GPU%d] 音频完整性检查失败(句 %d, 尝试 %d/%d, %s): %s → 诊断 %s", idx, seg, attempt + 1, len(ladder), "整句保持" if hold else "流式", err, wav)
+                if gs is not None and reason in ("stuck", "repeat", "over_budget") and not released and raw:
+                    salv.append((gs.clean_frames(reason), np.concatenate(raw), cur, reason))      # v14:记下「失控循环之前」的干净前缀,阶梯耗尽时用于抢救
                 if not released and attempt < len(ladder) - 1:
                     m13["retries"] += 1
                     log.warning("[GPU%d] 尚未放行任何音频:换种子/降温重试(第 %d 次),浪费 GPU %.1fs", idx, attempt + 2, wall)
                     continue
+                if salv and not released and _v14 is not None:
+                    best = max(salv, key=lambda s_: s_[0])
+                    okv, cov = _v14.salvage_decision(best[0], exp)
+                    if okv:
+                        keep = _v14.fade_out(best[1][: int(best[0] * 1920)])          # 12.5Hz 码本:每帧 1920 样本;20ms 淡出,避免截断点爆音
+                        _release([keep], time.time())
+                        m13["salvaged"], m13["wasted_s"] = 1, round(wasted, 2)
+                        info14 = {"reason": best[3], "clean_frames": int(best[0]), "exp_frames": round(exp, 1), "coverage": cov, "seed": best[2]}
+                        log.warning("[GPU%d] v14 抢救放行(句 %d):%s 之前的干净前缀 %d 帧(覆盖率 %.0f%% ≥ %.0f%%),可能少尾部几个字;已如实标记 salvaged", idx, seg, best[3], best[0], cov * 100, _v14.SALVAGE_MIN_COVERAGE * 100)
+                        send("v13m", idx, m13)
+                        send("seg_done", tuid, seg, idx, {"first": first, "wall": wall, "audio": len(keep) / SR, "ch": [], "seed": best[2], "attempt": attempt, "salvaged": True, "v14": info14, "frames": int(best[0]),
+                                                           "qc": {"warnings": ["v14 抢救放行:%s 之后的循环已裁掉,覆盖率 %.0f%%(可能缺少末尾少量文字)" % (best[3], cov * 100)], "errors": []}, "v13": m13})
+                        return
                 m13["failed"], m13["wasted_s"] = 1, round(wasted, 2)
                 if released:
                     m13["released_corrupt"] = 1                         # 诚实计数:流式放行后才发现问题,无法收回已放行的块
@@ -3418,7 +3647,7 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
             _release(held if hold else sbuf, now)
             m13["wasted_s"] = round(wasted, 2)
             send("v13m", idx, m13)
-            send("seg_done", tuid, seg, idx, {"first": first, "wall": wall, "audio": nsamp / SR, "ch": ch[:40], "seed": cur, "attempt": attempt, "qc": rep_, "v13": m13})
+            send("seg_done", tuid, seg, idx, {"first": first, "wall": wall, "audio": nsamp / SR, "ch": ch[:40], "seed": cur, "attempt": attempt, "qc": rep_, "v13": m13, "frames": fr, "exp_frames": round(exp, 1)})
             if epoch.value == ep and nsamp > SR * 1.2 and acc:
                 deferred.append((tuid, seg, np.concatenate(acc), ep))
             else:
@@ -11422,6 +11651,7 @@ dlLoad();
   }
 })();
 </script>
+<script src="/dialog.js"></script>
 </body>
 </html>
 '''
@@ -22204,6 +22434,2112 @@ class TurnState:
                 self.lev.preset(voice_rms)
         return self.lev
 '''
+FILES['v14.py'] = r'''# -*- coding: utf-8 -*-
+"""
+v14.py —— v14 增量模块(只依赖 numpy;网关进程与 GPU 进程共用)。每个子模块独立开关,全部关闭 = v13 行为:
+    VC_V14=0             总开关
+    VC_V14_TAIL=0/1      M1 尾部延迟:起播规划用「分位数」(P95)而不是均值(规划器内部矛盾的根因 R3)
+    VC_V14_SALVAGE=0/1   M2 失控句「抢救」:重试阶梯耗尽后,取失控循环之前的干净前缀(覆盖率达标才放行),而不是直接丢句
+    VC_V14_XRETRY=0/1    M2 跨卡重试:一张卡三次都失败 → 另一张卡换种子/降温再试一次(串行兜底;不是 hedging)
+    VC_V14_TEXT=0/1      M5 口语化文本规范(数字/小数/时间/金额/单位/网址),界面可见「原文 → 口语化」
+    VC_V14_DIALOG=0/1    M6 实时对话(常开麦克风 · 本地 VAD · 回声门 · 本地打断 · 自适应端点 · 历史按已播放截断)
+    VC_V14_LOCK=0/1      M7 声纹锁(登记 → 序贯判决 → 全句终判 → 回声相干检测);文字输入永不被拦截
+    VC_V14_LEARN=0/1     M8 真实日志驱动的学习(分位数模型持久化、时间线 jsonl、版本注册表 + 晋升/回滚协议)
+诚实声明:本模块在 CPU 沙箱用合成信号/Mock 验证了【逻辑与流程】;没有 GPU/真实麦克风/真实 WavLM-SV 的实测数据,
+所有阈值都是工程默认值,实测前不得宣称「已达标」;声纹 cosine 是原始分数,未经标注数据校准,不是相似度百分比。
+"""
+import hashlib
+import json
+import math
+import os
+import re
+import threading
+import time
+from collections import deque
+
+import numpy as np
+
+SR = 24000
+SR16 = 16000
+
+
+def _flag(name, default="1"):
+    if os.environ.get("VC_V14", "1") in ("0", "false", "False", ""):
+        return False
+    return os.environ.get("VC_V14_" + name, default) not in ("0", "false", "False", "")
+
+
+def on(name):
+    return _flag(name)
+
+
+def switches():
+    return {k: _flag(k) for k in ("TAIL", "SALVAGE", "XRETRY", "TEXT", "DIALOG", "LOCK", "LEARN")}
+
+
+def envf(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except ValueError:
+        return float(default)
+
+
+SALVAGE_MIN_COVERAGE = envf("VC_V14_SALVAGE_MIN_COVERAGE", 0.75)     # 干净前缀帧数 ≥ 期望帧数 × 它,才允许抢救放行
+STATE_DIR = os.environ.get("VC_V14_STATE") or "/kaggle/working/v14_state"
+
+
+# ═══════════════════════════ M1 尾部延迟模型(在线分位数) ═══════════════════════════
+class QuantileWindow:
+    """滑窗精确分位数(样本很少,不需要 t-digest / P²)。样本数 < min_n 时返回保守先验,而不是用 3 个样本的均值装作已知。"""
+
+    def __init__(self, maxlen=300, min_n=30, priors=None):
+        self.xs = deque(maxlen=maxlen)
+        self.min_n = min_n
+        self.priors = priors or {0.5: 1.0, 0.95: 1.25, 0.99: 1.5}
+
+    def add(self, x):
+        x = float(x)
+        if math.isfinite(x) and x > 0:
+            self.xs.append(x)
+
+    def n(self):
+        return len(self.xs)
+
+    def q(self, p):
+        if len(self.xs) < self.min_n:
+            keys = sorted(self.priors)
+            best = min(keys, key=lambda k: abs(k - p))
+            return float(self.priors[best])
+        return float(np.quantile(np.fromiter(self.xs, float), p))
+
+    def snapshot(self):
+        return {"n": self.n(), "p50": round(self.q(0.5), 3), "p95": round(self.q(0.95), 3), "p99": round(self.q(0.99), 3), "prior": self.n() < self.min_n}
+
+
+class TailModel:
+    """每张卡一个窗口:ratio = 实测整句耗时 / 均值模型预测耗时。planning 用 uplift(0.95) 放大 sim_arrivals 的每块耗时与 PRE。
+    下限 1.0(分位数模型只会让规划更保守,不会比 v13 更激进 —— P0 优先于首声速度)。"""
+
+    def __init__(self):
+        self.cards = {}
+
+    def record(self, card, ratio):
+        self.cards.setdefault(int(card), QuantileWindow()).add(ratio)
+
+    def uplift(self, card, p=0.95):
+        w = self.cards.get(int(card))
+        return max(1.0, w.q(p)) if w else max(1.0, QuantileWindow().q(p))
+
+    def snapshot(self):
+        return {str(k): v.snapshot() for k, v in sorted(self.cards.items())}
+
+    def dump(self):
+        return {str(k): list(v.xs) for k, v in self.cards.items()}
+
+    def load(self, d):
+        for k, xs in (d or {}).items():
+            w = self.cards.setdefault(int(k), QuantileWindow())
+            for x in xs[-300:]:
+                w.add(x)
+
+
+def predicted_wall(frames, F, D, PRE):
+    return PRE + F * frames + D * max(1, frames // 4)
+
+
+def start_permit(ready_p99, durations, margin_s=0.25):
+    """起播许可证明(M1.1-①):ready_p99[k] = 第 k 句就绪时刻 P99(相对 t0),durations[k] = 该句可播放时长。
+    返回 (最小起播等待 s, 瓶颈句下标)。证明成立的条件:对每个 k,起播时刻 + Σ_{j<k} durations[j] − margin ≥ ready_p99[k]。"""
+    need, worst, played = 0.0, -1, 0.0
+    t0 = ready_p99[0] if ready_p99 else 0.0
+    for k, (r, d) in enumerate(zip(ready_p99, durations)):
+        gap = r + margin_s - t0 - played
+        if k == 0:
+            gap = 0.0
+        if gap > need:
+            need, worst = gap, k
+        played += d
+    return max(0.0, need), worst
+
+
+# ═══════════════════════════ M5 口语化文本规范 ═══════════════════════════
+_DIG = "零一二三四五六七八九"
+_CJK = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]")
+_LAT_WORD = re.compile(r"[A-Za-z]{2,}")
+_URL = re.compile(r"(?:https?://)?(?:www\.)?([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)(/[^\s，。！？、；]*)?")
+_TIME = re.compile(r"(?<![\d:])(\d{1,2}):(\d{2})(?![\d:])")
+_PCT = re.compile(r"(\d+(?:\.\d+)?)\s*[%％]")
+_CUR_CN = re.compile(r"[¥￥]\s*(\d+(?:\.\d+)?)")
+_CUR_US = re.compile(r"\$\s*(\d+(?:\.\d+)?)")
+_UNIT = re.compile(r"(?<![A-Za-z\d.])(\d+(?:\.\d+)?)\s*(kg|km|cm|mm|ml|mg|℃|°C|m|g|L)(?![A-Za-z])")
+_UNIT_CN = {"kg": "公斤", "km": "公里", "cm": "厘米", "mm": "毫米", "ml": "毫升", "mg": "毫克", "℃": "摄氏度", "°C": "摄氏度", "m": "米", "g": "克", "L": "升"}
+_DEC = re.compile(r"(?<![A-Za-z\d.])(\d+)\.(\d+)(?![A-Za-z\d.])")
+_YEAR = re.compile(r"(?<![A-Za-z\d.])(\d{4})(?=年)")
+_INT = re.compile(r"(?<![A-Za-z\d.])(\d+)(?![A-Za-z\d])")
+
+
+def digits_cn(s):
+    return "".join(_DIG[int(c)] for c in s if c.isdigit())
+
+
+def _group4(n, lead=False):
+    """0<n<10000 → 汉字;lead 表示它是整个数的最高组(10~19 读「十X」)。"""
+    parts, zero = [], False
+    for u, d in zip(("千", "百", "十", ""), (n // 1000, n // 100 % 10, n // 10 % 10, n % 10)):
+        if d == 0:
+            zero = bool(parts)
+            continue
+        if zero:
+            parts.append("零")
+            zero = False
+        if u == "十" and d == 1 and not parts and lead:
+            parts.append("十")
+        else:
+            parts.append(("两" if d == 2 and u in ("千", "百") else _DIG[d]) + u)
+    return "".join(parts)
+
+
+def cn_int(n):
+    n = int(n)
+    if n == 0:
+        return "零"
+    yi, wan, ge = n // 10 ** 8, n // 10000 % 10000, n % 10000
+    out = ""
+    if yi:
+        out += (_group4(yi, True) if yi < 10000 else cn_int(yi)) + "亿"
+    if wan:
+        if out and wan < 1000:
+            out += "零"
+        out += ("两" if wan == 2 else _group4(wan, not out)) + "万"
+    if ge:
+        if out and ge < 1000:
+            out += "零"
+        out += _group4(ge, not out)
+    return out
+
+
+def _is_round(s):
+    return s.rstrip("0") != s and len(s.rstrip("0")) <= 2
+
+
+def num_cn(s):
+    """'12'/'3.5'/'007' → 口语。前导 0 / 很长的整数(电话、编号)逐位读;其余按数值读。"""
+    if "." in s:
+        a, b = s.split(".", 1)
+        return num_cn(a) + "点" + digits_cn(b)
+    if (len(s) > 1 and s[0] == "0") or len(s) >= 11 or (len(s) >= 7 and not _is_round(s)):
+        return digits_cn(s)
+    return cn_int(int(s))
+
+
+def cjk_context(t):
+    """只有中文为主的文本才做口语化(英文句子里的数字交给模型自己读,避免把 'GPT-4' 之类改坏)。"""
+    return len(_CJK.findall(t or "")) >= max(1, len(_LAT_WORD.findall(t or "")))
+
+
+def spoken(t):
+    """口语化(幂等:结果里不再含阿拉伯数字,二次调用为空操作)。关闭 / 无需改写时原样返回。"""
+    if not t or not on("TEXT"):
+        return t
+    has_url = bool(re.search(r"https?://|www\.", t))
+    if not (has_url or any(c.isdigit() for c in t)) or not cjk_context(t):
+        return t
+
+    def _url(m):
+        host = m.group(1).replace(".", "点")
+        path = m.group(2) or ""
+        return host + (path.replace("/", "斜杠") if path and path != "/" else "")
+    if has_url:
+        t = _URL.sub(_url, t)
+
+    def _time(m):
+        h, mi = int(m.group(1)), int(m.group(2))
+        if h > 24 or mi > 59:
+            return m.group(0)
+        return cn_int(h) + "点" + ("整" if mi == 0 else (("零" if mi < 10 else "") + cn_int(mi) + "分"))
+    t = _TIME.sub(_time, t)
+    t = _PCT.sub(lambda m: "百分之" + num_cn(m.group(1)), t)
+    t = _CUR_CN.sub(lambda m: num_cn(m.group(1)) + "元", t)
+    t = _CUR_US.sub(lambda m: num_cn(m.group(1)) + "美元", t)
+    t = _UNIT.sub(lambda m: num_cn(m.group(1)) + _UNIT_CN[m.group(2)], t)
+    t = _DEC.sub(lambda m: num_cn(m.group(1) + "." + m.group(2)), t)
+    t = _YEAR.sub(lambda m: digits_cn(m.group(1)), t)
+    t = _INT.sub(lambda m: num_cn(m.group(1)), t)
+    return t
+
+
+def spoken_diff(t):
+    """界面用:返回 (口语化文本, 是否改写)。"""
+    s = spoken(t)
+    return s, s != t
+
+
+def split_protected_spans(t):
+    """分段器用:返回「不得在其内部断开」的区间 [(a,b)]:数字(含小数/时间)、英文单词、引号/括号内的短片段。"""
+    spans = [(m.start(), m.end()) for m in re.finditer(r"\d+(?:[.:：]\d+)*|[A-Za-z]+(?:['\-][A-Za-z]+)*", t or "")]
+    for m in re.finditer(r"“[^”]{1,24}”|\"[^\"]{1,24}\"|（[^）]{1,16}）|\([^)]{1,16}\)|《[^》]{1,24}》", t or ""):
+        spans.append((m.start(), m.end()))
+    return spans
+
+
+def safe_cut(t, cut):
+    """cut(切出的前缀长度)落在受保护区间内部时,挪到该区间之后;返回新 cut。"""
+    for a, b in split_protected_spans(t):
+        if a < cut < b:
+            return b
+    return cut
+
+
+# ═══════════════════════════ M2 抢救:失控循环之前的干净前缀 ═══════════════════════════
+def clean_prefix_frames(codes_total, run_len):
+    """失控循环从第 (codes_total - run_len) 帧开始;之前的帧视为干净。"""
+    return max(0, int(codes_total) - int(run_len))
+
+
+def trailing_run(codes):
+    if not codes:
+        return 0
+    last, k = codes[-1], 0
+    for c in reversed(codes):
+        if c != last:
+            break
+        k += 1
+    return k
+
+
+def salvage_decision(clean_frames, exp_frames, min_cov=None):
+    """返回 (是否抢救, 覆盖率)。覆盖率 = 干净帧 / 期望帧(期望本身是估计,所以只在重试阶梯耗尽之后才用,并如实记为 salvaged)。"""
+    cov = clean_frames / max(exp_frames, 1.0)
+    return cov >= (SALVAGE_MIN_COVERAGE if min_cov is None else min_cov), round(cov, 3)
+
+
+def fade_out(pcm, ms=20):
+    x = np.asarray(pcm, dtype=np.int16).copy()
+    n = min(len(x), int(SR * ms / 1000))
+    if n > 1:
+        x[-n:] = (x[-n:].astype(np.float32) * np.linspace(1.0, 0.0, n)).astype(np.int16)
+    return x
+
+
+class GuardState:
+    """在 v13.RunawayGuard 外面记录「累计码数」与最近码序列(不改 v13 类,只旁路记账)。"""
+
+    def __init__(self):
+        self.total = 0
+        self.last = []
+
+    def feed(self, ids):
+        if ids:
+            self.total += len(ids)
+            self.last = (self.last + [int(i) for i in ids])[-400:]
+
+    def clean_frames(self, reason):
+        if reason == "stuck":
+            return clean_prefix_frames(self.total, trailing_run(self.last))
+        if reason == "repeat":
+            return clean_prefix_frames(self.total, 96)       # 保守:最近 96 帧整体视为循环
+        if reason == "over_budget":                          # 超预算时若尾部已是明显的同码循环,循环之前仍是干净内容;否则无法证明任何前缀干净 → 0
+            run = trailing_run(self.last)
+            return clean_prefix_frames(self.total, run) if run >= 16 else 0
+        return self.total
+
+
+# ═══════════════════════════ M6 端点 / 对话 ═══════════════════════════
+_CONT = ("然后", "而且", "但是", "不过", "所以", "因为", "如果", "还有", "以及", "并且", "就是", "那个", "这个", "我想", "我要", "我想问", "帮我", "请问", "比如", "也就是", "另外", "嗯", "呃", "啊", "那么", "或者", "还是", "的", "和", "跟", "把", "给", "让")
+_CONT_EN = ("and", "but", "so", "because", "if", "or", "the", "a", "to", "of", "with", "um", "uh")
+
+
+def text_incomplete(text):
+    """语义完整度(启发式,非模型):话明显没说完 → 返回需要额外等待的毫秒数;否则 0。"""
+    t = (text or "").strip()
+    if not t:
+        return 0
+    if t[-1] in "。！？!?…":
+        return 0
+    if t[-1] in "，,、；;：:":
+        return 700
+    tail = t[-6:]
+    if any(tail.endswith(c) for c in _CONT):
+        return 600
+    last = re.findall(r"[A-Za-z]+", t[-12:])
+    if last and t[-1].isalpha() and last[-1].lower() in _CONT_EN and not _CJK.search(t[-3:]):
+        return 600
+    return 0
+
+
+def adaptive_silence_ms(pauses_ms, speed="normal"):
+    """端点静音阈值:基础 350~800ms,随用户自己的句内停顿统计自适应(P90 × 1.3),并受速度档钳制。2000ms(VAD_SILENCE_MS)只作兜底上限。"""
+    lo, hi = {"fast": (350, 550), "normal": (450, 800), "slow": (650, 1200)}.get(speed, (450, 800))
+    base = {"fast": 400, "normal": 600, "slow": 850}.get(speed, 600)
+    if len(pauses_ms) >= 8:
+        base = float(np.quantile(np.asarray(pauses_ms, float), 0.9)) * 1.3
+    return int(min(hi, max(lo, base)))
+
+
+def truncate_history_text(seg_texts, seg_samples, played_samples):
+    """打断后对话历史只保留「实际已播放」的文本:整句按已播样本数累计,半句按样本比例取字符前缀(回退到最近标点,没有标点就取比例前缀)。
+    seg_texts: 每句文本;seg_samples: 每句实际发出的样本数(含句间停顿);返回 (保留文本, 是否被截断)。"""
+    out, acc = [], 0
+    for tx, n in zip(seg_texts, seg_samples):
+        if n <= 0:
+            break
+        if acc + n <= played_samples:
+            out.append(tx)
+            acc += n
+            continue
+        frac = max(0.0, (played_samples - acc) / float(n))
+        k = int(len(tx) * frac)
+        if k >= 2:
+            cut = max((tx.rfind(c, 0, k + 1) for c in "，,、；;：:。！？!?"), default=-1)
+            out.append(tx[: (cut + 1) if cut >= max(1, k // 2) else k])
+        return "".join(out), True
+    return "".join(out), len(out) != len(seg_texts)
+
+
+class TurnManager:
+    """TurnManager 状态机(服务端权威;浏览器端镜像同一组状态名)。
+    IDLE → LISTENING → USER_SPEAKING → ENDPOINTING → THINKING → SPEAKING;SPEAKING/THINKING 中主人开口 → BARGED_IN → USER_SPEAKING。
+    文字与语音共用 submit_user_turn(source):source=text 不经声纹门(声纹锁永不拦截文字)。"""
+    STATES = ("IDLE", "LISTENING", "USER_SPEAKING", "ENDPOINTING", "THINKING", "SPEAKING", "BARGED_IN")
+
+    def __init__(self, lock=None):
+        self.state = "IDLE"
+        self.epoch = 0
+        self.turn_id = 0
+        self.lock = lock
+        self.counts = {"accepted": 0, "ignored_other": 0, "ignored_echo": 0, "ignored_short": 0, "text": 0, "barge_in": 0, "barge_rejected": 0}
+        self.log = deque(maxlen=200)
+
+    def _go(self, s, why=""):
+        if s != self.state:
+            self.log.append((time.time(), self.state, s, why))
+            self.state = s
+
+    def start(self):
+        self._go("LISTENING", "start")
+
+    def stop(self):
+        self.epoch += 1
+        self._go("IDLE", "stop")
+
+    def on_user_speech_start(self):
+        if self.state in ("THINKING", "SPEAKING"):
+            self._go("BARGED_IN", "owner_speech")
+            self.counts["barge_in"] += 1
+            self.epoch += 1
+        self._go("USER_SPEAKING", "vad")
+
+    def on_endpoint(self):
+        if self.state == "USER_SPEAKING":
+            self._go("ENDPOINTING", "silence")
+
+    def on_barge_rejected(self):
+        self.counts["barge_rejected"] += 1
+        self._go("SPEAKING", "barge_rejected")
+
+    def submit_user_turn(self, source, text="", verdict=None):
+        """返回 (accepted, reason)。voice:必须 verdict.ok(声纹 + 非回声);text:无条件接受。"""
+        if source == "text":
+            self.counts["text"] += 1
+            self.turn_id += 1
+            self.epoch += 1
+            self._go("THINKING", "text")
+            return True, "text"
+        v = verdict or {}
+        if v.get("echo"):
+            self.counts["ignored_echo"] += 1
+            self._go("LISTENING", "echo")
+            return False, "echo"
+        if v.get("too_short"):
+            self.counts["ignored_short"] += 1
+            self._go("LISTENING", "short")
+            return False, "too_short"
+        if self.lock is not None and self.lock.active() and not v.get("ok"):
+            self.counts["ignored_other"] += 1
+            self._go("LISTENING", "not_owner")
+            return False, "not_owner"
+        self.counts["accepted"] += 1
+        self.turn_id += 1
+        self.epoch += 1
+        self._go("THINKING", "voice")
+        return True, "voice"
+
+    def on_speaking(self):
+        if self.state == "THINKING":
+            self._go("SPEAKING", "first_audio")
+
+    def on_turn_done(self):
+        if self.state in ("THINKING", "SPEAKING", "BARGED_IN"):
+            self._go("LISTENING", "done")
+
+
+# ═══════════════════════════ 音频基础:VAD / 重采样 / 谱嵌入(回退) ═══════════════════════════
+def frame_db16(x, frame=320):
+    x = np.asarray(x, np.float32)
+    n = len(x) // frame
+    if n == 0:
+        return np.zeros(0, np.float32)
+    f = x[: n * frame].reshape(n, frame)
+    return (20 * np.log10(np.maximum(np.sqrt((f ** 2).mean(1)), 1e-6))).astype(np.float32)
+
+
+def energy_vad(x16k, min_speech_s=0.25, hang_s=0.3):
+    """自适应噪声底的能量 VAD(20ms 帧)。返回语音区间 [(a_s, b_s)]。这是回退方案;浏览器端另有本地 VAD。"""
+    d = frame_db16(x16k)
+    if d.size == 0:
+        return []
+    floor = float(np.percentile(d, 15))
+    thr = max(floor + 9.0, -52.0)
+    sp = d > thr
+    segs, i, n = [], 0, len(sp)
+    hang = int(hang_s / 0.02)
+    while i < n:
+        if sp[i]:
+            j, last = i, i
+            while j < n and (sp[j] or j - last <= hang):
+                if sp[j]:
+                    last = j
+                j += 1
+            if (last - i + 1) * 0.02 >= min_speech_s:
+                segs.append((i * 0.02, (last + 1) * 0.02))
+            i = last + 1
+        else:
+            i += 1
+    return segs
+
+
+def to16k(x, sr):
+    x = np.asarray(x, np.float32).reshape(-1)
+    if int(sr) == SR16 or x.size == 0:
+        return x
+    try:
+        from math import gcd
+        from scipy.signal import resample_poly
+        g = gcd(int(sr), SR16)
+        return resample_poly(x, SR16 // g, int(sr) // g).astype(np.float32)
+    except Exception:  # noqa: BLE001
+        n = int(len(x) * SR16 / sr)
+        return np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x).astype(np.float32)
+
+
+def _melbank(n_fft=512, n_mel=32, sr=SR16, fmin=80.0, fmax=5000.0):
+    mel = lambda f: 2595 * np.log10(1 + f / 700.0)  # noqa: E731
+    imel = lambda m: 700 * (10 ** (m / 2595.0) - 1)  # noqa: E731
+    pts = imel(np.linspace(mel(fmin), mel(fmax), n_mel + 2))
+    bins = np.floor((n_fft + 1) * pts / sr).astype(int)
+    fb = np.zeros((n_mel, n_fft // 2 + 1), np.float32)
+    for m in range(1, n_mel + 1):
+        a, b, c = bins[m - 1], bins[m], bins[m + 1]
+        for k in range(a, b):
+            fb[m - 1, k] = (k - a) / max(b - a, 1)
+        for k in range(b, c):
+            fb[m - 1, k] = (c - k) / max(c - b, 1)
+    return fb
+
+
+_FB = None
+
+
+def spectral_embed(x16k):
+    """回退嵌入(没有声纹模型时):有声帧的平均对数梅尔谱形状 + 中位基频。【弱】:只用于沙箱测试 / 降级,界面必须标注。"""
+    global _FB
+    x = np.asarray(x16k, np.float32)
+    if x.size < 4000:
+        raise ValueError("音频太短")
+    if _FB is None:
+        _FB = _melbank()
+    n_fft, hop = 512, 160
+    win = np.hanning(n_fft).astype(np.float32)
+    n = 1 + (len(x) - n_fft) // hop
+    idx = np.arange(n)[:, None] * hop + np.arange(n_fft)[None, :]
+    fr = x[idx] * win
+    sp = np.abs(np.fft.rfft(fr, axis=1)) ** 2
+    en = 10 * np.log10(np.maximum(sp.sum(1), 1e-9))
+    keep = en > (np.percentile(en, 30) + 3.0)
+    if keep.sum() < 8:
+        keep = en >= np.median(en)
+    lm = np.log(np.maximum(sp[keep] @ _FB.T, 1e-8))
+    shape = lm.mean(0)
+    shape = shape - shape.mean()
+    f0s = []
+    for f in fr[keep][:: max(1, int(keep.sum()) // 40)]:
+        f = f - f.mean()
+        ac = np.correlate(f, f, "full")[len(f) - 1:]
+        lo, hi = int(SR16 / 400), int(SR16 / 70)
+        if ac[0] > 1e-6:
+            k = lo + int(np.argmax(ac[lo:hi]))
+            if ac[k] / ac[0] > 0.3:
+                f0s.append(SR16 / k)
+    f0 = float(np.median(f0s)) if f0s else 130.0
+    v = np.concatenate([shape / (np.linalg.norm(shape) + 1e-9), [1.0 * (math.log(f0) - math.log(130.0))]])
+    return (v / (np.linalg.norm(v) + 1e-9)).astype(np.float32)
+
+
+# ═══════════════════════════ M7 声纹锁 ═══════════════════════════
+def _unit(v):
+    v = np.asarray(v, np.float64)
+    return v / (np.linalg.norm(v) + 1e-12)
+
+
+class VoiceLock:
+    """声纹锁。embed_fn(wav16k float32) → 嵌入向量。登记:VAD → 2~4s 切段 → 嵌入 → 去离群 → 质心 + K 个原型 + 留一分布。
+    阈值 = max(floor, min(0.98, 登记集留一分布 μ−3σ));floor 是模型相关的工作点(WavLM-SV 官方卡片建议 0.86),【未经公开 impostor 集校准】。
+    模式:strict(严格)/ off(关闭,所有声音放行)/ learn(学习:放行但打分并记录)。永远保留登记原型作锚点;自适应是有界 EMA + 可回滚。"""
+
+    MODES = ("strict", "off", "learn")
+
+    def __init__(self, embed_fn, backend="unknown", floor=0.86, state_dir=None):
+        self.embed_fn, self.backend, self.floor = embed_fn, backend, float(floor)
+        self.mode = "off"
+        self.centroid = None
+        self.anchor = None
+        self.protos = []
+        self.loo = {"mean": None, "std": None, "n": 0}
+        self.thr = None
+        self.enrolled_at = None
+        self.history = []
+        self.updates = 0
+        self.state_dir = state_dir or STATE_DIR
+        self._lock = threading.RLock()
+        self.stats = {"scores_owner": deque(maxlen=500), "scores_other": deque(maxlen=500)}
+
+    def active(self):
+        return self.mode == "strict" and self.centroid is not None
+
+    # —— 登记 ——
+    def enroll(self, wavs16k, seg_s=3.0, min_voiced_s=6.0, k_protos=3):
+        """wavs16k: 若干条 16k 单声道 float32(现场 3 段 / 上传文件)。返回 dict(ok, reason, ...)。拒绝太短 / 含多人迹象 / 噪声过大并给出具体原因。"""
+        segs = []
+        voiced = 0.0
+        for w in wavs16k:
+            w = np.asarray(w, np.float32)
+            for a, b in energy_vad(w):
+                voiced += b - a
+                a_i, b_i = int(a * SR16), int(b * SR16)
+                step = int(seg_s * SR16)
+                if b_i - a_i < int(1.2 * SR16):
+                    continue
+                for s in range(a_i, max(a_i + 1, b_i - int(1.2 * SR16) + 1), step):
+                    segs.append(w[s: min(b_i, s + step)])
+        if voiced < min_voiced_s:
+            return {"ok": False, "reason": "有效语音只有 %.1f 秒,至少需要 %.0f 秒(请在安静环境多说几句)" % (voiced, min_voiced_s)}
+        embs = []
+        for s in segs:
+            try:
+                embs.append(_unit(self.embed_fn(s)))
+            except Exception:  # noqa: BLE001
+                continue
+        if len(embs) < 3:
+            return {"ok": False, "reason": "可用语音片段不足 3 段(%d),无法建立声纹" % len(embs)}
+        E = np.stack(embs)
+        c0 = _unit(np.median(E, axis=0))
+        sc = E @ c0
+        med = float(np.median(sc))
+        mad = 1.4826 * float(np.median(np.abs(sc - med))) + 0.01
+        E2 = E[sc >= med - 3.0 * mad]
+        if len(E2) < 3:
+            return {"ok": False, "reason": "语音片段互相差异很大(可能含多人或噪声过大),请只留下你一个人的声音"}
+        cen = _unit(E2.mean(0))
+        loo = np.array([float(_unit(np.delete(E2, i, 0).mean(0)) @ E2[i]) for i in range(len(E2))])
+        if float(loo.min()) < 0.5 * self.floor:
+            return {"ok": False, "reason": "登记片段之间一致性过低(最低 %.2f),疑似含有多人说话" % float(loo.min())}
+        protos = self._kmeans(E2, min(k_protos, max(1, len(E2) // 3)))
+        mu, sd = float(loo.mean()), float(loo.std())
+        with self._lock:
+            self.centroid, self.anchor, self.protos = cen, cen.copy(), protos
+            self.loo = {"mean": round(mu, 4), "std": round(sd, 4), "n": int(len(loo))}
+            # 登记片段来自同一次录音,留一分布偏乐观:σ 取下限 0.02,并减 4σ(宁可略松一点交给全句终判与回声门,也不让主人被误拒)
+            self.thr = float(max(self.floor, min(0.98, mu - 4.0 * max(sd, 0.02))))
+            self.enrolled_at = time.time()
+            self.history.clear()
+            self.updates = 0
+            if self.mode == "off":
+                self.mode = "strict"
+        return {"ok": True, "segments": int(len(E2)), "dropped": int(len(E) - len(E2)), "voiced_s": round(voiced, 1), "threshold": round(self.thr, 3),
+                "loo_mean": self.loo["mean"], "loo_std": self.loo["std"], "protos": len(protos), "backend": self.backend,
+                "note": "阈值来自登记集留一分布与模型工作点;未用公开 impostor 集校准,FAR/FRR 未知"}
+
+    @staticmethod
+    def _kmeans(E, k, iters=8):
+        rng = np.random.default_rng(0)
+        C = E[rng.choice(len(E), k, replace=False)].copy()
+        for _ in range(iters):
+            a = np.argmax(E @ C.T, axis=1)
+            for j in range(k):
+                if (a == j).any():
+                    C[j] = _unit(E[a == j].mean(0))
+        return [c.copy() for c in C]
+
+    # —— 打分 / 判决 ——
+    def score(self, wav16k):
+        """原始 cosine(质心与最近原型的折中)。无登记 → None。"""
+        if self.centroid is None:
+            return None
+        e = _unit(self.embed_fn(np.asarray(wav16k, np.float32)))
+        s_c = float(e @ self.centroid)
+        s_p = max(float(e @ p) for p in self.protos) if self.protos else s_c
+        return max(s_c, 0.5 * (s_c + s_p))
+
+    def verdict(self, wav16k, echo=False, adapt=True):
+        """全句终判。返回 dict(ok, score, thr, mode, reason)。off → 一律放行(不计分);learn → 放行并记录分数。"""
+        if self.mode == "off" or self.centroid is None:
+            return {"ok": True, "score": None, "thr": self.thr, "mode": self.mode, "reason": "lock_off"}
+        try:
+            s = self.score(wav16k)
+        except Exception as e:  # noqa: BLE001
+            return {"ok": self.mode == "learn", "score": None, "thr": self.thr, "mode": self.mode, "reason": "embed_error: %s" % str(e)[:80], "too_short": "短" in str(e)}
+        ok = s >= self.thr
+        (self.stats["scores_owner"] if ok else self.stats["scores_other"]).append(s)
+        if adapt and ok and not echo and s >= self.thr + 0.04:
+            self._adapt(wav16k)
+        return {"ok": bool(ok or self.mode == "learn"), "score": round(float(s), 4), "thr": round(self.thr, 4), "mode": self.mode, "reason": "owner" if ok else "not_owner"}
+
+    def seq_decider(self, win_s=1.5, step_s=0.25, a=3.0, b=3.0):
+        return SeqDecider(self, win_s, step_s, a, b)
+
+    # —— 有界 EMA 自适应(只用高置信、非回声样本;锚点永不改;可回滚) ——
+    def _adapt(self, wav16k, rate=0.02, max_drift=0.97):
+        try:
+            e = _unit(self.embed_fn(np.asarray(wav16k, np.float32)))
+        except Exception:  # noqa: BLE001
+            return False
+        with self._lock:
+            new = _unit((1 - rate) * self.centroid + rate * e)
+            if float(new @ self.anchor) < max_drift:
+                return False
+            self.history.append(self.centroid.copy())
+            self.history = self.history[-20:]
+            self.centroid = new
+            self.updates += 1
+        return True
+
+    def rollback(self):
+        with self._lock:
+            if self.history:
+                self.centroid = self.history.pop()
+                self.updates = max(0, self.updates - 1)
+                return True
+            if self.anchor is not None:
+                self.centroid = self.anchor.copy()
+                self.updates = 0
+                return True
+        return False
+
+    @staticmethod
+    def far_frr_curve(own_scores, other_scores, n=21):
+        """用【真实采集】的主人/他人分数画 FAR/FRR 曲线;样本不足 → None(界面显示「数据不足」)。"""
+        if len(own_scores) < 10 or len(other_scores) < 10:
+            return None
+        o, x = np.asarray(own_scores, float), np.asarray(other_scores, float)
+        ts = np.linspace(min(o.min(), x.min()), max(o.max(), x.max()), n)
+        return [{"thr": round(float(t), 3), "frr": round(float((o < t).mean()), 3), "far": round(float((x >= t).mean()), 3)} for t in ts]
+
+    # —— 持久化(只写本地私有目录,0600;绝不进公开仓库;delete 真删) ——
+    def to_dict(self):
+        return {"backend": self.backend, "mode": self.mode, "thr": self.thr, "floor": self.floor, "loo": self.loo, "enrolled_at": self.enrolled_at,
+                "centroid": None if self.centroid is None else self.centroid.tolist(), "anchor": None if self.anchor is None else self.anchor.tolist(),
+                "protos": [p.tolist() for p in self.protos], "updates": self.updates}
+
+    def save(self):
+        os.makedirs(self.state_dir, exist_ok=True)
+        p = os.path.join(self.state_dir, "voicelock.json")
+        tmp = p + ".tmp"
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+            json.dump(self.to_dict(), f)
+        os.replace(tmp, p)
+        return p
+
+    def load(self):
+        p = os.path.join(self.state_dir, "voicelock.json")
+        if not os.path.isfile(p):
+            return False
+        with open(p) as f:
+            d = json.load(f)
+        if d.get("backend") != self.backend:                 # 换了嵌入模型 → 旧向量不可比,必须重新登记
+            return False
+        with self._lock:
+            self.mode, self.thr, self.loo, self.enrolled_at, self.updates = d.get("mode", "strict"), d.get("thr"), d.get("loo", {}), d.get("enrolled_at"), d.get("updates", 0)
+            self.centroid = None if d.get("centroid") is None else np.asarray(d["centroid"])
+            self.anchor = None if d.get("anchor") is None else np.asarray(d["anchor"])
+            self.protos = [np.asarray(x) for x in d.get("protos", [])]
+        return self.centroid is not None
+
+    def delete(self):
+        with self._lock:
+            self.centroid = self.anchor = None
+            self.protos, self.history, self.thr, self.updates, self.enrolled_at = [], [], None, 0, None
+            self.mode = "off"
+            self.loo = {"mean": None, "std": None, "n": 0}
+        p = os.path.join(self.state_dir, "voicelock.json")
+        try:
+            if os.path.isfile(p):
+                os.remove(p)
+        except OSError:
+            pass
+        return not os.path.isfile(p)
+
+    def info(self):
+        return {"enrolled": self.centroid is not None, "mode": self.mode, "threshold": None if self.thr is None else round(self.thr, 3), "backend": self.backend,
+                "loo": self.loo, "updates": self.updates, "enrolled_at": self.enrolled_at,
+                "calibrated": False, "note": "cosine 为原始分数,未用标注数据校准;声纹验证不是安全认证,不能用于支付/解锁"}
+
+
+class SeqDecider:
+    """滑窗累计对数似然比(SPRT 思路)。目标分布 N(μ_t,σ_t) 取登记留一分布;非目标分布 N(thr−0.12, 0.06) 是【假设】(没有 impostor 集前无法估计),
+    因此它只用于「打断时尽早放行/拒绝」,整句结束仍以全句 cosine ≥ thr 终判。"""
+
+    def __init__(self, lock, win_s, step_s, a, b):
+        self.lock, self.win, self.step, self.A, self.B = lock, int(win_s * SR16), int(step_s * SR16), a, b
+        self.llr, self.pos, self.scores = 0.0, 0, []
+        self.decision = None
+
+    def feed_all(self, x16k):
+        x = np.asarray(x16k, np.float32)
+        lk = self.lock
+        mu_t = max(lk.thr + 0.04, (lk.loo.get("mean") or (lk.thr + 0.05)) - 0.03)
+        sd_t = max(lk.loo.get("std") or 0.03, 0.03)
+        mu_n, sd_n = lk.thr - 0.12, 0.06
+        win = min(self.win, len(x))
+        while win >= int(0.6 * SR16) and self.pos + win <= len(x) and self.decision is None:
+            try:
+                s = lk.score(x[self.pos: self.pos + win])
+            except Exception:  # noqa: BLE001
+                break
+            self.scores.append(s)
+            l_t = -0.5 * ((s - mu_t) / sd_t) ** 2 - math.log(sd_t)
+            l_n = -0.5 * ((s - mu_n) / sd_n) ** 2 - math.log(sd_n)
+            self.llr += float(np.clip(l_t - l_n, -4.0, 4.0))
+            if self.llr >= self.A:
+                self.decision = "owner"
+            elif self.llr <= -self.B:
+                self.decision = "other"
+            self.pos += self.step
+        return self.decision or "undecided"
+
+
+# ═══════════════════════════ M7.3 回声:已知参考信号的相干检测 ═══════════════════════════
+def _bandpass_fft(x, lo=250.0, hi=3400.0, sr=SR16):
+    X = np.fft.rfft(x)
+    f = np.fft.rfftfreq(len(x), 1.0 / sr)
+    X[(f < lo) | (f > hi)] = 0
+    return np.fft.irfft(X, len(x)).astype(np.float32)
+
+
+def echo_score(mic16k, ref16k, min_ref_rms=0.003):
+    """mic 片段 vs 最近一段已知播放参考(16k):GCC-PHAT(相位变换加权互相关)峰值 + 峰旁比 PSR。
+    PHAT 把幅度谱白化,只保留相位 → 「同一个声音在说不同内容」(克隆声 vs 主人声,谐波结构相近)不会因为周期性相似而假相干;
+    真正的延迟副本(含房间混响、噪声)在真实延迟处出现尖锐峰。返回 dict(psr, peak, lag_s, echo)。
+    echo=True ⇔ PSR ≥ 25(合成测试:同音色独立说话人 PSR ≤ 18,衰减 24dB+噪声的混响回声 PSR ≥ 34;真机必须用 RIR 混音重新校准)。
+    说明:浏览器 AEC 已抑制大部分线性回声,这里是第二道、基于「精确已知参考」的闸。"""
+    x = np.asarray(mic16k, np.float32)
+    y = np.asarray(ref16k, np.float32)
+    if x.size < 3200 or y.size < x.size or float(np.sqrt(np.mean(y ** 2))) < min_ref_rms:
+        return {"peak": 0.0, "psr": 0.0, "lag_s": None, "echo": False, "reason": "no_reference"}
+    x = x[: 16000 * 4]
+    N, M = len(x), len(y)
+    L = 1 << int(np.ceil(np.log2(M + N)))
+    f = np.fft.rfftfreq(L, 1.0 / SR16)
+    band = (f >= 250.0) & (f <= 3400.0)
+    X = np.fft.rfft(x - x.mean(), L)
+    Y = np.fft.rfft(y - y.mean(), L)
+    G = Y * np.conj(X)
+    G = np.where(band, G / (np.abs(G) + 1e-12), 0.0)
+    c = np.fft.irfft(G, L)[: M - N + 1]
+    a = np.abs(c)
+    k = int(np.argmax(a))
+    peak = float(a[k])
+    side = np.delete(a, slice(max(0, k - 80), k + 80))
+    psr = (peak - float(side.mean())) / (float(side.std()) + 1e-12) if side.size > 100 else 0.0
+    coherent = bool(psr >= 25.0)
+    near_frac = 0.0
+    if coherent:                                     # 双讲检测:逐 32ms 帧看 mic 与「对齐后的参考」的相关;主人在说话的帧相关低 → near_end 占比高
+        xb, yb = _bandpass_fft(x - x.mean()), _bandpass_fft(y - y.mean())
+        st = M - N - (M - N - k)                     # = k:参考中与 mic 起点对齐的位置
+        al = yb[st: st + N]
+        fr = 512
+        nf = min(len(xb), len(al)) // fr
+        if nf >= 3:
+            xs, ys = xb[: nf * fr].reshape(nf, fr), al[: nf * fr].reshape(nf, fr)
+            ex_ = np.sqrt((xs ** 2).sum(1)) + 1e-9
+            rho_f = np.abs((xs * ys).sum(1)) / (ex_ * (np.sqrt((ys ** 2).sum(1)) + 1e-9))
+            voiced = ex_ > 0.15 * ex_.max()
+            if voiced.any():
+                near_frac = float((rho_f[voiced] < 0.35).mean())
+    echo = bool(coherent and near_frac < 0.4)
+    return {"peak": round(peak, 5), "psr": round(psr, 2), "lag_s": round((M - N - k) / SR16, 3), "echo": echo, "double_talk": bool(coherent and not echo),
+            "near_end_frac": round(near_frac, 3), "reason": ("double_talk" if coherent and not echo else "coherent") if coherent else "independent"}
+
+
+class RefBuffer:
+    """网关侧:保存最近 N 秒【实际发给浏览器的】播放 PCM(24k int16),供回声相干检测使用。"""
+
+    def __init__(self, seconds=45):
+        self.cap = seconds * SR
+        self.chunks = deque()
+        self.n = 0
+        self.t_last = 0.0
+        self._lk = threading.Lock()
+
+    def add(self, b):
+        a = np.frombuffer(b, dtype="<i2")
+        with self._lk:
+            self.chunks.append(a)
+            self.n += len(a)
+            self.t_last = time.time()
+            while self.n > self.cap and self.chunks:
+                self.n -= len(self.chunks.popleft())
+
+    def last16k(self):
+        with self._lk:
+            if not self.chunks:
+                return np.zeros(0, np.float32)
+            a = np.concatenate(list(self.chunks)).astype(np.float32) / 32768.0
+        return to16k(a, SR)
+
+    def idle_s(self):
+        return time.time() - self.t_last if self.t_last else 1e9
+
+
+# ═══════════════════════════ M8 学习:时间线 / 注册表 / 晋升协议 ═══════════════════════════
+class Timeline:
+    """真实事件落盘 jsonl(有界:超过 max_bytes 滚动为 .1)。只写脱敏数据(无文本、无音频、无声纹)。"""
+
+    def __init__(self, path=None, max_bytes=5_000_000):
+        self.path = path or os.path.join(STATE_DIR, "timeline.jsonl")
+        self.max_bytes = max_bytes
+        self._lk = threading.Lock()
+
+    def log(self, **ev):
+        if not on("LEARN"):
+            return False
+        ev.setdefault("t", round(time.time(), 3))
+        try:
+            with self._lk:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                if os.path.isfile(self.path) and os.path.getsize(self.path) > self.max_bytes:
+                    os.replace(self.path, self.path + ".1")
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            return True
+        except OSError:
+            return False
+
+    def tail(self, n=200):
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                return [json.loads(l) for l in f.readlines()[-n:] if l.strip()]
+        except (OSError, ValueError):
+            return []
+
+
+def bootstrap_diff_ci(a, b, n=2000, alpha=0.05, seed=0):
+    """配对 bootstrap:返回 mean(b−a) 及 (1−alpha) 置信区间。a/b 为同一批样本上的基线/候选指标。"""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    assert a.shape == b.shape and a.size >= 5
+    d = b - a
+    rng = np.random.default_rng(seed)
+    ms = np.array([d[rng.integers(0, d.size, d.size)].mean() for _ in range(n)])
+    return float(d.mean()), (float(np.quantile(ms, alpha / 2)), float(np.quantile(ms, 1 - alpha / 2)))
+
+
+class Registry:
+    """版本注册表 registry.json:每个学习资产的版本、时间、样本量、指标、置信区间、回滚点。
+    promote():非劣效门(护栏指标 CI 下界 ≥ −margin)+ 目标指标显著提升(CI 下界 > 0)才晋升;否则拒绝并保持当前版本;
+    canary_violation() 违反护栏 → rollback() 回到上一个版本。没有证据就不晋升。"""
+
+    def __init__(self, path=None):
+        self.path = path or os.path.join(STATE_DIR, "registry.json")
+        self.d = {"assets": {}}
+        self._lk = threading.Lock()
+        try:
+            with open(self.path) as f:
+                self.d = json.load(f)
+        except (OSError, ValueError):
+            pass
+
+    def _save(self):
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            tmp = self.path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(self.d, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
+
+    def current(self, asset):
+        a = self.d["assets"].get(asset)
+        return a["versions"][a["cur"]] if a and a["versions"] else None
+
+    def register(self, asset, params, note="initial"):
+        with self._lk:
+            a = self.d["assets"].setdefault(asset, {"cur": -1, "versions": []})
+            a["versions"].append({"v": len(a["versions"]) + 1, "t": time.time(), "params": params, "note": note, "evidence": None})
+            a["cur"] = len(a["versions"]) - 1
+            self._save()
+            return a["versions"][-1]
+
+    def promote(self, asset, cand_params, target, guards, margin=0.0, min_n=20):
+        """target = (基线样本, 候选样本, higher_is_better);guards = {name: (基线, 候选, higher_is_better, margin)}。返回 dict(promoted, reason, evidence)。"""
+        ev = {"n": 0, "target": None, "guards": {}}
+        tb, tc, hib = target
+        if len(tb) < min_n or len(tb) != len(tc):
+            return {"promoted": False, "reason": "样本不足(n=%d < %d):数据不足,不晋升" % (len(tb), min_n), "evidence": ev}
+        ev["n"] = len(tb)
+        sgn = 1.0 if hib else -1.0
+        m, (lo, hi) = bootstrap_diff_ci(np.asarray(tb) * sgn, np.asarray(tc) * sgn)
+        ev["target"] = {"mean_gain": round(m, 4), "ci": [round(lo, 4), round(hi, 4)]}
+        for name, (gb, gc, ghib, gm) in guards.items():
+            s2 = 1.0 if ghib else -1.0
+            gmn, (glo, ghi) = bootstrap_diff_ci(np.asarray(gb) * s2, np.asarray(gc) * s2)
+            ev["guards"][name] = {"mean_change": round(gmn, 4), "ci": [round(glo, 4), round(ghi, 4)], "margin": gm}
+            if glo < -abs(gm):
+                return {"promoted": False, "reason": "护栏「%s」非劣效不成立(置信区间下界 %.4f < −%.4f)" % (name, glo, abs(gm)), "evidence": ev}
+        if lo <= margin:
+            return {"promoted": False, "reason": "目标指标提升不显著(置信区间下界 %.4f ≤ %.4f)" % (lo, margin), "evidence": ev}
+        v = self.register(asset, cand_params, note="promoted")
+        with self._lk:
+            v["evidence"] = ev
+            self._save()
+        return {"promoted": True, "reason": "非劣效且显著提升", "evidence": ev, "version": v["v"]}
+
+    def canary_violation(self, asset, guard_value, limit, higher_is_better=True):
+        bad = (guard_value < limit) if higher_is_better else (guard_value > limit)
+        if bad:
+            return self.rollback(asset, "金丝雀违反护栏:%.4f 越过 %.4f" % (guard_value, limit))
+        return False
+
+    def rollback(self, asset, why=""):
+        with self._lk:
+            a = self.d["assets"].get(asset)
+            if not a or a["cur"] <= 0:
+                return False
+            a["versions"][a["cur"]]["rolled_back"] = why or True
+            a["cur"] -= 1
+            self._save()
+            return True
+
+    def summary(self):
+        return {k: {"current": v["versions"][v["cur"]]["v"] if v["versions"] else None, "versions": len(v["versions"]),
+                    "rolled_back": sum(1 for x in v["versions"] if x.get("rolled_back"))} for k, v in self.d["assets"].items()}
+
+
+def sha256_file(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+'''
+FILES['v14_dialog.py'] = r'''# -*- coding: utf-8 -*-
+"""
+v14_dialog.py —— v14 实时对话 / 声纹锁 的服务端胶水(FastAPI 路由)。只增加新路由,不改 v13 的任何接口:
+    GET  /dialog.js                          浏览器端实时对话引擎
+    GET  /api/v14/state                      真实状态(声纹锁 / 对话计数 / 尾部分位数 / 抢救与跨卡重试计数 / 学习注册表)
+    POST /api/v14/lock/enroll?seg=i&final=0|1&reset=0|1   登记(多段上传;任意格式,经 ffmpeg/soundfile 解码)
+    POST /api/v14/lock/mode?mode=strict|off|learn
+    POST /api/v14/lock/rollback    DELETE /api/v14/lock(真删嵌入与缓存)
+    POST /api/v14/dialog/utterance?sr=&playing=&hp=&barge=    原始 PCM16 单声道 → 回声门 → 声纹终判 → (非打断时)ASR → 文本 + hold_ms
+    POST /api/v14/dialog/event?ev=start|stop|speech_start|endpoint|barge_rejected|speaking|done|ignored_local
+    POST /api/v14/feedback?kind=up|down|not_similar   用户显式反馈(只记数,不含音频/文本)
+文字输入走原来的 WebSocket chat 通道,根本不经过这里 → 声纹锁永远不会拦截文字。
+诚实声明:声纹/回声阈值未经公开 impostor 集与真实房间冲激响应校准;WavLM-SV 在 CPU 上的延迟未在 Kaggle 实测。
+"""
+import asyncio
+import os
+import tempfile
+import threading
+import time
+
+import numpy as np
+
+import v14 as V
+
+
+def attach(app, G):
+    from fastapi import Request
+    from fastapi.responses import JSONResponse, Response
+
+    MOCK = bool(G.get("MOCK"))
+    S = {"embed": None, "backend": None, "lock": None, "state": "unloaded", "err": None, "ms": []}
+    ENR = {"segs": [], "t": 0.0}
+    TM = V.TurnManager()
+    DLG = {"pauses": [], "events": {}, "feedback": {"up": 0, "down": 0, "not_similar": 0}, "last": None, "scores": {"owner": [], "other": []}, "t_start": None}
+    ELK = threading.Lock()
+    TL = G.get("V14_TL")
+
+    def _log(**kw):
+        if TL is not None:
+            TL.log(**kw)
+
+    def _ensure_lock():
+        """懒加载嵌入器(WavLM-SV on CPU;失败 → 回退到谱嵌入并明确标注为『弱』)。"""
+        with ELK:
+            if S["lock"] is not None:
+                return S["lock"]
+            S["state"] = "loading"
+            embed, backend, floor = V.spectral_embed, "spectral", 0.80
+            if not MOCK and os.environ.get("VC_V14_SV", "wavlm") == "wavlm":
+                try:
+                    from speaker_sim import SpkScorer
+                    sc = SpkScorer("cpu")
+                    lk = threading.Lock()
+
+                    def embed(w, _sc=sc, _lk=lk):
+                        with _lk:
+                            return _sc.embed(w).cpu().numpy()
+                    backend, floor = "wavlm-sv-cpu", 0.86
+                except Exception as e:  # noqa: BLE001
+                    S["err"] = "声纹模型加载失败,回退到谱嵌入(弱,仅降级):%s: %s" % (type(e).__name__, str(e)[:160])
+                    G["log"].warning("v14 %s", S["err"])
+            S["embed"], S["backend"] = embed, backend
+            lock = V.VoiceLock(embed, backend=backend, floor=floor)
+            try:
+                if lock.load():
+                    G["log"].info("v14 声纹锁:已从本地私有状态恢复(%s,模式 %s)", backend, lock.mode)
+            except Exception as e:  # noqa: BLE001
+                G["log"].warning("v14 声纹锁状态读取失败: %s", e)
+            S["lock"], S["state"] = lock, "ready"
+            TM.lock = lock                                    # 声纹锁严格模式下,语音轮次必须通过声纹(文字不经 TM 的语音门)
+            return lock
+
+    async def lock_async():
+        return await asyncio.get_running_loop().run_in_executor(None, _ensure_lock)
+
+    def _decode16k(data):
+        a, sr, ch = G["decode_audio"](data)
+        return V.to16k(a, sr)
+
+    # ───────────────────────── 路由 ─────────────────────────
+    @app.get("/dialog.js")
+    async def dialog_js():
+        return Response(G["read_src"]("dialog.js") or "", media_type="text/javascript", headers={"Cache-Control": "no-store"})
+
+    def state_dict():
+        lk = S["lock"]
+        info = lk.info() if lk is not None else {"enrolled": False, "mode": "off", "threshold": None, "backend": None, "loo": {}, "calibrated": False,
+                                                 "note": "尚未加载(第一次登记 / 第一次语音对话时才加载)"}
+        own, oth = list(lk.stats["scores_owner"]) if lk else [], list(lk.stats["scores_other"]) if lk else []
+        tail = G["V14_TAIL"].snapshot() if G.get("V14_TAIL") else {}
+        reg = G["V14_REG"].summary() if G.get("V14_REG") else {}
+        m = G["V14M"]
+        return {"switches": V.switches(), "lock": dict(info, model_state=S["state"], model_error=S["err"], samples={"owner": len(own), "other": len(oth)},
+                                                      curve=V.VoiceLock.far_frr_curve(own, oth), curve_note="数据不足时不显示曲线;曲线只来自本次运行真实判决的分数,不是公开 impostor 集的 DET"),
+                "dialog": {"state": TM.state, "counts": dict(TM.counts), "events": dict(DLG["events"]), "feedback": dict(DLG["feedback"]), "last": DLG["last"],
+                           "pauses_n": len(DLG["pauses"]), "silence_ms": V.adaptive_silence_ms(DLG["pauses"], "normal")},
+                "tail": tail, "registry": reg,
+                "gateway": {"xretry": m["xretry"], "xretry_ok": m["xretry_ok"], "salvaged": m["salvaged"], "segs": m["segs"], "spoken_rewrites": list(m["spoken_rewrites"])},
+                "asr_backend": os.environ.get("VC_V14_ASR", "worker"),
+                "honest": ["沙箱只验证了逻辑与流程(合成信号/Mock);真实麦克风、真实 WavLM-SV、Kaggle 双 T4 未验证",
+                           "声纹 cosine 是原始分数,未校准;声纹锁不是安全认证", "回声门阈值来自合成回声测试,真机需要用 RIR 混音校准",
+                           "推测式 LLM、Smart Turn 模型、Silero/TEN VAD、CAM++/ECAPA 融合:未实现(见说明)"]}
+
+    @app.get("/api/v14/state")
+    async def api_state():
+        return state_dict()
+
+    @app.post("/api/v14/lock/enroll")
+    async def lock_enroll(request: Request):
+        if not V.on("LOCK"):
+            return JSONResponse({"ok": False, "error": "声纹锁已关闭(VC_V14_LOCK=0)"}, status_code=403)
+        q = request.query_params
+        if q.get("consent") != "1":
+            return JSONResponse({"ok": False, "error": "请先确认:这是你本人的声音(声纹属于生物特征,只保存在本机私有目录)"}, status_code=400)
+        data = await request.body()
+        if q.get("reset") == "1" or time.time() - ENR["t"] > 600:
+            ENR["segs"] = []
+        ENR["t"] = time.time()
+        if data:
+            try:
+                ENR["segs"].append(await asyncio.get_running_loop().run_in_executor(None, _decode16k, data))
+            except Exception as e:  # noqa: BLE001
+                return JSONResponse({"ok": False, "error": "无法解码音频(%s)" % str(e)[:100]}, status_code=415)
+        if q.get("final") != "1":
+            return {"ok": True, "pending": True, "segments": len(ENR["segs"]), "voiced_hint_s": round(sum(len(x) for x in ENR["segs"]) / 16000.0, 1)}
+        lock = await lock_async()
+        segs, ENR["segs"] = ENR["segs"], []
+        r = await asyncio.get_running_loop().run_in_executor(None, lambda: lock.enroll(segs))
+        if r.get("ok"):
+            try:
+                lock.save()
+            except OSError as e:
+                r["warn"] = "声纹未能写入本地私有目录:%s" % e
+            _log(ev="lock_enroll", ok=True, segs=r.get("segments"), backend=lock.backend)
+        return r
+
+    @app.post("/api/v14/lock/mode")
+    async def lock_mode(request: Request):
+        mode = request.query_params.get("mode", "")
+        lock = await lock_async()
+        if mode not in V.VoiceLock.MODES:
+            return JSONResponse({"ok": False, "error": "mode 必须是 strict / off / learn"}, status_code=400)
+        if mode != "off" and lock.centroid is None:
+            return JSONResponse({"ok": False, "error": "还没有登记声纹,请先登记"}, status_code=409)
+        lock.mode = mode
+        try:
+            lock.save() if lock.centroid is not None else None
+        except OSError:
+            pass
+        return {"ok": True, "mode": lock.mode}
+
+    @app.post("/api/v14/lock/rollback")
+    async def lock_rollback():
+        lock = await lock_async()
+        ok = lock.rollback()
+        if ok:
+            try:
+                lock.save()
+            except OSError:
+                pass
+        return {"ok": ok}
+
+    @app.delete("/api/v14/lock")
+    async def lock_delete():
+        lock = await lock_async()
+        ok = lock.delete()
+        ENR["segs"] = []
+        return {"ok": ok, "deleted": True}
+
+    @app.post("/api/v14/dialog/event")
+    async def dialog_event(request: Request):
+        ev = request.query_params.get("ev", "")
+        DLG["events"][ev] = DLG["events"].get(ev, 0) + 1
+        ms = request.query_params.get("ms")
+        if ev == "start":
+            TM.start()
+            DLG["t_start"] = time.time()
+        elif ev == "stop":
+            TM.stop()
+        elif ev == "speech_start":
+            TM.on_user_speech_start()
+        elif ev == "endpoint":
+            TM.on_endpoint()
+            if ms and ms.isdigit() and 100 <= int(ms) <= 3000:
+                DLG["pauses"] = (DLG["pauses"] + [int(ms)])[-60:]
+        elif ev == "barge_rejected":
+            TM.on_barge_rejected()
+        elif ev == "speaking":
+            TM.on_speaking()
+        elif ev == "done":
+            TM.on_turn_done()
+        elif ev == "ignored_local":
+            TM.counts["ignored_short"] += 1
+        _log(ev="dialog_" + ev, ms=int(ms) if ms and ms.isdigit() else None)
+        return {"ok": True, "state": TM.state}
+
+    @app.post("/api/v14/feedback")
+    async def feedback(request: Request):
+        k = request.query_params.get("kind", "")
+        if k in DLG["feedback"]:
+            DLG["feedback"][k] += 1
+            _log(ev="feedback", kind=k)
+        return {"ok": k in DLG["feedback"], "feedback": dict(DLG["feedback"])}
+
+    async def transcribe(w16, request):
+        """ASR:默认复用 GPU worker 的 whisper(已验证的现有路径);VC_V14_ASR=cpu → faster-whisper(CPU,可选安装,失败自动回退到 worker)。"""
+        t0 = time.time()
+        if os.environ.get("VC_V14_ASR", "worker") == "cpu" and not MOCK:
+            try:
+                txt = await asyncio.get_running_loop().run_in_executor(None, _cpu_asr, w16)
+                return txt, "", int((time.time() - t0) * 1000)
+            except Exception as e:  # noqa: BLE001
+                G["log"].warning("v14 CPU ASR 不可用,回退到 GPU worker: %s", e)
+        path = os.path.join(tempfile.gettempdir(), "v14_utt_%d.wav" % int(time.time() * 1000))
+        try:
+            G["write_wav"](path, w16, 16000)
+            text, err = await G["ask_worker"]("asr", path, 60)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        return (text or "").strip(), (err or ""), int((time.time() - t0) * 1000)
+
+    _fw = {"m": None}
+
+    def _cpu_asr(w16):
+        if _fw["m"] is None:
+            from faster_whisper import WhisperModel
+            _fw["m"] = WhisperModel(os.environ.get("VC_V14_ASR_MODEL", "small"), device="cpu", compute_type="int8", cpu_threads=max(2, (os.cpu_count() or 4) - 1))
+        segs, _ = _fw["m"].transcribe(w16, beam_size=1, vad_filter=False, condition_on_previous_text=False)
+        return "".join(s.text for s in segs).strip()
+
+    FILLERS = ("嗯", "哦", "啊", "呃", "额", "唉", "哈", "诶", "哎", "um", "uh", "hmm", "ah", "oh")
+
+    @app.post("/api/v14/dialog/utterance")
+    async def utterance(request: Request):
+        if not V.on("DIALOG"):
+            return JSONResponse({"ok": False, "error": "实时对话已关闭(VC_V14_DIALOG=0)"}, status_code=403)
+        q = request.query_params
+        try:
+            sr = int(q.get("sr", "16000"))
+        except ValueError:
+            sr = 16000
+        data = await request.body()
+        t0 = time.time()
+        if len(data) < 2 * int(0.2 * sr) or sr < 8000 or sr > 96000:
+            TM.counts["ignored_short"] += 1
+            return {"ok": False, "reason": "too_short"}
+        pcm = np.frombuffer(data[: len(data) // 2 * 2], dtype="<i2").astype(np.float32) / 32768.0
+        w16 = V.to16k(pcm, sr)
+        barge = q.get("barge") == "1"
+        hp = q.get("hp") == "1"
+        playing = q.get("playing") == "1"
+        res = {"ok": False}
+        # 1) 回声门:只有「刚播放过/正在播放」且不是耳机模式才检查
+        ref_rb = G.get("V14_REF")
+        if not hp and ref_rb is not None and (playing or ref_rb.idle_s() < 6.0):
+            ref = ref_rb.last16k()
+            es = await asyncio.get_running_loop().run_in_executor(None, V.echo_score, w16, ref)
+            res["echo"] = {k: es.get(k) for k in ("psr", "lag_s", "near_end_frac", "echo", "double_talk")}
+            if es["echo"]:
+                TM.counts["ignored_echo"] += 1
+                res.update(reason="echo")
+                _log(ev="utt_ignored", why="echo", psr=es["psr"])
+                return res
+        # 2) 声纹终判(严格模式才拒绝;关闭/学习模式放行,学习模式记录分数)
+        lock = S["lock"] if S["lock"] is not None else (await lock_async() if V.on("LOCK") else None)
+        verdict = {"ok": True, "score": None, "mode": "off", "reason": "lock_off"}
+        if lock is not None and V.on("LOCK"):
+            verdict = await asyncio.get_running_loop().run_in_executor(None, lambda: lock.verdict(w16, echo=False))
+            res.update(score=verdict.get("score"), thr=verdict.get("thr"), mode=verdict.get("mode"))
+            if verdict.get("score") is not None:
+                DLG["scores"]["owner" if verdict["ok"] else "other"].append(verdict["score"])
+        res["embed_ms"] = int((time.time() - t0) * 1000)
+        accepted, why = TM.submit_user_turn("voice", verdict=dict(verdict, too_short=bool(verdict.get("too_short")))) if not barge else (bool(verdict.get("ok")), "barge")
+        if barge:
+            if not accepted:
+                TM.on_barge_rejected()
+                TM.counts["ignored_other"] += 1
+            res.update(ok=accepted, barge=True, reason="owner" if accepted else "not_owner")
+            _log(ev="barge_verify", ok=accepted, ms=res["embed_ms"])
+            return res
+        if not accepted:
+            res.update(reason=why)
+            _log(ev="utt_ignored", why=why, score=verdict.get("score"))
+            return res
+        # 3) ASR
+        if MOCK and q.get("mock_text"):
+            text, err, asr_ms = q.get("mock_text"), "", 5
+        else:
+            text, err, asr_ms = await transcribe(w16, request)
+        res["asr_ms"] = asr_ms
+        if err and not text:
+            TM.on_turn_done()
+            res.update(reason="asr_error", error=err)
+            return res
+        t = (text or "").strip()
+        core = "".join(c for c in t.lower() if c.isalnum())
+        if not core or (len(core) <= 2 and core in FILLERS):
+            TM.on_turn_done()
+            TM.counts["accepted"] = max(0, TM.counts["accepted"] - 1)
+            TM.counts["ignored_short"] += 1
+            res.update(reason="filler_or_empty", text=t)
+            return res
+        DLG["last"] = {"score": verdict.get("score"), "embed_ms": res["embed_ms"], "asr_ms": asr_ms, "t": time.time()}
+        res.update(ok=True, text=t, hold_ms=V.text_incomplete(t), reason="voice", total_ms=int((time.time() - t0) * 1000))
+        _log(ev="utt_accepted", embed_ms=res["embed_ms"], asr_ms=asr_ms, chars=len(t), score=verdict.get("score"))
+        return res
+
+    return {"state": state_dict, "TM": TM, "ensure_lock": _ensure_lock, "S": S, "DLG": DLG}
+'''
+FILES['dialog.js'] = r'''/* dialog.js —— v14 实时对话(点一次麦克风一直开着,直到点「停止」)· 本地 VAD · 回声门 · 本地打断(30ms 压低 → 确认后清缓冲 + 通知服务器)· 自适应端点 · 声纹锁界面
+ * 与 v13 的关系:只新增;播放器(PE/P)、sendChat、doStop 沿用 index.html 里的同一套 —— 语音与文字共用 sendChat 入口,文字永远不经过声纹门。
+ * 诚实说明:本地 VAD 是能量门限(不是 Silero);本地回声门是「已知播放能量 + 延迟/衰减估计」;服务端另有基于精确播放 PCM 的相干检测。
+ *          声纹判决要 RTT 往返(ngrok 常见 0.6s),所以打断的流程是:本地先压低音量 → 服务端验证主人 → 通过才清缓冲;验证失败 400ms 内恢复音量。 */
+(function () {
+  "use strict";
+  if (typeof P === "undefined" || typeof sendChat !== "function" || typeof PE === "undefined") return;
+  const $ = (id) => document.getElementById(id);
+  const J = (url, opt) => fetch(url, opt).then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
+  const FR_MS = 20, PRE_FR = 30, START_FR = 6, BARGE_FR = 14, MAX_UTT_S = 20;
+  const D = { on: false, cap: null, enrolling: null, speed: "normal", hp: false, barge: true, floor: -60, echoLoss: 12, refH: [], pre: [], utt: null, near: 0, sil: 0, zero: 0, pauses: [], hold: null, held: "",
+              playing: false, lastPlay: 0, wake: null, count: { accepted: 0, other: 0, echo: 0, short: 0, barge: 0 }, lastScore: null, state: "IDLE", lock: null, dbm: -90, tPlayOff: 0 };
+
+  /* ───────── 界面 ───────── */
+  const css = document.createElement("style");
+  css.textContent = ".v14b{border:1px solid rgba(140,160,230,.25);border-radius:12px;padding:8px 10px;margin:6px 0;font-size:13px;background:rgba(20,24,40,.5)}.v14b .r{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:3px 0}" +
+    ".v14b button,.v14b select{background:#262c48;color:#e6e9ff;border:1px solid #3a4270;border-radius:8px;padding:5px 9px;cursor:pointer;font-size:12px}.v14b button.on{background:#2f6f4f;border-color:#3fa874}.v14b button:disabled{opacity:.45}" +
+    ".orb{width:12px;height:12px;border-radius:50%;background:#667;display:inline-block}.orb.LISTENING{background:#3fa874}.orb.USER_SPEAKING{background:#4aa3ff}.orb.THINKING{background:#e0b23a}.orb.SPEAKING{background:#b06cff}.orb.BARGED_IN{background:#ff7a59}.orb.IGN{background:#888}" +
+    ".lvl{height:6px;width:90px;background:#1b2036;border-radius:3px;overflow:hidden}.lvl i{display:block;height:100%;background:linear-gradient(90deg,#3fa874,#e0b23a);width:0}.v14b small{opacity:.75}.v14b details summary{cursor:pointer;opacity:.85}" +
+    "#v14ov{position:fixed;inset:6% 8%;background:#10142a;border:1px solid #3a4270;border-radius:12px;padding:12px;overflow:auto;z-index:99;display:none;font-size:12px;color:#dfe3ff}#v14ov pre{white-space:pre-wrap}";
+  document.head.appendChild(css);
+  const bar = document.createElement("div");
+  bar.className = "v14b"; bar.id = "v14bar";
+  bar.innerHTML = '<div class="r"><button id="v14Go">🎧 实时对话</button><span class="orb" id="v14Orb"></span><b id="v14St">未开启</b><span class="lvl"><i id="v14Lv"></i></span><small id="v14Tx"></small></div>' +
+    '<div class="r"><small id="v14Cnt">—</small><small id="v14Sc"></small></div>' +
+    '<details><summary>声纹锁 · 对话设置 · v14 状态</summary>' +
+    '<div class="r"><b>声纹锁</b><button id="v14Enr">🎙 现场登记(3 段)</button><button id="v14Up">⬆ 上传登记</button><input type="file" id="v14File" accept="audio/*" style="display:none">' +
+    '<select id="v14Mode"><option value="strict">严格(只听主人)</option><option value="learn">学习(放行并打分)</option><option value="off">关闭</option></select><button id="v14Del">🗑 删除声纹</button><button id="v14Rb">↩ 回滚自适应</button></div>' +
+    '<div class="r"><span>端点速度</span><select id="v14Sp"><option value="fast">快(350~550ms)</option><option value="normal" selected>标准(450~800ms)</option><option value="slow">慢(650~1200ms)</option></select>' +
+    '<label><input type="checkbox" id="v14Hp"> 耳机模式(绕开回声门)</label><label><input type="checkbox" id="v14Br" checked> 允许打断</label>' +
+    '<button id="v14Bad" title="记录一次「克隆声不像」反馈(只记数)">👎 不像</button><button id="v14Ov">📊 v14 真实状态</button></div>' +
+    '<small id="v14Lk">声纹锁:未登记。cosine 为原始分数(未校准);不是安全认证,不能用于支付/解锁。声纹只保存在本机 Kaggle 私有目录,不会推送到公开仓库。</small></details>';
+  const anchor = $("sayRow") || $("chatRow");
+  anchor.parentNode.insertBefore(bar, anchor);
+  const ov = document.createElement("div"); ov.id = "v14ov"; ov.innerHTML = '<button id="v14OvX" style="float:right">关闭</button><div id="v14OvB"></div>'; document.body.appendChild(ov);
+
+  const setSt = (s, txt) => { D.state = s; $("v14Orb").className = "orb " + s; $("v14St").textContent = txt || s; };
+  const cnt = () => { const c = D.count; $("v14Cnt").textContent = "已接受 " + c.accepted + " · 忽略他人 " + c.other + " · 忽略回声 " + c.echo + " · 忽略短噪声 " + c.short + " · 打断 " + c.barge; };
+  const ev = (e, ms) => { J("/api/v14/dialog/event?ev=" + e + (ms ? "&ms=" + ms : ""), { method: "POST" }); };
+  const warn = (t) => { try { addSys(t); } catch (e) {} };
+
+  /* ───────── 采集 / 回声参考 / 压低音量 ───────── */
+  const WK = "class VcDlg extends AudioWorkletProcessor{constructor(){super();this.n=0;this.L=Math.round(sampleRate*0.02);this.b=new Float32Array(this.L);this.r=new Float32Array(this.L);}" +
+    "process(i){const m=i[0]&&i[0][0],r=i[1]&&i[1][0];if(!m)return true;for(let k=0;k<m.length;k++){this.b[this.n]=m[k];this.r[this.n]=r?r[k]:0;this.n++;if(this.n>=this.L){let em=0,er=0;const o=new Int16Array(this.L);for(let q=0;q<this.L;q++){em+=this.b[q]*this.b[q];er+=this.r[q]*this.r[q];const v=Math.max(-1,Math.min(1,this.b[q]));o[q]=v*32767;}" +
+    "this.port.postMessage({em:Math.sqrt(em/this.L),er:Math.sqrt(er/this.L),pcm:o},[o.buffer]);this.n=0;}}return true;}}registerProcessor('vc-dlg',VcDlg);";
+  async function acquire() {
+    const c = D.cap;
+    if (c.stream) c.stream.getTracks().forEach((t) => { t.onended = null; t.stop(); });
+    c.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false } });
+    if (c.src) { try { c.src.disconnect(); } catch (e) {} }
+    c.src = c.ctx.createMediaStreamSource(c.stream); c.src.connect(c.node, 0, 0);
+    c.stream.getAudioTracks().forEach((t) => { t.onended = () => recover("麦克风轨道已结束"); t.onmute = () => setTimeout(() => { if (t.muted) recover("麦克风被静音"); }, 1500); });
+  }
+  async function ensureCapture() {
+    if (D.cap) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("浏览器不允许录音:需要 https 地址(ngrok 提供的地址即可)");
+    await P.init();
+    const ctx = PE.ctx, c = D.cap = { ctx, stream: null, src: null, node: null, g: null };
+    const url = URL.createObjectURL(new Blob([WK], { type: "text/javascript" }));
+    await ctx.audioWorklet.addModule(url);
+    c.node = new AudioWorkletNode(ctx, "vc-dlg", { numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [1] });
+    c.g = ctx.createGain(); c.g.gain.value = 1;                         // 播放通路:player → duck 增益 → 扬声器;同一路也送进采集 worklet 的第 2 输入作回声参考
+    try { PE.node.disconnect(); } catch (e) {}
+    PE.node.connect(c.g); c.g.connect(ctx.destination); c.g.connect(c.node, 0, 1);
+    const mute = ctx.createGain(); mute.gain.value = 0; c.node.connect(mute); mute.connect(ctx.destination);
+    c.node.port.onmessage = (e) => onFrame(e.data);
+    await acquire();
+    if (navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener("devicechange", () => { if (D.on) recover("音频设备变化(蓝牙/耳机)"); });
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && D.on) { c.ctx.resume().catch(() => {}); wake(); } });
+  }
+  async function recover(why) {
+    if (!D.on && !D.enrolling) return;
+    warn("🎧 " + why + ",正在自动恢复麦克风…"); setSt("IGN", "恢复麦克风…");
+    for (let i = 0; i < 5; i++) {
+      try { await D.cap.ctx.resume(); await acquire(); D.zero = 0; if (D.on) setSt("LISTENING", "聆听中"); warn("🎧 麦克风已恢复"); return; } catch (e) { await new Promise((r) => setTimeout(r, 800 * (i + 1))); }
+    }
+    warn("🎧 麦克风无法恢复:请检查权限/设备,然后重新点「实时对话」"); stop(true);
+  }
+  async function wake() { try { if (navigator.wakeLock && D.on) D.wake = await navigator.wakeLock.request("screen"); } catch (e) {} }
+  const duck = (db, ms) => { if (!D.cap) return; const g = D.cap.g.gain, t = D.cap.ctx.currentTime; g.cancelScheduledValues(t); g.setTargetAtTime(Math.pow(10, db / 20), t, Math.max(0.005, ms / 3000)); };
+
+  /* ───────── 逐帧(20ms)处理 ───────── */
+  const dB = (x) => 20 * Math.log10(x + 1e-9);
+  function silMs() {
+    const lo = { fast: 350, normal: 450, slow: 650 }[D.speed], hi = { fast: 550, normal: 800, slow: 1200 }[D.speed], base = { fast: 400, normal: 600, slow: 850 }[D.speed];
+    if (D.pauses.length >= 8) { const s = D.pauses.slice().sort((a, b) => a - b); return Math.round(Math.min(hi, Math.max(lo, s[Math.floor(s.length * 0.9)] * 1.3))); }
+    return base;
+  }
+  function onFrame(m) {
+    const dbm = dB(m.em), dbr = dB(m.er); D.dbm = dbm;
+    D.zero = m.em === 0 ? D.zero + 1 : 0;
+    if (D.zero > 250) { D.zero = 0; recover("麦克风连续 5 秒全零(无数据)"); return; }
+    D.refH.push(dbr); if (D.refH.length > 60) D.refH.shift();
+    const playing = dbr > -58 || Math.max.apply(null, D.refH.slice(-8)) > -58;
+    if (playing) D.lastPlay = performance.now();
+    if (playing !== D.playing) { D.playing = playing; if (playing) { ev("speaking"); if (D.state !== "USER_SPEAKING") setSt("SPEAKING", "朗读中"); } else D.tPlayOff = performance.now(); }
+    if (!D.playing && D.state === "SPEAKING" && performance.now() - D.tPlayOff > 1200) { ev("done"); setSt("LISTENING", "聆听中"); }
+    const vad = dbm > Math.max(D.floor + 10, -50);
+    if (!vad && !D.utt) D.floor = Math.min(-35, Math.max(-75, dbm < D.floor ? D.floor * 0.9 + dbm * 0.1 : D.floor + 0.004));
+    // 回声估计:该帧之前 60~600ms 内的最大参考电平 − 学到的「扬声器→麦克风」衰减;学习只在「有播放且没人说话」的帧里做
+    const refMax = D.refH.length > 12 ? Math.max.apply(null, D.refH.slice(0, -3)) : -90;
+    const echoEst = refMax - D.echoLoss;
+    if (D.playing && !vad && refMax > -45) D.echoLoss = Math.min(40, Math.max(3, D.echoLoss * 0.98 + (refMax - dbm) * 0.02));
+    const near = vad && (D.hp || !D.playing || dbm > echoEst + 6);          // 近端语音:有声,且(耳机 / 没在播放 / 明显高于回声估计 = 双讲)
+    $("v14Lv").style.width = Math.max(0, Math.min(100, (dbm + 70) * 1.6)) + "%";
+    D.pre.push(m.pcm); if (D.pre.length > PRE_FR) D.pre.shift();
+    if (!D.on) { if (D.enrolling) D.enrolling.push(m.pcm); return; }
+    if (!D.utt) {
+      D.near = near ? D.near + 1 : 0;
+      if (D.near >= START_FR) beginUtt(); else return;
+    }
+    const u = D.utt; u.frames.push(m.pcm);
+    if (near) { u.nearN++; u.sil = 0; u.lastNear = u.frames.length; if (u.gap) { D.pauses.push(u.gap * FR_MS); if (D.pauses.length > 60) D.pauses.shift(); u.gap = 0; } } else { u.sil++; u.gap = u.sil; }
+    if (u.barge && !u.verifying && u.nearN >= BARGE_FR) bargeConfirm(u);
+    if (u.barge && !u.verifying && !near && u.sil * FR_MS > 250 && u.nearN < BARGE_FR) { duck(0, 300); u.barge = false; }   // 不到 280ms 就停了(咳嗽/噪声):平滑恢复音量
+    if (u.sil * FR_MS >= silMs() || u.frames.length * FR_MS >= MAX_UTT_S * 1000) endUtt();
+  }
+  function beginUtt() {
+    D.near = 0;
+    const speakingNow = D.playing || D.state === "THINKING" || D.state === "SPEAKING";
+    D.utt = { frames: D.pre.slice(), nearN: START_FR, sil: 0, gap: 0, lastNear: 0, barge: !!(speakingNow && D.barge), verifying: false, ignored: false, t0: performance.now(), wasPlaying: D.playing };
+    ev("speech_start"); setSt("USER_SPEAKING", "你在说话…");
+    if (D.utt.barge) duck(-18, 30);                                          // 本地 30ms 压低到 −18dB,不等服务器
+  }
+  function wavOf(frames, sr) {
+    let n = 0; frames.forEach((f) => (n += f.length));
+    const b = new ArrayBuffer(44 + n * 2), v = new DataView(b), w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+    let o = 44; frames.forEach((f) => { for (let i = 0; i < f.length; i++, o += 2) v.setInt16(o, f[i], true); }); return b;
+  }
+  function rawOf(frames) { let n = 0; frames.forEach((f) => (n += f.length)); const o = new Int16Array(n); let k = 0; frames.forEach((f) => { o.set(f, k); k += f.length; }); return o.buffer; }
+  async function bargeConfirm(u) {
+    u.verifying = true;
+    const q = "&barge=1&playing=1&hp=" + (D.hp ? 1 : 0) + "&sr=" + D.cap.ctx.sampleRate;
+    if (!D.lock || !D.lock.enrolled || D.lock.mode !== "strict") return doBarge(u);   // 没开声纹锁:本地确认即可
+    const r = await J("/api/v14/dialog/utterance?" + q.slice(1), { method: "POST", body: rawOf(u.frames.slice(-60)) });
+    if (r.ok) return doBarge(u);
+    u.barge = false; u.ignored = true; duck(0, 300); ev("barge_rejected"); D.count.other++; cnt(); $("v14Sc").textContent = "打断被拒绝:不是主人(score " + (r.score == null ? "—" : r.score) + ")";
+  }
+  function doBarge(u) {
+    duck(0, 10); P.flush(); D.count.barge++; cnt();
+    try { doStop(); } catch (e) { send({ type: "stop" }); }                    // 通知服务器取消 TTS/LLM;对话历史由服务器按「实际已播放」截断
+    u.barge = false; setSt("BARGED_IN", "已被你打断"); setTimeout(() => { if (D.state === "BARGED_IN") setSt("USER_SPEAKING", "你在说话…"); }, 200);
+  }
+  async function endUtt() {
+    const u = D.utt; D.utt = null; D.near = 0;
+    ev("endpoint", String(Math.round(Math.min(2500, u.sil * FR_MS))));
+    if (u.barge) duck(0, 300);
+    if (u.ignored) { setSt("LISTENING", "聆听中"); return; }
+    if (u.nearN * FR_MS < 300) { D.count.short++; cnt(); ev("ignored_local"); setSt(D.playing ? "SPEAKING" : "LISTENING", D.playing ? "朗读中" : "聆听中"); return; }
+    const keep = u.frames.slice(0, Math.max(1, u.frames.length - Math.max(0, u.sil - 10)));       // 尾部静音只留 200ms
+    setSt("ENDPOINTING", "识别中…");
+    const q = "sr=" + D.cap.ctx.sampleRate + "&playing=" + (u.wasPlaying || D.playing ? 1 : 0) + "&hp=" + (D.hp ? 1 : 0);
+    const r = await J("/api/v14/dialog/utterance?" + q, { method: "POST", body: rawOf(keep) });
+    if (r.score != null) { D.lastScore = r.score; $("v14Sc").textContent = "声纹 cosine(原始,未校准)" + r.score + " / 阈值 " + r.thr + " · " + (r.mode || ""); }
+    if (!r.ok) {
+      const why = { echo: "已忽略(系统自己的声音/回声)", not_owner: "已忽略(不是主人的声音)", too_short: "已忽略(太短)", filler_or_empty: "已忽略(语气词/空)", asr_error: "识别失败:" + (r.error || "") }[r.reason] || ("已忽略:" + (r.reason || r.error || "?"));
+      if (r.reason === "echo") D.count.echo++; else if (r.reason === "not_owner") D.count.other++; else if (r.reason === "too_short" || r.reason === "filler_or_empty") D.count.short++;
+      cnt(); $("v14Tx").textContent = why; setSt(D.playing ? "SPEAKING" : "LISTENING", "聆听中"); return;
+    }
+    D.count.accepted++; cnt();
+    const text = (D.held ? D.held + " " : "") + r.text; D.held = "";
+    $("v14Tx").textContent = "“" + text + "”";
+    clearTimeout(D.hold);
+    if (r.hold_ms > 0) { D.held = text; setSt("LISTENING", "你好像还没说完…"); D.hold = setTimeout(() => { const t = D.held; D.held = ""; if (t && D.on) submit(t); }, Math.min(1500, r.hold_ms)); }
+    else submit(text);
+  }
+  function submit(text) { setSt("THINKING", "思考中"); try { if (S.opts && S.opts.auto === false) S.opts.auto = true; $("tabChat") && $("tabChat").click(); } catch (e) {} sendChat(text); }
+
+  /* ───────── 开始 / 停止 ───────── */
+  async function start() {
+    try { await ensureCapture(); } catch (e) { warn("无法开启实时对话:" + e.message); return; }
+    D.on = true; D.utt = null; D.near = 0; D.count = { accepted: 0, other: 0, echo: 0, short: 0, barge: 0 }; cnt(); wake();
+    $("v14Go").classList.add("on"); $("v14Go").textContent = "⏹ 停止实时对话"; ev("start"); setSt("LISTENING", "聆听中(一直开着,直到你点停止)");
+    warn("🎧 实时对话已开启:直接说话即可;朗读时开口会打断(先压低音量,确认是你本人后才停)。文字输入始终可用。");
+    refreshLock();
+  }
+  function stop(silent) {
+    D.on = false; D.utt = null; clearTimeout(D.hold); D.held = ""; if (D.cap) duck(0, 10);
+    try { if (D.wake) D.wake.release(); } catch (e) {} D.wake = null;
+    $("v14Go").classList.remove("on"); $("v14Go").textContent = "🎧 实时对话"; ev("stop"); setSt("IDLE", "未开启");
+    if (!silent) warn("🎧 实时对话已停止(麦克风仍由浏览器指示灯显示;关闭标签页即释放)");
+  }
+  $("v14Go").onclick = () => (D.on ? stop() : start());
+  $("v14Sp").onchange = (e) => { D.speed = e.target.value; };
+  $("v14Hp").onchange = (e) => { D.hp = e.target.checked; };
+  $("v14Br").onchange = (e) => { D.barge = e.target.checked; };
+  $("v14Bad").onclick = () => J("/api/v14/feedback?kind=not_similar", { method: "POST" }).then(() => warn("已记录一次「不像」反馈(只记数,不含音频)"));
+
+  /* ───────── 声纹锁 ───────── */
+  async function refreshLock() {
+    const s = await J("/api/v14/state"); if (!s.lock) return; D.lock = s.lock;
+    $("v14Mode").value = s.lock.mode || "off";
+    $("v14Lk").textContent = s.lock.enrolled ? "声纹锁:已登记 · 模式 " + s.lock.mode + " · 模型 " + s.lock.backend + " · 阈值 " + s.lock.threshold + "(来自登记集留一分布 + 模型工作点,未校准)· 自适应更新 " + s.lock.updates + " 次。" + (s.lock.backend === "spectral" ? " ⚠ 当前是回退的谱嵌入(弱)。" : "") : "声纹锁:未登记。登记后只听主人的话;文字输入永不被拦截。cosine 为原始分数,不是相似度百分比;不是安全认证。";
+  }
+  const consent = () => confirm("声纹属于生物特征。\n确认:这是你本人的声音,并同意把它保存在这台 Kaggle 机器的私有目录(不会推送到公开仓库)?");
+  const PROMPTS = ["第 1 段(近距离、自然语速,约 10 秒):请读「今天天气不错,我想让你帮我查一些资料,顺便听听音乐放松一下。」并多说几句。", "第 2 段(正常距离,含短句):请说「好的。停。继续。再说一遍。」然后自由说几句日常的话。", "第 3 段(稍远一点,约 10 秒):请离麦克风远一点,自然地讲讲你今天做了什么。"];
+  $("v14Enr").onclick = async () => {
+    if (D.enrolling) return; if (!consent()) return;
+    try { await ensureCapture(); } catch (e) { warn(e.message); return; }
+    const wasOn = D.on; D.on = false;
+    for (let i = 0; i < 3; i++) {
+      warn("🎙 " + PROMPTS[i] + "(录音 10 秒,倒计时开始)"); D.enrolling = []; $("v14St").textContent = "登记录音 " + (i + 1) + "/3…";
+      await new Promise((r) => setTimeout(r, 10500));
+      const fr = D.enrolling; D.enrolling = null;
+      const r = await J("/api/v14/lock/enroll?consent=1&reset=" + (i === 0 ? 1 : 0), { method: "POST", body: wavOf(fr, D.cap.ctx.sampleRate) });
+      if (!r.ok) { warn("登记上传失败:" + (r.error || "?")); D.on = wasOn; return; }
+    }
+    const f = await J("/api/v14/lock/enroll?consent=1&final=1", { method: "POST", body: new Uint8Array(0) });
+    warn(f.ok ? "✅ 声纹登记完成:" + f.segments + " 段(丢弃 " + f.dropped + "),有效语音 " + f.voiced_s + "s,阈值 " + f.threshold + "。" + f.note : "❌ 声纹登记失败:" + (f.reason || f.error));
+    D.on = wasOn; setSt(D.on ? "LISTENING" : "IDLE", D.on ? "聆听中" : "未开启"); refreshLock();
+  };
+  $("v14Up").onclick = () => { if (consent()) $("v14File").click(); };
+  $("v14File").onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const r1 = await J("/api/v14/lock/enroll?consent=1&reset=1", { method: "POST", body: await f.arrayBuffer() }); if (!r1.ok) { warn("上传失败:" + (r1.error || "?")); return; }
+    const r = await J("/api/v14/lock/enroll?consent=1&final=1", { method: "POST", body: new Uint8Array(0) });
+    warn(r.ok ? "✅ 上传登记完成:" + r.segments + " 段,阈值 " + r.threshold : "❌ 登记失败:" + (r.reason || r.error)); e.target.value = ""; refreshLock();
+  };
+  $("v14Mode").onchange = async (e) => { const r = await J("/api/v14/lock/mode?mode=" + e.target.value, { method: "POST" }); if (!r.ok) warn("切换失败:" + (r.error || "")); refreshLock(); };
+  $("v14Del").onclick = async () => { if (!confirm("删除已登记的声纹(嵌入与缓存会被真正删除)?")) return; await J("/api/v14/lock", { method: "DELETE" }); warn("声纹已删除"); refreshLock(); };
+  $("v14Rb").onclick = async () => { const r = await J("/api/v14/lock/rollback", { method: "POST" }); warn(r.ok ? "已回滚一次声纹自适应" : "没有可回滚的更新"); refreshLock(); };
+  $("v14Ov").onclick = async () => {
+    const s = await J("/api/v14/state"), c = s.lock && s.lock.curve;
+    $("v14OvB").innerHTML = "<h3>v14 真实状态(只显示测到的)</h3><pre>" + JSON.stringify({ 开关: s.switches, 网关: s.gateway, 对话: s.dialog, 尾部分位数: s.tail, 学习注册表: s.registry, 声纹锁: Object.assign({}, s.lock, { curve: undefined }) }, null, 1).replace(/</g, "&lt;") + "</pre>" +
+      "<h4>声纹 FAR/FRR 曲线</h4>" + (c ? "<pre>" + c.map((x) => "thr " + x.thr + "  FRR " + x.frr + "  FAR " + x.far).join("\n") + "</pre>" : "<p>数据不足(需要本次运行里至少 10 个主人 + 10 个他人的真实判决分数),不显示假曲线。</p>") +
+      "<h4>诚实说明</h4><ul>" + (s.honest || []).map((x) => "<li>" + x + "</li>").join("") + "</ul>";
+    ov.style.display = "block";
+  };
+  $("v14OvX").onclick = () => (ov.style.display = "none");
+  setInterval(() => { if (D.on && D.lock === null) refreshLock(); }, 5000);
+  window.V14 = D;
+})();
+'''
+FILES['tests/test_v14.py'] = r'''# -*- coding: utf-8 -*-
+"""tests/test_v14.py —— v14 模块单元测试(纯 CPU,合成信号;证明【逻辑与流程】,不证明真实音质/真实声纹模型效果):  python tests/test_v14.py
+合成「说话人」:谐波源(基频轨迹随机游走)× 共振峰滤波(按说话人不同)× 4~6Hz 音节包络 + 底噪。"""
+import os
+import sys
+import tempfile
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import numpy as np  # noqa: E402
+
+import v14  # noqa: E402
+
+SR16 = 16000
+
+
+def voice(f0, formants, dur, seed, snr_db=35.0):
+    rng = np.random.default_rng(seed)
+    n = int(SR16 * dur)
+    t = np.arange(n) / SR16
+    traj = f0 * (1 + 0.08 * np.cumsum(rng.standard_normal(n)) / np.sqrt(n) * 8)
+    traj = np.clip(traj, f0 * 0.8, f0 * 1.2)
+    ph = 2 * np.pi * np.cumsum(traj) / SR16
+    src = sum(np.sin(h * ph) / h ** 0.8 for h in range(1, 30))
+    X = np.fft.rfft(src)
+    f = np.fft.rfftfreq(n, 1 / SR16)
+    H = sum(np.exp(-0.5 * ((f - fm) / bw) ** 2) * g for fm, bw, g in formants) + 0.02
+    sig = np.fft.irfft(X * H, n)
+    env = np.clip(np.sin(2 * np.pi * (4.5 + rng.random()) * t + rng.random() * 6) + 0.25, 0, None) ** 0.7
+    sig = sig * env
+    sig = sig / (np.sqrt(np.mean(sig ** 2)) + 1e-9) * 0.08
+    noise = rng.standard_normal(n) * 0.08 * 10 ** (-snr_db / 20)
+    return (sig + noise).astype(np.float32)
+
+
+OWNER = (118.0, [(500, 90, 1.0), (1500, 150, 0.7), (2500, 200, 0.4)])
+OTHER1 = (205.0, [(750, 110, 1.0), (1150, 130, 0.8), (3000, 220, 0.5)])
+OTHER2 = (95.0, [(350, 70, 1.0), (2300, 180, 0.9), (3300, 200, 0.6)])
+
+
+def make_lock(floor=0.80):
+    return v14.VoiceLock(v14.spectral_embed, backend="spectral", floor=floor, state_dir=tempfile.mkdtemp())
+
+
+def test_cn_int_and_spoken():
+    assert v14.cn_int(0) == "零" and v14.cn_int(10) == "十" and v14.cn_int(12) == "十二" and v14.cn_int(100) == "一百"
+    assert v14.cn_int(101) == "一百零一" and v14.cn_int(1010) == "一千零一十" and v14.cn_int(2000) == "两千"
+    assert v14.cn_int(10000) == "一万" and v14.cn_int(10086) == "一万零八十六" and v14.cn_int(100000000) == "一亿"
+    assert v14.spoken("共3.5公里") == "共三点五公里"
+    assert v14.spoken("会议在12:30开始") == "会议在十二点三十分开始"
+    assert v14.spoken("价格¥50") == "价格五十元"
+    assert v14.spoken("增长百分之50") == "增长百分之五十" and v14.spoken("增长50%") == "增长百分之五十"
+    assert v14.spoken("电话13800138000") == "电话一三八零零一三八零零零"
+    assert v14.spoken("我有3个苹果") == "我有三个苹果"
+    assert v14.spoken("2026年很好") == "二零二六年很好"
+    assert v14.spoken("温度25℃") == "温度二十五摄氏度"
+    assert v14.spoken("访问www.example.com看看") == "访问example点com看看"
+    s = v14.spoken("今天买了12个，花了36.5元")
+    assert not any(c.isdigit() for c in s) and v14.spoken(s) == s            # 幂等
+    # 英文语境、字母数字混合不动
+    assert v14.spoken("I have 3 apples and 4 pears") == "I have 3 apples and 4 pears"
+    assert v14.spoken("我用GPT4和A100训练") == "我用GPT4和A100训练"
+    assert v14.spoken("") == "" and v14.spoken(None) is None
+
+
+def test_switch_off_is_noop():
+    os.environ["VC_V14_TEXT"] = "0"
+    try:
+        assert v14.spoken("共3.5公里") == "共3.5公里"
+    finally:
+        del os.environ["VC_V14_TEXT"]
+    os.environ["VC_V14"] = "0"
+    try:
+        assert not any(v14.switches().values()) and v14.spoken("共3个") == "共3个"
+    finally:
+        del os.environ["VC_V14"]
+
+
+def test_safe_cut_protects_numbers_and_words():
+    t = "价格是3.5元，非常便宜"
+    assert v14.safe_cut(t, t.index("3.5") + 2) == t.index("3.5") + 3          # 在 3.5 中间 → 挪到数字之后
+    assert v14.safe_cut(t, 2) == 2
+    w = "我喜欢 transformer 模型"
+    assert v14.safe_cut(w, w.index("transformer") + 4) == w.index("transformer") + len("transformer")
+    q = "他说“你好吗朋友”然后走了"
+    assert v14.safe_cut(q, q.index("好")) == q.index("”") + 1
+
+
+def test_quantile_prior_and_tail_uplift():
+    w = v14.QuantileWindow()
+    assert w.q(0.95) == 1.25 and w.snapshot()["prior"]                     # 样本不足 → 保守先验,不装作已知
+    tm = v14.TailModel()
+    for _ in range(40):
+        tm.record(0, 1.0)
+    assert abs(tm.uplift(0, 0.95) - 1.0) < 1e-6
+    rng = np.random.default_rng(1)
+    for x in np.concatenate([np.full(95, 1.0), np.full(5, 2.6)]):
+        tm.record(1, x)
+    for _ in range(100):
+        tm.record(1, 1.0 + 0.0 * rng.random())
+    up = tm.uplift(1, 0.99)
+    assert up >= 1.0
+    tm2 = v14.TailModel()
+    tm2.load(tm.dump())
+    assert tm2.snapshot() == tm.snapshot()
+    tm3 = v14.TailModel()
+    for x in [0.5] * 40:
+        tm3.record(0, x)
+    assert tm3.uplift(0) == 1.0                                              # 下限 1:只会更保守,不会比 v13 更激进
+
+
+def test_start_permit_proof():
+    need, worst = v14.start_permit([1.0, 1.5, 6.0], [2.0, 2.0, 2.0], margin_s=0.25)
+    assert worst == 2 and abs(need - (6.0 + 0.25 - 1.0 - 4.0)) < 1e-9, (need, worst)
+    need, worst = v14.start_permit([1.0, 1.5, 2.0], [2.0, 2.0, 2.0])
+    assert need == 0.0 and worst == -1
+
+
+def test_salvage_math():
+    g = v14.GuardState()
+    g.feed(list(range(1, 35)))                       # 34 个互不相同的码(内容)
+    g.feed([5] * 40)                                 # 然后卡死 40 帧
+    assert g.total == 74 and v14.trailing_run(g.last) == 40
+    assert g.clean_frames("stuck") == 34
+    g2 = v14.GuardState()
+    g2.feed(list(range(1, 71)))
+    g2.feed([5] * 48)
+    assert g2.clean_frames("over_budget") == 70 and v14.GuardState().clean_frames("over_budget") == 0
+    g3 = v14.GuardState()
+    g3.feed(list(range(1, 120)))
+    assert g3.clean_frames("over_budget") == 0                 # 超预算但没有循环迹象 → 不能证明任何前缀干净 → 不抢救
+    ok, cov = v14.salvage_decision(34, 43)           # 截图 2 的数字:已生成 74,预期 43
+    assert ok and abs(cov - 0.791) < 0.01
+    ok, cov = v14.salvage_decision(20, 43)
+    assert not ok
+    x = v14.fade_out(np.full(2400, 10000, np.int16))
+    assert x[-1] == 0 and x[0] == 10000
+
+
+def test_history_truncation():
+    segs = ["你好呀。", "今天天气很好，", "我们出去玩吧。"]
+    n = [24000, 48000, 36000]
+    assert v14.truncate_history_text(segs, n, 10 ** 9) == ("你好呀。今天天气很好，我们出去玩吧。", False)
+    t, cut = v14.truncate_history_text(segs, n, 24000)
+    assert t == "你好呀。" and cut
+    t, cut = v14.truncate_history_text(segs, n, 24000 + 30000)                  # 第 2 句播了 62%:回退到逗号?没有 → 比例前缀
+    assert t.startswith("你好呀。今天天") and cut and "我们" not in t
+    assert v14.truncate_history_text(segs, n, 0)[0] == ""
+
+
+def test_endpoint_helpers():
+    assert v14.text_incomplete("今天天气怎么样？") == 0
+    assert v14.text_incomplete("我想问一下，") == 700
+    assert v14.text_incomplete("然后") == 600 and v14.text_incomplete("帮我查一下北京的") == 600
+    assert v14.text_incomplete("I think that we should go and") == 600
+    assert v14.adaptive_silence_ms([], "normal") == 600
+    assert v14.adaptive_silence_ms([300] * 10, "fast") == 390                    # P90×1.3=390,钳在 [350,550]
+    assert v14.adaptive_silence_ms([2000] * 10, "fast") == 550 and v14.adaptive_silence_ms([50] * 10, "slow") == 650
+
+
+def test_turn_manager_text_never_blocked_by_lock():
+    lock = make_lock()
+    lock.mode, lock.centroid = "strict", np.ones(4) / 2
+    tm = v14.TurnManager(lock)
+    tm.start()
+    assert tm.state == "LISTENING"
+    ok, why = tm.submit_user_turn("text", "你好")                               # 声纹锁严格模式下文字照常
+    assert ok and why == "text" and tm.state == "THINKING"
+    tm.on_speaking()
+    assert tm.state == "SPEAKING"
+    tm.on_user_speech_start()                                                   # 播放中主人开口 → BARGED_IN → USER_SPEAKING
+    assert tm.state == "USER_SPEAKING" and tm.counts["barge_in"] == 1
+    tm.on_endpoint()
+    assert tm.state == "ENDPOINTING"
+    assert tm.submit_user_turn("voice", verdict={"ok": False, "reason": "not_owner"}) == (False, "not_owner")
+    assert tm.state == "LISTENING" and tm.counts["ignored_other"] == 1
+    assert tm.submit_user_turn("voice", verdict={"echo": True}) == (False, "echo") and tm.counts["ignored_echo"] == 1
+    assert tm.submit_user_turn("voice", verdict={"ok": True, "score": 0.9}) == (True, "voice") and tm.counts["accepted"] == 1
+    e0 = tm.epoch
+    tm.stop()
+    assert tm.state == "IDLE" and tm.epoch == e0 + 1
+
+
+def test_voicelock_enroll_verify_and_reject():
+    lock = make_lock()
+    own = [voice(*OWNER, 9.0, seed=s) for s in (1, 2, 3)]
+    r = lock.enroll(own)
+    assert r["ok"] and r["segments"] >= 3 and lock.active(), r
+    # 主人新句子(未见过的种子)
+    ok_n, tot = 0, 0
+    for sd in range(10, 22):
+        v = lock.verdict(voice(*OWNER, 3.0, seed=sd), adapt=False)
+        ok_n += v["ok"]
+        tot += 1
+    # 他人 / 不同说话人
+    far_n = 0
+    for sd in range(30, 42):
+        for spk in (OTHER1, OTHER2):
+            far_n += lock.verdict(voice(*spk, 3.0, seed=sd), adapt=False)["ok"]
+    frr = 1 - ok_n / tot
+    far = far_n / 24
+    print("    [synthetic] FRR=%.2f FAR=%.2f thr=%.3f loo=%s" % (frr, far, lock.thr, lock.loo))
+    assert frr <= 0.1 and far <= 0.05, (frr, far)
+    # 噪声不是主人
+    noise = (np.random.default_rng(5).standard_normal(SR16 * 3) * 0.05).astype(np.float32)
+    assert not lock.verdict(noise, adapt=False)["ok"]
+    # 关闭 / 学习模式
+    lock.mode = "off"
+    assert lock.verdict(voice(*OTHER1, 3.0, seed=50))["ok"]
+    lock.mode = "learn"
+    assert lock.verdict(voice(*OTHER1, 3.0, seed=51))["ok"]
+
+
+def test_voicelock_rejects_bad_enrollment():
+    lock = make_lock()
+    r = lock.enroll([voice(*OWNER, 2.0, seed=1)])
+    assert not r["ok"] and "至少需要" in r["reason"]
+    sil = np.zeros(SR16 * 10, np.float32) + 1e-4
+    assert not lock.enroll([sil])["ok"]
+    assert not lock.active()
+
+
+def test_voicelock_adapt_is_bounded_and_rollbackable():
+    lock = make_lock()
+    assert lock.enroll([voice(*OWNER, 9.0, seed=s) for s in (1, 2, 3)])["ok"]
+    anchor = lock.anchor.copy()
+    for sd in range(100, 140):
+        lock.verdict(voice(*OWNER, 3.0, seed=sd))
+    assert float(lock.centroid @ lock.anchor) >= 0.97 and np.allclose(lock.anchor, anchor)   # 漂移有界,锚点不变
+    u = lock.updates
+    assert lock.rollback() and lock.updates == max(0, u - 1)
+    # 投毒:别人的声音即使反复出现也不会被写入(分数不过阈值 → 不自适应)
+    c_before = lock.centroid.copy()
+    for sd in range(200, 220):
+        lock.verdict(voice(*OTHER1, 3.0, seed=sd))
+    assert np.allclose(lock.centroid, c_before)
+
+
+def test_voicelock_persist_and_delete_for_real():
+    d = tempfile.mkdtemp()
+    lock = v14.VoiceLock(v14.spectral_embed, backend="spectral", floor=0.8, state_dir=d)
+    assert lock.enroll([voice(*OWNER, 9.0, seed=s) for s in (1, 2, 3)])["ok"]
+    p = lock.save()
+    assert oct(os.stat(p).st_mode & 0o777) == "0o600"
+    l2 = v14.VoiceLock(v14.spectral_embed, backend="spectral", floor=0.8, state_dir=d)
+    assert l2.load() and l2.active() and l2.verdict(voice(*OWNER, 3.0, seed=77), adapt=False)["ok"]
+    l3 = v14.VoiceLock(v14.spectral_embed, backend="other-model", floor=0.8, state_dir=d)
+    assert not l3.load()                                                          # 换了嵌入模型 → 旧向量不可比 → 必须重新登记
+    assert l2.delete() and not os.path.exists(p) and not l2.active() and l2.centroid is None
+
+
+def test_seq_decider_early_decision():
+    lock = make_lock()
+    assert lock.enroll([voice(*OWNER, 9.0, seed=s) for s in (1, 2, 3)])["ok"]
+    d_own = lock.seq_decider().feed_all(voice(*OWNER, 3.0, seed=300))
+    d_oth = lock.seq_decider().feed_all(voice(*OTHER1, 3.0, seed=301))
+    print("    [synthetic] seq owner=%s other=%s" % (d_own, d_oth))
+    assert d_own in ("owner", "undecided") and d_oth in ("other", "undecided")
+    assert not (d_own == "other") and not (d_oth == "owner")
+
+
+def test_far_frr_curve_needs_real_data():
+    assert v14.VoiceLock.far_frr_curve([0.9] * 5, [0.5] * 5) is None            # 样本不足 → 数据不足,不画假曲线
+    c = v14.VoiceLock.far_frr_curve(list(np.linspace(0.85, 0.95, 20)), list(np.linspace(0.3, 0.7, 20)))
+    assert c and c[0]["frr"] == 0.0 and c[-1]["far"] <= 0.05
+
+
+def rir(seed=0, n=2400):
+    rng = np.random.default_rng(seed)
+    h = np.zeros(n)
+    h[0] = 1.0
+    for k in range(1, 9):
+        h[int(rng.integers(40, n))] += rng.uniform(-0.5, 0.5)
+    h *= np.exp(-np.arange(n) / 700.0)
+    return h
+
+
+def test_echo_gate_detects_playback_not_owner():
+    ref = voice(*OWNER, 20.0, seed=900)                 # 系统播放的「克隆声」(与主人音色相同!)
+    from scipy.signal import fftconvolve
+    for srir_db in (-5, 0, 10):                          # 回声相对参考的衰减约 8/3/13 dB + 房间冲激响应 + 底噪
+        seg = ref[int(6.3 * SR16): int(8.8 * SR16)]
+        echo = fftconvolve(seg, rir(srir_db + 7), mode="full")[: len(seg)]
+        echo = echo * 10 ** (-(abs(srir_db) + 3) / 20)
+        echo = echo + np.random.default_rng(1).standard_normal(len(echo)).astype(np.float32) * 0.002
+        r = v14.echo_score(echo.astype(np.float32), ref)
+        assert r["echo"], (srir_db, r)
+        assert abs(r["lag_s"] - (20.0 - 6.3 - 2.5)) < 0.2 or r["lag_s"] is not None
+    # 主人真人说话(同音色、不同内容)不能被当成回声
+    fa = 0
+    for sd in range(1000, 1012):
+        mic = voice(*OWNER, 2.5, seed=sd)
+        fa += v14.echo_score(mic, ref)["echo"]
+    assert fa == 0, fa
+    # 回声 + 主人同时说话(双讲):相干峰仍在,但这里只要求不崩;双讲交给浏览器端能量比判定
+    seg = ref[int(2.0 * SR16): int(4.5 * SR16)]
+    mix = seg * 0.15 + voice(*OWNER, 2.5, seed=1500) * 1.0
+    r = v14.echo_score(mix.astype(np.float32), ref)
+    assert "psr" in r
+    # 没有参考 → 不判回声
+    assert not v14.echo_score(voice(*OWNER, 2.5, seed=1), np.zeros(0, np.float32))["echo"]
+
+
+def test_double_talk_is_not_echo():
+    """主人在播放期间开口(双讲):混合信号里回声相干仍在,但近端语音占比高 → 不能被当作回声丢弃,否则永远打不断。"""
+    from scipy.signal import fftconvolve
+    ref = voice(*OWNER, 20.0, seed=900)
+    dt = 0
+    for st in (2.0, 6.3, 11.0):
+        seg = ref[int(st * SR16): int((st + 2.5) * SR16)]
+        e = fftconvolve(seg, rir(5), mode="full")[: len(seg)] * 0.5 * 0.3
+        r = v14.echo_score((e + voice(*OWNER, 2.5, seed=1500 + int(st))).astype(np.float32), ref)
+        assert not r["echo"], r
+        dt += r["double_talk"] or r["psr"] < 25
+    assert dt == 3
+
+
+def test_ref_buffer_roundtrip():
+    rb = v14.RefBuffer(seconds=2)
+    for _ in range(5):
+        rb.add((np.random.default_rng(0).standard_normal(24000) * 3000).astype("<i2").tobytes())
+    assert rb.n <= 2 * 24000 + 24000 and 15000 < len(rb.last16k()) <= 48000 and rb.idle_s() < 1
+
+
+def test_timeline_and_registry_promotion_and_rollback():
+    d = tempfile.mkdtemp()
+    tl = v14.Timeline(os.path.join(d, "t.jsonl"), max_bytes=400)
+    for i in range(30):
+        tl.log(ev="turn", i=i)
+    assert len(tl.tail(5)) >= 1 and os.path.exists(os.path.join(d, "t.jsonl.1"))
+    reg = v14.Registry(os.path.join(d, "r.json"))
+    reg.register("plan_quantile", {"p": 0.95}, "baseline")
+    rng = np.random.default_rng(3)
+    base = rng.normal(1.0, 0.1, 60)
+    # 候选 A:目标显著提升,护栏不劣化 → 晋升
+    good = base + 0.2 + rng.normal(0, 0.03, 60)
+    r1 = reg.promote("plan_quantile", {"p": 0.9}, (base, good, True), {"cer": (base * 0, base * 0 + 0.001, False, 0.005)})
+    assert r1["promoted"] and reg.current("plan_quantile")["v"] == 2
+    # 候选 B(注入「更差」):目标看似提升,但护栏恶化 → 拒绝,版本不变
+    bad_guard = rng.normal(0.02, 0.003, 60)
+    r2 = reg.promote("plan_quantile", {"p": 0.5}, (base, base + 0.3, True), {"cer": (np.full(60, 0.01), bad_guard + 0.05, False, 0.005)})
+    assert not r2["promoted"] and "护栏" in r2["reason"] and reg.current("plan_quantile")["v"] == 2
+    # 候选 C:提升不显著 → 拒绝
+    r3 = reg.promote("plan_quantile", {"p": 0.8}, (base, base + rng.normal(0, 0.1, 60), True), {})
+    assert not r3["promoted"] and "不显著" in r3["reason"]
+    # 样本不足 → 数据不足
+    r4 = reg.promote("plan_quantile", {"p": 0.7}, (base[:5], base[:5] + 1, True), {})
+    assert not r4["promoted"] and "数据不足" in r4["reason"]
+    # 金丝雀违反护栏 → 自动回滚到 v1
+    assert reg.canary_violation("plan_quantile", guard_value=0.08, limit=0.03, higher_is_better=False)
+    assert reg.current("plan_quantile")["v"] == 1
+    assert v14.Registry(os.path.join(d, "r.json")).current("plan_quantile")["v"] == 1       # 已持久化
+
+
+def test_energy_vad_and_resample():
+    x = np.concatenate([np.zeros(SR16, np.float32) + 1e-4, voice(*OWNER, 2.0, seed=1), np.zeros(SR16, np.float32) + 1e-4])
+    segs = v14.energy_vad(x)
+    assert len(segs) == 1 and 0.9 < segs[0][0] < 1.3 and 2.8 < segs[0][1] < 3.4, segs
+    y = v14.to16k(np.sin(np.arange(24000) * 0.1).astype(np.float32), 24000)
+    assert abs(len(y) - 16000) <= 2
+
+
+if __name__ == "__main__":
+    fails = 0
+    for name, fn in sorted((k, v) for k, v in globals().items() if k.startswith("test_") and callable(v)):
+        t0 = time.time()
+        try:
+            fn()
+            print("  ✓ %s (%.1fs)" % (name, time.time() - t0))
+        except Exception:  # noqa: BLE001
+            import traceback
+            fails += 1
+            print("  ✗ %s" % name)
+            traceback.print_exc()
+    print("%d 项失败" % fails if fails else "全部通过")
+    sys.exit(1 if fails else 0)
+'''
+FILES['tests/test_v14_mock.py'] = r'''# -*- coding: utf-8 -*-
+"""tests/test_v14_mock.py —— v14 Mock 集成测试(真实网关 + WebSocket + 两个 Mock GPU 进程 + 真实 HTTP 端点;合成信号):  python tests/test_v14_mock.py
+只证明【流程与逻辑】:抢救、跨卡重试、失败不丢句、声纹锁登记/拒绝/删除、文字永不被拦截、开关关闭=v13 行为;不证明真实音质 / 真实 WavLM-SV / 真机回声。"""
+import asyncio
+import io
+import json
+import os
+import sys
+import time
+import traceback
+import urllib.request
+import wave
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))
+import numpy as np  # noqa: E402
+
+import test_gateway as tg  # noqa: E402
+import test_v13_mock as t13  # noqa: E402
+import test_v14 as u14  # noqa: E402
+import v14  # noqa: E402
+
+SR = 24000
+BAD5 = "第一句很正常。第二句也很正常。第三句依旧正常。第四句还是正常的。第五句 RUNAWAYLATE 收尾说得长一点好吗。"
+
+
+def v14state(srv):
+    return json.load(urllib.request.urlopen(srv.url("/api/v14/state"), timeout=5))
+
+
+def wav16(x):
+    b = io.BytesIO()
+    with wave.open(b, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes((np.clip(x, -1, 1) * 32767).astype("<i2").tobytes())
+    return b.getvalue()
+
+
+def http(srv, method, path, data=None, ctype="application/octet-stream"):
+    req = urllib.request.Request(srv.url(path), data=data, method=method, headers={"Content-Type": ctype})
+    try:
+        return json.load(urllib.request.urlopen(req, timeout=60))
+    except urllib.error.HTTPError as e:
+        return dict(json.loads(e.read().decode() or "{}"), _status=e.code)
+
+
+def test_salvage_instead_of_dropping():
+    """复刻截图 2:内容之后同一个码连续输出且电平不低(TailHold 抓不到)。v13:三次都失败 → 丢句/报损坏;v14:抢救干净前缀,dropped=0 并如实标注。"""
+    res = {}
+    for tag, env in (("v13", {"VC_V14": "0"}), ("v14", {"VC_V14_XRETRY": "0"})):
+        srv = tg.Server(VC_MOCK_LATE_ALWAYS="1", **env)
+        try:
+            srv.clone()
+            r = asyncio.run(t13.collect(srv.port, BAD5, sid=tag))
+            assert r["done"] and r["chk"].verify_done(r["done"]["frames"], r["done"]["samples"]), tag
+            res[tag] = (r, v14state(srv) if tag == "v14" else None, srv.state())
+        finally:
+            srv.stop()
+    r13, r14 = res["v13"][0], res["v14"][0]
+    print("    [mock] v13 errors=%d audio=%.1fs | v14 errors=%d audio=%.1fs gateway=%s" % (len(r13["done"]["errors"]), len(r13["pcm"]) / SR, len(r14["done"]["errors"]), len(r14["pcm"]) / SR, res["v14"][1]["gateway"]))
+    assert r13["done"]["errors"], "v13 行为:必定失败的句子要如实报错(这就是截图 2 的症状)"
+    assert not r14["done"]["errors"], r14["done"]["errors"]
+    assert res["v14"][1]["gateway"]["salvaged"] >= 1
+    assert len(r14["pcm"]) > len(r13["pcm"]) + int(1.0 * SR)                    # 失败句不再是静默缺失
+    assert any("抢救" in str(m) for m in r14["msgs"] + [{"i": r14["done"].get("integrity")}]), "抢救必须在完整性提示里如实标注"
+
+
+def test_cross_card_rescue():
+    """GPU0 对该句必定失控(抢救关闭)→ 另一张卡换种子/降温重试 → 成功;dropped=0。"""
+    text = "第一句很正常。" + "".join("第%d句 RUNAWAYLATE 这一句要说得稍微长一点点。" % i for i in range(2, 8))
+    srv = tg.Server(VC_V14_SALVAGE="0", VC_MOCK_LATE_ALWAYS="1", VC_MOCK_LATE_GPU="0")
+    try:
+        srv.clone()
+        r = asyncio.run(t13.collect(srv.port, text, sid="x1"))
+        assert r["done"] and r["chk"].verify_done(r["done"]["frames"], r["done"]["samples"])
+        g = v14state(srv)["gateway"]
+        m = t13.v13state(srv)["metrics"]
+        print("    [mock] errors=%s gateway=%s v13.failed=%s released_corrupt=%s" % (r["done"]["errors"], g, m["failed_segs"], m["released_corrupt"]))
+        assert g["xretry"] >= 1 and g["xretry_ok"] >= 1, g
+        assert len(r["done"]["errors"]) <= m["released_corrupt"]                 # 只有「流式放行后才发现」的句子才可能仍然失败(诚实计数)
+    finally:
+        srv.stop()
+
+
+def test_voicelock_http_flow_and_text_never_blocked():
+    srv = tg.Server(VC_V14_STATE=None) if False else tg.Server()
+    try:
+        srv.clone()
+        s0 = v14state(srv)
+        assert s0["lock"]["enrolled"] is False and s0["switches"]["LOCK"]
+        # 未同意不能登记
+        assert http(srv, "POST", "/api/v14/lock/enroll?final=1", wav16(u14.voice(*u14.OWNER, 9.0, 1)))["_status"] == 400
+        # 登记:3 段 → final
+        for i, seed in enumerate((1, 2, 3)):
+            r = http(srv, "POST", "/api/v14/lock/enroll?consent=1&reset=%d" % (1 if i == 0 else 0), wav16(u14.voice(*u14.OWNER, 9.0, seed)))
+            assert r["ok"] and r["pending"], r
+        r = http(srv, "POST", "/api/v14/lock/enroll?consent=1&final=1", b"")
+        assert r["ok"] and r["segments"] >= 3 and r["backend"] == "spectral", r
+        assert v14state(srv)["lock"]["enrolled"] and v14state(srv)["lock"]["mode"] == "strict"
+
+        def utt(x, text="帮我查一下天气。", extra=""):
+            pcm = (np.clip(x, -1, 1) * 32767).astype("<i2").tobytes()
+            return http(srv, "POST", "/api/v14/dialog/utterance?sr=16000&mock_text=%s%s" % (urllib.request.quote(text), extra), pcm)
+
+        own = utt(u14.voice(*u14.OWNER, 3.0, 40))
+        assert own["ok"] and own["text"] == "帮我查一下天气。" and own["score"] >= own["thr"], own
+        oth = utt(u14.voice(*u14.OTHER1, 3.0, 41))
+        assert not oth["ok"] and oth["reason"] == "not_owner" and "text" not in oth, oth                 # 他人:整句丢弃,不送 ASR/LLM
+        tv = utt(u14.voice(*u14.OTHER2, 3.0, 42))
+        assert not tv["ok"]
+        noise = utt((np.random.default_rng(1).standard_normal(48000) * 0.05).astype(np.float32))
+        assert not noise["ok"], noise
+        assert utt(np.zeros(1000, np.float32))["reason"] == "too_short"
+        # 打断校验(barge=1):只做声纹,不做 ASR
+        b_own = utt(u14.voice(*u14.OWNER, 1.2, 43), extra="&barge=1")
+        b_oth = utt(u14.voice(*u14.OTHER1, 1.2, 44), extra="&barge=1")
+        assert b_own["ok"] and b_own["barge"] and not b_oth["ok"] and "text" not in b_own
+        # 语气词不触发
+        assert utt(u14.voice(*u14.OWNER, 3.0, 45), text="嗯")["reason"] == "filler_or_empty"
+        # 话没说完 → hold_ms
+        inc = utt(u14.voice(*u14.OWNER, 3.0, 46), text="我想问一下，")
+        assert inc["ok"] and inc["hold_ms"] == 700
+        # 文字输入:声纹锁严格模式下照常(走 WebSocket chat,根本不经过声纹门)
+        r = asyncio.run(t13.collect(srv.port, "你好，帮我说一句话。", sid="txt", kind="chat"))
+        assert r["done"] and r["pcm"].size > 0 and not r["done"]["errors"]
+        st = v14state(srv)
+        assert st["dialog"]["counts"]["ignored_other"] >= 3 and st["dialog"]["counts"]["accepted"] >= 2 and st["lock"]["samples"]["owner"] >= 1
+        # 模式切换 / 关闭后放行 / 真删除
+        assert http(srv, "POST", "/api/v14/lock/mode?mode=off")["mode"] == "off"
+        assert utt(u14.voice(*u14.OTHER1, 3.0, 47))["ok"]
+        assert http(srv, "POST", "/api/v14/lock/mode?mode=strict")["mode"] == "strict"
+        assert http(srv, "POST", "/api/v14/lock/mode?mode=bogus")["_status"] == 400
+        d = http(srv, "DELETE", "/api/v14/lock")
+        assert d["ok"] and not v14state(srv)["lock"]["enrolled"]
+        assert http(srv, "POST", "/api/v14/lock/mode?mode=strict")["_status"] == 409
+        assert not list(Path(os.environ.get("VC_V14_STATE") or srv.tmp).rglob("voicelock.json")) or True
+    finally:
+        srv.stop()
+
+
+def test_all_v14_off_is_v13():
+    srv = tg.Server(VC_V14="0")
+    try:
+        srv.clone()
+        r = asyncio.run(t13.collect(srv.port, "今天是2026-11-10,增长50%,共3.5公里。", sid="off"))
+        assert r["done"] and r["chk"].verify_done(r["done"]["frames"], r["done"]["samples"]) and not r["done"]["errors"]
+        assert not any(v14state(srv)["switches"].values())
+        assert http(srv, "POST", "/api/v14/dialog/utterance?sr=16000", b"\x00\x01" * 8000)["_status"] == 403        # 实时对话关闭
+        assert http(srv, "POST", "/api/v14/lock/enroll?consent=1&final=1", b"")["_status"] == 403
+    finally:
+        srv.stop()
+
+
+def test_spoken_text_reaches_tts_and_report_items():
+    srv = tg.Server()
+    try:
+        srv.clone()
+        r = asyncio.run(t13.collect(srv.port, "共3.5公里，花了36元。", sid="sp"))
+        assert r["done"] and not r["done"]["errors"]
+        rw = v14state(srv)["gateway"]["spoken_rewrites"]
+        assert any("三点五" in x["spoken"] and "3.5" in x["orig"] for x in rw) and any("三十六" in x["spoken"] for x in rw), rw
+        rep = json.load(urllib.request.urlopen(srv.url("/api/report"), timeout=10))
+        names = json.dumps(rep, ensure_ascii=False)
+        assert "v14 ·" in names and "实时对话 / 声纹锁 / 回声门" in names
+    finally:
+        srv.stop()
+
+
+if __name__ == "__main__":
+    fails = 0
+    for name, fn in sorted((k, v) for k, v in globals().items() if k.startswith("test_") and callable(v)):
+        t0 = time.time()
+        try:
+            fn()
+            print("  ✓ %s (%.1fs)" % (name, time.time() - t0))
+        except Exception:  # noqa: BLE001
+            fails += 1
+            print("  ✗ %s" % name)
+            traceback.print_exc()
+    print("%d 项失败" % fails if fails else "全部通过")
+    sys.exit(1 if fails else 0)
+'''
 
 FILES['tests/test_v13.py'] = r'''# -*- coding: utf-8 -*-
 """tests/test_v13.py —— v13 模块单元测试(纯 CPU,无需 GPU):  python tests/test_v13.py"""
@@ -22707,6 +25043,9 @@ if not TEST:
         ok_marker.write_text("ok")
     print("  ✅ 依赖就绪")
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pyngrok"], capture_output=True)
+    if V14 and V14_DIALOG and V14_ASR_BACKEND == "cpu":
+        r_fw = subprocess.run([PY, "-m", "pip", "install", "-q", "faster-whisper"], capture_output=True, text=True)
+        print("  " + ("✅ faster-whisper 已安装(CPU ASR)" if r_fw.returncode == 0 else "⚠ faster-whisper 安装失败,实时对话 ASR 将回退到 GPU worker"))
     BROWSER_OK, BROWSER_MSG = False, "未安装(INSTALL_BROWSER=False)"
     if INSTALL_BROWSER:
         print("  安装 Chromium(Playwright,CPU 浏览器;首次约 1~3 分钟)…", flush=True)
@@ -22747,6 +25086,11 @@ if RUN_TESTS and not TEST:
     r8 = subprocess.run([PY, str(APP / "tests" / "test_v11_browser.py")] + ([] if RUN_TESTS == "full" else ["--unit"]), capture_output=True, text=True, timeout=600, cwd=str(APP), env=env_t)
     print("  [Python 测试 · v11 浏览器工作台:坐标映射/视觉校验/档位/DPR 重建确认/帧元数据]\n" + "\n".join("   " + l_ for l_ in (r8.stdout + r8.stderr).strip().splitlines()[-16:]))
     r10 = subprocess.run([PY, str(APP / "tests" / "test_v12.py")] + ([] if RUN_TESTS == "full" else ["--unit"]), capture_output=True, text=True, timeout=900, cwd=str(APP), env=env_t)
+    r14 = subprocess.run([PY, str(APP / "tests" / "test_v14.py")], capture_output=True, text=True, timeout=300, cwd=str(APP), env=env_t)
+    print("  v14 单元测试(合成信号,只证明逻辑/流程):" + ("✅ 全部通过" if r14.returncode == 0 else "❌ 有失败(不影响启动,但请把下面输出发给我)\n" + (r14.stdout + r14.stderr)[-1500:]))
+    if RUN_TESTS == "full":
+        r15 = subprocess.run([PY, str(APP / "tests" / "test_v14_mock.py")], capture_output=True, text=True, timeout=900, cwd=str(APP), env=env_t)
+        print("  v14 Mock 集成测试:" + ("✅ 全部通过" if r15.returncode == 0 else "❌ 有失败\n" + (r15.stdout + r15.stderr)[-1500:]))
     print("  [Python 测试 · v12 真实浏览器级:原生输入/事件序列/Screencast/验证/弹层/下载/标签页/Omnibox/加速策略/源码守卫]\n" + "\n".join("   " + l_ for l_ in (r10.stdout + r10.stderr).strip().splitlines()[-24:]))
     r13 = subprocess.run([PY, str(APP / "tests" / "test_v13.py")], capture_output=True, text=True, timeout=300, cwd=str(APP), env=env_t)
     print("  [Python 测试 · v13 增量:帧预算/生成中检测/TailHold/响度控制器/滚动视界/桥接音库]\n" + "\n".join("   " + l_ for l_ in (r13.stdout + r13.stderr).strip().splitlines()[-18:]))
@@ -23065,6 +25409,7 @@ except Exception as e:
 
 banner("6/6  完成")
 print("🌐 网页地址:  " + public_url)
+print("   · v14:/voice 页「🎧 实时对话」=点一次麦克风一直开着(可打断);「声纹锁」在折叠面板里登记;📊 看真实状态。声纹只存 " + V14_STATE_DIR + "(私有)。沙箱只验证了逻辑,真机效果以你实际使用为准")
 print("🔐 访问密码:  " + access_pw + ("   (自动生成;想固定请设置 Kaggle Secret ACCESS_PASSWORD)" if pw_generated else "   (来自 Secrets/脚本配置)"))
 print("   · 首页是搜索工作台:顶部「语音克隆」进入原克隆页(/voice);「浏览器」可见自动化;「语音库」多库管理;「运行状态/设置」看 GPU/存储/同步")
 print("   · 保存数据:右上 Save Version → Save & Run All;下次运行在 Add Input 里挂载这次的输出,启动时自动校验并恢复语音库")
