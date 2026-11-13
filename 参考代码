@@ -1,5 +1,5 @@
 # =============================================================================
-#  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v15 · 样本连续流拼接 · 舒适噪声停顿 · 软限幅 · 参考管线 · 取证 · 盲测页 · 在 v14 之上可回退的增量 · v14 · 分位数起播 · 失败不丢句(抢救/跨卡重试) · 实时对话 · 声纹锁 · 口语化文本 · 在 v13 之上可回退的增量 · v13 · 零损坏放行 · 滚动视界起播 · 恒定音量 · 在 v12 之上可回退的增量 · v12 · 真实浏览器级交互 · v10 · 完整可下载的合成音频 · 合规搜索加速 · 在 v9 之上最小必要改动 · 大模型意图理解 · 2 秒静音自动执行 · 真实 Google/Bing 多来源 · 页面视觉理解 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
+#  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v16 · 多参考语音库 · 无时长限制入库 · 复合参考 · 增量再优化 · 沙沙声/直流取证 · 首声分段计时 · 在 v15 之上可回退的增量 · v15 · 样本连续流拼接 · 舒适噪声停顿 · 软限幅 · 参考管线 · 取证 · 盲测页 · 在 v14 之上可回退的增量 · v14 · 分位数起播 · 失败不丢句(抢救/跨卡重试) · 实时对话 · 声纹锁 · 口语化文本 · 在 v13 之上可回退的增量 · v13 · 零损坏放行 · 滚动视界起播 · 恒定音量 · 在 v12 之上可回退的增量 · v12 · 真实浏览器级交互 · v10 · 完整可下载的合成音频 · 合规搜索加速 · 在 v9 之上最小必要改动 · 大模型意图理解 · 2 秒静音自动执行 · 真实 Google/Bing 多来源 · 页面视觉理解 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
 #  (在 v6「连续播放优先 · 背压 + 帧序号 + 断线续传 · 无变速 · 完整性检测 · 留出评估」之上无损追加;原语音克隆页在 /voice,根路径 / 是搜索首页)
 #  Qwen3-TTS-12Hz-1.7B-Base 声音克隆  ×  双 T4  ×  LoRA 训练(留出验证)  ×  真实指标面板
 #
@@ -159,6 +159,22 @@ from pathlib import Path
 #         热/冷 TTFA、欠载=0、500 轮 soak、双 T4 显存。
 #      【未实现】Best-of-N 并行重排(需要 GPU 才能择优,且会占吞吐)· 24k→48k 超分 · 音色转换 · LoRA 自蒸馏 · 多验证器集成相似度 · fp32 codec 解码器 · 浏览器端欠载外推保底 · 真浏览器网络整形模拟。
 #         这些需要 GPU 实测才能择优,宁可不写也不假装做过。
+#  ┌─ v16 ·【多参考语音库 · 无时长限制入库 · 复合参考 · 增量再优化 · 沙沙声/直流取证 · 首声分段计时】在 v15 之上「可回退的增量」(本脚本顶部「只需要改这里」里的 V16_* 开关;V16=False = v15 行为,PCM 逐样本一致,已用 Mock 对账) ─┐
+#  【M1 无时长限制 V16_REFSTORE】上传/录音不再有 1800 秒 / 80MB 硬上限,也不再在 30 秒处截断参考:>30 秒的音频在【停顿处】自动切成 ~8 秒片段(3~14 秒),逐片质检(质量分/SNR/HF 底噪/有声占比),不可用片段跳过并给出原因;原件完整保存;后台自动转写(标记「待核对」)。
+#  【M2 多参考 V16_REFSET】库里 ≥2 条「口语+已启用+文字已核对+质检通过」的参考,在克隆时自动拼成 ≤20 秒「复合参考」(电平对齐 · 与底噪匹配的舒适噪声连接 · 峰值 0.7 约定不变);GPU 进程零改动;不足 2 条/任何异常 → 自动退回 v15 单条参考。你手动指定的主参考永远排第一。
+#  【M3 增量再优化 V16_INCR】语音库「📚 多参考管理」→「继续优化」:新样本 + 旧样本回放(防遗忘) + 学习率×0.4(夹 0.3~0.5) + 以当前已晋升模型为父(--base);只排队,候选模型仍须「验证+加载+试合成」三项证据才能升级(沿用 v10 晋升/回滚)。
+#  【M4 V16_EVAL】校准相似度的纯函数(同说话人片段对分布 → 该说话人自己的阈值;不足 8 对 = not_calibrated,不显示百分比)与配对 bootstrap 晋升规则;尚未接入实时通路。
+#  【M5 V16_AUDIO】每轮取证新增:安静处 6kHz 以上底噪(沙沙声启发式,仅平稳噪声才测,连续无停顿语音不误报)+ 直流;只测量,【不修改任何输出音频】。
+#  【M7 V16_TTFA】首声分段计时(网关/模型首块/其余),写进诊断;prefill/text/decode_first/postfx 需要 GPU 进程内打点:未实现。
+#  【UI V16_UI】/ 首页「语音库」每个库新增「📚 多参考管理」折叠面板:质量分、SNR、文字是否核对、启用/停用、权重、设为主参考、核对转写、预览/提交增量计划。
+#  【诚实声明 · 沙箱已验证 / 真机未验证 / 未实现】
+#    沙箱(CPU + Mock 两个 GPU 进程)已验证:tests/test_v16.py(17 项:长音频切分无丢样本/切点在停顿/2 小时音频 <20 秒 · HF 底噪指标还原注入电平且连续语音不误报 · 稳健质心去离群 · 复合参考确定性/电平/无零段 · 增量计划 · 晋升规则 · 校准诚实 · 开关)
+#      + tests/test_v16_mock.py(真实网关 + HTTP:95 秒音频切分入库且原件完整/复合参考激活/停用与主参考/增量预览/报告项/VC_V16=0 回到 v15 的 30 秒截断)+ v13/v14/v15/网关/语音库全套回归 + Mock golden PCM 在 V16 开/关两种状态下与 v15 逐样本一致。
+#    Kaggle T4×2 真机【未验证】:克隆相似度是否更高(只有 /abx 盲测 + 校准分数能回答;复合参考在 xvec/ICL 两种模式下的真实效果)· 首声 TTFA 是否更快 · underrun=0 · 沙沙声/爆音是否更少 · 增量 LoRA 是否真的提升且不遗忘 · 双卡显存。
+#    【未实现(宁可不写也不假装做过)】多说话人聚类剔除(长音频里混入他人声音需你在面板里停用)· 说话人向量级融合(质心函数已实现并测试,但 qwen-tts 内部 speaker encoder 注入需要 GPU 验证,所以线上用「复合参考」)· 参考锦标赛(Best-of-N 需要 GPU)·
+#      浏览器 OPFS 断点续传 · 分块可恢复上传 · 沙盒里对 CosyVoice/GPT-SoVITS/F5 等备选模型的实测对比(没有 GPU 与模型权重,无法给出可信数字)· 提高克隆相似度的任何数值宣称。
+#      说明:沙沙声/爆音的根因(模型本身 / 参考底噪 / fp16 解码 / 拼接)必须在真机用本版的取证指标逐项排查,没有数据就不下结论。
+#  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 # ╔═══════════════════════════ 只需要改这里(都可以不改) ═══════════════════════════╗
 MODE = "serve"                 # "serve" | "train" | "train_then_serve"
 NGROK_TOKEN = ""               # 留空 = 从 Kaggle Secrets 读取 NGROK_TOKEN。⚠ 直接填写后请不要公开分享笔记本
@@ -235,6 +251,18 @@ V15_DITHER = True              # M5 TPDF 抖动量化(饱和不回绕)
 V15_REFPREP = True             # M6 参考语音:50Hz 零相位高通 + 边缘淡化 + 质量评分(低分提示重录;电平约定不变)
 V15_FORENSICS = True           # M7 每轮取证(零段/click/削波/真峰值/底噪),写入 📊 诊断的 v15 验收项
 V15_CEIL_DB = -1.5             # 软限幅上限(dBFS)
+# —— v16 增量模块(每个都可独立关闭;V16=False = 与 v15 行为一致 = 一键回退) ——
+V16 = True                     # v16 总开关(False = v15 行为,PCM 逐样本一致)
+V16_REFSTORE = True            # M1 无时长限制入库:>30 秒音频在停顿处自动切成 ~8 秒片段(不再 30 秒截断 / 1800 秒 / 80MB 上限)
+V16_REFSET = True              # M2 多参考:克隆时把库里 ≥2 条优质参考拼成 ≤20 秒「复合参考」(不足 2 条自动退回单条)
+V16_INCR = True                # M3 增量再优化:新样本 + 旧样本回放 + 低学习率 + 已晋升模型为父(只排队,仍须三项证据才能升级)
+V16_AUDIO = True               # M5 取证扩展:沙沙声(安静处 HF 底噪)/直流(只测量,不改音频)
+V16_EVAL = True                # M4 校准相似度 / 晋升规则(纯函数,未接入实时通路)
+V16_UI = True                  # 「📚 多参考管理」面板与 /api/libs/{id}/refs 接口
+V16_TTFA = True                # M7 首声分段计时(只测量)
+V16_COMPOSITE_SECONDS = 20     # 复合参考总时长上限(秒);ICL 模式下越长首句 prefill 越慢
+V16_SEG_TARGET_SECONDS = 8     # 长音频自动切分的目标片段时长(秒);上限 = 14
+V16_BASE_LR = 1e-4             # 增量再优化的基准学习率(实际 = 基准 × 0.4,夹在 0.3~0.5 倍)
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 
 TEST = os.environ.get("VC_LAUNCH_TEST") == "1"          # 本地自检用(跳过安装/隧道/训练)
@@ -248,6 +276,11 @@ for _k15, _v15v in (("", V15), ("_STITCH", V15 and V15_STITCH), ("_COMFORT", V15
                     ("_LEVEL", V15 and V15_LEVEL), ("_DITHER", V15 and V15_DITHER), ("_REFPREP", V15 and V15_REFPREP), ("_FORENSICS", V15 and V15_FORENSICS)):
     os.environ["VC_V15" + _k15] = "1" if _v15v else "0"
 os.environ["VC_V15_CEIL_DB"] = str(V15_CEIL_DB)
+for _k16, _v16v in (("", V16), ("_REFSTORE", V16 and V16_REFSTORE), ("_REFSET", V16 and V16_REFSET), ("_INCR", V16 and V16_INCR), ("_AUDIO", V16 and V16_AUDIO),
+                    ("_EVAL", V16 and V16_EVAL), ("_UI", V16 and V16_UI), ("_TTFA", V16 and V16_TTFA)):
+    os.environ["VC_V16" + _k16] = "1" if _v16v else "0"
+os.environ["VC_V16_COMPOSITE_S"], os.environ["VC_V16_SEG_TARGET_S"], os.environ["VC_V16_BASE_LR"] = str(V16_COMPOSITE_SECONDS), str(V16_SEG_TARGET_SECONDS), str(V16_BASE_LR)
+os.environ["VC_V16_SEG_MAX_S"] = str(max(float(V16_SEG_TARGET_SECONDS) + 3.0, 14.0))
 if NGROK_TOKEN or DEEPSEEK_API_KEY:
     print("⚠ 你把令牌直接写进了脚本:不要公开分享/提交这个笔记本;建议改用 Kaggle Secrets。")
 WORK = Path(os.environ.get("VC_WORK") or "/kaggle/working/vc")      # 运行时数据(克隆的声音等)
@@ -372,6 +405,13 @@ try:
 except Exception as _e15:  # noqa: BLE001
     _v15 = None
     log.warning("v15 模块不可用,按 v14 行为运行: %s", _e15)
+try:
+    import v16 as _v16
+except Exception as _e16:  # noqa: BLE001
+    _v16 = None
+    log.warning("v16 模块不可用,按 v15 行为运行: %s", _e16)
+V16C = _v16.Counters() if _v16 else None               # v16:多参考 / 长音频切分 / 取证 的累计计数(诊断面板;portal 共用同一个对象)
+V16T = _v16.StageTimer() if _v16 else None             # v16:首声分段计时(只测量)
 V15C = _v15.Counters() if _v15 else None               # v15:拼接/舒适噪声/限幅/取证 的累计计数(诊断面板)
 V14M = {"xretry": 0, "xretry_ok": 0, "salvaged": 0, "segs": 0, "spoken_rewrites": deque(maxlen=20)}
 
@@ -542,6 +582,65 @@ def v15_forensics_turn(turn):
         LOOP.run_in_executor(None, work)
     except Exception:  # noqa: BLE001
         pass
+
+
+def v16_state():
+    if _v16 is None:
+        return {"available": False}
+    return {"available": True, "version": _v16.VERSION, "switches": _v16.switches(), "counters": V16C.snapshot(), "ttfa_stages": V16T.summary(), "ttfa_biggest": V16T.biggest(),
+            "params": {"hf_ref_warn_db": _v16.HF_REF_WARN_DB, "hf_out_warn_db": _v16.HF_OUT_WARN_DB, "dc_fix_threshold": _v16.DC_FIX_THRESHOLD}}
+
+
+def v16_forensics_turn(turn):
+    """v16 取证(线程池里):v15.analyze 全部指标 + 安静处 HF 底噪(沙沙声启发式)+ 直流。只测量,不改任何音频。"""
+    if _v16 is None or not _v16.on("AUDIO") or not turn.gen_pcm:
+        return
+
+    def work():
+        try:
+            pcm = np.frombuffer(b"".join(turn.gen_pcm)[: 2 * SR * 120], dtype="<i2")
+            V16C.add_turn(_v16.audio_guard_report(pcm))
+        except Exception as e:  # noqa: BLE001
+            log.warning("v16 取证失败(忽略): %s", e)
+    try:
+        LOOP.run_in_executor(None, work)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def v16_turn_timing(turn, first_ms, model_first_ms, queue_ms):
+    """M7:把已有的三个测量值记成分段:gateway=队列(轮开始→首段派发) · first_frames=模型首块(prefill+前N帧+首块解码,GPU 进程内未再细分) · ws_play=其余(规划保持/桥接/后处理/WebSocket)。"""
+    if _v16 is None or V16T is None or not _v16.on("TTFA") or first_ms is None:
+        return
+    try:
+        V16T.add("gateway", queue_ms)
+        V16T.add("first_frames", model_first_ms)
+        V16T.add("ws_play", max(0.0, float(first_ms) - float(queue_ms or 0) - float(model_first_ms or 0)))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def v16_report_items(add):
+    """v16 验收清单:只写测到的;GPU/真机/人耳相关一律「未验证」。"""
+    if _v16 is None:
+        add(40, "v16 增量模块", "未运行", "v16.py 未能导入,系统按 v15 行为运行")
+        return
+    sw, c = _v16.switches(), V16C.snapshot()
+    add(40, "v16 · 开关与回退", "已记录", "开关 %s;全部设为 0(VC_V16=0)= v15 行为(PCM 逐样本一致,由 Mock 对账验证);v16 不修改任何推理/后处理音频,只读取证 + 参考管理" % json.dumps(sw, ensure_ascii=False))
+    lt = c.get("last_turn") or {}
+    if not c["turns_analyzed"]:
+        add(41, "v16 · 输出取证(沙沙声 HF 底噪/直流/零段/click/削波)", "未运行", "还没有完成的合成轮次(AUDIO=%s)" % sw["AUDIO"])
+    else:
+        st41 = "失败" if c["turns_with_problems"] else ("已测量" if MOCK else "通过")
+        add(41, "v16 · 输出取证(沙沙声 HF 底噪/直流/零段/click/削波)", st41, "分析 %d 轮,有问题 %d 轮(疑似沙沙声 %d 轮);最近一轮 HF 底噪 %s dBFS/bin、直流 %s、问题 %s。阈值为启发式、未校准;Mock 不代表真实模型" % (
+            c["turns_analyzed"], c["turns_with_problems"], c["hiss_suspect_turns"], lt.get("hf_floor_dbfs"), lt.get("dc16"), lt.get("problems") or "无"))
+    add(42, "v16 · 多参考 / 长音频入库", "已记录", "长音频切分 %d 个文件 → %d 段(跳过 %d 段);复合参考构建 %d 次,回退单条 %d 次;增量计划 %d 次。「更像」只能由 /abx 盲测裁决(未验证)" % (
+        c["long_split_files"], c["long_split_segments"], c["segments_rejected"], c["composites_built"], c["composite_fallbacks"], c["incremental_plans"]))
+    ts = V16T.summary()
+    n = sum(v["n"] for v in ts.values())
+    add(43, "v16 · 首声分段计时(只测量)", "已测量" if n else "未运行",
+        ("; ".join("%s p50=%s p95=%s(n=%d)" % (k, v["p50"], v["p95"], v["n"]) for k, v in ts.items() if v["n"]) + "。最大头(P95):%s。prefill/text/decode_first/postfx 需 GPU 进程内打点:未实现" % V16T.biggest()) if n else "还没有完成的轮次")
+    add(44, "v16 · 相似度 / 音质 / 首声 / 不断流(T4×2 真机)", "未验证", "沙箱(CPU+Mock)只验证逻辑与客观指标;真机相似度需 /abx 盲测 + 校准分数,真机 TTFA/underrun=0 需 Kaggle T4×2 实测")
 
 
 def v15_report_items(add):
@@ -1257,7 +1356,7 @@ def state_public():
             "model": (Path(MODEL).name if os.path.isdir(MODEL) else MODEL), "trained": TRAINED, "target": TARGET_RMS[0], "backend": backend_summary(),
             "gpus": gpu_table(), "calibrated": bool(CAL), "sv_model": SV_MODEL, "emotion_pause": EMOTION_PAUSE,
             "perf": {"mode": LATENCY_MODE, "policy": GPU_POLICY, "spc": round(TEXT_STATS["spc"], 3), "send_ahead_ms": SEND_AHEAD_MS}, "train": read_train_progress(),
-            "library": VOICE.get("library"), "v13": v13_state(), "v15": v15_state()}
+            "library": VOICE.get("library"), "v13": v13_state(), "v15": v15_state(), "v16": v16_state()}
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1357,6 +1456,7 @@ def finish_turn(turn):
     emit(turn, b"", F_END, len(turn.segs))
     art_finish(turn)
     v15_forensics_turn(turn)
+    v16_forensics_turn(turn)
     if turn.sim_wait > 0:
         RECENT[turn.uid] = turn
     gaps = {}
@@ -1377,6 +1477,7 @@ def finish_turn(turn):
                      "policy": turn.policy, "pinned": turn.pinned, "plan": turn.plan, "emotions": [g.emotion for g in turn.segs][:40], "replayed_frames": turn.replayed,
                      "seeds": [g.stats.get("seed") for g in turn.segs][:40], "library_id": (turn.lib or {}).get("library_id"),
                      "artifact_id": turn.art.aid if turn.art else None, "synthetic": True, "eval_truncated": turn.gen_truncated, "v13": v13_turn_summary(turn)}
+    v16_turn_timing(turn, turn.done_msg.get("first_ms"), turn.done_msg.get("model_first_ms"), turn.done_msg.get("queue_ms"))
     turn.sess.send(turn.done_msg)
     TURN_LOG.append(dict(turn.done_msg, chars=len(turn.full_text), t=time.time()))
     if turn.gen_pcm:
@@ -2313,7 +2414,8 @@ def build_report():
     v13_report_items(add)
     v14_report_items(add)
     v15_report_items(add)
-    return {"generated": time.strftime("%F %T"), "mock": MOCK, "items": items, "turns_gateway": list(TURN_LOG)[-40:], "turns_browser": ms[-40:], "events": EVENTS, "v13": v13_state(), "v15": v15_state(),
+    v16_report_items(add)
+    return {"generated": time.strftime("%F %T"), "mock": MOCK, "items": items, "turns_gateway": list(TURN_LOG)[-40:], "turns_browser": ms[-40:], "events": EVENTS, "v13": v13_state(), "v15": v15_state(), "v16": v16_state(),
             "per_gpu": {str(i): {"F_ms": round(W(i)["F"] * 1000, 1), "D_ms": round(W(i)["D"] * 1000, 1), "PRE_ms": round(W(i)["PRE"] * 1000), "chunk_gap_ms": pcts([g * 1000 for g in W(i)["gaps"]])}
                         for i in (range(len(POOL.workers)) if POOL else [])}}
 
@@ -5396,7 +5498,7 @@ class LibraryStore:
     @staticmethod
     def public_sample(s):
         keys = ("sample_id", "created_at", "duration_s", "sr_orig", "sr_proc", "channels", "category", "kind_zh", "text", "text_source", "text_trusted", "transcribe_state", "session",
-                "orig_sha256", "proc_sha256", "qc_summary", "excluded_from_speech_training", "orig_ext", "orig_bytes", "notes")
+                "orig_sha256", "proc_sha256", "qc_summary", "excluded_from_speech_training", "orig_ext", "orig_bytes", "notes", "enabled", "weight", "v16")
         return {k: s.get(k) for k in keys}
 
     # ───────── 样本 ─────────
@@ -5457,6 +5559,36 @@ class LibraryStore:
             self._save(lib)
             return s
 
+    def update_sample_meta(self, lib_id, sample_id, enabled=None, weight=None, v16=None, asr_text=None):
+        """v16:多参考管理(白名单字段):启用/停用、权重(0.1~3)、v16 质检信息。不改动音频与文字。"""
+        with self.lock:
+            lib = self._load(lib_id)
+            s = next((x for x in lib["samples"] if x["sample_id"] == sample_id), None)
+            if not s:
+                raise StoreError("样本不存在", 404)
+            if enabled is not None:
+                s["enabled"] = bool(enabled)
+            if weight is not None:
+                s["weight"] = round(min(3.0, max(0.1, float(weight))), 3)
+            if v16 is not None and isinstance(v16, dict):
+                s["v16"] = dict(v16)
+            if asr_text is not None and not s.get("text_trusted"):          # 自动转写只写【未核对】文字;已核对的文字永不被覆盖
+                s.update(text=str(asr_text).strip(), text_source="asr_auto", text_trusted=False, transcribe_state="asr_unverified")
+            self._save(lib)
+            return s
+
+    def incremental_inputs(self, lib_id):
+        """v16 增量再优化的输入:当前已晋升模型(父) + 它训练时用过的样本 id(旧) + 当前所有合格样本 id(全部)。"""
+        lib = self._load(lib_id)
+        cur = lib["checkpoints"].get("current")
+        elig = [s["sample_id"] for s in lib["samples"] if s["category"] == "speech" and s.get("text_trusted") and not (s.get("qc") or {}).get("blocking") and s.get("enabled") is not False]
+        old = []
+        if cur:
+            ds = next((d for d in lib["datasets"] if d["version"] == cur.get("dataset_version")), None)
+            keep = set(elig)
+            old = [i["sample_id"] for i in (ds or {}).get("samples", []) if i["sample_id"] in keep]
+        return cur, old, elig
+
     def set_ref(self, lib_id, sample_id):
         with self.lock:
             lib = self._load(lib_id)
@@ -5502,14 +5634,15 @@ class LibraryStore:
         return max(pool, key=lambda s: s["duration_s"])
 
     # ───────── 数据集版本(冻结) ─────────
-    def freeze_dataset(self, lib_id):
+    def freeze_dataset(self, lib_id, only_ids=None):
         """把【当前】口语 + 文字已核对 + 质检通过的样本冻结成新版本;之后新增样本只进入下一个版本。按录音场次(session)划分训练/验证,避免相邻切片泄漏。"""
         with self.lock:
             lib = self._load(lib_id)
             if not lib["consent"]["confirmed"]:
                 raise StoreError("该语音库还没有声音授权确认,不能用于训练")
-            elig = [s for s in lib["samples"] if s["category"] == "speech" and s.get("text_trusted") and not (s.get("qc") or {}).get("blocking")]
-            skipped = [{"sample_id": s["sample_id"], "reason": ("歌声/伴奏" if s["category"] != "speech" else "文字未核对" if not s.get("text_trusted") else "质检阻断")} for s in lib["samples"] if s not in elig]
+            elig = [s for s in lib["samples"] if s["category"] == "speech" and s.get("text_trusted") and not (s.get("qc") or {}).get("blocking")
+                    and s.get("enabled") is not False and (only_ids is None or s["sample_id"] in only_ids)]       # v16:已停用样本不进训练;only_ids=增量集合(None=与 v15 完全一致)
+            skipped = [{"sample_id": s["sample_id"], "reason": ("歌声/伴奏" if s["category"] != "speech" else "文字未核对" if not s.get("text_trusted") else "质检阻断" if (s.get("qc") or {}).get("blocking") else "已停用/不在本次增量集合")} for s in lib["samples"] if s not in elig]
             if not elig:
                 raise StoreError("没有可训练的样本(需要口语 + 文字已核对 + 质检通过)。被排除:%d 条" % len(skipped))
             sessions = sorted({s["session"] for s in elig})
@@ -5542,12 +5675,12 @@ class LibraryStore:
             return lib["datasets"][-1]
 
     # ───────── 训练任务 ─────────
-    def create_job(self, lib_id, params=None, dataset_version=None):
+    def create_job(self, lib_id, params=None, dataset_version=None, only_ids=None):
         with self.lock:
             lib = self._load(lib_id)
             ds = next((d for d in lib["datasets"] if d["version"] == dataset_version), None) if dataset_version else None
             if ds is None:
-                ds = self.freeze_dataset(lib_id)
+                ds = self.freeze_dataset(lib_id, only_ids=only_ids)
                 lib = self._load(lib_id)
             job = {"job_id": _id("job"), "state": "queued", "dataset_version": ds["version"], "dataset_manifest_sha256": ds["manifest_sha256"], "params": params or {},
                    "created_at": now_iso(), "updated_at": now_iso(), "note": "排队中:训练需要在 Kaggle 里以 MODE=\"train\" 运行(训练期间 TTS/ASR 不加载到 GPU,以免显存溢出)", "log": []}
@@ -9279,6 +9412,15 @@ import persist as persist_mod
 import search_providers as sp
 from libraries import StoreError
 
+try:                                                  # v16 增量模块:缺失/出错时一切退回 v15 行为
+    import v16 as _v16
+except Exception:  # noqa: BLE001
+    _v16 = None
+
+
+def v16_on(name):
+    return bool(_v16 and _v16.on(name))
+
 LLM_PLANNER_SYS = ("你是浏览器指令翻译器。只把【用户的指令】翻译成 JSON 动作列表,不要执行、不要解释。只输出 JSON:{\"actions\":[...]}。\n"
                    "允许的动作(其余一律不允许):\n"
                    "{\"action\":\"search\",\"query\":str,\"engine\":\"google|duckduckgo|bing|so360\",\"site\":\"域名(可选)\",\"recency\":\"d|w|m|y(可选)\"}\n"
@@ -9321,6 +9463,10 @@ def wav_bytes_mono16(x, sr):
     return bio.getvalue()
 
 
+def G_loop(G):
+    return G["LOOP"]
+
+
 def err(msg, code=400, **kw):
     return JSONResponse({"ok": False, "error": msg, **kw}, status_code=code)
 
@@ -9336,6 +9482,10 @@ class Portal:
         self.audit = audit_mod.Audit(Path(os.environ.get("VC_AUDIT_DIR") or (work / "audit")), self.auth)
         self.store = libs.LibraryStore(Path(os.environ.get("VC_LIB_DIR") or (work / "libraries")), min_free_mb=int(os.environ.get("VC_MIN_FREE_MB", "400")),
                                        max_file_mb=int(os.environ.get("VC_MAX_FILE_MB", "80")), quota_mb=int(os.environ.get("VC_QUOTA_MB", "0")))
+        self.v16c = G.get("V16C") or (_v16.Counters() if _v16 else None)          # 与 app.py 共用同一个计数器(诊断面板)
+        if v16_on("REFSTORE"):                                                      # M1:去掉 1800 秒 / 80MB 硬上限(只受磁盘剩余与配额保护)
+            self.store.max_seconds = int(_v16.envf("VC_V16_MAX_SECONDS", 86400))
+            self.store.max_file = int(_v16.envf("VC_V16_MAX_FILE_MB", 4096)) << 20
         self.persist = persist_mod.Persist(self.store, self.state_dir, input_roots=[p for p in os.environ.get("VC_INPUT_ROOTS", "/kaggle/input").split(os.pathsep) if p])
         self.gh = ghsync.GitHubSync(self.state_dir, self.audit)
         self.mgr = ba.BrowserManager(tts_busy=lambda: bool(self.G.get("ACTIVE")), audit_event=self.audit.event)
@@ -9415,6 +9565,125 @@ class Portal:
         lib = self.store.get(lid)
         self.VOICE["library"] = self.snapshot(lib, s)
 
+    # ───────────────────────── v16:复合参考 / 长音频入库 / 增量再优化 ─────────────────────────
+    def v16_composite(self, lib_id, lib):
+        """M2 复合参考:把库里多条优质参考(口语+已启用+文字已核对+质检通过+分数≥50)按电平对齐、舒适噪声连接成 ≤20 秒的一条 WAV,
+        文字同步拼接。结果按「成员+处理版哈希」缓存;任何异常/不足 2 条 → 返回 None(调用方退回 v15 的单条参考)。"""
+        G = self.G
+        try:
+            tot_s = _v16.envf("VC_V16_COMPOSITE_S", 20.0)
+            mem = _v16.select_composite_members(lib["samples"], max_total_s=tot_s, max_k=int(_v16.envf("VC_V16_COMPOSITE_K", 6)), prefer_id=lib.get("ref_sample_id"))
+            if not mem:
+                return None
+            ids = [m["sample_id"] for m, _w in mem]
+            key = _v16.composite_key(ids, "".join(str(m.get("proc_sha256", ""))[:8] for m, _w in mem))
+            d = self.work / "v16_refset"
+            d.mkdir(parents=True, exist_ok=True)
+            wav, meta = d / ("%s_%s.wav" % (lib_id, key)), d / ("%s_%s.json" % (lib_id, key))
+            if wav.exists() and meta.exists():
+                m = json.loads(meta.read_text(encoding="utf-8"))
+                return {"path": str(wav), "text": m["text"], "members": m["members"], "seconds": m["seconds"], "cached": True}
+            items = []
+            for m, _w in mem:
+                y, sr_, _c = G["decode_audio"](Path(self.store.sample_paths(lib_id, m["sample_id"])["proc"]).read_bytes())
+                items.append({"audio": np.asarray(G["resample_to"](y, sr_, G["SR"]), np.float32), "text": m.get("text") or "", "sample_id": m["sample_id"]})
+            y, text, members, secs = _v16.build_composite(items, sr=G["SR"], max_total_s=tot_s, seed=int(key, 16) % (2 ** 32))
+            if len(members) < 2 or not text.strip():
+                return None
+            G["write_wav"](wav, y, G["SR"])
+            meta.write_text(json.dumps({"text": text, "members": members, "seconds": secs}, ensure_ascii=False), encoding="utf-8")
+            self.v16c.inc("composites_built")
+            return {"path": str(wav), "text": text, "members": members, "seconds": secs, "cached": False}
+        except Exception as e:  # noqa: BLE001
+            G["log"].warning("v16 复合参考失败,退回单条参考: %s", e)
+            if self.v16c:
+                self.v16c.inc("composite_fallbacks")
+            return None
+
+    async def v16_add_long(self, lid, q, data, ext, a, sr, ch, ack):
+        """M1 无时长限制入库:长音频在停顿处切成 3~20 秒片段 → 逐片质检(不可用的片段跳过并说明原因) → 逐片保存;
+        原件完整保存在第一个入库片段上(绝不截断);文字留空 → 后台自动转写(标记「未核对」,须你核对后才参与训练/复合参考)。
+        诚实:没做多说话人聚类(未实现),请在列表里核对/停用异常片段;每 5 分钟划为一个伪场次用于留出验证(相邻片段可能轻微泄漏)。"""
+        G, loop, SRr = self.G, G_loop(self.G), self.G["SR"]
+        segs = _v16.split_long_audio(a, sr, min_s=3.0, target_s=_v16.envf("VC_V16_SEG_TARGET_S", 8.0), max_s=_v16.envf("VC_V16_SEG_MAX_S", 14.0))      # 8 秒左右一段:训练推荐 5~15 秒,且 ≥2 段能装进 20 秒复合参考
+        base = (q.get("session") or ("long_" + secrets.token_hex(3)))
+        ids, saved, rejected, orig_kept, first_qc = [], [], [], False, None
+        for i, (s0, e0) in enumerate(segs):
+            seg = a[s0:e0]
+            proc, _c = await loop.run_in_executor(None, G["prepare_reference"], seg, sr)
+            vq = await loop.run_in_executor(None, _v16.segment_quality, proc, SRr)
+            if not vq["usable"]:
+                rejected.append({"index": i, "seconds": round(len(seg) / sr, 1), "score": vq["score"], "reasons": vq["reasons"][:3]})
+                continue
+            qc = await loop.run_in_executor(None, lambda: G["aq"].reference_qc(proc, SRr, orig_sr=sr, channels=ch, text=None))
+            if qc["blocking"] and not ack:
+                rejected.append({"index": i, "seconds": round(len(seg) / sr, 1), "score": vq["score"], "reasons": (qc.get("warnings") or ["质检阻断"])[:3]})
+                continue
+            ob, oe = (data, ext) if not orig_kept else (wav_bytes_mono16(seg, sr), "wav")
+            sess = "%s_p%d" % (base, int(s0 / sr // 300))
+            notes = ["长音频自动切分 %d/%d(起点 %.0f 秒);未做多说话人聚类,请核对" % (i + 1, len(segs), s0 / sr)] + ([] if not orig_kept else ["原件在本次入库的第一个片段上"])
+            smp = await loop.run_in_executor(None, lambda: self.store.add_sample(lid, ob, oe, wav_bytes_mono16(proc, SRr), len(proc) / SRr, sr, ch, qc, "", "", False, session=sess, notes=notes))
+            orig_kept = True
+            first_qc = first_qc or qc
+            meta = {k: vq.get(k) for k in ("score", "snr_db", "clip_pct", "hf_floor_dbfs", "voiced_frac", "bandwidth_khz")}
+            meta.update(split_from=base, index=i, of=len(segs), t0_s=round(s0 / sr, 1))
+            self.store.update_sample_meta(lid, smp["sample_id"], v16=meta)
+            ids.append(smp["sample_id"])
+            saved.append(smp["sample_id"])
+        self.v16c.inc("long_split_files")
+        self.v16c.inc("long_split_segments", len(saved))
+        self.v16c.inc("segments_rejected", len(rejected))
+        if not saved:
+            return err("长音频切出 %d 段,但没有可用片段(详见 rejected)" % len(segs), 422, rejected=rejected)
+        self.mark()
+        self.audit.event("sample_add_long", "ok", None, None, segments=len(saved), rejected=len(rejected), seconds=round(len(a) / sr, 1))
+        if (not G.get("MOCK")) and self.workers_ready():
+            asyncio.get_running_loop().create_task(self._v16_asr(lid, list(ids)))
+        lib = self.store.get(lid)
+        out = {"ok": True, "split": True, "segments": len(segs), "saved": len(saved), "rejected": rejected, "qc": first_qc,
+               "samples": [self.store.public_sample(x) for x in lib["samples"] if x["sample_id"] in set(saved)],
+               "message": "已切成 %d 段并保存 %d 段(跳过 %d 段);文字将在后台自动转写,请核对后再用于训练/复合参考" % (len(segs), len(saved), len(rejected))}
+        out["sample"] = out["samples"][0]
+        if q.get("activate") == "1":
+            self.store.set_active(lid)
+            best = max((x for x in lib["samples"] if x["sample_id"] in set(saved)), key=lambda x: _v16.sample_rank_score(x))
+            self.store.set_ref(lid, best["sample_id"])
+            out["activation"] = await self.activate(lid)
+        return out
+
+    async def _v16_asr(self, lid, ids):
+        G = self.G
+        for sid in ids:
+            try:
+                for _ in range(120):                                             # 不抢正在进行的合成
+                    if not G.get("ACTIVE"):
+                        break
+                    await asyncio.sleep(1)
+                y, sr_, _c = G["decode_audio"](Path(self.store.sample_paths(lid, sid)["proc"]).read_bytes())
+                tmp = self.work / ("v16asr_%s.wav" % secrets.token_hex(4))
+                G["write_wav"](tmp, G["resample_to"](y, sr_, 16000), 16000)
+                try:
+                    text, e = await G["ask_worker"]("asr", str(tmp), 120)
+                finally:
+                    tmp.unlink(missing_ok=True)
+                if text and not e:
+                    self.store.update_sample_meta(lid, sid, asr_text=text)
+            except Exception as e:  # noqa: BLE001
+                G["log"].warning("v16 自动转写失败(%s):%s", sid, e)
+
+    def v16_refs(self, lid):
+        lib = self.store.get(lid)
+        rows = []
+        for s in lib["samples"]:
+            r = self.store.public_sample(s)
+            r.update(rank_score=_v16.sample_rank_score(s), trainable=bool(s["category"] == "speech" and s.get("text_trusted") and not (s.get("qc") or {}).get("blocking") and s.get("enabled") is not False))
+            rows.append(r)
+        mem = _v16.select_composite_members(lib["samples"], max_total_s=_v16.envf("VC_V16_COMPOSITE_S", 20.0), max_k=int(_v16.envf("VC_V16_COMPOSITE_K", 6)), prefer_id=lib.get("ref_sample_id"))
+        cur, old, elig = self.store.incremental_inputs(lid)
+        plan = _v16.plan_incremental(old, elig, parent=(cur or {}).get("candidate_id"), base_lr=_v16.envf("VC_V16_BASE_LR", 1e-4))
+        return {"ok": True, "refs": rows, "composite": {"members": [m["sample_id"] for m, _w in mem], "seconds": round(sum(float(m.get("duration_s") or 0) for m, _w in mem), 1), "active": bool(mem)},
+                "incremental": {k: plan[k] for k in ("mode", "reason", "lr", "parent")} | {"new": len(plan["new_ids"]), "replay": len(plan["replay_ids"])}, "counters": self.v16c.snapshot() if self.v16c else {}}
+
     async def activate(self, lib_id):
         G, VOICE = self.G, self.VOICE
         lib = self.store.get(lib_id)
@@ -9441,7 +9710,12 @@ class Portal:
             VOICE["ref_summary"] = await G["LOOP"].run_in_executor(None, lambda: G["aq"].acoustic_summary(y, G["SR"], s.get("text") or None, "speech"))
         except Exception as e:  # noqa: BLE001
             G["log"].warning("参考摘要失败: %s", e)
-        G["start_clone"](str(paths["proc"]), s.get("text") or "", False)
+        comp = await G["LOOP"].run_in_executor(None, self.v16_composite, lib_id, lib) if v16_on("REFSET") else None
+        if comp:                                                         # M2:多条优质参考拼成的复合参考(GPU 进程零改动;失败/不足 2 条 → 与 v15 完全一致)
+            VOICE["library"]["v16_refset"] = {"members": comp["members"], "seconds": comp["seconds"], "cached": bool(comp.get("cached"))}
+            G["start_clone"](comp["path"], comp["text"], False)
+        else:
+            G["start_clone"](str(paths["proc"]), s.get("text") or "", False)
         self.audit.event("library_switch", "started", workers=len(self.workers_ready()))
         return {"ok": True, "voice": "cloning", "message": "正在两张 GPU 上同时加载「%s」的声音(每张卡都确认后才会可用)" % lib["name"], "vid": VOICE["vid"]}
 
@@ -10467,6 +10741,8 @@ class Portal:
                 return err("无法解码音频(文件损坏或格式不支持):%s" % str(e)[:100], 415)
             if len(a) / sr > P.store.max_seconds:
                 return err("音频 %.0f 秒超过单条上限 %d 秒" % (len(a) / sr, P.store.max_seconds), 413)
+            if v16_on("REFSTORE") and len(a) / sr > _v16.envf("VC_V16_SPLIT_OVER_S", 30.0):
+                return await P.v16_add_long(lid, q, data, ext, a, sr, ch, ack)               # M1:长音频自动切分入库(不再在 30 秒处截断)
             proc, cropped = await G["LOOP"].run_in_executor(None, G["prepare_reference"], a, sr)
             qc = await G["LOOP"].run_in_executor(None, lambda: G["aq"].reference_qc(proc, G["SR"], orig_sr=sr, channels=ch, text=text or None))
             notes = []
@@ -10520,6 +10796,45 @@ class Portal:
             P.mark()
             lib = P.store.get(lid)
             return {"ok": True, "sample": P.store.public_sample(next(x for x in lib["samples"] if x["sample_id"] == sid))}
+
+        @app.get("/api/libs/{lid}/refs")
+        @guard
+        async def api_v16_refs(lid: str):
+            if not v16_on("UI"):
+                return err("v16 多参考面板已关闭(VC_V16_UI=0)", 404)
+            return P.v16_refs(lid)
+
+        @app.post("/api/libs/{lid}/refs/retrain")
+        @guard
+        async def api_v16_retrain(lid: str, request: Request):
+            """M3 增量再优化:新样本 + 旧样本回放 + 较低学习率 + 以当前已晋升模型为父。只排队,候选模型仍须 验证+加载+试合成 三项证据才能升级。"""
+            if not v16_on("INCR"):
+                return err("v16 增量再优化已关闭(VC_V16_INCR=0)", 404)
+            j = await body(request)
+            cur, old, elig = P.store.incremental_inputs(lid)
+            plan = _v16.plan_incremental(old, elig, replay_ratio=float(j.get("replay_ratio", 1.0)), base_lr=float(j.get("base_lr", _v16.envf("VC_V16_BASE_LR", 1e-4))),
+                                         lr_scale=float(j.get("lr_scale", 0.4)), parent=(cur or {}).get("candidate_id"), seed=int(j.get("seed", 0)))
+            view = {k: plan[k] for k in ("mode", "reason", "lr", "parent")} | {"new": len(plan["new_ids"]), "replay": len(plan["replay_ids"]), "total": len(plan["train_ids"])}
+            if j.get("dry_run") or plan["mode"] == "noop":
+                return {"ok": True, "enqueued": False, "plan": view, "message": "仅预览" if j.get("dry_run") else "没有新增样本,无需增量优化"}
+            params = {"v16": dict(view, parent_dir=(cur or {}).get("model_dir") if plan["mode"] == "incremental" else None)}
+            job = P.store.create_job(lid, params, None, set(plan["train_ids"]) if plan["mode"] == "incremental" else None)
+            P.v16c.inc("incremental_plans")
+            P.mark()
+            P.audit.event("train_enqueue_incremental", "queued", None, sid_of(request), mode=plan["mode"])
+            return {"ok": True, "enqueued": True, "plan": view, "job": {k: v for k, v in job.items() if k != "log"}}
+
+        @app.post("/api/libs/{lid}/refs/{sid}")
+        @guard
+        async def api_v16_ref_set(lid: str, sid: str, request: Request):
+            if not v16_on("UI"):
+                return err("v16 多参考面板已关闭(VC_V16_UI=0)", 404)
+            j = await body(request)
+            P.store.update_sample_meta(lid, sid, enabled=j.get("enabled"), weight=j.get("weight"))
+            if j.get("primary"):
+                P.store.set_ref(lid, sid)
+            P.mark()
+            return P.v16_refs(lid)
 
         @app.get("/api/libs/{lid}/samples/{sid}/impact")
         @guard
@@ -10724,7 +11039,7 @@ def main():
         lib = st.get(lid)
         ds = next(d for d in lib["datasets"] if d["version"] == job["dataset_version"])
         st.job_set(lid, job["job_id"], "running", "训练开始(冻结数据集 v%d)" % ds["version"])
-        print(json.dumps({"job_id": job["job_id"], "library_id": lid, "data_dir": ds["dir"], "val_n": sum(1 for i in ds["samples"] if i["split"] == "val"), "version": ds["version"]}))
+        print(json.dumps({"job_id": job["job_id"], "library_id": lid, "data_dir": ds["dir"], "val_n": sum(1 for i in ds["samples"] if i["split"] == "val"), "version": ds["version"], "params": job.get("params") or {}}))
         return 0
     if a.cmd == "finish":
         ts = {}
@@ -10987,7 +11302,7 @@ textarea.ref,input.in,.wave{background:#141517;border-color:#2e3036}textarea.ref
         <button class="btn main" id="btnClone" disabled>🚀 开始克隆(双卡同时)</button>
         <div id="gpus" style="display:flex;flex-direction:column;gap:7px"></div>
         <div id="qcBox"></div>
-        <div class="card none" id="vcard"><div class="ring"><span>🎙️</span></div><div><h4 id="vh">还没有克隆声音</h4><div id="vb">录制或上传 5~20 秒清晰的人声,点击「开始克隆」。Qwen3-TTS 是零样本克隆,不需要训练,通常几十秒内完成。</div></div></div>
+        <div class="card none" id="vcard"><div class="ring"><span>🎙️</span></div><div><h4 id="vh">还没有克隆声音</h4><div id="vb">录制或上传清晰的人声(时长不限;快速克隆用前 30 秒内,长录音请到「语音库」,会自动切分为多条参考),点击「开始克隆」。Qwen3-TTS 是零样本克隆,不需要训练,通常几十秒内完成。</div></div></div>
         <div id="vextra"></div>
         <button class="btn" id="btnTry" disabled>🔊 试听克隆声音</button>
         <div class="hint">推荐参考音频:单人清晰口语、8~20 秒、无背景音乐/混响、wav(16-bit)或 flac;文字必须与音频逐字对应。上传的原件会保留,处理版另存。歌声/带伴奏音频不支持(未验证)。</div>
@@ -11349,7 +11664,7 @@ function renderState() {
   } else if (v.state === "error") {
     c.className = "card bad"; ring.textContent = "!"; h.textContent = "克隆失败"; b.textContent = v.err || "未知错误";
   } else {
-    c.className = "card none"; ring.textContent = "🎙️"; h.textContent = "还没有克隆声音"; b.textContent = "录制或上传 5~20 秒清晰的人声,点击「开始克隆」。Qwen3-TTS 是零样本克隆,不需要训练,通常几十秒内完成。";
+    c.className = "card none"; ring.textContent = "🎙️"; h.textContent = "还没有克隆声音"; b.textContent = "录制或上传清晰的人声(时长不限;快速克隆用前 30 秒内,长录音请到「语音库」,会自动切分为多条参考),点击「开始克隆」。Qwen3-TTS 是零样本克隆,不需要训练,通常几十秒内完成。";
   }
   renderVoiceExtra(v);
   $("btnTry").disabled = !ok;
@@ -11450,8 +11765,8 @@ async function recStart() {
   const mute = Rec.ctx.createGain(); mute.gain.value = 0;
   src.connect(Rec.node); src.connect(Rec.an); Rec.node.connect(mute); mute.connect(Rec.ctx.destination);
   Rec.on = true; Rec.t0 = performance.now(); $("btnRec").classList.add("on"); $("btnRec").textContent = "⏹";
-  Rec.tm = setInterval(() => { const s = (performance.now() - Rec.t0) / 1000; $("recTime").textContent = fmt(s); if (s >= 20) recStop(); }, 200);
-  drawLoop(); log("开始录音(最长 20 秒)");
+  Rec.tm = setInterval(() => { const s = (performance.now() - Rec.t0) / 1000; $("recTime").textContent = fmt(s); if (s >= 1800) recStop(); }, 200);
+  drawLoop(); log("开始录音(不限时长;快速克隆只取前 30 秒内的安静处,要用全部录音请到「语音库」录制/上传,会自动切分)");
 }
 async function recStop() {
   if (!Rec.on) return; Rec.on = false; clearInterval(Rec.tm); cancelAnimationFrame(Rec.raf); drawIdle();
@@ -12579,7 +12894,7 @@ async function loadLibs() {
       (l.runtime && l.runtime.note ? '<div class="warnbox">' + esc(l.runtime.note) + "</div>" : "") + evalHtml(l.eval) +
       '<div class="row"><button class="btn pri" data-act="' + l.library_id + '">选用此库</button><button class="btn" data-ren="' + l.library_id + '">改名</button><button class="btn" data-eval="' + l.library_id + '">评估</button><button class="btn" data-frz="' + l.library_id + '">冻结数据集版本</button><button class="btn" data-trn="' + l.library_id + '">加入训练队列</button><button class="btn" data-rb="' + l.library_id + '">回滚模型</button><button class="btn danger" data-del="' + l.library_id + '">删除库</button></div>' +
       '<div class="row" style="margin-top:8px"><label class="btn">⬆ 上传音频<input type="file" accept="audio/*" data-up="' + l.library_id + '" hidden></label><button class="btn" data-rec="' + l.library_id + '">🎤 录制样本</button><label class="mut"><input type="checkbox" data-actv="' + l.library_id + '"> 保存后立即用它克隆</label><label class="mut"><input type="checkbox" data-qtrain="' + l.library_id + '"> 并加入训练队列</label><span class="mut" data-msg="' + l.library_id + '"></span></div>' +
-      "<div>" + cands + (l.jobs.length ? "<div class='mut'>训练任务:" + l.jobs.map((j) => esc(j.state) + "(v" + j.dataset_version + ")" + (["queued", "running"].includes(j.state) ? ' <a href="#" data-jc="' + l.library_id + "|" + j.job_id + '">取消</a>' : ["cancelled", "failed"].includes(j.state) ? ' <a href="#" data-jr="' + l.library_id + "|" + j.job_id + '">重新排队</a>' : "")).join(" · ") + "</div>" : "") + "</div>" +
+      v16Box(l.library_id) + "<div>" + cands + (l.jobs.length ? "<div class='mut'>训练任务:" + l.jobs.map((j) => esc(j.state) + "(v" + j.dataset_version + ")" + (["queued", "running"].includes(j.state) ? ' <a href="#" data-jc="' + l.library_id + "|" + j.job_id + '">取消</a>' : ["cancelled", "failed"].includes(j.state) ? ' <a href="#" data-jr="' + l.library_id + "|" + j.job_id + '">重新排队</a>' : "")).join(" · ") + "</div>" : "") + "</div>" +
       "<details><summary>样本(" + l.sample_count + ")</summary>" + l.samples.map((s) => '<div class="smp"><div class="row"><b class="mono">' + s.sample_id + '</b><span class="badge ' + (s.category === "speech" ? "" : "warn") + '">' + (s.category === "speech" ? "口语" : "歌声(不参与口语训练)") + '</span><span class="badge">' + esc(s.kind_zh || "") + '</span><span class="mut">' + s.duration_s + "s · " + s.sr_orig + "Hz→" + s.sr_proc + "Hz · " + s.channels + "声道 · " + ((s.orig_bytes || 0) / 1024).toFixed(0) + "KB</span>" + (l.ref_sample_id === s.sample_id ? '<span class="badge ok">参考提示</span>' : "") + "</div>" +
         "<div class='mut mono'>原件 " + short(s.orig_sha256) + " · 处理版 " + short(s.proc_sha256) + " · " + esc(s.created_at) + " · 转写:" + (s.text_trusted ? "已核对" : s.text ? "未核对(ASR/待确认)" : "无") + "</div>" + ((s.qc_summary && s.qc_summary.warnings || []).map((w) => '<div class="mut">⚠ ' + esc(w) + "</div>").join("")) +
         '<textarea aria-label="样本转写(可编辑)" data-txt="' + l.library_id + "|" + s.sample_id + '">' + esc(s.text || "") + '</textarea><div class="row"><button class="btn" data-save="' + l.library_id + "|" + s.sample_id + '">保存转写(标记为已核对)</button><button class="btn" data-ref="' + l.library_id + "|" + s.sample_id + '">设为参考提示</button><a class="btn" href="/api/libs/' + l.library_id + "/samples/" + s.sample_id + '/audio?which=orig" target="_blank">原件</a><a class="btn" href="/api/libs/' + l.library_id + "/samples/" + s.sample_id + '/audio" target="_blank">处理版</a><button class="btn danger" data-sdel="' + l.library_id + "|" + s.sample_id + '">删除</button></div></div>').join("") + "</details>";
@@ -12604,8 +12919,54 @@ function wireLibs() {
   q("data-save", async (v) => { const [l, s] = v.split("|"); const t = document.querySelector('[data-txt="' + v + '"]').value; const r = await J("/api/libs/" + l + "/samples/" + s, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: t, trusted: true }) }); alert(r.ok ? "已保存并标记为已核对" : r.error); loadLibs(); });
   q("data-ref", async (v) => { const [l, s] = v.split("|"); const r = await J("/api/libs/" + l + "/samples/" + s, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ set_ref: true }) }); if (!r.ok) alert(r.error); loadLibs(); });
   q("data-sdel", async (v) => { const [l, s] = v.split("|"); const im = (await J("/api/libs/" + l + "/samples/" + s + "/impact")).impact; if (!im || !confirm("删除样本 " + s + "?\n" + im.warning)) return; const r = await J("/api/libs/" + l + "/samples/" + s + "?confirm=1", { method: "DELETE" }); if (!r.ok) alert(r.error); loadLibs(); });
+  document.querySelectorAll("details[data-v16box]").forEach((d) => d.addEventListener("toggle", () => { if (d.open) v16Load(d.getAttribute("data-v16box")); }));
   q("data-up", (id, el) => { const f = el.files[0]; if (f) uploadSample(id, f, f.name.split(".").pop()); });
   q("data-rec", async (id, el) => { if (el._r) { const b = el._r.stop(); el._r = null; el.textContent = "🎤 录制样本"; uploadSample(id, b, "wav"); return; } try { el._r = WavRec(); await el._r.start(); el.textContent = "⏹ 停止并保存"; } catch (e) { el._r = null; alert("无法使用麦克风:" + e.message); } });
+}
+function v16Box(id) {
+  return '<details data-v16box="' + id + '" style="margin:8px 0"><summary>📚 多参考管理 · 增量优化(v16)</summary><div data-v16body="' + id + '" class="mut" style="padding:6px 0">展开后加载…</div></details>';
+}
+async function v16Load(id) {
+  const box = document.querySelector('[data-v16body="' + id + '"]'); if (!box) return;
+  let r; try { r = await J("/api/libs/" + id + "/refs"); } catch (e) { box.textContent = "加载失败:" + e.message; return; }
+  if (!r || !r.ok) { box.textContent = (r && r.error) || "多参考面板不可用(VC_V16_UI=0)"; return; }
+  const c = r.composite, inc = r.incremental, ct = r.counters || {};
+  let h = '<div class="mut">复合参考:' + (c.active ? '<span class="badge ok">生效</span> ' + c.members.length + " 条 · " + c.seconds + " 秒(克隆时自动拼接,电平对齐+舒适噪声连接)" : '<span class="badge warn">未生效</span> 需要 ≥2 条「已核对文字 + 质检通过 + 已启用」的口语参考,否则沿用单条参考(与 v15 一致)') + "</div>";
+  h += '<div class="mut">增量优化计划:' + esc(inc.mode) + " · " + esc(inc.reason) + (inc.mode === "incremental" ? " · 学习率 " + inc.lr : "") + " · 新样本 " + inc.new + " / 回放 " + inc.replay + "</div>";
+  h += '<div class="mut">长音频切分 ' + (ct.long_split_files || 0) + " 个文件 → " + (ct.long_split_segments || 0) + " 段(跳过 " + (ct.segments_rejected || 0) + ") · 上传/录音不限时长,>30 秒自动在停顿处切成 ~8 秒片段</div>";
+  h += r.refs.map(function (s) {
+    const v = s.v16 || {}, trusted = !!s.text_trusted, asr = s.text_source === "asr_auto";
+    const inC = c.members.indexOf(s.sample_id) >= 0, prim = c.members[0] === s.sample_id;
+    return '<div class="smp"><div class="row"><b class="mono">' + s.sample_id + "</b>" +
+      '<span class="badge ' + (s.rank_score >= 60 ? "ok" : "warn") + '">质量 ' + Math.round(s.rank_score) + "</span>" +
+      '<span class="mut">' + s.duration_s + "s" + (v.snr_db != null ? " · SNR≈" + v.snr_db + "dB" : "") + (v.hf_floor_dbfs != null ? " · HF底噪 " + v.hf_floor_dbfs : "") + "</span>" +
+      '<span class="badge ' + (trusted ? "ok" : "warn") + '">' + (trusted ? "文字已核对" : asr ? "转写待核对" : "无文字") + "</span>" +
+      (inC ? '<span class="badge ok">' + (prim ? "主参考" : "复合成员") + "</span>" : "") +
+      '<label class="mut"><input type="checkbox" data-v16en="' + id + "|" + s.sample_id + '"' + (s.enabled === false ? "" : " checked") + "> 启用</label>" +
+      '<label class="mut">权重 <input type="number" step="0.1" min="0.1" max="3" value="' + (s.weight || 1) + '" style="width:62px" data-v16w="' + id + "|" + s.sample_id + '"></label>' +
+      '<button class="btn" data-v16pri="' + id + "|" + s.sample_id + '">设为主参考</button>' +
+      (trusted ? "" : '<button class="btn" data-v16ok="' + id + "|" + s.sample_id + '">核对文字</button>') + "</div>" +
+      (s.text ? '<div class="mut">' + esc(s.text) + "</div>" : "") + "</div>";
+  }).join("");
+  h += '<div class="row" style="margin-top:8px"><button class="btn" data-v16dry="' + id + '">预览增量计划</button><button class="btn pri" data-v16go="' + id + '">继续优化(增量训练)</button><label class="mut">回放比例 <input type="number" step="0.1" min="0" max="3" value="1" style="width:62px" data-v16rr="' + id + '"></label><span class="mut" data-v16msg="' + id + '"></span></div>';
+  h += '<div class="mut">增量优化 = 新样本 + 旧样本回放(防遗忘) + 学习率×0.4 + 以已晋升模型为父;只排队,候选模型仍须「验证+加载+试合成」才能升级。真机效果未验证,以 /abx 盲测为准。</div>';
+  box.innerHTML = h;
+  const post = async (u, b) => J(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+  const on = (a, f, ev) => box.querySelectorAll("[" + a + "]").forEach((el) => el.addEventListener(ev || "click", () => f(el.getAttribute(a), el)));
+  on("data-v16en", async (v, el) => { const [l, s] = v.split("|"); await post("/api/libs/" + l + "/refs/" + s, { enabled: el.checked }); v16Load(l); }, "change");
+  on("data-v16w", async (v, el) => { const [l, s] = v.split("|"); await post("/api/libs/" + l + "/refs/" + s, { weight: parseFloat(el.value) }); v16Load(l); }, "change");
+  on("data-v16pri", async (v) => { const [l, s] = v.split("|"); await post("/api/libs/" + l + "/refs/" + s, { primary: true }); v16Load(l); });
+  on("data-v16ok", async (v) => {
+    const [l, s] = v.split("|"); const cur = (r.refs.find((x) => x.sample_id === s) || {}).text || "";
+    const t = prompt("请对照音频核对文字(可修改);确认后才会参与训练/复合参考:", cur); if (t == null || !t.trim()) return;
+    await J("/api/libs/" + l + "/samples/" + s, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: t.trim(), trusted: true }) }); v16Load(l);
+  });
+  const retrain = async (l, dry) => {
+    const rr = parseFloat((box.querySelector('[data-v16rr="' + l + '"]') || {}).value || "1"); const m = box.querySelector('[data-v16msg="' + l + '"]');
+    const j = await post("/api/libs/" + l + "/refs/retrain", { dry_run: dry, replay_ratio: isNaN(rr) ? 1 : rr });
+    m.textContent = j.ok ? (j.message || (j.enqueued ? "已加入训练队列(模式 " + j.plan.mode + ",新 " + j.plan.new + " + 回放 " + j.plan.replay + ")。在 Kaggle 里 MODE=train 且 TRAIN_FROM_LIBRARY=True 运行" : "")) + " · 计划:" + j.plan.mode + " · " + j.plan.reason : (j.error || "失败");
+  };
+  on("data-v16dry", (l) => retrain(l, true)); on("data-v16go", (l) => { if (confirm("把「增量再优化」任务加入训练队列?")) retrain(l, false); });
 }
 async function uploadSample(id, blob, ext, ack) {
   const root = document.getElementById("lib-" + id); const text = prompt("这段音频说的文字(可留空,稍后可编辑;高质量训练需要核对一致):", "") || "";
@@ -12613,6 +12974,7 @@ async function uploadSample(id, blob, ext, ack) {
   const r = await fetch("/api/libs/" + id + "/samples?consent=1&ext=" + encodeURIComponent(ext) + "&text=" + encodeURIComponent(text) + "&activate=" + a + "&train=" + t + (ack ? "&ack=1" : ""), { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: blob }).then((x) => x.json());
   if (r.needs_ack) { if (confirm("质检发现问题:\n" + (r.qc.warnings || []).join("\n") + "\n\n仍要保存(会被标记为不参与口语训练)吗?")) return uploadSample(id, blob, ext, true); msgOf(id, "已取消(未保存)"); return; }
   if (!r.ok) { msgOf(id, ""); alert(r.error); return; }
+  if (r.split) { alert("长音频已自动切分入库(无时长限制):\n" + r.message + (r.rejected && r.rejected.length ? "\n跳过的片段:" + r.rejected.map((x) => "#" + x.index + "(" + x.reasons[0] + ")").join(";") : "") + "\n到「📚 多参考管理」核对转写文字、启用/停用片段。"); loadLibs(); return; }
   alert("已追加保存(不会覆盖旧样本)。类型:" + (r.qc.kind_zh || r.qc.kind) + (r.qc.warnings && r.qc.warnings.length ? "\n提示:\n" + r.qc.warnings.join("\n") : "")); loadLibs();
 }
 $("newLib").onclick = async () => { const r = await post("/api/libs", { name: $("newName").value, consent: $("newConsent").checked }); if (!r.ok) alert(r.error); else { $("newName").value = ""; loadLibs(); } };
@@ -26415,6 +26777,862 @@ if __name__ == "__main__":
     print("%d 项通过, %d 项失败" % (len(tests) - bad, bad))
     sys.exit(1 if bad else 0)
 '''
+FILES['tests/test_v16.py'] = r'''# -*- coding: utf-8 -*-
+"""v16 单元测试(合成信号,CPU,只依赖 numpy):    python tests/test_v16.py
+只证明「逻辑与客观指标」,不证明听感/相似度(见 v16.py 顶部诚实声明)。"""
+import os
+import sys
+import time
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, HERE)
+import v16  # noqa: E402
+
+SR = 24000
+
+
+def speech(sec, f0=120.0, amp=0.3, noise_db=-65.0, seed=0, pauses=True):
+    """合成浊音 + 句中停顿(只剩底噪),比「连续音」更接近真实录音的 SNR 结构。"""
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(sec * SR)) / SR
+    x = np.zeros_like(t)
+    for k in range(1, 15):
+        x += np.sin(2 * np.pi * f0 * k * t + k) / k
+    x = x / np.abs(x).max() * amp
+    if pauses:
+        m = np.ones_like(t)
+        period = 2.2                                      # 每 2.2 秒一个 0.5 秒停顿
+        for s in np.arange(1.7, sec, period):
+            m[int(s * SR): int((s + 0.5) * SR)] = 0.0
+        x = x * m
+    x = x + rng.standard_normal(len(t)) * 10 ** (noise_db / 20)
+    return x.astype(np.float32)
+
+
+def long_audio(sec, seed=0):
+    return speech(sec, seed=seed)
+
+
+# ───────── M1:无时长限制 ─────────
+def test_short_audio_is_one_segment():
+    x = speech(8.0)
+    assert v16.split_long_audio(x, SR) == [(0, len(x))]
+
+
+def test_long_audio_split_is_gapless_and_in_pauses():
+    x = long_audio(95.0)
+    segs = v16.split_long_audio(x, SR)
+    assert segs[0][0] == 0 and segs[-1][1] == len(x)
+    assert all(segs[i][1] == segs[i + 1][0] for i in range(len(segs) - 1)), "片段必须首尾相接(不丢样本、不重叠)"
+    L = [(e - s) / SR for s, e in segs]
+    assert all(3.0 <= l <= 23.1 for l in L), L
+    for s, e in segs[:-1]:                                   # 切点落在静音里
+        w = x[max(0, e - 1200): e + 1200]
+        assert float(np.sqrt((w ** 2).mean())) < 0.01, "切点不在停顿处"
+
+
+def test_split_without_pauses_still_bounded():
+    x = speech(75.0, pauses=False)
+    segs = v16.split_long_audio(x, SR)
+    assert all((e - s) / SR <= 23.1 for s, e in segs) and segs[-1][1] == len(x)
+
+
+def test_two_hour_stream_is_fast_and_bounded():
+    x = np.tile(long_audio(60.0), 120)[: 2 * 3600 * SR]
+    t0 = time.time()
+    segs = v16.split_long_audio(x, SR)
+    assert time.time() - t0 < 20.0
+    assert segs[-1][1] == len(x) and all((e - s) / SR <= 23.1 for s, e in segs)
+
+
+def test_segment_quality_flags_hiss_but_not_normal_noise():
+    clean = speech(10.0, noise_db=-72.0)
+    normal = speech(10.0, noise_db=-68.0, seed=1)
+    hissy = speech(10.0, noise_db=-45.0, seed=2)
+    qc, qn, qh = v16.segment_quality(clean), v16.segment_quality(normal), v16.segment_quality(hissy)
+    assert qh["hf_floor_dbfs"] > qc["hf_floor_dbfs"] + 15
+    assert not any("高频底噪" in r for r in qc["reasons"]) and not any("高频底噪" in r for r in qn["reasons"]), "正常麦克风底噪不应被当作沙沙声"
+    assert any("高频底噪" in r for r in qh["reasons"])
+    assert qh["score"] < qc["score"]
+
+
+def test_segment_quality_rejects_silence_and_short():
+    assert not v16.segment_quality(np.zeros(SR * 5, np.float32))["usable"]
+    assert not v16.segment_quality(speech(1.0))["usable"]
+
+
+# ───────── M2:多参考 ─────────
+def test_robust_centroid_drops_outlier():
+    rng = np.random.default_rng(0)
+    base = rng.standard_normal(192)
+    E = [base + rng.standard_normal(192) * 0.15 for _ in range(5)] + [rng.standard_normal(192) * 3]
+    c, keep = v16.robust_centroid(E)
+    assert (not keep[-1]) and keep[:5].all() and v16.cosine(c, base) > 0.95
+    c2, k2 = v16.robust_centroid(E[:2])
+    assert k2.all() and abs(np.linalg.norm(c2) - 1) < 1e-9
+
+
+def _S(i, sc=80, tr=True, en=True, d=6.0, cat="speech", blocking=False):
+    return {"sample_id": "s%d" % i, "category": cat, "text_trusted": tr, "enabled": en, "duration_s": d, "qc": {"blocking": blocking}, "v16": {"score": sc}}
+
+
+def test_select_members_filters_and_orders():
+    assert v16.select_composite_members([_S(1)]) == [], "不足 2 条 → 退回 v15 单条参考"
+    m = v16.select_composite_members([_S(1, 90), _S(2, 70), _S(3, 40), _S(4, 95, tr=False), _S(5, 80, en=False), _S(6, 85), _S(7, 99, blocking=True), _S(8, 99, cat="singing")])
+    assert [s["sample_id"] for s, _ in m] == ["s1", "s6", "s2"]
+    m = v16.select_composite_members([_S(i, 90 - i, d=7.0) for i in range(10)], max_total_s=20.0)
+    assert sum(s["duration_s"] for s, _ in m) <= 20.0 and len(m) == 2
+
+
+def test_composite_is_deterministic_level_matched_and_no_digital_zero():
+    items = [{"audio": speech(5.0, f0=110 + 8 * i, amp=0.15 + 0.12 * i, seed=i), "text": "第%d句" % i, "sample_id": "s%d" % i} for i in range(3)]
+    a1, t1, m1, d1 = v16.build_composite(items, seed=1)
+    a2, t2, m2, d2 = v16.build_composite(items, seed=1)
+    assert np.array_equal(a1, a2) and t1 == t2 and m1 == ["s0", "s1", "s2"]
+    assert abs(float(np.abs(a1).max()) - 0.7) < 2e-3, "参考电平约定:峰值 0.7"
+    assert d1 <= 20.0 and np.isfinite(a1).all()
+    import v15
+    assert len(v15.zero_runs(np.round(a1 * 32768).astype(np.int16), min_len=48)) == 0, "连接处不得出现数字零段(连续 ≥48 个零样本)"
+    assert t1.count("。") == 3
+    a3 = v16.build_composite(items, seed=2)[0]
+    assert not np.array_equal(a1, a3), "不同种子 → 不同舒适噪声"
+
+
+def test_composite_respects_max_total():
+    items = [{"audio": speech(9.0, seed=i), "text": "x", "sample_id": "s%d" % i} for i in range(4)]
+    a, t, m, d = v16.build_composite(items, max_total_s=20.0)
+    assert d <= 20.0 and len(m) == 2
+
+
+def test_tournament_rule():
+    r = np.random.default_rng(1)
+    b = r.normal(0.6, 0.02, 12)
+    assert v16.tournament_promote(b, b + 0.05)["promote"]
+    assert not v16.tournament_promote(b, b - 0.05)["promote"]
+    assert not v16.tournament_promote(b[:3], b[:3] + 1)["promote"], "样本太少必须拒绝"
+    noisy = b + r.normal(0, 0.2, 12)
+    assert not v16.tournament_promote(b, noisy, margin=0.01)["promote"] or v16.tournament_promote(b, noisy)["ci5"] > 0
+
+
+# ───────── M3:增量 ─────────
+def test_incremental_plan():
+    p = v16.plan_incremental(["a", "b", "c", "d"], ["e", "f"], replay_ratio=1.0, base_lr=1e-4, lr_scale=0.4, parent="v1")
+    assert p["mode"] == "incremental" and set(p["new_ids"]) == {"e", "f"} and len(p["replay_ids"]) == 2
+    assert set(p["replay_ids"]) <= {"a", "b", "c", "d"} and abs(p["lr"] - 4e-5) < 1e-12 and p["parent"] == "v1"
+    assert set(p["train_ids"]) == set(p["new_ids"]) | set(p["replay_ids"])
+    assert v16.plan_incremental(["a"], [], parent="v1")["mode"] == "noop"
+    assert v16.plan_incremental(["a"], ["a"], parent="v1")["mode"] == "noop", "已存在的样本不算新增"
+    assert v16.plan_incremental(["a"], ["b"], parent=None)["mode"] == "full"
+    assert v16.plan_incremental([], ["b"], parent="v1")["mode"] == "full"
+    assert v16.plan_incremental(["a", "b"], ["c"], parent="v", seed=3) == v16.plan_incremental(["a", "b"], ["c"], parent="v", seed=3)
+    assert abs(v16.plan_incremental(["a"], ["b"], parent="v", lr_scale=9)["lr"] - 0.5e-4) < 1e-12, "学习率缩放夹到 0.3~0.5"
+    assert abs(v16.plan_incremental(["a"], ["b"], parent="v", lr_scale=0.01)["lr"] - 0.3e-4) < 1e-12
+    big = v16.plan_incremental(["o%d" % i for i in range(50)], ["n%d" % i for i in range(5)], replay_ratio=1.0, parent="v", max_total=8)
+    assert len(big["train_ids"]) == 8 and all(i.startswith("n") for i in big["new_ids"])
+
+
+# ───────── M4:校准 ─────────
+def test_calibration_is_honest():
+    assert v16.same_speaker_calibration([0.8] * 5)["status"] == "not_calibrated"
+    cal = v16.same_speaker_calibration(np.linspace(0.7, 0.9, 10))
+    assert cal["status"] == "calibrated" and cal["p05"] < cal["p50"]
+    assert v16.judge_similarity(0.5, cal)["verdict"] == "below_same_speaker_range"
+    assert v16.judge_similarity(0.95, cal)["verdict"] == "within_same_speaker_median"
+    j = v16.judge_similarity(0.9, None)
+    assert j["verdict"] == "not_calibrated" and "score" not in j, "没校准不得给分数百分比"
+
+
+# ───────── M5:音质守护 ─────────
+def test_dc_fix_is_identity_when_clean():
+    y = speech(2.0)
+    o, f = v16.dc_fix_if_needed(y)
+    assert o is y and not f
+    o2, f2 = v16.dc_fix_if_needed(y + 0.02)
+    assert f2 and abs(float(o2.mean())) < 1e-4
+
+
+def test_guard_report_detects_hiss_dc_and_passes_clean():
+    clean = (speech(6.0, noise_db=-75.0) * 32767).astype(np.int16)
+    hiss = (speech(6.0, noise_db=-40.0) * 32767).astype(np.int16)
+    dc = np.clip(clean.astype(np.int32) + 800, -32768, 32767).astype(np.int16)
+    rc, rh, rd = v16.audio_guard_report(clean), v16.audio_guard_report(hiss), v16.audio_guard_report(dc)
+    assert not any("沙沙" in p for p in rc["problems"])
+    assert any("沙沙" in p for p in rh["problems"]) and any("直流" in p for p in rd["problems"])
+
+
+# ───────── M7 / 计数 ─────────
+def test_stage_timer_and_counters():
+    st = v16.StageTimer()
+    for v in range(1, 101):
+        st.add("prefill", v)
+    st.add("nonexistent", 1)
+    st.add("gateway", float("nan"))
+    s = st.summary()
+    assert s["prefill"]["p50"] == 50 and s["prefill"]["p95"] == 95 and s["gateway"]["n"] == 0 and st.biggest() == "prefill"
+    c = v16.Counters()
+    c.add_turn({"problems": ["疑似沙沙声:x"]})
+    c.add_turn({"problems": []})
+    d = c.snapshot()
+    assert d["turns_analyzed"] == 2 and d["turns_with_problems"] == 1 and d["hiss_suspect_turns"] == 1
+
+
+def test_switches_roundtrip():
+    keep = {k: os.environ.get(k) for k in ["VC_V16"] + ["VC_V16_" + n for n in v16.SWITCH_NAMES]}
+    try:
+        for k in keep:
+            os.environ.pop(k, None)
+        assert all(v16.switches().values()), "默认全开(优化默认开启,可一键回退)"
+        os.environ["VC_V16"] = "0"
+        assert not any(v16.switches().values())
+        os.environ["VC_V16"] = "1"
+        os.environ["VC_V16_REFSET"] = "0"
+        assert (not v16.on("REFSET")) and v16.on("AUDIO")
+    finally:
+        for k, v in keep.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+if __name__ == "__main__":
+    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    bad = 0
+    for k, fn in tests:
+        t0 = time.time()
+        try:
+            fn()
+            print("  ✓ %s (%.1fs)" % (k, time.time() - t0))
+        except Exception:  # noqa: BLE001
+            bad += 1
+            import traceback
+            print("  ✗ %s\n%s" % (k, traceback.format_exc()))
+    print("%d 项通过, %d 项失败" % (len(tests) - bad, bad))
+    sys.exit(1 if bad else 0)
+'''
+FILES['tests/test_v16_mock.py'] = r'''# -*- coding: utf-8 -*-
+"""tests/test_v16_mock.py —— v16 Mock 集成测试(真实网关 + HTTP + 两个 Mock GPU 进程;不代表真实模型质量):  python tests/test_v16_mock.py
+覆盖:长音频无上限入库(自动切分/原件完整/不截断) · 多参考列表与启停 · 复合参考激活 · 增量预览 · 报告项 · VC_V16=0 回退到 v15 行为。"""
+import json
+import sys
+import time
+import traceback
+import urllib.parse
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))
+import numpy as np  # noqa: E402
+
+import test_gateway as tg  # noqa: E402
+import test_portal as tp  # noqa: E402
+import test_v16 as t16  # noqa: E402
+
+_http = tp._http
+SR = 24000
+
+
+def long_wav(sec=95.0):
+    """口语样合成(能通过 v15 质检,不会被判成歌声)+ 句间 0.7 秒底噪停顿,拼成任意长度。"""
+    rng = np.random.default_rng(7)
+    parts, tot, i = [], 0.0, 0
+    while tot < sec:
+        seg = tg.speechlike(7.0, seed=3 + (i % 5)).astype(np.float32)
+        gap = (rng.standard_normal(int(0.7 * SR)) * 10 ** (-66 / 20)).astype(np.float32)
+        parts += [seg, gap]
+        tot += 7.7
+        i += 1
+    x = np.concatenate(parts)[: int(sec * SR)]
+    return tg.wav_bytes(x), x
+
+
+def new_lib(srv, name="多参考库"):
+    return _http(srv, "POST", "/api/libs", {"name": name, "consent": True})[1]["library"]["library_id"]
+
+
+def wait_ready(srv):
+    st = None
+    for _ in range(120):
+        st = _http(srv, "GET", "/api/portal/status")[1]
+        if st["voice"]["state"] == "ready" and all(w["voice_confirmed"] for w in st["workers"]):
+            return st
+        time.sleep(0.3)
+    return st
+
+
+def test_long_upload_is_split_not_cropped_and_original_kept():
+    srv = tg.Server()
+    try:
+        lid = new_lib(srv)
+        data, x = long_wav(95.0)
+        r = _http(srv, "POST", "/api/libs/%s/samples?consent=1&ext=wav" % lid, data, timeout=120)[1]
+        assert r["ok"] and r["split"] is True and r["saved"] >= 6, r
+        durs = [s["duration_s"] for s in r["samples"]]
+        assert all(2.0 <= d <= 17.5 for d in durs), durs
+        assert sum(durs) > 0.80 * (len(x) / SR), "长音频不得被截断:保存的总时长 %.1f / %.1f" % (sum(durs), len(x) / SR)
+        lib = _http(srv, "GET", "/api/libs/" + lid)[1]["library"]
+        assert max(s["orig_bytes"] for s in lib["samples"]) >= len(data) - 64, "原件必须完整保留"
+        assert all((s.get("v16") or {}).get("score") is not None for s in lib["samples"]), "每片都有 v16 质检分"
+        assert len({s["session"] for s in lib["samples"]}) >= 1
+        refs = _http(srv, "GET", "/api/libs/%s/refs" % lid)[1]
+        assert refs["ok"] and len(refs["refs"]) == r["saved"] and refs["composite"]["active"] is False, "文字未核对 → 不进复合参考"
+        assert refs["incremental"]["mode"] in ("noop", "full")
+        rep = _http(srv, "GET", "/api/report")[1]
+        names = [i.get("name") or i.get("title") or "" for i in rep["items"]]
+        assert any("v16" in n for n in names) and rep["v16"]["counters"]["long_split_files"] == 1, rep.get("v16")
+    finally:
+        srv.stop()
+
+
+def test_composite_ref_activation_and_toggle():
+    srv = tg.Server()
+    try:
+        lid = new_lib(srv)
+        data, _x = long_wav(70.0)
+        r = _http(srv, "POST", "/api/libs/%s/samples?consent=1&ext=wav" % lid, data, timeout=120)[1]
+        ids = [s["sample_id"] for s in r["samples"]]
+        assert len(ids) >= 4
+        for i, sid in enumerate(ids[:4]):                                              # 人工核对 4 条文字
+            code, j, _ = _http(srv, "PATCH", "/api/libs/%s/samples/%s" % (lid, sid), {"text": "这是第%d句核对过的文字" % i, "trusted": True})
+            assert code == 200, j
+        refs = _http(srv, "GET", "/api/libs/%s/refs" % lid)[1]
+        assert refs["composite"]["active"] and len(refs["composite"]["members"]) >= 2 and refs["composite"]["seconds"] <= 20.0, refs["composite"]
+        # 停用一条 → 不再出现在成员/训练集中
+        off = refs["composite"]["members"][0]
+        j = _http(srv, "POST", "/api/libs/%s/refs/%s" % (lid, off), {"enabled": False, "weight": 9})[1]
+        row = next(x for x in j["refs"] if x["sample_id"] == off)
+        assert row["enabled"] is False and row["weight"] == 3.0 and off not in j["composite"]["members"] and row["trainable"] is False
+        # 激活:复合参考被喂给克隆通路
+        a = _http(srv, "POST", "/api/libs/%s/activate" % lid, {})[1]
+        assert a["ok"] and a["voice"] == "cloning", a
+        st = wait_ready(srv)
+        v = st["voice"]["library"]
+        assert v.get("v16_refset") and len(v["v16_refset"]["members"]) >= 2, v
+        files = list((Path(srv.tmp) / "v16_refset").glob("*.wav")) if hasattr(srv, "tmp") else []
+        assert files, "复合参考 WAV 应写入缓存目录"
+        # 设为主参考:排第一
+        prim = [m for m in v["v16_refset"]["members"]][-1]
+        j2 = _http(srv, "POST", "/api/libs/%s/refs/%s" % (lid, prim), {"primary": True})[1]
+        assert j2["composite"]["members"][0] == prim
+        # 增量预览(没有已晋升模型 → 全量)
+        pv = _http(srv, "POST", "/api/libs/%s/refs/retrain" % lid, {"dry_run": True})[1]
+        assert pv["ok"] and pv["enqueued"] is False and pv["plan"]["mode"] == "full", pv
+    finally:
+        srv.stop()
+
+
+def test_v16_off_is_v15_behavior():
+    srv = tg.Server(VC_V16="0")
+    try:
+        lid = new_lib(srv)
+        data, _x = long_wav(60.0)
+        code, r, _ = _http(srv, "POST", "/api/libs/%s/samples?consent=1&ext=wav" % lid, data, timeout=120)
+        assert code == 200 and r["ok"] and not r.get("split") and r["sample"]["duration_s"] <= 30.5, r      # v15:超过 30 秒在安静处截断
+        assert _http(srv, "GET", "/api/libs/%s/refs" % lid)[0] == 404
+        rep = _http(srv, "GET", "/api/report")[1]
+        assert not any(rep["v16"]["switches"].values()), rep["v16"]["switches"]
+    finally:
+        srv.stop()
+
+
+if __name__ == "__main__":
+    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    bad = 0
+    for k, fn in tests:
+        t0 = time.time()
+        try:
+            fn()
+            print("  ✓ %s (%.1fs)" % (k, time.time() - t0))
+        except Exception:  # noqa: BLE001
+            bad += 1
+            print("  ✗ %s\n%s" % (k, traceback.format_exc()))
+    print("%d 项通过, %d 项失败" % (len(tests) - bad, bad))
+    sys.exit(1 if bad else 0)
+'''
+FILES['v16.py'] = r'''# -*- coding: utf-8 -*-
+"""
+v16.py —— v16 增量模块「多参考语音库 · 无时长限制入库 · 复合参考 · 增量再优化计划 · 校准相似度 · 音质守护 · 首声分段计时」。
+只依赖 numpy(v15 存在时复用其 analyze / ref_quality);网关进程与 GPU 进程共用,纯 CPU 逻辑,可在无 GPU 沙箱里单元测试。
+每个子模块有独立开关,全部关闭 = v15 行为(网关里的 v16_* 钩子直接返回原对象,逐样本一致):
+    VC_V16=0                总开关
+    VC_V16_REFSTORE=0/1     M1 无时长限制入库:长音频在停顿处自动切成 3~20 秒片段 + 逐片质检(不再在 30 秒处截断、不再有 1800 秒/80MB 硬上限)
+    VC_V16_REFSET=0/1       M2 多参考:把库里多条优质参考拼成「复合参考」(舒适噪声连接、电平对齐)喂给同一条克隆通路;GPU 进程零改动
+    VC_V16_INCR=0/1         M3 增量再优化计划:新样本 + 旧样本回放(防遗忘) + 较低学习率 + 父检查点谱系;候选模型仍须过晋升门槛
+    VC_V16_AUDIO=0/1        M5 音质守护:沙沙声(HF 底噪)/直流/削波/click/零段指标 + 「仅在检测到直流偏移时」才修正(干净语音 = 原对象,近似透明)
+    VC_V16_EVAL=0/1         M4 校准相似度:同说话人片段对分布 → 该说话人自己的阈值;没校准一律 not_calibrated,不显示百分比
+    VC_V16_UI=0/1           前端多参考管理面板与「继续优化」按钮
+    VC_V16_TTFA=0/1         M7 首声分段计时(只测量,不改变任何行为)
+诚实声明:本模块在 CPU 上用合成信号验证了「逻辑与客观指标」;没有 GPU / 真机 / 人耳数据。
+    「更像」「沙沙声更少」只能由 T4×2 真机实测 + /abx 盲测裁决,不得据此宣称已提升。所有阈值都是启发式、未校准。
+"""
+import hashlib
+import math
+import os
+import threading
+
+import numpy as np
+
+SR = 24000
+VERSION = "v16.0"
+
+try:                                       # 复用 v15 已验证的取证 / 参考评分;缺失时回退到本模块的简化实现
+    import v15 as _v15
+except Exception:  # noqa: BLE001
+    _v15 = None
+
+
+# ───────────────────────── 开关 ─────────────────────────
+def _flag(name, default="1"):
+    return str(os.environ.get(name, default)).strip().lower() not in ("0", "false", "off", "no", "")
+
+
+def on(name):
+    return _flag("VC_V16") and _flag("VC_V16_" + name)
+
+
+SWITCH_NAMES = ("REFSTORE", "REFSET", "INCR", "AUDIO", "EVAL", "UI", "TTFA")
+
+
+def switches():
+    return {k: on(k) for k in SWITCH_NAMES}
+
+
+def envf(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except Exception:  # noqa: BLE001
+        return float(default)
+
+
+def _db(v, floor=1e-9):
+    return 20.0 * math.log10(max(float(v), floor))
+
+
+def _frames_rms(x, hop):
+    n = len(x) // hop
+    if n <= 0:
+        return np.zeros(0, np.float32)
+    f = np.asarray(x[: n * hop], np.float32).reshape(n, hop)
+    return np.sqrt((f ** 2).mean(axis=1))
+
+
+# ───────────────────────── M1 无时长限制:长音频切分 + 逐片质检 ─────────────────────────
+def split_long_audio(x, sr, min_s=3.0, target_s=12.0, max_s=20.0, pause_ms=250):
+    """把任意长度的音频在【停顿处】切成 min_s~max_s 秒的片段,返回 [(start, end)] 样本下标(首尾相接,无重叠、无丢样本)。
+    ≤ max_s 秒的音频原样返回单段。没有合适停顿时,在 [target_s, max_s] 内能量最低的帧处强制切。"""
+    x = np.asarray(x, np.float32)
+    n = len(x)
+    if n <= int(max_s * sr):
+        return [(0, n)]
+    hop = max(1, int(sr * 0.01))
+    r = _frames_rms(x, hop)
+    e = 20 * np.log10(np.maximum(r, 1e-6))
+    floor, top = float(np.percentile(e, 10)), float(np.percentile(e, 95))
+    thr = max(floor + 8.0, top - 38.0)
+    silent = e < thr
+    need = max(1, int(pause_ms / 10))
+    cuts, i, nf = [], 0, len(e)
+    while i < nf:                                                   # 找 ≥ pause_ms 的静音段,取段中点
+        if silent[i]:
+            j = i
+            while j < nf and silent[j]:
+                j += 1
+            if j - i >= need:
+                cuts.append(((i + j) // 2) * hop)
+            i = j
+        else:
+            i += 1
+    segs, start = [], 0
+    lo_len, hi_len, tg = int(min_s * sr), int(max_s * sr), int(target_s * sr)
+    while n - start > hi_len:
+        cands = [c for c in cuts if start + lo_len <= c <= start + hi_len]
+        if cands:
+            c = min(cands, key=lambda c: abs(c - (start + tg)))
+        else:
+            a, b = (start + tg) // hop, (start + hi_len) // hop
+            b = min(b, nf)
+            c = (a + int(np.argmin(e[a:b]))) * hop if b > a else start + hi_len
+        c = max(c, start + lo_len)
+        segs.append((start, c))
+        start = c
+    if n - start < lo_len and segs:                                 # 太短的尾巴并入上一段(≤ max_s + min_s,仍远小于 30 秒)
+        segs[-1] = (segs[-1][0], n)
+    else:
+        segs.append((start, n))
+    return segs
+
+
+def voiced_fraction(x, sr):
+    r = _frames_rms(np.asarray(x, np.float32), max(1, int(sr * 0.02)))
+    if r.size == 0:
+        return 0.0
+    thr = max(10 ** (-48 / 20), float(np.percentile(r, 95)) * 0.05)
+    return float((r > thr).mean())
+
+
+def hf_noise_metrics(x, sr):
+    """沙沙声(hiss)的客观痕迹:在【安静帧】里统计 6 kHz 以上的功率。启发式、未校准,只做相对比较与告警。
+    返回 hf_floor_dbfs(安静帧 6k~Nyquist 的平均每 bin 功率,dBFS)与 hf_ratio(该频段占安静帧总功率的比例)。"""
+    x = np.asarray(x, np.float32)
+    fr = 1024
+    nf = len(x) // fr
+    if nf < 4 or sr < 16000:
+        return {"hf_floor_dbfs": None, "hf_ratio": None, "quiet_frames": 0}
+    f = x[: nf * fr].reshape(nf, fr)
+    r = np.sqrt((f ** 2).mean(axis=1))
+    top = float(np.percentile(r, 95))
+    cand = (r <= np.percentile(r, 30)) & (r <= top * 0.15)                # 比峰值低 ≥16.5dB 的候选帧
+    if cand.sum() < 3:
+        return {"hf_floor_dbfs": None, "hf_ratio": None, "quiet_frames": int(cand.sum())}
+    rdb = 20 * np.log10(np.maximum(r[cand], 1e-7))
+    stat = np.abs(rdb - np.median(rdb)) <= 6.0                           # 平稳性:噪声底电平稳定;变化的弱语音/停顿边缘帧被剔除
+    if stat.sum() < 3 or stat.mean() < 0.5:                              # 大部分候选帧不平稳 = 没有真停顿(连续语音)→ 不测量,绝不误报
+        return {"hf_floor_dbfs": None, "hf_ratio": None, "quiet_frames": int(stat.sum())}
+    q = f[cand][stat]
+    w = np.hanning(fr)
+    sp = np.abs(np.fft.rfft(q * w, axis=1)) ** 2 / (w ** 2).sum()
+    k0 = int(6000 / (sr / 2.0) * (sp.shape[1] - 1))
+    hf_f = sp[:, k0:].mean(axis=1)                                      # 每个安静帧的 6k+ 平均每 bin 功率
+    tot_f = sp.sum(axis=1)
+    hf = float(np.median(hf_f))                                         # 中位数:对个别含阶跃/点击的帧稳健
+    ratio = float(np.median(sp[:, k0:].sum(axis=1) / np.maximum(tot_f, 1e-14)))
+    return {"hf_floor_dbfs": round(10 * math.log10(max(hf, 1e-14)), 1), "hf_ratio": round(ratio, 3), "quiet_frames": int(len(q))}
+
+
+def segment_quality(x, sr=SR):
+    """逐片质量评分(0~100)与「是否可用」。复用 v15.ref_quality,再加:HF 底噪 / 直流 / 有声占比。"""
+    x = np.asarray(x, np.float32)
+    n = len(x)
+    if _v15 is not None and n >= sr:
+        q = dict(_v15.ref_quality(x, sr))
+    else:
+        q = {"score": 0 if n < sr else 60, "reasons": ["短于 1 秒"] if n < sr else [], "seconds": round(n / sr, 2)}
+    why = list(q.get("reasons") or [])
+    score = float(q.get("score", 0))
+    vf = voiced_fraction(x, sr)
+    hf = hf_noise_metrics(x, sr)
+    dc = float(x.mean()) if n else 0.0
+    if vf < 0.25:
+        score -= 30
+        why.append("有声部分仅 %.0f%%(多为静音/噪声)" % (vf * 100))
+    if hf.get("hf_floor_dbfs") is not None and hf["hf_floor_dbfs"] > HF_REF_WARN_DB:
+        score -= 10
+        why.append("安静处高频底噪偏高(%.0f dBFS/bin,启发式)" % hf["hf_floor_dbfs"])
+    if abs(dc) > 0.01:
+        score -= 5
+        why.append("直流偏移 %.3f" % dc)
+    score = max(0.0, min(100.0, score))
+    q.update(score=int(round(score)), reasons=why, voiced_frac=round(vf, 3), dc=round(dc, 5), **{k: v for k, v in hf.items() if k != "quiet_frames"})
+    q["usable"] = bool(score >= 50 and vf >= 0.25 and q.get("clip_pct", 0) < 0.5 and n >= int(2.0 * sr))
+    q["redo"] = score < 60
+    return q
+
+
+# ───────────────────────── M2 多参考:稳健质心 / 复合参考 / 锦标赛晋升 ─────────────────────────
+def _l2(v):
+    v = np.asarray(v, np.float64)
+    return v / max(float(np.linalg.norm(v)), 1e-12)
+
+
+def robust_centroid(embs, weights=None, mad_k=3.5):
+    """说话人向量的稳健质心:L2 归一 → 与中位方向的余弦 → 中位数 + MAD 去离群 → 加权平均 → 再 L2 归一。
+    返回 (centroid, keep_mask)。1~2 条时不做去离群。"""
+    E = np.stack([_l2(e) for e in embs])
+    n = len(E)
+    w = np.ones(n) if weights is None else np.asarray(weights, np.float64).clip(1e-6, None)
+    keep = np.ones(n, bool)
+    if n >= 3:
+        med = _l2(np.median(E, axis=0))
+        cos = E @ med
+        m = float(np.median(cos))
+        mad = float(np.median(np.abs(cos - m))) * 1.4826
+        mad = max(mad, 0.01)
+        keep = cos >= m - mad_k * mad
+        if keep.sum() < 2:
+            keep = np.ones(n, bool)
+    c = _l2((E[keep] * w[keep][:, None]).sum(axis=0))
+    return c, keep
+
+
+def cosine(a, b):
+    return float(np.dot(_l2(a), _l2(b)))
+
+
+def sample_rank_score(s):
+    """库里一条样本的排序分:v16 质检分(若有) > v15 质检 > 默认。"""
+    v = (s.get("v16") or {})
+    if "score" in v:
+        return float(v["score"])
+    qc = s.get("qc") or {}
+    rq = qc.get("ref_quality") or qc.get("quality") or {}
+    if isinstance(rq, dict) and "score" in rq:
+        return float(rq["score"])
+    return 70.0 if not qc.get("blocking") else 0.0
+
+
+def select_composite_members(samples, max_total_s=20.0, max_k=6, min_score=50.0, prefer_id=None):
+    """从语音库样本里挑「复合参考」成员:口语 + 已启用 + 文字已核对 + 质检未阻断 + 分数 ≥ min_score;按分数降序贪心装入 ≤ max_total_s 秒。
+    返回 [(sample, weight)]。不足 2 条时返回空(调用方退回 v15 的单条参考,行为不变)。"""
+    pool = []
+    for s in samples:
+        if s.get("category") != "speech" or s.get("enabled") is False:
+            continue
+        if not s.get("text_trusted") or (s.get("qc") or {}).get("blocking"):
+            continue
+        sc = sample_rank_score(s)
+        if sc < min_score:
+            continue
+        pool.append((sc, s))
+    pool.sort(key=lambda t: (0 if (prefer_id and t[1].get("sample_id") == prefer_id) else 1, -t[0], t[1].get("sample_id", "")))      # 用户指定的主参考排第一(仍须通过筛选)
+    out, tot = [], 0.0
+    for sc, s in pool:
+        d = float(s.get("duration_s") or 0.0)
+        if d <= 0 or d > max_total_s:
+            continue
+        if tot + d > max_total_s or len(out) >= max_k:
+            continue
+        out.append((s, float(s.get("weight") or 1.0) * sc / 100.0))
+        tot += d
+    return out if len(out) >= 2 else []
+
+
+def _voiced_rms(a):
+    r = _frames_rms(a, 480)
+    if r.size == 0:
+        return 1e-4
+    v = r[r > max(1e-4, float(np.percentile(r, 90)) * 0.1)]
+    return float(np.sqrt((v ** 2).mean())) if v.size else 1e-4
+
+
+def _floor_rms(a):
+    r = _frames_rms(a, 480)
+    return float(np.percentile(r, 10)) if r.size else 1e-4
+
+
+def _punct(t):
+    t = (t or "").strip()
+    if not t:
+        return ""
+    if t[-1] in "。！？.!?…;；,，":
+        return t
+    cjk = any("\u4e00" <= ch <= "\u9fff" for ch in t[-4:])
+    return t + ("。" if cjk else ".")
+
+
+def build_composite(items, sr=SR, gap_ms=150, max_total_s=20.0, peak=0.7, seed=0):
+    """items = [{"audio": float32 单声道(已是 sr), "text": str, "sample_id": str}](已按优先级排好)。
+    电平对齐到中位有声 RMS(增益限制在 0.5~2 倍)→ 用与两侧底噪匹配的舒适噪声连接(首尾淡化,绝不插数字零)→ 整体峰值归一到 peak(参考电平约定 0.7)。
+    确定性(同输入同种子 = 同输出)。返回 (audio, text, members, seconds)。"""
+    rng = np.random.default_rng(seed)
+    items = [it for it in items if it.get("audio") is not None and len(it["audio"]) > 0]
+    if not items:
+        return np.zeros(0, np.float32), "", [], 0.0
+    rmss = [_voiced_rms(it["audio"]) for it in items]
+    tgt = float(np.median(rmss))
+    parts, texts, members, tot = [], [], [], 0
+    for i, it in enumerate(items):
+        a = np.asarray(it["audio"], np.float32)
+        a = a - float(a.mean())
+        g = min(2.0, max(0.5, tgt / max(rmss[i], 1e-6)))
+        a = a * g
+        if parts and tot + len(a) + int(gap_ms * sr / 1000) > int(max_total_s * sr):
+            continue
+        if parts:
+            ng = int(gap_ms * sr / 1000)
+            lvl = min(_floor_rms(parts[-1]), _floor_rms(a))
+            noise = rng.standard_normal(ng + 2).astype(np.float32)
+            noise = (noise[:-2] + noise[1:-1] + noise[2:]) / 3.0                       # 三点低通:舒适噪声偏低频,不是白噪声
+            noise *= lvl / max(float(np.sqrt((noise ** 2).mean())), 1e-9)
+            f = max(1, int(0.01 * sr))
+            noise[:f] *= np.linspace(0, 1, f, dtype=np.float32)
+            noise[-f:] *= np.linspace(1, 0, f, dtype=np.float32)
+            parts.append(noise)
+            tot += ng
+        e = max(1, int(0.005 * sr))                                                     # 片段两端 5ms 淡入淡出,避免拼接点跳变
+        a = a.copy()
+        a[:e] *= np.linspace(0, 1, e, dtype=np.float32)
+        a[-e:] *= np.linspace(1, 0, e, dtype=np.float32)
+        parts.append(a)
+        tot += len(a)
+        texts.append(_punct(it.get("text", "")))
+        members.append(it.get("sample_id", str(i)))
+    y = np.concatenate(parts)
+    pk = float(np.abs(y).max())
+    if pk > 1e-4:
+        y = y * (peak / pk)
+    sep = "" if any("\u4e00" <= ch <= "\u9fff" for ch in "".join(texts)) else " "
+    return y.astype(np.float32), sep.join(t for t in texts if t), members, round(len(y) / sr, 2)
+
+
+def composite_key(members, texts_sha=""):
+    """复合参考的缓存键:成员 id + 各自处理版 sha256(成员变化 → 键变化 → 重建)。"""
+    return hashlib.sha256(("|".join(members) + "#" + texts_sha).encode()).hexdigest()[:16]
+
+
+def tournament_promote(base, chal, margin=0.01, n_boot=2000, seed=0):
+    """配对 bootstrap 晋升规则:同一批探针句上,挑战者相对基线的平均提升 ≥ margin,且 bootstrap 5% 分位 > 0,才晋升。
+    base / chal 为等长分数序列(越大越好)。数据太少(<5 对)一律拒绝并说明原因(宁可不换)。"""
+    b, c = np.asarray(base, np.float64), np.asarray(chal, np.float64)
+    if len(b) != len(c) or len(b) < 5:
+        return {"promote": False, "reason": "探针对数不足(<5)或长度不一致,拒绝晋升", "n": int(min(len(b), len(c)))}
+    d = c - b
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(d), size=(n_boot, len(d)))
+    means = d[idx].mean(axis=1)
+    lo = float(np.percentile(means, 5))
+    ok = bool(d.mean() >= margin and lo > 0)
+    return {"promote": ok, "mean_gain": round(float(d.mean()), 4), "ci5": round(lo, 4), "n": int(len(d)),
+            "reason": "挑战者显著更好" if ok else "提升未达 margin 或置信下界 ≤ 0,保持基线"}
+
+
+# ───────────────────────── M3 增量再优化计划 ─────────────────────────
+def plan_incremental(old_ids, new_ids, replay_ratio=1.0, base_lr=1e-4, lr_scale=0.4, parent=None, seed=0, max_total=None):
+    """新样本 + 旧样本回放(防灾难性遗忘):回放数 = min(len(old), round(replay_ratio × len(new)))(确定性抽样)。
+    学习率 = base_lr × lr_scale(夹到 0.3~0.5);没有新样本 → noop;没有旧样本/父检查点 → 退化为全量训练。"""
+    old = list(dict.fromkeys(old_ids))
+    oldset = set(old)
+    new = [i for i in dict.fromkeys(new_ids) if i not in oldset]
+    if not new:
+        return {"mode": "noop", "reason": "没有新增样本", "train_ids": list(old), "replay_ids": [], "new_ids": [], "lr": base_lr, "parent": parent}
+    if not old or not parent:
+        ids = old + new
+        return {"mode": "full", "reason": "没有已晋升的父检查点或旧样本:全量训练", "train_ids": ids, "replay_ids": old, "new_ids": new, "lr": base_lr, "parent": None}
+    k = min(len(old), int(round(float(replay_ratio) * len(new))))
+    rng = np.random.default_rng(seed)
+    pick = sorted(rng.choice(len(old), size=k, replace=False).tolist()) if k else []
+    replay = [old[i] for i in pick]
+    ids = new + replay
+    if max_total and len(ids) > max_total:
+        ids = new[:max_total] + replay[: max(0, max_total - len(new))]
+    return {"mode": "incremental", "reason": "新 %d + 回放 %d" % (len(new), len(replay)), "train_ids": ids, "replay_ids": replay, "new_ids": new,
+            "lr": float(base_lr) * float(min(0.5, max(0.3, lr_scale))), "parent": parent}
+
+
+# ───────────────────────── M4 校准相似度(诚实) ─────────────────────────
+def same_speaker_calibration(sims):
+    """sims = 该说话人【不同真实片段对】的相似度。≥ 8 对才算校准;否则 not_calibrated(界面不显示百分比)。"""
+    s = np.asarray([float(v) for v in sims if v is not None and np.isfinite(v)], np.float64)
+    if len(s) < 8:
+        return {"status": "not_calibrated", "n": int(len(s)), "reason": "同说话人真实片段对不足 8 对"}
+    return {"status": "calibrated", "n": int(len(s)), "p05": round(float(np.percentile(s, 5)), 4), "p25": round(float(np.percentile(s, 25)), 4),
+            "p50": round(float(np.percentile(s, 50)), 4), "min": round(float(s.min()), 4)}
+
+
+def judge_similarity(score, cal):
+    if not cal or cal.get("status") != "calibrated" or score is None:
+        return {"verdict": "not_calibrated", "note": "没有校准:不显示相似度百分比;请用 /abx 盲测裁决"}
+    if score >= cal["p50"]:
+        v = "within_same_speaker_median"
+    elif score >= cal["p05"]:
+        v = "within_same_speaker_range"
+    else:
+        v = "below_same_speaker_range"
+    return {"verdict": v, "score": round(float(score), 4), "p05": cal["p05"], "p50": cal["p50"]}
+
+
+# ───────────────────────── M5 音质守护(条件式,干净语音 = 原对象) ─────────────────────────
+DC_FIX_THRESHOLD = 0.003
+HF_REF_WARN_DB = -62.0      # 参考语音安静处 6kHz 以上每 bin 底噪 > 此值才扣分(启发式,未校准;正常麦克风底噪 ≈ -70 以下不扣)
+HF_OUT_WARN_DB = -58.0      # 输出音频同指标 > 此值才报「疑似沙沙声」(启发式,未校准)
+
+
+def dc_fix_if_needed(x, thr=None):
+    """仅当整段直流偏移 |mean| > thr(默认 0.003 ≈ -50dBFS)才扣除;否则原样返回同一个对象(逐样本一致)。返回 (x, fixed)。"""
+    thr = DC_FIX_THRESHOLD if thr is None else thr
+    if len(x) == 0:
+        return x, False
+    m = float(np.mean(x))
+    if abs(m) <= thr:
+        return x, False
+    return (np.asarray(x, np.float32) - np.float32(m)), True
+
+
+def audio_guard_report(pcm, sr=SR):
+    """对一段【实际发给浏览器的 PCM】做 v16 取证:v15.analyze(零段/click/削波/真峰值) + HF 底噪 + 直流。"""
+    x = np.asarray(pcm)
+    xf = x.astype(np.float32) / 32768.0 if x.dtype.kind in "iu" else x.astype(np.float32)
+    rep = dict(_v15.analyze(pcm, sr)) if _v15 is not None else {"problems": []}
+    hf = hf_noise_metrics(xf, sr)
+    rep.update(hf_floor_dbfs=hf["hf_floor_dbfs"], hf_ratio=hf["hf_ratio"], dc16=round(float(xf.mean()), 5) if len(xf) else 0.0)
+    probs = list(rep.get("problems") or [])
+    if abs(rep["dc16"]) > 0.01:
+        probs.append("直流偏移 %.3f" % rep["dc16"])
+    if hf["hf_floor_dbfs"] is not None and hf["hf_floor_dbfs"] > HF_OUT_WARN_DB:
+        probs.append("疑似沙沙声:安静处 6kHz 以上底噪 %.0f dBFS/bin(启发式,未校准)" % hf["hf_floor_dbfs"])
+    rep["problems"], rep["ok"] = probs, not probs
+    return rep
+
+
+# ───────────────────────── M7 首声分段计时(只测量) ─────────────────────────
+TTFA_STAGES = ("gateway", "text", "prefill", "first_frames", "decode_first", "postfx", "ws_play")
+
+
+def _pct(v, q):
+    if not v:
+        return None
+    s = sorted(v)
+    return round(s[min(len(s) - 1, int(math.ceil(q / 100.0 * len(s))) - 1)], 1)
+
+
+class StageTimer:
+    """TTFA 拆成 7 段并全部打点(毫秒);诊断面板显示每段 P50/P95。线程安全,只测量。"""
+
+    def __init__(self, keep=200):
+        self.lock = threading.Lock()
+        self.keep = keep
+        self.d = {k: [] for k in TTFA_STAGES}
+
+    def add(self, stage, ms):
+        if stage not in self.d or ms is None or not np.isfinite(ms):
+            return
+        with self.lock:
+            v = self.d[stage]
+            v.append(float(ms))
+            if len(v) > self.keep:
+                del v[0]
+
+    def summary(self):
+        with self.lock:
+            return {k: {"n": len(v), "p50": _pct(v, 50), "p95": _pct(v, 95)} for k, v in self.d.items()}
+
+    def biggest(self):
+        s = self.summary()
+        c = [(v["p95"], k) for k, v in s.items() if v["p95"] is not None]
+        return max(c)[1] if c else None
+
+
+class Counters:
+    """运行时累计计数(网关用,写入 /api/report 的 v16 段)。"""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.d = {"long_split_files": 0, "long_split_segments": 0, "segments_rejected": 0, "composites_built": 0, "composite_fallbacks": 0,
+                  "dc_fixed_turns": 0, "turns_analyzed": 0, "turns_with_problems": 0, "hiss_suspect_turns": 0, "last_turn": None, "incremental_plans": 0}
+
+    def inc(self, k, n=1):
+        with self.lock:
+            self.d[k] = self.d.get(k, 0) + n
+
+    def set(self, k, v):
+        with self.lock:
+            self.d[k] = v
+
+    def add_turn(self, rep):
+        with self.lock:
+            self.d["turns_analyzed"] += 1
+            self.d["last_turn"] = rep
+            if rep.get("problems"):
+                self.d["turns_with_problems"] += 1
+            if any("沙沙" in p for p in rep.get("problems", [])):
+                self.d["hiss_suspect_turns"] += 1
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.d)
+'''
 
 for name, content in FILES.items():
     (APP / name).parent.mkdir(parents=True, exist_ok=True)
@@ -26543,6 +27761,13 @@ if RUN_TESTS and not TEST:
         t15m = subprocess.run([PY, str(APP / "tests" / "test_v15_mock.py")], capture_output=True, text=True, timeout=900, cwd=str(APP), env=env_t)
         print("  [Python 测试 · v15 Mock 集成:停顿零段→0 / 句内零段修复 / 报告项 / /abx]\n" + "\n".join("   " + l_ for l_ in (t15m.stdout + t15m.stderr).strip().splitlines()[-10:]))
         rs.append(t15m)
+    t16u = subprocess.run([PY, str(APP / "tests" / "test_v16.py")], capture_output=True, text=True, timeout=300, cwd=str(APP), env=env_t)
+    print("  [Python 测试 · v16 增量:长音频切分/质检/HF 底噪/稳健质心/复合参考/增量计划/晋升规则/校准/计时/开关]\n" + "\n".join("   " + l_ for l_ in (t16u.stdout + t16u.stderr).strip().splitlines()[-20:]))
+    rs.append(t16u)
+    if RUN_TESTS == "full":
+        t16m = subprocess.run([PY, str(APP / "tests" / "test_v16_mock.py")], capture_output=True, text=True, timeout=900, cwd=str(APP), env=env_t)
+        print("  [Python 测试 · v16 Mock 集成:长音频切分入库/复合参考/停用与主参考/增量预览/报告项/V16=0 回退]\n" + "\n".join("   " + l_ for l_ in (t16m.stdout + t16m.stderr).strip().splitlines()[-10:]))
+        rs.append(t16m)
     if any(x.returncode != 0 for x in rs):
         print("  ⚠ 有测试未通过(见上)。服务仍会启动,但请把失败项当作已知问题,不要宣称对应功能已验证。")
 
@@ -26734,10 +27959,21 @@ if MODE in ("train", "train_then_serve") and not TEST:
                 raise RuntimeError("数据预处理失败,见上方日志")
         else:
             print("  已有预处理好的数据 %s(想重做请把 FRESH_TRAIN 设为 True)" % data_dir)
+    TRAIN_BASE_USE, TRAIN_LR_USE = TTS_MODEL, TRAIN_LR                      # v16 M3:增量再优化 → 以已晋升模型为父(--base)+ 较低学习率;其余训练路径与 v15 完全一致
+    _v16p = ((LIB_JOB or {}).get("params") or {}).get("v16") or {}
+    if V16 and V16_INCR and _v16p.get("mode") == "incremental" and _v16p.get("parent_dir") and (Path(_v16p["parent_dir"]) / "model.safetensors").exists():
+        try:
+            _pd = OUT / "v16_parent" / str(LIB_JOB["job_id"])                       # 先把父模型拷走:训练结束会覆盖 best_model,父模型必须保留(回滚/对照)
+            if not (_pd / "model.safetensors").exists():
+                shutil.copytree(_v16p["parent_dir"], _pd, dirs_exist_ok=True)
+            TRAIN_BASE_USE, TRAIN_LR_USE = str(_pd), float(_v16p.get("lr") or TRAIN_LR)
+            print("  🔁 v16 增量再优化:父模型 %s → 副本 %s;学习率 %.2e;新样本 %s + 回放 %s(未在真机验证效果;候选模型仍须验证+加载+试合成才能升级)" % (_v16p["parent_dir"], _pd, TRAIN_LR_USE, _v16p.get("new"), _v16p.get("replay")))
+        except Exception as e:
+            print("  ⚠ v16 增量准备失败(%s),改为从基座全量训练(与 v15 一致)" % e)
     banner("训练 · LoRA 双卡微调 + 每轮自动评估(auto_train_loop.py)")
     print("  可随时中断(停止单元格);再次运行会自动从最近的 checkpoint 续训。\n", flush=True)
-    cmd = [PY, str(APP / "auto_train_loop.py"), "--work", str(OUT), "--data_dir", str(data_dir), "--base", TTS_MODEL, "--target", str(TARGET_SIMILARITY),
-           "--max_epochs", str(MAX_EPOCHS), "--patience", str(PATIENCE), "--lr", str(TRAIN_LR)]
+    cmd = [PY, str(APP / "auto_train_loop.py"), "--work", str(OUT), "--data_dir", str(data_dir), "--base", TRAIN_BASE_USE, "--target", str(TARGET_SIMILARITY),
+           "--max_epochs", str(MAX_EPOCHS), "--patience", str(PATIENCE), "--lr", str(TRAIN_LR_USE)]
     if FRESH_TRAIN:
         cmd.append("--fresh")
     rc = stream(cmd, env=dict(senv), cwd=str(APP))
@@ -26860,6 +28096,7 @@ print("   · 右上「📊 诊断 / 训练 / 评估」:冷/热 TTFA、欠载/重
 print("   · 💾 下载生成的语音:/voice 页右上「💾 下载」→ 每个文本段 / 每一轮(WAV,可选 FLAC)/ 全部 ZIP(含脱敏 manifest 与 SHA-256);文件在 %s,只在当前 Kaggle 会话内有效,请及时下载" % (WORK / "artifacts"))
 print("   · 🔎 搜索:被 Bing/DDG 等站点限制(401/403/429/验证码)时系统会【停止】请求并显示原因,不会绕过;要更稳定请配置 BRAVE_SEARCH_API_KEY。体检结果:%s" % (OUT / "vc_net_preflight.json"))
 print("   · v15:📊 诊断里的「v15」验收项=每轮取证(数字零段/click/削波/真峰值);%s/abx = 盲测页(参考 vs v14 vs v15,二项检验);关闭某项见脚本顶部 V15_*;沙箱不能证明「更像」,以你的耳朵为准" % public_url)
+print("   · v16:首页「语音库」→ 每个库的「📚 多参考管理」:上传/录音不限时长(>30 秒自动在停顿处切片 + 后台转写,请核对文字);≥2 条已核对参考会自动拼成复合参考;「继续优化」= 增量再优化(需已晋升模型;MODE=train + TRAIN_FROM_LIBRARY=True 执行)。关闭某项见脚本顶部 V16_*;真机效果未验证,以 /abx 盲测为准")
 print("   · 本单元格会一直运行 = 服务在线,请不要停止它;日志可在网页右上角「运行日志」查看\n", flush=True)
 try:
     from IPython.display import HTML, display
