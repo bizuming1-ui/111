@@ -1,1 +1,635 @@
+# 提示词6 · 星河克隆语音系统 v17 开发任务书(极致音质 · 多参考语音库 · 可无限续训)
 
+> 本文件是给"具备终端、GPU(Kaggle T4×2 或同级)、联网、可下载安装依赖"的 AI 工程代理的完整开发任务书。
+> 目标仓库:https://github.com/bizuming1-ui/111 (参考代码文件名:参考代码;当前最新版本:v16)。
+> 你的工作方式:先读懂现有代码 → 先测量再动手 → 多方案在沙盒里实测对比 → 只保留被数据证明更好的方案 → 全程不得让任何已成功功能退化。
+
+---
+
+## 0. 给执行 AI 的元指令(必须先读)
+
+1. 你不是在"重写系统",而是在 v16 之上做"可回退的增量"(命名 v17)。所有新模块必须有独立开关 V17_*,关闭后行为与 v16 逐样本一致(沿用仓库里已有的 Mock golden PCM 对账方法)。
+2. 禁止"凭印象宣称更好"。任何"更像 / 更干净 / 更稳"的结论,必须来自你在本任务里跑出来的数字(相似度、CER、UTMOS/DNSMOS、伪影计数)和用户的盲听(/abx 页)。没跑过的写"未验证",不得编造数字。
+3. 禁止降级:任何会降低已有指标(见 §2 的"质量棘轮")的改动自动被拒绝并回滚,即使它"理论上更先进"。
+4. 一次只做一个变量(控制变量法):凡是排查沙沙声/爆音,每次只切换一个因素,记录前后指标。
+5. 先写测试和基线,再写功能:第一个提交必须是"v16 基线冻结"(见 §2.2)。
+6. 遇到不确定的接口(模型 API、依赖版本、许可证),先 web_search / 阅读官方仓库与 README,再动手;把核实结果与链接写进 docs/DECISIONS.md。
+7. 所有结论要诚实:如果某个目标在 T4×2 上做不到(显存、实时性、许可证),要明说并给出替代,而不是悄悄降低标准。
+8. 最终交付必须包含:可运行的 Kaggle 单单元格脚本(沿用 v16 的"整份粘贴即运行"形态)+ 独立的 bench/ 对比实验套件 + 实测报告(docs/REPORT.md)+ 回归测试全绿证据。
+
+---
+
+## 1. 用户的真实需求(逐条还原,不得遗漏)
+
+| 编号 | 需求(用户原话含义) | 本任务的落地解释 |
+|---|---|---|
+| R1 | 克隆出来的所有语音音色、音质、语音参数不得损坏 | 建立客观伪影检测(沙沙声/爆音/零段/削波/直流/块边界台阶/带宽/响度)+ 说话人相似度 + 可懂度 + 自然度的"质量门",每一条生成的音频都过门 |
+| R2 | 不能有沙沙声、爆音等任何不好的现象 | 先用二分法定位根因(§7 排查矩阵),再用"只在测到缺陷时才介入"的守卫式后处理修复;通过的音频不做任何改动 |
+| R3 | 能否用比 Qwen3-TTS-1.7B 更强的模型,或在其基础上融合联网增强模型 | 两条路都做并实测对比:路线一"换/并联更强引擎"(VoxCPM2、LongCat-AudioDiT、CosyVoice3、IndexTTS2、Fish S2 等),路线二"Qwen3-TTS + 增强链 + Best-of-N + 声音转换精修";由 bench/ 实测择优,支持"按语音库自动路由到最优引擎" |
+| R4 | 一定要成功、功能做到极致 | 把"成功"定义为可测量的验收标准(§11),不达标不发布;不达标时自动回退到已验证的最佳配置 |
+| R5 | 已成功的所有功能不能被破坏/降级 | 质量棘轮 + 开关 + 逐样本回归 + 金丝雀(§2) |
+| R6 | 每个语音库可以用多条参考语音训练:可先上传多条再训练 | 多参考语音库(§9):样本集合、逐条质检/转写/核对/启用/权重,统一冻结数据集后训练 |
+| R7 | 训练完后还能继续通过现场录制或上传参考语音再优化 | 增量再优化(§10):新样本 + 回放旧样本 + 低学习率 + 候选模型三证据晋升 + 可回滚 |
+| R8 | 上传的参考语音和现场录制的语音没有任何时长限制 | "入库无限制"(§9.2):流式无损录音(OPFS 落盘,不占内存)+ 分块可续传上传 + 服务端流式解码/切片;不再 30 秒截断、不再 1800 秒/80MB 上限 |
+| R9 | 精准开发,在参考代码基础上继续精准优化 | 严格以 v16 代码为基线做增量;沿用其目录、开关命名、测试风格、诚实声明风格 |
+| R10 | 需要我能一键复制到 GitHub | 本文件即最终提示词,可直接保存为仓库中的"提示词6" |
+
+---
+
+## 2. 不可违反的铁律:零破坏、零降级
+
+### 2.1 受保护功能清单(v16 已成功,任何改动都不得影响)
+
+- 克隆主流程:录音/上传参考 → 质检 → 开始克隆(双卡)→ 试听 → 朗读文字 / AI 对话流式合成播放。
+- 连续播放链路:背压 + 帧序号 + 断线续传、滚动视界起播、桥接音库、恒定音量、欠载/重缓冲统计。
+- v13 零损坏放行(帧预算/生成中检测/重试阶梯)、v14 抢救放行与跨卡重试、口语化文本、实时对话(VAD/回声门/打断)、声纹锁。
+- v15 拼接器(零段填充/块边界平滑/句尾淡出)、舒适噪声停顿、点击修复、下行扩展器、真峰值软限幅 + TPDF、参考管线(50Hz 高通/边缘淡化/质量评分)、每轮取证、/abx 盲测页。
+- v16 无时长限制入库的切片逻辑、复合参考(≤20 秒)、增量再优化的排队与父模型机制、沙沙声/直流取证、首声分段计时。
+- 语音库多库管理、持久化与恢复、GitHub 脱敏同步、访问密码、搜索工作台/浏览器自动化(与语音无关但不得被误伤)。
+
+### 2.2 质量棘轮(Quality Ratchet)——防降级的硬机制
+
+1. 第 0 步(任何功能开发之前):冻结基线。
+   - 用 v16 原样在固定种子、固定文本集(Golden Set,见 §11.3)下渲染全部克隆语音,保存 WAV + SHA-256 + 全部指标(SIM、CER、UTMOS/DNSMOS、hiss、click、零段、削波、真峰值、LUFS、起播 TTFA、RTF)到 baseline/v16/。
+   - 对用户仓库中已有的 3 条克隆语音(克隆语音1/2/3.wav)和 2 条参考语音(参考语音.webm、参考语音1.webm)同样建立"离线取证基线"。
+2. 每次提交的 CI(沙箱 CPU 部分 + Kaggle GPU 部分)必须通过:
+   - 全部 V17_* 关闭 → PCM 与 v16 逐样本一致。
+   - 开启后:每个指标"不劣于基线(非劣效边界按指标设定)"且主指标有统计学显著提升(配对 bootstrap,置信区间下界 > 0)才允许默认开启;否则保持默认关闭,只作为实验选项。
+3. 模型/配置的晋升沿用 v10/v14 的 registry(晋升/金丝雀/回滚);任何候选版本的相似度、可懂度、伪影、自然度四项只要有一项显著变差,立刻拒绝晋升。
+4. 所有"后处理"遵循守卫原则:先测量,只有当检测器报告该段存在缺陷时才处理该段;通过检测的音频一个样本都不改(bypass,逐样本一致)。
+5. 任何新引擎只能"加入候选池",不得替换现有默认引擎,除非 bench/ 报告证明在该语音库上全面胜出,且用户在 /abx 盲测中给出 ≥ 12 轮、二项检验显著的偏好。
+
+---
+
+## 3. 现状一句话总结(给你快速建立心智模型)
+
+当前系统是一份约 28,000 行的 Kaggle 单文件脚本(内含 app.py、infer_dual_gpu.py、v12~v16 模块、前端 index.html/home.html/dialog.js/abx.html、训练脚本 train.py/auto_train_loop.py/data_prep.py 与大量测试),核心引擎为 Qwen/Qwen3-TTS-12Hz-1.7B-Base(通过 FasterQwen3TTS + CUDA Graph 流式推理,fp16,SDPA 注意力,24 kHz 输出),双 T4 各跑一个 TTS 进程;ASR 为 whisper-large-v3-turbo;声纹为 microsoft/wavlm-base-plus-sv(CPU);训练为 LoRA 双卡 DDP + 留出验证 + 早停;公网为 ngrok。v16 已经提供了:多参考入库(自动切片)、复合参考、增量再优化的排队机制、沙沙声/直流取证。v17 的任务是把这些"已有骨架"做成"可真正用、可被数据证明更好"的完整能力,并补上"更强引擎/增强链"的实测择优。
+
+---
+
+## 4. 已完成的调研与实测证据(执行 AI 请先复现这些数字,再继续)
+
+### 4.1 对参考仓库的核实结果
+
+- 仓库根目录文件:克隆语音1/2/3(.wav 与 .zip)、参考语音.webm、参考语音1.webm、参考代码(约 1.6 MB 文本,28,193 行)、提示词1~5。
+- 我抓取"提示词1~5"原始文件时内容为空(约 1 字节);它们的结论已被内嵌在参考代码文件头部的 v14/v15/v16 变更说明中(根因分析、模块清单、诚实声明)。请你自行再确认一次,如果它们有内容,以其为准。
+- 仓库中没有图片文件(参考代码注释里提到的"搜索失败.png"等截图不在当前根目录)。如果用户之后补充截图,按截图修正。
+- 仓库是公开的,里面有用户本人的参考语音与克隆语音(生物特征数据)。强烈建议改为私有仓库(见 §14)。
+
+### 4.2 对仓库中 5 个音频文件的离线取证(我在沙箱里用 Python/NumPy/SciPy 测得,可复现)
+
+| 文件 | 格式 | 时长 | 峰值 | RMS | 关键观察 |
+|---|---|---|---|---|---|
+| 参考语音.webm | Opus,48 kHz,立体声 | 26.4 s | -17.4 dBFS | -33.8 dBFS | 电平很低(峰值只有 -17 dBFS);有损编码;最安静 10% 帧电平约 -46.7 dB;99.9% 能量在 15.3 kHz 以下 |
+| 参考语音1.webm | Opus,48 kHz,立体声 | 54.4 s | -15.4 dBFS | -33.4 dBFS | 同上;最安静 10% 帧约 -47.0 dB |
+| 克隆语音1.wav | PCM16,24 kHz,单声道 | 4.8 s | -2.2 dBFS | -20.0 dBFS | 99.9% 能量在 7.3 kHz 以下;相邻样本跳变 >0.25 满量程 3 处 |
+| 克隆语音2.wav | PCM16,24 kHz,单声道 | 10.8 s | -1.5 dBFS | -19.4 dBFS | 99.9% 能量在 9.0 kHz 以下;大跳变 9 处 |
+| 克隆语音3.wav | PCM16,24 kHz,单声道 | 149.8 s | -1.5 dBFS | -19.3 dBFS | 大跳变 536 处(约 3.6 次/秒);其中"孤立单样本尖峰(点击样)"79 处(约 0.53 次/秒);无数字零段、无削波、直流≈0 |
+
+我对这些数字的解读(请你验证,不要盲信):
+
+1. 参考语音是 WebM/Opus 有损格式且录得很轻(RMS ≈ -34 dBFS)。现有参考管线会把峰值归一到 -3 dBFS(增益约 +14~15 dB),这会把底噪同比抬高 14~15 dB。Qwen3-TTS 这类基于参考上下文/说话人向量的模型会复制参考的"信道特征",包括底噪、房间声、编码伪影。这是"沙沙声"的第一嫌疑(假设,待 §7 的 A/B 实验证实)。
+2. 现有克隆语音峰值贴近 -1.5 dBFS、有孤立点击样尖峰,这与 v15 的取证结论一致(这些文件很可能由 v15 之前的版本生成,v15 的点击修复、软限幅、舒适噪声就是为此加的)。你必须用 v16 当前版本重新渲染同样的文本,再测一次,看点击是否已经消除;如果还有,说明根因不在拼接而在解码器/流式块边界。
+3. 克隆输出是 24 kHz,天然带宽上限 12 kHz;主观上"发闷/不够通透"可能与此有关。VoxCPM2 原生 48 kHz 输出是一个可测的改进方向(必须以 SIM/UTMOS 与盲听确认,不能因为采样率高就认为更好)。
+4. 在安静帧(最安静 10% 的 20 ms 帧)里,按"相对语音 RMS"归一化后,克隆语音的 6 kHz 以上底噪(约 -37.5 dB 相对语音)并不比参考语音(约 -29.5 dB 相对语音)更差。也就是说,如果用户听到的沙沙声不是来自停顿处的高频底噪,那它可能来自语音段内部(擦音/气声被模型生成成宽带噪声、解码器 fp16 数值误差、块边界)。所以不能只测"安静处底噪",必须同时测"语音段内的宽带噪声比例(谐噪比 HNR、谱平坦度)"。
+
+重要限制:沙箱没有 GPU 与模型权重,以上只是对已有文件的信号层取证,不能证明任何模型"更好"。
+
+### 4.3 公开基准:比 Qwen3-TTS-1.7B 更强的候选(Seed-TTS-Eval,WER/CER 越低越好,SIM 越高越好)
+
+数据来源:OpenBMB/VoxCPM 的 README 与 sota2.com 排行榜(截至检索时,请 AI 重新核对最新数值)。
+
+| 模型 | 参数量 | 许可 | test-ZH CER | test-ZH SIM | test-EN WER | test-EN SIM | 备注 |
+|---|---|---|---|---|---|---|---|
+| Qwen3-TTS(基线) | 1.7B | 开源 | 1.22 | 77.0 | 1.23 | 71.7 | 当前使用 |
+| VoxCPM2 | 2B | Apache-2.0 | 0.97 | 79.5 | 1.84 | 75.3 | 48 kHz 输出、30 语言、LoRA 微调(5~10 分钟音频即可)、可控克隆/终极克隆;约 8 GB 显存;官方 RTF≈0.3(RTX4090) |
+| LongCat-Audio-DiT | 3.5B(另有 1B) | MIT | 1.09 | 81.8 | 1.50 | 78.6 | 扩散式、非流式、24 kHz,中英文;离线渲染候选,SIM 榜首但不适合实时 |
+| IndexTTS2 | 1.5B | 开源(请核对条款) | 1.03 | 76.5 | 2.23 | 70.6 | 时长控制、音色与情感解耦 |
+| CosyVoice 3(0.5B 开源 / 1.5B) | 0.5B / 1.5B | 0.5B 开源 | 1.16 / 1.12 | 78.0 / 78.1 | 2.02 / 2.22 | 71.8 / 72.0 | 流式延迟低 |
+| Fish Audio S2(S2 Pro) | 4B | Fish Audio Research License(研究与非商用免费,商用需授权) | 0.54 | 未列出 | 0.99 | 未列出 | CER 最低;显存与推理栈较重(SGLang);许可受限 |
+| ClipCannon 流水线(基于 Qwen3-TTS) | 同 1.7B | 见其页面 | — | — | est.<1% | 0.779(官方 WavLM-Large+ECAPA,Best-of-24) | 证明"零改模型,仅推理时工程"可显著提升相似度 |
+
+读法:
+- 榜单是英文/通用语料的平均成绩,不等于"对用户这几把嗓音更好"。所以必须在 bench/ 里用用户自己的参考语音实测(§6)。
+- SIM 榜首的是 LongCat-Audio-DiT(中文 81.8),但它是非流式扩散模型;VoxCPM2 是"强且可实时"的折中;Qwen3-TTS 的 WER 很强。真正的赢家按语音库不同而不同,因此设计"引擎路由器"(§6.4)。
+- ClipCannon 的 Best-of-N + 增强 + 三道验证,是路线二(不换模型)里最值得复刻的参照:https://huggingface.co/cabdru/clipcannon-voice-clone
+
+### 4.4 增强/修复模型(用于"联网增强")的公开信息
+
+- Sidon(sarulab-speech/sidon-v0.1,arXiv:2509.17052):生成式语音修复,w2v-BERT 2.0 特征预测器 + DAC 声码器,48 kHz 重建,去噪/去混响/去编码伪影/带宽扩展;社区常用于"清洗声音克隆参考"。风险:生成式模型可能"抹掉安静音节"或改变音色,必须用声纹相似度门守护。
+- DeepFilterNet3(MIT/Apache-2.0):全频带 48 kHz 轻量降噪,适合处理残留噪声。
+- ClearerVoice-Studio(Apache-2.0):MossFormer2_SE_48K 语音增强、MossFormer2_SR_48K 超分。
+- Resemble Enhance:去噪 + 增强 + 44.1 kHz;ClipCannon 用于可选的输出增强;社区对比中显存需求较高(超过 6 GB)。
+- 社区实测链(beleonattila/audio-enhancer):Sidon → DeepFilterNet3 → 掉字修复(与原声交叉淡化)→ 混入少量原声保持房间音连续 → EQ/去齿音/压缩 → 响度归一,在其数据上 DNSMOS/UTMOS 最优。值得借鉴"掉字修复 + 混入原声"的思路,但必须在用户数据上验证。
+
+---
+
+## 5. 总体架构(v17 在 v16 之上新增的部分用 [NEW] 标出)
+
+    浏览器(/ 首页 · /voice · /abx · [NEW] /bench-report)
+      ├─ [NEW] 无损录音器:AudioWorklet 采 PCM → OPFS 分段落盘(不占内存,可录数小时)→ 分块可续传上传
+      ├─ [NEW] 语音库 · 多参考管理(质检/转写核对/启用/权重/主参考/说话人一致性/增强预览 A/B)
+      └─ 现有:实时对话、流式播放器、诊断面板、盲测页
+    网关(app.py,FastAPI/WebSocket,沿用)
+      ├─ [NEW] ingest 服务:分块上传 → ffmpeg 流式解码为 48 kHz/float32 无损 WAV → VAD 切片 → 说话人聚类 → 双 ASR 转写 → 逐片质检
+      ├─ [NEW] RefBank:每个语音库的参考片段库(原件 + 增强版 + 指纹 + 质量分 + 嵌入)
+      ├─ [NEW] RefSelector:复合参考 / 最佳单条(参考锦标赛)/ 说话人向量质心 / LoRA 四种"参考策略",由 bench 结果决定默认
+      ├─ [NEW] EngineRouter:按语音库的 bench 成绩选择引擎(Qwen3-TTS 默认;VoxCPM2/LongCat/CosyVoice3/IndexTTS2 为候选),每个引擎独立 venv 与子进程
+      ├─ [NEW] QualityGate:SIM + CER + UTMOS/DNSMOS + 伪影检测;不过门 → 换种子重试 / 切换候选 / 守卫式修复 / 如实报告
+      ├─ [NEW] Best-of-N 离线渲染器("极致质量"模式;实时模式保持 v16 行为)
+      └─ 现有:v13~v16 全部模块(守卫、拼接器、软限幅、取证、registry)
+    GPU worker(每卡一个进程,沿用)+ [NEW] 引擎适配器接口(load / prepare_voice / synth_stream / synth_full / unload)
+    训练(沿用 auto_train_loop.py)+ [NEW] 多参考冻结数据集 + 增量回放 + 三证据晋升 + 引擎特定训练器(Qwen3-TTS LoRA、VoxCPM2 LoRA)
+    bench/(新增,独立可运行)+ MODE="bench":引擎×参考策略×后处理 的网格实验,输出 REPORT.md 与 /abx 盲测包
+
+---
+
+## 6. 多方案并行对比:让 AI 自动下载安装沙盒/模拟器,实测择优
+
+### 6.1 方案清单(每个方案都必须实际跑通并出数字,跑不通要写明原因与日志)
+
+| 方案 | 做法 | 预期收益 | 主要风险 | 适用 |
+|---|---|---|---|---|
+| A. 基线+ | 保持 Qwen3-TTS-12Hz-1.7B-Base;修复沙沙/爆音根因(参考增强、fp32 解码器、块边界重叠解码、采样超参网格);复合参考/最佳参考/质心三策略对比 | 零迁移风险,改动最小,先拿到"低垂果实" | 模型上限在那里(中文 SIM 约 77) | 实时+离线 |
+| B. VoxCPM2 主引擎 | 安装 openbmb/VoxCPM2(pip install voxcpm),用 Controllable Cloning + Ultimate Cloning(参考音频+逐字稿)+ 可选 LoRA;48 kHz 原生输出 | 中文 SIM 79.5、48 kHz、LoRA 门槛低、Apache-2.0 | T4 无 bf16(用 fp16 需验证数值稳定);实时性需实测;扩散自回归偶发不稳定,官方也建议多生成 1~3 次;长句稳定性 | 实时(需测 RTF)+ 离线 |
+| C. LongCat-Audio-DiT 3.5B | 扩散式、波形隐空间;参考音频+逐字稿克隆;24 kHz | 公开榜单 SIM 最高(ZH 81.8,EN 78.6),MIT | 非流式;3.5B 在 T4 上的显存/速度必须实测(可尝试 1B 版) | 仅离线/预渲染(极致质量) |
+| D. CosyVoice 3(0.5B) | FunAudioLLM/CosyVoice,Fun-CosyVoice3-0.5B,流式 | 低延迟、SIM 78 | 依赖栈复杂,需独立 venv | 实时备选 |
+| E. IndexTTS2 | index-tts/index-tts | 时长可控、情感解耦 | 英文 SIM 偏低,条款需核对 | 离线备选 |
+| F. Fish Audio S2 | fishaudio/fish-speech(S2 Pro) | CER 最低 | 研究/非商用许可;4B + SGLang 在 T4 上很可能过重 | 仅在许可允许且显存够时试验 |
+| G. 两段式:TTS → 零样本声音转换精修 | 先用任一引擎出句子,再用 Seed-VC(Plachtaa/seed-vc)等零样本 VC,以用户多条参考做目标音色,二次对齐音色 | 可能进一步提升相似度并统一跨句/跨卡音色 | 增加延迟与新伪影;必须用伪影检测+盲测证明 | 仅离线 |
+| H. 增强链叠加 | 参考增强(Sidon/DeepFilterNet3/MossFormer2_SE_48K/Resemble Denoise)+ 输出守卫式后处理 | 降低底噪与编码伪影 | 生成式增强可能改音色/抹音节 → 必须过 SIM 门 | 与 A~G 任意组合 |
+
+说明:用户要求"一定要成功"。因此不押注任何单一方案;bench 会把 A~H 做网格组合并选出每个语音库的最优配置;如果所有候选都没有显著超过 A 的基线,就保留 A,并在报告里如实写"没有更好的"。
+
+### 6.2 沙盒/模拟器怎么搭(请你执行,不是我替你假设)
+
+1. 两层沙盒:
+   - CPU 沙盒(任意容器):跑信号层测试(取证函数、切片器、拼接器、质量门、数据模型、API、前端交互),不得拿它宣称音质。
+   - GPU 沙盒(Kaggle T4×2,Internet On):跑真实模型 bench。每个引擎一个独立虚拟环境(python -m venv /kaggle/working/envs/<engine>),以子进程 + 本地 socket/JSON-RPC 与网关通信,避免依赖冲突;任何引擎安装失败只影响自己,并写入 bench/logs/<engine>.log。
+2. 浏览器模拟器:用 Playwright(仓库已有 Chromium 自动化)驱动真实页面,在带假麦克风的 Chromium 里(--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=<wav>)跑"录音→上传→训练→合成→播放"的端到端回归,并用 AudioContext 录回播放输出,检测"播放端"的欠载/爆音(把模型问题与传输/播放问题分开)。
+3. 网络模拟:对 ngrok 路径做限速/丢包/抖动测试(Linux tc netem 或 Playwright 的 CDP Network.emulateNetworkConditions),验证背压与断线续传不引入爆音。
+4. 数据:使用用户的参考语音(两条 webm)、v16 现有克隆输出、再加一批公开测试集(Seed-TTS-Eval 的中文子集 https://github.com/BytedanceSpeech/seed-tts-eval)做外部校准;用户数据只留在私有目录。
+
+### 6.3 bench 的网格与指标
+
+- 网格轴:引擎(A~F)× 参考策略(单条原件 / 单条增强 / 复合参考 / 最佳单条 / 质心 / LoRA)× 参考增强(无 / DeepFilterNet3 / Sidon / MossFormer2_SE_48K / Resemble Denoise)× 解码精度(fp16 / fp32 编解码器)× 采样超参(温度 0.3~0.9,top_p 0.8~0.95,重复惩罚 1.0~1.2)× 输出后处理(无 / 守卫式)。全网格太大,用"一次一变量"+ 二阶段(先粗筛后精调)。
+- 测试文本(Golden Set):≥ 40 句,覆盖短句/长句/数字时间金额/中英混合/问句/感叹/绕口令/专名/连续长段落(≥ 60 秒)。
+- 客观指标(每条音频都算):
+  1. 说话人相似度 SIM:官方 Seed-TTS-Eval 同款 WavLM-Large + ECAPA-TDNN(UniSpeech 的 wavlm_large_finetune.pth),同时算 WavLM-base-plus-sv(与 v16 一致,保证可比)与 3D-Speaker CAM++/ECAPA2 作为交叉验证;一律对"用户未增强的原始参考"计算,避免"自己增强自己再拿增强版打分"的自我欺骗。
+  2. 可懂度:Whisper-large-v3 回读 CER/WER + FunASR Paraformer-zh 回读 CER(两套 ASR 都要,避免单一 ASR 偏差)。
+  3. 自然度/感知质量:UTMOS(tarepan/SpeechMOS)、DNSMOS P.835/P.808(microsoft/DNS-Challenge)、NISQA;三者取一致性,不单看一个。
+  4. 伪影:沙沙声(安静帧 6 kHz 以上底噪相对语音 dB;语音帧内谱平坦度/HNR)、点击(孤立尖峰与二阶差分异常)、数字零段、削波、直流、真峰值、块边界台阶(以 chunk 边界为锚统计 50 ms 窗电平差与频谱通量突变)、带宽(99.9% 能量截止频率)、响度(LUFS)与响度范围。
+  5. 性能:冷/热 TTFA、RTF、P95 chunk 间隔、显存峰值、欠载次数。
+- 统计:每个配置 ≥ 40 句 × ≥ 3 个种子;配对 bootstrap 95% 置信区间;多重比较做 Holm 校正。
+- 人耳:生成 /abx 盲测包(参考 vs v16 基线 vs 候选 Top-3),响度对齐,≥ 12 轮,二项检验。客观指标之间冲突时,以用户盲听为准。
+
+### 6.4 择优与引擎路由规则(写成代码,不要写成口头约定)
+
+1. 硬门槛(任一不满足即淘汰):相对 v16 基线,CER 不得显著变差;伪影计数不得变多;UTMOS/DNSMOS 不得显著变差;实时模式下 TTFA/欠载不得变差(离线模式不要求)。
+2. 主排序:SIM(对原始参考)的配对差值显著为正者优先;并列时比较 UTMOS,再比较 RTF。
+3. 每个语音库独立选择:库里有 N 条参考后重新跑一遍"小 bench"(默认 20 句 × 2 种子 × Top-3 候选配置),结果写入该库的 voice_profile.json(引擎、参考策略、采样超参、是否使用增强、阈值)。
+4. 两种渲染模式:
+   - 实时模式:只允许"流式且实测欠载=0"的引擎/配置;默认仍是 v16 的 Qwen3-TTS 路径,除非另一个引擎在实时门槛内全面胜出。
+   - 极致质量模式(离线渲染/预渲染/下载用):允许非流式引擎、Best-of-N(N=4~16)、参考锦标赛、两段式 VC、守卫式增强。
+5. 任何引擎在运行时失败/不稳定 → 自动回退到该库上一个已晋升的配置(最终回退到 v16 路径),并在诊断面板里如实显示回退原因。
+
+### 6.5 引擎适配器接口(统一抽象,便于沙盒里替换)
+
+    class EngineAdapter:
+        name, sample_rate, supports_streaming, supports_icl, supports_lora, vram_estimate_mb
+        load(device, dtype)                         # 在自己的 venv 子进程里加载
+        prepare_voice(refs: list[RefItem], strategy)   # 返回 VoiceHandle(缓存提示/说话人向量/LoRA 路径)
+        synth_stream(text, voice, seed, params)     # 产出 float32 PCM 块,附帧元数据(便于块边界检测)
+        synth_full(text, voice, seed, params)       # 一次性产出,便于 Best-of-N
+        train_lora(dataset, base, out, hparams)     # 引擎自己的训练入口(可不支持)
+        unload()
+
+要求:所有适配器输出统一为 float32、记录原生采样率;重采样只在网关末端做一次(高质量 sinc/soxr),不得在链路中反复重采样。
+
+---
+
+## 7. 沙沙声 / 爆音 / 音质损坏:根因排查矩阵(二分法,一次一变量)
+
+原则:先把"模型生成的 PCM"和"网络/浏览器播放"分开。第一步永远是"离线渲染到 WAV 文件"再取证;如果离线 WAV 干净而浏览器里有问题,根因在传输/播放;反之在模型/拼接。
+
+| 序号 | 嫌疑环节 | 怎么验证(只改这一项) | 观察指标 | 修复候选(只有被证实才启用) |
+|---|---|---|---|---|
+| 1 | 参考语音本身(有损 WebM/Opus、电平过低后被拉高 14 dB、底噪、房间声、浏览器 AEC/NS/AGC 处理) | 同一句、同种子,分别用 原件 / 无损重录 / 增强版 作参考 | 输出 HF 底噪、UTMOS、SIM(对原始) | 无损采集(§9.2);参考增强并过 SIM 门(§8.1);录音提示"够响但不过载" |
+| 2 | 克隆模式:ICL(参考音频+逐字稿)vs x-vector-only | 同参考两种模式对比;注意 v16 的训练后模型强制 x-vector 模式 | SIM、CER、韵律自然度、伪影 | 选择更优模式;训练后模型也评估 ICL 提示的收益 |
+| 3 | 逐字稿不准(参考文字与音频不一致会造成前缀"漏字/噪声") | 人工核对 vs ASR 初稿 | CER、起始伪影 | 双 ASR 一致性 + 人工核对门(§9.4) |
+| 4 | 采样超参(温度/top-p/top-k/重复惩罚)过激进导致"气声噪声/失控循环" | 网格 | CER、零段/循环帧、HNR | 降低温度、提高重复惩罚;按库保存 |
+| 5 | fp16 数值(T4 无 bf16):codec 解码器/声码器在 fp16 下的量化噪声或溢出 | 仅把编解码器(Qwen3-TTS-Tokenizer-12Hz 解码器)切到 fp32,LM 仍 fp16 | 底噪、点击、UTMOS | 解码器 fp32(显存开销小,速度影响需测) |
+| 6 | 流式块边界:逐块解码缺少足够左上下文 → 边界台阶/点击 | 对比 非流式整句解码 vs 流式分块解码的同一份 codes | 块边界 50 ms 台阶、频谱通量 | 解码时带左上下文并重叠相加(请核对 qwen-tts tokenizer 的 chunked_decode/left_context 实现);v15 拼接器已做 3 ms 平滑,但那只是"事后补" |
+| 7 | CUDA Graph/静态缓存路径与官方非 Graph 路径的数值差异 | 同种子下 FasterQwen3TTS vs 官方 generate_voice_clone | 波形相关、伪影计数 | 若 Graph 路径更差,对"极致质量模式"改用官方路径 |
+| 8 | 拼接/后处理本身(舒适噪声、扩展器、限幅器、抖动) | 开关 V15_* 逐项关闭 | 伪影、SIM | 只保留有证据的项;所有项守卫化 |
+| 9 | 响度/限幅:峰值 -1.5 dBFS、归一过度导致削波 | 取证 | 真峰值、削波样本数 | 保持 v15 -1.5 dBTP 软限幅;克隆语音文件导出统一 -1.5 dBTP |
+| 10 | 采样率链路:24 kHz → 设备 44.1/48 kHz 的重采样质量;AudioContext 采样率与数据不一致 | 强制 AudioContext sampleRate=24000(v16 已声明),并在 48 kHz 设备上抓取回放 | 回放频谱、混叠 | 末端使用高质量重采样;48 kHz 引擎直接 48 kHz 播放 |
+| 11 | 网络/背压/欠载:ngrok、包重排、欠载补零 | Playwright + 网络模拟 | 欠载次数、播放端零段 | v13/v14 机制保留;新增"播放端取证" |
+| 12 | 模型本身的上限(训练数据、codec 带宽) | 换引擎(§6) | 全部指标 | 路线一/二的择优结果 |
+
+要求:每一行都要在 docs/REPORT.md 里有"实验编号、变量、结果表、结论"。没有证据的行写"未验证",不得写"已排除"。
+
+---
+
+## 8. 增强链(联网增强模型的融合):守卫式,宁缺毋滥
+
+### 8.1 参考语音增强(进入克隆之前)
+
+1. 候选链(各自独立实验,不预设赢家):
+   - R0:不增强(仅高通 + 边缘淡化,沿用 v15 参考管线)
+   - R1:DeepFilterNet3(48 kHz;MIT/Apache-2.0;https://github.com/Rikorose/DeepFilterNet)
+   - R2:ClearerVoice MossFormer2_SE_48K(https://github.com/modelscope/ClearerVoice-Studio)
+   - R3:Resemble Enhance 仅去噪模式(https://github.com/resemble-ai/resemble-enhance)
+   - R4:Sidon → DeepFilterNet3(https://huggingface.co/sarulab-speech/sidon-v0.1)
+   - R5:R4 + 掉字修复 + 混入少量原声(参考 https://github.com/beleonattila/audio-enhancer 的思路)
+2. 守卫:增强版必须同时满足:对"原始参考"的说话人相似度不低于 min(0.97×原件自身片段间相似度中位数, 设定下限);ASR 回读 CER 不劣于原件;能量掉字检测(增强后语音能量显著低于原件的片段比例 ≤ 阈值);带宽不窄于原件。任一失败 → 该片段退回原件(逐片段决定,不是整库一刀切)。
+3. 输出:原件永远保留;增强版另存;UI 提供 A/B 试听与"逐片段使用原件/增强"的选择,默认按 bench 结论。
+4. 重要认知:增强可能让"更干净"但"不那么像"。因此判断标准是"克隆输出对原始参考的 SIM + 盲听",不是增强后的 MOS。
+
+### 8.2 输出后处理(合成之后,守卫式)
+
+1. 默认不加任何新处理(保持 v15/v16 的拼接器与软限幅,逐样本一致)。
+2. 仅当取证器在某个句段检测到缺陷(沙沙声指标超阈、点击残留、块边界台阶、削波)时,才对该句段调用修复:
+   - 点击:沿用 v15 孤立尖峰中值修复,必要时对块边界做更长的重叠相加;
+   - 沙沙声:先试"谱减/下行扩展(只作用于安静帧)",再试 DeepFilterNet3 轻度(衰减上限 ≤ 6~9 dB);最后才试生成式修复(Sidon),并必须过 SIM 门与"掉字"门;
+   - 任何处理后重新取证 + 重新算 SIM;变差则丢弃处理结果、使用原句或重新生成。
+3. 24 → 48 kHz 超分(MossFormer2_SR_48K / AP-BWE / Resemble Enhance)默认关闭;只有 bench + 盲听证明提升才在"极致质量模式"可选开启。注意带宽扩展会"发明"高频,可能被听成沙沙声。
+4. Best-of-N(极致质量模式):每句生成 N 个候选(不同种子),用 QualityGate 打分选优(score = w1·SIM + w2·(1-CER) + w3·UTMOS − w4·伪影惩罚;硬门槛先过滤),仿照 ClipCannon 的三道验证:合理性(时长/能量/零段)→ 可懂度(ASR)→ 身份(SIM)。
+
+---
+
+## 9. 多参考语音库(R6 + R8)
+
+### 9.1 数据模型(服务端,私有目录,沿用 libraries.py 的结构并扩展)
+
+    Library{ id, name, owner_consent, engine_profile, versions[], created_at }
+      Sample{ id, source: "upload"|"live", session_id, orig_file(无损原件), sha256, sr_orig, channels, duration_s,
+              status: "pending"|"processed"|"rejected", notes[] }
+        Segment{ id, sample_id, t0, t1, wav_48k, wav_24k, enhanced_wav?, text_asr_a, text_asr_b, text_final,
+                 text_trust: "human"|"asr_agree"|"asr_conflict", qc{snr, hf_floor, clip, dc, bandwidth, voiced_ratio, quality_score},
+                 speaker{embedding(s), cos_to_centroid, outlier:boolean, overlap_speech:boolean},
+                 enabled, weight, is_primary, used_in_versions[] }
+      Version{ id, parent_id?, frozen_dataset_id, mode:"full"|"incremental", params, metrics, status:"candidate"|"promoted"|"rejected", model_dir }
+
+规则:原件永不覆盖;删除要真删(含嵌入与缓存);任何派生数据都可由原件重新生成;每个版本冻结其数据集清单(便于复现与回滚)。
+
+### 9.2 无时长限制的入库(录音与上传)
+
+用户要求"没有任何时长限制"。落地时要区分三件事:入库不限、存储不限(磁盘配额只告警不拒绝)、模型条件长度有上限(ICL 提示越长首句越慢)。后者通过"切片+选择"解决,而不是限制用户。
+
+1. 现场录音(浏览器):
+   - getUserMedia 约束:echoCancellation=false、noiseSuppression=false、autoGainControl=false、channelCount=1(录参考时必须关;v16 的实时对话路径里这些为 true,二者必须分开);请求 sampleRate 48000,实际以 track.getSettings() 为准并记录。
+   - 采集:AudioWorklet 以 float32 拿 PCM,在 Worker 里写入 OPFS(FileSystemSyncAccessHandle),每 1 秒追加一块并 flush;内存只保留常数级缓冲;页面崩溃/刷新后可从 OPFS 恢复未上传的会话。
+   - 实时质量仪表:电平(RMS/峰值)、削波报警(≥ 0.1% 样本接近满幅)、估计 SNR、"太轻/太响"提示(目标:峰值 -12~-3 dBFS、RMS 约 -26~-18 dBFS;不在录音端做自动增益)、HF 底噪、环境噪声底。
+   - 屏幕常亮(Wake Lock)、设备切换/轨道结束自动续录并在时间轴标记断点(沿用 dialog.js 的 recover 思路)。
+   - 回退:不支持 AudioWorklet/OPFS 的浏览器用 MediaRecorder,但必须提示"有损,不推荐",并设置较高码率;文件标记 lossy=true,质量分降权。
+   - 录音期间可"边录边传":每 8~16 MB 或每 30 秒一个分块上传,断网自动续传。
+2. 文件上传:
+   - 接受 wav/flac/mp3/m4a/aac/ogg/opus/webm/mp4/mkv 等一切 ffmpeg 能解码的格式;不设时长/大小上限。
+   - 分块可续传(参考 tus 协议 https://tus.io 或自定义:4~8 MB 分块 + 每块 SHA-256 + 服务端 offset 查询),经 ngrok 稳定;前端显示真实进度与剩余时间。
+   - 服务端用 ffmpeg 流式解码为 48 kHz/32-bit float WAV(无损中间格式),原件另存;全程流式处理,内存与时长无关(2 小时音频也只用常数内存)。
+3. 切片:
+   - Silero VAD(https://github.com/snakers4/silero-vad)找语音段 → 在"停顿能量最低处"切成目标 8 秒(3~14 秒)片段(v16 已有逻辑,保留并增强);不在词中间切。
+   - 长音频后台排队处理(进度条 + 可取消 + 可恢复),处理期间用户可继续使用其他功能。
+4. 说话人一致性(混入他人声音的防护):对每个片段取 WavLM-Large/ECAPA(或 CAM++)嵌入 → 稳健质心(去离群,v16 已有函数)→ 层次聚类;与"主参考质心"余弦低于库自适应阈值的片段标记为"疑似他人",默认停用并需人工确认;重叠说话检测(pyannote/segmentation-3.0,需要用户同意 HF 条款,https://github.com/pyannote/pyannote-audio)作为可选项。
+5. 录音与上传共用同一入库流水线,UI 上同一列表呈现,来源标签区分。
+
+### 9.3 多条参考怎么用于"克隆"(不训练也能用)
+
+提供四种参考策略,bench 择优(默认以实测胜者为准,没有实测前保持 v16 的复合参考):
+- S1 复合参考:把 ≥ 2 条优质片段拼成 ≤ 20 秒(v16 已有;注意拼接处用与底噪匹配的舒适噪声,电平对齐)。
+- S2 最佳单条(参考锦标赛):每个文本风格类别(陈述/疑问/感叹/长句/数字)预先用各候选参考生成,按 SIM/CER/UTMOS 排名,运行时按文本特征检索最佳参考。
+- S3 说话人向量质心:对所有高质量片段的说话人向量取稳健质心(v16 已实现函数,但"qwen-tts 内部说话人编码器注入需要 GPU 验证"所以没有上线);请在 GPU 上验证并 bench。
+- S4 LoRA 微调(§10):多片段训练出的模型,默认说话人 = 质心。
+
+### 9.4 文字核对(逐字稿质量决定克隆质量)
+
+- 双 ASR:Whisper-large-v3(faster-whisper,https://github.com/SYSTRAN/faster-whisper)+ FunASR Paraformer-zh/SenseVoice(https://github.com/modelscope/FunASR);两者 CER ≤ 3% 且与用户核对一致 → "asr_agree";否则"asr_conflict"需人工核对。
+- UI:逐片段"播放 + 文字编辑 + 一键确认";批量模式"仅看冲突项"。
+- 只有 text_trust ∈ {human, asr_agree} 的片段才进入 ICL 与训练;其余仅作为 x-vector/质心的候选。
+
+---
+
+## 10. 训练与持续再优化(R6 + R7)
+
+### 10.1 首次训练(用上传的多条参考)
+
+1. 数据冻结:选取 enabled 且 text_trust 合格且非离群的片段,按"会话"划分训练/验证(同一会话的片段不得同时出现在训练与验证里,防止数据泄漏造成虚高),验证集 ≥ 10% 且至少 8 条或 ≥ 60 秒。
+2. 数据量建议(写在 UI 提示里,不是限制):VoxCPM 官方称 5~10 分钟即可适配说话人;建议 20~60 分钟、覆盖多种语速/情绪/距离;超过后收益递减,但不拒绝更多数据。训练时对超长数据做"覆盖均衡采样"(按时长、语速、音素覆盖分层),保证多条参考都被学到。
+3. 数据增强(谨慎):轻度速度/音量扰动可选;禁止对参考做会改变音色的增强(如变调)。
+4. 训练器:沿用 auto_train_loop.py(Qwen3-TTS LoRA,双卡 DDP,按验证 loss 早停,NaN 保护);对 VoxCPM2 提供其官方 LoRA 脚本的适配(scripts/train_voxcpm_finetune.py,conf/voxcpm_v2/voxcpm_finetune_lora.yaml)。
+5. 注意仓库现状:训练后模型在服务端被强制 x-vector 模式(VC_REF_XVEC=1,与训练格式一致)。请评估"训练后模型 + ICL 提示"是否更好,并保持一致性(训练格式与推理格式必须一致,否则会出伪影)。
+6. 可断点续训、可暂停;训练监控页保持只读且不占显存(沿用)。
+
+### 10.2 继续再优化(训练完后再录音/再上传)
+
+1. 触发:用户在语音库里"继续优化" → 新增样本(现场录音或上传)走 §9 的完整入库流水线 → 通过后自动生成"增量计划"预览(新样本数/时长、回放样本数、学习率、父模型、预计耗时)。
+2. 增量训练配方(沿用 v16 并强化):
+   - 数据 = 新样本 + 旧样本回放(防遗忘;回放比例默认 30~50%,按质量分与覆盖度分层采样,保证"老声音特征"不被冲掉)+(可选)用当前已晋升模型对 Golden Set 句子生成的"自蒸馏样本"作为稳定锚(仅在 bench 证明有益时启用;自蒸馏可能固化伪影,默认关闭);
+   - 学习率 = 基准 × 0.4(夹在 0.3~0.5),更少 epoch,早停;
+   - 父模型 = 当前已晋升版本;训练开始前把父模型完整拷贝保留(回滚/对照);
+   - 可选:训练结束后对"父 LoRA 与新 LoRA"做权重插值(例如 0.3~0.7 网格)并用验证集选系数,抑制过拟合与灾难性遗忘。
+3. 晋升(三证据 + 质量棘轮):候选模型必须同时 (a) 验证集 SIM(对原始参考)显著不劣且最好显著提升,(b) CER 不劣,(c) 伪影与 UTMOS/DNSMOS 不劣,(d) 加载 + 试合成通过,(e) Golden Set 对旧版本的配对 bootstrap 满足晋升规则(v14 registry),(f) 用户在 /abx 里盲听不劣(可选但推荐)。通过后晋升为当前版本;旧版本永久保留可回滚。
+4. 反馈循环:允许用户对任意一句标"不像/有噪声",被标记的文本与种子进入"困难样本集",下次 bench 与 Best-of-N 重点覆盖(只记文本哈希与指标,不存音频,沿用 v14 的脱敏时间线)。
+5. 无训练的快速优化:新增参考立即参与 §9.3 的参考策略(S1~S3),用户无需等训练就能听到变化;训练是"可选的深度优化"。
+
+---
+
+## 11. 质量门与验收标准(定义"成功")
+
+### 11.1 单条音频质量门(运行时,Best-of-N/离线渲染必过;实时模式用其轻量版只做监测与重试)
+
+| 指标 | 通过条件(初始值,必须用用户数据与参考分布校准后写入配置;不得拍脑袋) |
+|---|---|
+| 说话人相似度 | 对原始参考的 SIM ≥ 该库"同说话人真实片段对分布"的 P10(v16 的校准函数:不足 8 对时标记 not_calibrated 且不显示百分比) |
+| 可懂度 | 双 ASR 回读 CER ≤ 该引擎在 Golden Set 上基线 CER + 容差 |
+| 自然度 | UTMOS ≥ 基线 - 容差;DNSMOS OVRL ≥ 基线 - 容差 |
+| 沙沙声 | 安静帧 6 kHz 以上底噪相对语音 ≤ 参考语音的同口径值 + 3 dB;语音帧谱平坦度/HNR 不劣于基线 |
+| 爆音/点击 | 孤立尖峰数 = 0(阈值沿用 v15 保守阈值),块边界台阶 ≤ 阈值 |
+| 零段/削波/直流 | 数字零段 = 0(舒适噪声填充后);削波样本 = 0;|DC| < 40 LSB |
+| 真峰值/响度 | 真峰值 ≤ -1.5 dBFS;短期响度偏差在 ±1.5 LU 内(沿用 v13/v15 恒定音量) |
+| 带宽 | 99.9% 能量截止频率不低于基线 |
+
+不达标 → 换种子重试 → 降温重试 → 切换候选配置 → 守卫式修复 → 仍不达标则如实标注"未达标放行/拒绝放行"(沿用 v14 抢救放行的诚实标注),绝不静默放行。
+
+### 11.2 系统级验收(全部通过才算 v17 完成)
+
+1. 回归:V17 全关 → 与 v16 PCM 逐样本一致(Mock + 真机 golden 各一份)。
+2. 基线不降级:在 Golden Set 上,v17 默认配置对 v16 基线:SIM、CER、UTMOS/DNSMOS、伪影计数、TTFA、欠载全部"非劣效",至少一项显著提升(配对 bootstrap)。
+3. 沙沙声/爆音:对用户的全部语音库,用 v17 重新渲染 Golden Set,点击/零段/削波 = 0,沙沙声指标不劣于参考语音;用户盲听(/abx ≥ 12 轮)不劣于 v16 且在"极致质量模式"显著更优。
+4. 多参考:同一库上传 ≥ 5 条参考(含 ≥ 1 条 > 10 分钟的长录音与 ≥ 1 条现场录音),全部成功入库、切片、转写、核对;训练成功;再追加 ≥ 2 条新参考做增量优化,候选模型通过晋升或被合理拒绝(两种结果都要有日志与解释)。
+5. 无时长限制:模拟 2 小时音频上传(断网续传一次)与 60 分钟现场录音(刷新页面恢复一次),内存占用不随时长增长,最终入库成功。
+6. 回滚:任意晋升版本可一键回滚,回滚后输出与回滚前版本逐样本一致。
+7. 性能:实时模式 TTFA/欠载不劣于 v16;极致质量模式给出真实的离线渲染耗时与显存数据。
+8. 诚实:docs/REPORT.md 对每个结论标注"沙箱验证 / 真机验证 / 未验证",没有任何编造数字。
+
+### 11.3 Golden Set(冻结,跨版本不可改)
+
+≥ 40 句:短句(≤ 6 字)× 8、中长句 × 12、数字/时间/金额/网址 × 6、中英混合 × 6、问句/感叹 × 4、绕口令/疑难字 × 2、≥ 60 秒连续长段落 × 2。每个语音库一份,存 baseline/ 下,附固定种子 [11, 23, 37]。
+
+---
+
+## 12. 前端实现要点(在 v16 的 "📚 多参考管理" 面板基础上扩展)
+
+1. 语音库详情页分四栏:
+   - 参考样本列表(来源标签:现场录音/上传;时长;状态;质量分;说话人一致性;是否核对;启用开关;权重滑块;设为主参考;A/B 试听"原件/增强版")。
+   - 录音器(无损,§9.2)+ 上传器(拖拽多文件/文件夹,分块续传,进度/速度/剩余时间)。
+   - 训练与版本:首次训练/继续优化按钮;增量计划预览;版本时间线(候选/已晋升/已拒绝)、每个版本的指标卡、一键回滚、与上一版 A/B 盲听。
+   - 质量:该库的 Golden Set 报告(SIM/CER/UTMOS/伪影);voice_profile(引擎、参考策略、是否增强、采样超参);"不像/有噪声"反馈按钮。
+2. 录音器 UI:大号电平表 + 削波警告 + "太轻/太响/环境噪声大"提示 + 计时 + 暂停/继续 + 标记断点 + "录完直接入库"与"继续录下一条";可以一直录,不弹"时长上限"提示。
+3. 所有长任务(上传/转码/切片/转写/增强/训练)都显示真实进度、可取消、可恢复;页面刷新后任务状态来自服务端,不丢失。
+4. 诊断面板新增:v17 验收项(§11.2 的 8 条各自"通过/失败/未运行/未验证")、bench 报告入口、引擎路由当前选择与回退原因。
+5. 设计系统沿用现有深灰风格;键盘可达;所有按钮有明确的禁用原因提示。
+
+## 13. 后端接口(新增,均需访问密码鉴权;沿用 /api/libs/{id}/refs 命名)
+
+- POST /api/libs/{id}/uploads(创建会话)/ PATCH /api/libs/{id}/uploads/{uid}(分块,带 Upload-Offset 与块 SHA-256)/ HEAD(查询 offset 以续传)。
+- GET /api/libs/{id}/samples、PATCH /api/libs/{id}/segments/{sid}(文字/启用/权重/主参考)、POST /api/libs/{id}/segments/{sid}/enhance?chain=R4、DELETE(真删)。
+- POST /api/libs/{id}/train?mode=full|incremental(排队;执行仍由 MODE=train + TRAIN_FROM_LIBRARY=True 触发,沿用)、GET /api/libs/{id}/versions、POST /api/libs/{id}/versions/{vid}/promote|rollback。
+- POST /api/bench/run、GET /api/bench/report(只读)。
+- 所有写操作生成脱敏审计事件(无文本、无音频、无声纹);声纹/嵌入只写私有目录(0600)。
+
+## 14. 隐私、合规与安全
+
+1. 声纹和语音是生物特征:每个库必须有"这是本人声音/已获授权"的勾选记录;删除按钮真删(原件、切片、嵌入、增强版、训练数据集副本、缓存)。
+2. 把仓库 bizuming1-ui/111 改为私有;若必须公开,仅同步脱敏审计,不同步任何音频/嵌入/模型权重。仓库内已有的语音文件建议移出公开历史(使用 git filter-repo / BFG 清理),因为公开仓库里的历史版本仍可被下载。
+3. 令牌(NGROK_TOKEN/HF_TOKEN/DEEPSEEK_API_KEY/GITHUB_TOKEN)只放 Kaggle Secrets;如果任何版本的仓库历史里出现过令牌,立即撤销重建。
+4. 许可证:Fish S2 为研究/非商用许可;IndexTTS2、Seed-VC 等请在使用前阅读各自许可;写入 docs/LICENSES.md。VoxCPM2(Apache-2.0)、LongCat-Audio-DiT(MIT)、DeepFilterNet3(MIT/Apache-2.0)、ClearerVoice-Studio(Apache-2.0)在使用前同样以官方仓库为准再核对一次。
+5. 防滥用:克隆他人声音必须有授权;输出音频建议带"AI 合成"标记(元数据/可选水印);遵循 VoxCPM 等模型"禁止冒充/欺诈/虚假信息"的使用条款。
+6. 网络:搜索类功能保持"遇到限制即停止、不绕过"的现有策略。
+
+## 15. 测试策略
+
+1. 单元(CPU 沙盒):取证函数(合成已知缺陷:注入点击/零段/沙沙声/削波/台阶,检出率与误报率);切片器(2 小时合成音频 <20 秒、无样本丢失、切点在停顿);分块上传(乱序/重复/中断/续传);OPFS 恢复(用 Playwright 模拟崩溃);数据模型与版本冻结;晋升规则(注入"更差候选"必须被拒绝);守卫式后处理(干净输入逐样本不变)。
+2. 集成(Mock GPU 进程):真实网关 + HTTP + WebSocket 全流程;V17 全关与 v16 逐样本一致;开关矩阵(每个 V17_* 单独开/关)。
+3. 端到端(Playwright + 假麦克风文件):录音 → 入库 → 转写核对 → 训练(用小数据快速跑)→ 合成 → 播放回录 → 取证。
+4. GPU 真机 bench:§6.3 全部指标;失败重试 3 次后写明原因。
+5. 回归守护:所有 v13~v16 原有测试必须继续全绿;新增测试文件 tests/test_v17.py、tests/test_v17_mock.py、tests/test_v17_ingest.py、bench/test_bench.py。
+6. 金丝雀:新配置先对 10% 的句子启用并监控指标,违反护栏自动回滚(沿用 v14)。
+
+## 16. 里程碑与交付物(按顺序执行;每个里程碑结束都要有可运行的证据)
+
+| 里程碑 | 内容 | 验收证据 |
+|---|---|---|
+| M0 | 阅读 v16 全部代码;冻结基线(baseline/v16:Golden Set 渲染 + 指标 + SHA-256);复现 §4.2 的取证数字 | baseline 目录 + 复现脚本 + 对比表 |
+| M1 | 根因排查矩阵(§7)逐行做实验,尤其 #1(参考)/#5(fp32 解码器)/#6(块边界)/#7(Graph) | docs/REPORT.md 的实验表 |
+| M2 | 无损录音器 + 分块续传上传 + 流式解码(§9.2);2 小时音频与 60 分钟录音的内存/恢复测试 | 测试日志 + 截图 |
+| M3 | 入库流水线增强:VAD 切片、说话人一致性、双 ASR、文字核对 UI | 入库 5 条样本的端到端演示 |
+| M4 | 参考增强链 R0~R5 + 守卫;参考策略 S1~S4 | bench 表(对原始参考的 SIM) |
+| M5 | 引擎适配器与独立 venv;安装并跑通 VoxCPM2、LongCat-Audio-DiT、CosyVoice3(0.5B)、IndexTTS2;Fish S2(许可允许且显存够时)| 每个引擎的安装日志/RTF/显存/样例 |
+| M6 | bench 全网格(二阶段)+ /abx 盲测包 + 引擎路由器 + 每库 voice_profile | REPORT.md 的择优结论 |
+| M7 | Best-of-N 离线渲染 + 质量门 + 守卫式修复 + 两段式 VC(可选) | 门通过率统计 |
+| M8 | 首次训练(多参考冻结数据集)+ 增量再优化 + 回放 + 权重插值 + 晋升/回滚 | 版本时间线 + 指标卡 |
+| M9 | 全量回归、端到端、网络模拟、金丝雀;文档与一键运行脚本(沿用"整份粘贴 Kaggle 单元格") | 全绿日志 + npm/pytest 输出 |
+| M10 | 最终报告:每个结论标注验证等级;列出所有未解决问题与下一步 | docs/REPORT.md |
+
+## 17. 交付形式(沿用 v16 的约定)
+
+- 一份可粘贴进 Kaggle 单个代码单元格的脚本(顶部有"只需要改这里"的开关区:V17_*、MODE="serve|train|train_then_serve|bench"、ENGINE_ALLOWLIST、REALTIME/ULTRA 渲染模式等);
+- 同一仓库内的 bench/ 目录(可独立运行)、tests/、docs/(DECISIONS.md、REPORT.md、LICENSES.md);
+- README 更新:新增功能的使用步骤、已知限制、真机验证状态。
+
+## 18. 诚实声明(请原样保留在脚本头部)
+
+1. 没有任何方法能在数学上保证"所有语音永远没有任何沙沙声/爆音"。本方案把它变成"每条输出都过客观质量门 + 不达标自动重试/修复/如实标注 + 用户盲听裁决",这是可验证、可持续的"做到最优"的唯一诚实定义。
+2. 公开榜单(Seed-TTS-Eval 等)不等于对用户嗓音的表现;最终以 bench 与盲听为准。
+3. 生成式增强可能改变音色或抹掉音节;因此所有增强都被 SIM/CER/掉字门守护,并可逐片段回退到原件。
+4. 沙箱(CPU)只能证明逻辑与信号层行为,不能证明真实音质;真机(Kaggle T4×2)上没跑过的一律写"未验证"。
+5. T4 无 bf16、显存 15 GB、会话有时长/配额限制:所有训练与长任务必须可断点续跑。
+6. 如果某个更强引擎在 T4 上不可用(显存/速度/许可),必须写明并保留现有方案,不得为了"换模型"而降低质量。
+
+---
+
+## 19. 资源与参考网址(请 AI 在使用前逐个打开核实最新状态与许可证)
+
+### 参考仓库与基线
+- 用户参考仓库(v16 代码、语音样本):https://github.com/bizuming1-ui/111
+- 克隆基线 Qwen3-TTS:https://github.com/QwenLM/Qwen3-TTS ;模型 Qwen/Qwen3-TTS-12Hz-1.7B-Base(Hugging Face)
+- 仓库推理所用的 FasterQwen3TTS(CUDA Graph 流式)——请在参考代码里定位其 import 与来源后核实上游仓库与版本
+
+### 更强/备选 TTS 引擎
+- VoxCPM / VoxCPM2(Apache-2.0,48 kHz,LoRA):https://github.com/OpenBMB/VoxCPM ;文档 https://voxcpm.readthedocs.io ;权重 https://huggingface.co/openbmb/VoxCPM2 ;加速服务 https://github.com/a710128/nanovllm-voxcpm ;vLLM-Omni https://github.com/vllm-project/vllm-omni
+- LongCat-Audio-DiT(MIT,1B/3.5B,扩散式):请检索 "LongCat-Audio-DiT" 官方 GitHub 与 Hugging Face 页面;社区 MLX 转换页面可作为参考 https://huggingface.co/mlx-community/LongCat-AudioDiT-3.5B-mxfp8
+- CosyVoice(含 Fun-CosyVoice3-0.5B):https://github.com/FunAudioLLM/CosyVoice
+- IndexTTS2:https://github.com/index-tts/index-tts
+- Fish Audio S2(研究/非商用许可):https://github.com/fishaudio/fish-speech ;https://huggingface.co/fishaudio/s2-pro ;许可说明 https://fish.audio/blog/what-we-mean-by-open-source-for-s2/
+- 零样本声音转换(两段式):https://github.com/Plachtaa/seed-vc
+- ClipCannon(Qwen3-TTS + Best-of-N + 三道验证 + 可选增强):https://huggingface.co/cabdru/clipcannon-voice-clone
+
+### 基准与榜单
+- Seed-TTS-Eval 评测代码与数据:https://github.com/BytedanceSpeech/seed-tts-eval
+- 中文零样本榜单:https://www.sota2.com/research/sota/zero-shot-voice-cloning-on-seed-tts-eval-zh-test
+- 英文零样本榜单:https://www.sota2.com/research/sota/zero-shot-voice-cloning-on-seed-tts-eval-en-test
+- 中文困难集榜单:https://www.sota2.com/research/sota/voice-cloning-on-seed-tts-eval-zh-hard-test
+- 2026 开源克隆模型综述:https://www.siliconflow.com/articles/best-open-source-models-for-voice-cloning
+
+### 增强 / 修复 / 降噪
+- Sidon(语音修复):https://huggingface.co/sarulab-speech/sidon-v0.1 ;论文 https://arxiv.org/abs/2509.17052
+- DeepFilterNet3:https://github.com/Rikorose/DeepFilterNet
+- ClearerVoice-Studio(MossFormer2_SE_48K / SR_48K):https://github.com/modelscope/ClearerVoice-Studio
+- Resemble Enhance:https://github.com/resemble-ai/resemble-enhance
+- 多级增强链实测参考:https://github.com/beleonattila/audio-enhancer
+- ComfyUI 封装(便于对比 ClearVoice/Resemble/VoiceFixer):https://github.com/filliptm/ComfyUI_FL-ClearVoice
+- 响度:https://github.com/csteinmetz1/pyloudnorm ;FFmpeg loudnorm
+
+### 评测模型(SIM / MOS / 伪影)
+- WavLM-SV:https://huggingface.co/microsoft/wavlm-base-plus-sv
+- 3D-Speaker(CAM++ / ERes2Net):https://github.com/modelscope/3D-Speaker
+- SpeechBrain ECAPA:https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb
+- UTMOS(SpeechMOS):https://github.com/tarepan/SpeechMOS
+- DNSMOS:https://github.com/microsoft/DNS-Challenge
+- NISQA:https://github.com/gabrielmittag/NISQA
+
+### 入库流水线
+- Silero VAD:https://github.com/snakers4/silero-vad
+- pyannote-audio(重叠说话/分离,需同意 HF 条款):https://github.com/pyannote/pyannote-audio
+- faster-whisper:https://github.com/SYSTRAN/faster-whisper
+- FunASR(Paraformer / SenseVoice):https://github.com/modelscope/FunASR
+- tus 可续传上传协议:https://tus.io
+
+### 浏览器能力
+- AudioWorklet:https://developer.mozilla.org/en-US/docs/Web/API/AudioWorklet
+- OPFS(Origin Private File System):https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system
+- getUserMedia 约束(关闭 AEC/NS/AGC):https://developer.mozilla.org/en-US/docs/Web/API/MediaTrackConstraints
+- Screen Wake Lock:https://developer.mozilla.org/en-US/docs/Web/API/Screen_Wake_Lock_API
+- Playwright(假麦克风、网络模拟):https://playwright.dev
+
+---
+
+## 20. 附录 · 决策记录(自问自答摘要,共 33 问;每问由上一问的答案引出)
+
+**Q1【现状】参考仓库现在到底是什么形态?我要在什么基础上继续开发?**
+
+答:仓库根目录是 3 条克隆语音(wav+zip)、2 条参考语音(webm)、提示词1~5、以及一个约 1.6MB/28,193 行的『参考代码』。它是一份 Kaggle 单单元格脚本,文件头写明已迭代到 v16:Qwen3-TTS-12Hz-1.7B-Base + FasterQwen3TTS(CUDA Graph 流式)+ 双 T4 + LoRA 训练 + ngrok;v13~v16 已有守卫、拼接器、软限幅、取证、盲测页、多参考入库、复合参考、增量再优化排队。结论:这是『在 v16 之上做增量(v17)』,不是重写。
+
+**Q2【现状】提示词1~5 和『照片』里有没有 v16 文件头没写到的要求?**
+
+答:我用原始文件地址抓取提示词1~5,内容几乎为空(约 1 字节);仓库当前根目录也没有图片文件(代码注释里提到的『搜索失败.png』不在)。所以我不猜测它们的内容,而是以参考代码文件头里对它们的引用与结论为准,并在任务书里要求执行 AI 再核对一遍、有内容就以内容为准。
+
+**Q3【证据】仓库里这 5 个音频有没有可客观测量的问题?**
+
+答:我在沙箱里用 Python 分析:两条参考是 Opus 有损、48kHz 立体声、RMS 约 -34dBFS(很轻,峰值 -17/-15dBFS);3 条克隆是 24kHz PCM16,峰值 -1.5dBFS,克隆语音3(149.8 秒)有 536 处相邻样本大跳变,其中 79 处是孤立单样本尖峰(约 0.53 次/秒,属点击样);无数字零段、无削波、直流≈0;99.9% 能量分别在 7.3/9.0/8.8kHz 以下。这些文件很可能来自 v15 之前,所以任务书要求用 v16 重新渲染再测。
+
+**Q4【证据】参考语音是有损 WebM/Opus 且很轻,这是不是沙沙声的第一嫌疑?**
+
+答:是『第一嫌疑』但不是结论。参考管线会把峰值归一到 -3dBFS,等于把底噪同比抬 14~15dB;这类模型会复制参考的信道特征(底噪/房间声/编码伪影)。但我的信号层测量也显示:按『相对语音』口径,克隆语音在安静帧的 6kHz 以上底噪并不比参考更差(约 -37.5 vs -29.5 dB 相对语音)。所以任务书没有写死『就是参考的错』,而是设计二分法排查矩阵(§7),并要求同时测语音段内的谱平坦度/HNR。
+
+**Q5【音质】怎样分清沙沙声/爆音来自模型、拼接、还是浏览器播放?**
+
+答:先离线渲染到 WAV 文件再取证:离线 WAV 干净而浏览器里有问题 → 传输/播放(欠载补零、重采样、AudioContext 采样率);离线 WAV 就有问题 → 模型/解码/拼接。再对模型侧一次只切一个变量:参考(原件/增强)、ICL vs x-vector、采样超参、fp16 vs fp32 解码器、流式分块 vs 整句解码、CUDA Graph vs 官方路径、v15 各后处理开关。每一步都要有指标表。
+
+**Q6【音质】T4 上 fp16 与流式分块解码是否可能制造底噪或块边界点击?**
+
+答:有可能,但没有数据不能下结论。仓库在 T4 上优先 fp16,且流式解码以小块输出;解码器若缺少足够左上下文,块边界会出现台阶/点击;codec 解码器在 fp16 下也可能有数值噪声。验证方式很明确:只把编解码器解码器改 fp32(LM 仍 fp16),并对同一份 codes 比较『整句解码 vs 分块解码』的边界台阶与频谱通量。任务书把这两项列为排查矩阵 #5/#6,并要求核对 qwen-tts tokenizer 的 chunked_decode/left_context 实现。
+
+**Q7【模型】是否存在比 Qwen3-TTS-1.7B 更强的开源模型?『更强』用什么衡量?**
+
+答:用 Seed-TTS-Eval 的 CER/WER 与说话人相似度 SIM 衡量。中文测试集:Qwen3-TTS 1.7B 为 CER 1.22/SIM 77.0;VoxCPM2(2B,Apache-2.0)0.97/79.5;LongCat-Audio-DiT(3.5B,MIT)1.09/81.8;IndexTTS2 1.03/76.5;CosyVoice3 0.5B 1.16/78.0;Fish Audio S2(4B)CER 0.54 但许可为研究/非商用。结论:确有更强者,但『更强』是平均意义,且各有代价。
+
+**Q8【模型】T4×2(各约 15GB、无 bf16)能不能装下这些候选?实时性呢?**
+
+答:VoxCPM2 官方约 8GB 显存、RTF≈0.3(RTX4090),T4 上需实测;LongCat 3.5B 是扩散式非流式,只适合离线渲染,可先试 1B 版;CosyVoice3-0.5B 轻量可流式;Fish S2 4B + SGLang 在 T4 上大概率过重且许可受限;IndexTTS2 可跑但英文 SIM 偏低。我不能在没有 GPU 的沙箱里编造 RTF/显存,所以必须让执行 AI 在 Kaggle 真机上给出每个引擎的真实 RTF、显存、TTFA。
+
+**Q9【模型】公开榜单第一是否等于用户的声音克隆更好?**
+
+答:不等于。榜单是 Common Voice 等通用语料的平均;用户的参考是自己的麦克风、自己的房间、可能是低电平有损录音。ClipCannon 的例子也表明:同一个 Qwen3-TTS,靠推理时工程(Best-of-24 + 三道验证 + 可选增强)能在官方编码器上把 SIM 做到 0.779;说明『流水线』与『换模型』都可能有收益。因此我把『选型』做成可复现的 bench:用用户自己的参考语音跑 引擎×参考策略×增强×精度×超参 的网格,按硬门槛 + 配对 bootstrap 择优,并按语音库独立路由。
+
+**Q10【增强】『联网增强』是下载开源权重,还是把用户声音发到第三方云 API?**
+
+答:选择前者:Kaggle 开启 Internet 只用来下载开源权重(Hugging Face/GitHub)并在本机/本会话推理;不把用户的声纹与语音发给第三方云服务。理由:声纹是生物特征(仓库已有声纹锁与同意流程)、云 API 版本会悄悄变化而不可复现、也无法做逐样本回归。可用的开源增强件:Sidon、DeepFilterNet3、ClearerVoice MossFormer2、Resemble Enhance,以及 Seed-VC 两段式转换。
+
+**Q11【增强】生成式增强(如 Sidon)会不会改变音色或吃掉音节?怎么防?**
+
+答:会有风险:社区实测里 Sidon 有时会擦掉安静音节,所以才有『掉字修复 + 混入少量原声』的做法。防护写成硬规则:增强版必须对『原始参考』的 SIM 不低于阈值、ASR 回读 CER 不劣、掉字检测不超标、带宽不更窄,逐片段决定是否采用,否则退回原件;原件永不覆盖,UI 提供 A/B。关键认知:判断标准是『克隆输出对原始参考的 SIM + 盲听』,不是增强后的 MOS 分。
+
+**Q12【增强】合成后的音频要不要统一再做降噪/超分?**
+
+答:不统一做。默认不加任何新处理(保持 v15/v16 的拼接器与软限幅,逐样本一致);只有当取证器在某句检测到缺陷(沙沙声指标超阈、点击残留、块边界台阶、削波)时,才对该句调用修复,修复后重新取证并重新算 SIM,变差就丢弃并换种子重生成。24→48kHz 超分默认关闭,因为带宽扩展是『发明高频』,可能反被听成沙沙声,只有 bench+盲听证明有益才在极致质量模式可选。
+
+**Q13【防降级】怎样把『不降级』从口号变成机制?**
+
+答:质量棘轮:第 0 步先冻结 v16 基线(固定种子的 Golden Set 渲染 + SHA-256 + 全部指标 + 用户现有 5 个文件的取证基线);所有 V17_* 开关关闭时 PCM 与 v16 逐样本一致(仓库已有 Mock golden 对账方法);开启后每个指标必须『非劣效』且主指标配对 bootstrap 显著提升才允许默认开启;候选模型沿用 v14 registry 的晋升/金丝雀/回滚;所有后处理守卫化(没缺陷就逐样本不动)。任何一项变差自动拒绝。
+
+**Q14【防降级】我能不能承诺『所有克隆语音永远没有任何沙沙声和爆音』?**
+
+答:不能,也不应该承诺——没有人能在数学上保证。诚实且可执行的定义是:每一条输出都过客观质量门(SIM/CER/UTMOS/DNSMOS/沙沙声/点击/零段/削波/台阶/带宽/响度),不过门就换种子、降温、换候选、守卫式修复,仍不过则如实标注;再加用户盲听裁决。任务书 §11 把『成功』写成 8 条可验证的验收标准,并在 §18 要求原样保留诚实声明。这比空口保证更可靠。
+
+**Q15【多参考】『每个语音库用多条参考语音进行训练』是指 LoRA 微调,还是多条参考参与克隆?**
+
+答:两者都要,并且分层:①不训练也能立即用——多条优质片段参与『参考策略』(复合参考/最佳单条锦标赛/说话人向量质心);②深度优化——用全部合格片段做 LoRA 微调。这样用户上传多条后马上能听到变化,训练只是可选的加深。
+
+**Q16【多参考】训练需要多少音频?要不要限制上限?**
+
+答:不设上限。参考:VoxCPM 官方称 LoRA 只需 5~10 分钟音频即可适配说话人;我建议 UI 提示『20~60 分钟、覆盖多语速/情绪/距离』更稳,超过后收益递减但不拒收。训练时对超长数据做覆盖均衡分层采样,保证多条参考都被学到,同时控制算力。
+
+**Q17【多参考】随机划分验证集会有什么问题?**
+
+答:同一次录音的相邻片段声学条件几乎相同,随机划分会让验证 loss/相似度虚高(数据泄漏)。任务书要求按『会话』划分:同一会话的片段不得同时出现在训练和验证里;验证集至少 10% 且不少于 8 条或 60 秒;每个版本冻结其数据集清单以便复现与回滚。
+
+**Q18【多参考】怎样避免长音频里混入他人声音污染声音库?**
+
+答:每个片段取 WavLM-Large/ECAPA(或 CAM++)说话人嵌入,与稳健质心比较并做层次聚类;余弦低于该库自适应阈值的片段标记『疑似他人』,默认停用,需用户确认;可选 pyannote 重叠说话检测。仓库 v16 已承认『多说话人聚类剔除未实现,需用户在面板里停用』,v17 把它补上。
+
+**Q19【多参考】参考文字(逐字稿)不准,会损害克隆质量吗?如何把关?**
+
+答:会:ICL/训练都依赖文字与音频对齐,不一致会造成前缀漏字或噪声。把关方式:双 ASR(Whisper-large-v3 + FunASR Paraformer/SenseVoice)互相校验,CER≤3% 且与用户核对一致标『asr_agree』,否则『asr_conflict』需人工核对;只有 human/asr_agree 的片段进入 ICL 与训练,其余只作为 x-vector/质心候选。UI 提供『仅看冲突项』的批量核对。
+
+**Q20【无限时长】『上传和录音没有任何时长限制』是否意味着模型也能吃无限长的参考?**
+
+答:要区分三件事:①入库不限(任何时长、任何大小、任何格式都能进来);②存储不限(磁盘配额只告警不拒绝);③模型条件长度有上限(ICL 提示越长首句 prefill 越慢,所以复合参考 ≤20 秒)。第③条用『切片 + 选择』解决,而不是限制用户。v16 已经取消了 30 秒截断与 1800 秒/80MB 上限,v17 把它做成真正流式、常数内存、可续传。
+
+**Q21【无限时长】浏览器录音几小时不爆内存、不丢数据,怎么做?**
+
+答:AudioWorklet 采 float32 PCM → Worker 里通过 OPFS 的 FileSystemSyncAccessHandle 每秒追加落盘并 flush,内存只保留常数缓冲;页面崩溃/刷新后从 OPFS 恢复未上传会话;录音同时每 8~16MB/30 秒分块上传,断网自动续传;Wake Lock 保持亮屏;设备切换/轨道结束自动续录并在时间轴标记断点。不支持 OPFS/AudioWorklet 时回退 MediaRecorder,但标记有损并降权。
+
+**Q22【无限时长】录参考语音时 echoCancellation/noiseSuppression/autoGainControl 该开还是关?**
+
+答:必须关。v16 的实时对话路径为了回声与打断把 echoCancellation/noiseSuppression 设为 true,这对『对话』合理,但对『采集克隆参考』会引入浏览器的谱修改与泵浦,损伤音色。任务书要求两条采集路径分开:参考录音一律 AEC/NS/AGC=false、单声道、请求 48kHz 并记录 track.getSettings(),用实时电平表/削波/SNR 提示用户把音量调到『够响但不过载』(目标峰值 -12~-3dBFS),而不是靠自动增益。这也解释了仓库里 webm 参考为何只有 -17dBFS 峰值。
+
+**Q23【无限时长】几百 MB 的上传经 ngrok 怎样才可靠?**
+
+答:不用单次大请求。采用 tus 式或自定义的分块可续传:4~8MB 分块、每块 SHA-256、服务端 Upload-Offset 查询、断线从 offset 续传、前端显示真实进度/速度/剩余时间;服务端用 ffmpeg 流式解码成 48kHz/float32 无损中间 WAV,原件另存,内存与时长无关(2 小时音频也是常数内存)。验收里要求做一次『2 小时音频 + 中途断网续传』的测试。
+
+**Q24【增量优化】继续优化时如何防止灾难性遗忘和过拟合新样本?**
+
+答:沿用并强化 v16:新样本 + 旧样本回放(默认 30~50%,按质量分与覆盖度分层)+ 学习率×0.4(夹 0.3~0.5)+ 以当前已晋升版本为父并先完整拷贝父模型;训练后可对『父 LoRA 与新 LoRA』做权重插值(0.3~0.7 网格,用验证集选系数)。自蒸馏样本可能固化伪影,所以默认关闭,只在 bench 证明有益时启用。
+
+**Q25【增量优化】候选模型晋升为当前版本的判据是什么?**
+
+答:同时满足:验证集 SIM(对原始参考)显著不劣(最好显著提升)、CER 不劣、伪影与 UTMOS/DNSMOS 不劣、加载+试合成通过、Golden Set 上对旧版本的配对 bootstrap 满足晋升规则(v14 registry)、(推荐)用户 /abx 盲听不劣。任何一项显著变差即拒绝;旧版本永久保留,可一键回滚且回滚后逐样本一致。
+
+**Q26【增量优化】训练格式和推理格式不一致会造成伪影吗?仓库有没有这类隐患?**
+
+答:会。仓库里训练后模型被强制 x-vector 模式(VC_REF_XVEC=1,ref_text 为空,与训练格式一致),这保证一致性,但可能牺牲 ICL 的韵律细节。我没有在真机上验证哪一个更好,所以任务书要求:评估『训练后模型 + ICL 提示』是否更优,并且无论选哪个,训练格式与推理格式必须一致。
+
+**Q27【引擎】实时模式与极致质量模式要不要分开?**
+
+答:要分开。实时模式只允许『流式且实测欠载=0』的引擎/配置,默认仍是 v16 的 Qwen3-TTS 路径,除非别的引擎在实时门槛内全面胜出;极致质量模式(离线渲染/预渲染/下载)允许非流式引擎(如 LongCat 3.5B)、Best-of-N(N=4~16)、参考锦标赛、两段式声音转换与守卫式增强。这样既不牺牲实时体验,又能把上限推到最高。
+
+**Q28【引擎】用同一个相似度模型选优再用它评估,会不会自欺?**
+
+答:会(ClipCannon 也提示了这点)。对策:选优用的编码器与最终评估的编码器分开——选优可用 WavLM-base-plus-sv/CAM++,最终报告用官方 Seed-TTS-Eval 同款 WavLM-Large+ECAPA 与另一个独立编码器交叉验证;一律对『用户未增强的原始参考』计算;客观指标冲突时以用户盲听(/abx ≥12 轮,二项检验)为准。
+
+**Q29【沙盒】要让 AI 自动下载安装沙盒/模拟器做对比,沙盒要怎样分层?**
+
+答:两层:CPU 沙盒只验证信号层与逻辑(取证函数、切片器、拼接器、质量门、数据模型、API、前端交互),不得宣称音质;GPU 沙盒(Kaggle T4×2)跑真实模型 bench,每个引擎独立 venv + 子进程 + 本地 RPC,安装失败只影响自己。浏览器侧用 Playwright 驱动真实 Chromium(假麦克风文件输入、回录播放输出、网络限速/丢包模拟),把模型问题与传输/播放问题分开。
+
+**Q30【沙盒】如何让多个引擎在同一系统里可替换而不互相破坏?**
+
+答:定义 EngineAdapter 接口(load/prepare_voice/synth_stream/synth_full/train_lora/unload),统一输出 float32 PCM 并记录原生采样率,重采样只在网关末端做一次(高质量 sinc/soxr)。每个适配器运行在独立 venv 子进程,崩溃/失败自动回退到该库上一个已晋升配置,最终回退到 v16 路径,并在诊断面板如实显示原因。
+
+**Q31【合规】声纹/语音数据与模型许可证有哪些必须遵守的红线?**
+
+答:声纹是生物特征:每库须有本人/授权勾选记录,删除按钮真删(原件、切片、嵌入、增强版、数据集副本、缓存);仓库 bizuming1-ui/111 是公开的且包含用户语音,建议改私有并清理历史(git filter-repo/BFG);令牌只放 Kaggle Secrets。许可证:Fish S2 为研究/非商用;VoxCPM2 Apache-2.0、LongCat MIT、DeepFilterNet3 MIT/Apache-2.0、ClearerVoice Apache-2.0,使用前以官方仓库再核对。输出建议带『AI 合成』标记。
+
+**Q32【交付】里程碑顺序如何设计,才能让『先测量、后动手、不降级』落地?**
+
+答:M0 冻结基线并复现我的取证数字 → M1 根因排查矩阵 → M2 无损录音+续传上传 → M3 入库流水线(VAD/说话人/双 ASR/核对 UI)→ M4 参考增强+参考策略 → M5 多引擎适配并真机跑通 → M6 全网格 bench+盲测包+引擎路由 → M7 Best-of-N+质量门+守卫修复 → M8 多参考训练+增量+晋升/回滚 → M9 全量回归/端到端/网络模拟/金丝雀 → M10 带验证等级标注的最终报告。每个里程碑都有可展示的证据。
+
+**Q33【终审】终审:我对需求的理解还有哪些不确定点?方案如何兜底?**
+
+答:①『沙沙声』的真实根因在真机上未证实 → 兜底:二分法矩阵 + 取证 + 盲听,不预设答案;②更强模型在 T4 上的实时性未知 → 兜底:实时/离线分模式,失败自动回退 v16;③生成式增强可能伤音色 → 兜底:SIM/CER/掉字门 + 逐片段回退;④增量训练可能遗忘/过拟合 → 兜底:回放+低学习率+插值+三证据晋升+一键回滚;⑤『无限时长』受 Kaggle 磁盘/会话限制 → 兜底:磁盘告警不拒收 + 断点续跑;⑥沙箱不能证明音质 → 兜底:所有结论标注验证等级。我据此确认:需求是『在 v16 之上,用可验证的流水线把音质推到最优,并补齐多参考库、无限时长入库、可持续再优化,同时绝不降级』。理解已闭合,给出最终任务书。
+
+---
+
+(文件结束。请从 M0 开始执行:先冻结 v16 基线,再做任何改动。)
