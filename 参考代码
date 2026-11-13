@@ -1,5 +1,5 @@
 # =============================================================================
-#  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v14 · 分位数起播 · 失败不丢句(抢救/跨卡重试) · 实时对话 · 声纹锁 · 口语化文本 · 在 v13 之上可回退的增量 · v13 · 零损坏放行 · 滚动视界起播 · 恒定音量 · 在 v12 之上可回退的增量 · v12 · 真实浏览器级交互 · v10 · 完整可下载的合成音频 · 合规搜索加速 · 在 v9 之上最小必要改动 · 大模型意图理解 · 2 秒静音自动执行 · 真实 Google/Bing 多来源 · 页面视觉理解 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
+#  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v15 · 样本连续流拼接 · 舒适噪声停顿 · 软限幅 · 参考管线 · 取证 · 盲测页 · 在 v14 之上可回退的增量 · v14 · 分位数起播 · 失败不丢句(抢救/跨卡重试) · 实时对话 · 声纹锁 · 口语化文本 · 在 v13 之上可回退的增量 · v13 · 零损坏放行 · 滚动视界起播 · 恒定音量 · 在 v12 之上可回退的增量 · v12 · 真实浏览器级交互 · v10 · 完整可下载的合成音频 · 合规搜索加速 · 在 v9 之上最小必要改动 · 大模型意图理解 · 2 秒静音自动执行 · 真实 Google/Bing 多来源 · 页面视觉理解 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
 #  (在 v6「连续播放优先 · 背压 + 帧序号 + 断线续传 · 无变速 · 完整性检测 · 留出评估」之上无损追加;原语音克隆页在 /voice,根路径 / 是搜索首页)
 #  Qwen3-TTS-12Hz-1.7B-Base 声音克隆  ×  双 T4  ×  LoRA 训练(留出验证)  ×  真实指标面板
 #
@@ -138,6 +138,27 @@ from pathlib import Path
 #      【未实现】并行 hedging 与多槽批解码 · EDF 调度器 · 短语缓存/开场库 best-of-N · 辅助模型全部移出 GPU(默认 ASR 仍占用 worker 所在的卡;可改 V14_ASR_BACKEND="cpu")· Silero/TEN VAD · CAM++/ECAPA 融合 · 推测式 LLM · Smart Turn 模型 ·
 #         参考锦标赛/停顿画像/LTAS EQ/LoRA 数据池/VC/其他 TTS 对比 · WebRTC/Opus · ABX 盲测页 · 隧道自动对比 · ASR 回读 CER · bench/ 目录与 MODE="bench"。这些需要 GPU 实测才能择优,我没有在沙箱里假装做过。
 #      隐私:声纹与语音属于生物特征,只写 V14_STATE_DIR(0600)。你的仓库 bizuming1-ui/111 是【公开】的:里面有你的参考语音与克隆语音,建议改为私有。
+#  v15 变更(在 v14 之上最小必要、每个模块独立开关、全部关闭 = v14 行为(逐字节一致,已用 Mock 引擎对 v14 原版做 PCM 逐样本比对);下面「只需要改这里」里的 V15_* 开关):
+#    【依据】对仓库 6 条克隆语音的离线取证(见提示词1/2):数字零段 800/1920 样本簇(1920 = 一个 12.5Hz 码帧)、零→语音硬起、非零截断点、块间 15~16dB 电平台阶、
+#       峰值 -1dBFS、句间停顿为数字零(与带噪静音来回切换 = 呼吸泵浦)。这些是「播放—停顿—播放」与爆音/沙沙的客观痕迹。
+#    【M1 拼接器 V15_STITCH】每个句段一个状态化拼接器:数字零段(含跨块)填舒适噪声并对两侧硬边做 2ms 余弦淡化 · 块边界跳变 3ms 衰减偏移平滑 · 直流仅在 >40LSB 时扣除 · 句尾 12ms 淡出。
+#    【M2 舒适噪声停顿 V15_COMFORT】句间停顿不再是数字零:取说话人实测静音底噪的一半(夹在 3~40 RMS)的低通噪声,首尾 8ms 余弦淡化;样本数与 v14 完全相同。
+#    【M3 点击修复 V15_CLICK】孤立尖峰(≤3 样本且偏离 7 点中值 >0.30 满量程)中值修复;阈值保守,干净语音近似透明(单元测试验证差值 <-55dB)。
+#    【M4 下行扩展器 V15_EXPAND】只衰减 <-52dBFS 的底噪(最多 6dB,下行 30ms、上行瞬时 + 块内 1ms 前视 → 不吃语音起音),不是硬噪声门。
+#    【M5 软限幅 + TPDF V15_LEVEL / V15_DITHER】4× Catmull-Rom 真峰值估计 -1.5dBFS 前视软限幅(平滑增益衰减,不削顶);float→int16 一次量化,TPDF ±1LSB 抖动,饱和不回绕。
+#    【M6 参考语音管线 V15_REFPREP】50Hz 零相位高通 + 10ms 边缘淡化 + 质量评分(SNR/削波/带宽/时长,低分明确提示「建议重录」);电平约定(峰值 0.7)不变。
+#       含「最佳 20 秒窗口选段」与「挑战者必须明显优于基线才替换」的重排函数(已单元测试),但默认不接入实时通路(没有 GPU 实测就不择优)。
+#    【M7 取证 V15_FORENSICS】每轮结束后对「实际发给浏览器的 PCM」取证(零段/click/削波/真峰值/底噪/50ms 台阶),写入 /api/report 的 v15 验收项;命令行:audio_forensics.py。
+#    【M8 盲测页 /abx】浏览器本地 ABX:参考 + v14 + v15,随机顺序、响度对齐、≥12 轮、二项检验 + 置信区间、导出 JSON(不含音频)。「更像」由你的耳朵裁决。
+#    【启动器加固】子进程(pip / 模型下载)带超时看门狗;心跳增加 CPU/内存监控;看门狗每个节拍异常隔离(v14 已有)与磁盘保护(v14 已有)继续保留。
+#    【诚实声明 · 沙箱已验证 / 真机未验证 / 未实现】
+#      沙箱(CPU,合成信号 + Mock 两个 GPU 进程)已验证:tests/test_v15.py(17 项:全关=逐样本一致 · 干净语音透明 · 零段含跨块填充 · 跳变平滑 · 点击仅修孤立点 · 软限幅与真峰值 · 抖动饱和 ·
+#         舒适噪声 · 取证 · 参考评分/选段/重排 · 实时性)+ tests/test_v15_mock.py(真实网关 + WebSocket:停顿零段 4→0、句内注入 1920 样本零段 7→0、帧协议对账、VC_V15=0 与 v14 PCM 逐样本一致、/abx 与报告项)
+#         + v13/v14/网关全套回归(全部通过)。
+#      Kaggle 真机【未验证】:相似度是否提升(只有 /abx 盲测能回答)· 零段在真实模型里到底来自哪里(pause 填充 / 解码零帧 / 欠载补零;本版的修复对三种来源都有效,但没做来源定位)·
+#         热/冷 TTFA、欠载=0、500 轮 soak、双 T4 显存。
+#      【未实现】Best-of-N 并行重排(需要 GPU 才能择优,且会占吞吐)· 24k→48k 超分 · 音色转换 · LoRA 自蒸馏 · 多验证器集成相似度 · fp32 codec 解码器 · 浏览器端欠载外推保底 · 真浏览器网络整形模拟。
+#         这些需要 GPU 实测才能择优,宁可不写也不假装做过。
 # ╔═══════════════════════════ 只需要改这里(都可以不改) ═══════════════════════════╗
 MODE = "serve"                 # "serve" | "train" | "train_then_serve"
 NGROK_TOKEN = ""               # 留空 = 从 Kaggle Secrets 读取 NGROK_TOKEN。⚠ 直接填写后请不要公开分享笔记本
@@ -204,6 +225,16 @@ V14_LEARN = True               # M8 脱敏时间线 jsonl + 分位数模型持�
 V14_ASR_BACKEND = "worker"     # 实时对话的 ASR:"worker" 复用 GPU worker 的 whisper(已验证路径;识别时会短暂占用该卡) | "cpu" faster-whisper small int8(CPU;会尝试 pip 安装,失败自动回退 worker;Kaggle 上的 CPU 延迟未实测)
 V14_SV = "wavlm"               # 声纹模型:"wavlm" = microsoft/wavlm-base-plus-sv 跑在 CPU(阈值下限 0.86,未校准) | "spectral" = 极弱的回退(仅测试)
 V14_STATE_DIR = "/kaggle/working/v14_state"   # 声纹 / 时间线 / 注册表 只写这里(私有、0600);绝不推送到公开仓库 —— GITHUB_REPO 若是公开仓库,请别把这个目录加进同步
+V15 = True                     # v15 总开关(False = 与 v14 逐字节一致)
+V15_STITCH = True              # M1 句段拼接:零段填充 / 块边界跳变平滑 / 句尾淡出(对爆音、播放-停顿-播放 的客观痕迹)
+V15_COMFORT = True             # M2 句间停顿用舒适噪声,不再输出数字零(消除噪声开合的呼吸泵浦)
+V15_CLICK = True               # M3 孤立点击(尖峰)检测与修复(阈值保守)
+V15_EXPAND = True              # M4 平滑下行扩展器(只衰减 <-52dBFS 底噪,最多 6dB;不是硬噪声门)
+V15_LEVEL = True               # M5 真峰值 -1.5dBFS 前视软限幅(取代硬剪裁)
+V15_DITHER = True              # M5 TPDF 抖动量化(饱和不回绕)
+V15_REFPREP = True             # M6 参考语音:50Hz 零相位高通 + 边缘淡化 + 质量评分(低分提示重录;电平约定不变)
+V15_FORENSICS = True           # M7 每轮取证(零段/click/削波/真峰值/底噪),写入 📊 诊断的 v15 验收项
+V15_CEIL_DB = -1.5             # 软限幅上限(dBFS)
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 
 TEST = os.environ.get("VC_LAUNCH_TEST") == "1"          # 本地自检用(跳过安装/隧道/训练)
@@ -213,6 +244,10 @@ os.environ["VC_V13_UPFRONT_WAIT_CAP_MS"], os.environ["VC_V13_FALLBACK_WAIT_MS"],
 for _k14, _v14v in (("", V14), ("_TAIL", V14 and V14_TAIL), ("_SALVAGE", V14 and V14_SALVAGE), ("_XRETRY", V14 and V14_XRETRY), ("_TEXT", V14 and V14_TEXT), ("_DIALOG", V14 and V14_DIALOG), ("_LOCK", V14 and V14_LOCK), ("_LEARN", V14 and V14_LEARN)):
     os.environ["VC_V14" + _k14] = "1" if _v14v else "0"
 os.environ["VC_V14_ASR"], os.environ["VC_V14_SV"], os.environ["VC_V14_STATE"] = V14_ASR_BACKEND, V14_SV, V14_STATE_DIR
+for _k15, _v15v in (("", V15), ("_STITCH", V15 and V15_STITCH), ("_COMFORT", V15 and V15_COMFORT), ("_CLICK", V15 and V15_CLICK), ("_EXPAND", V15 and V15_EXPAND),
+                    ("_LEVEL", V15 and V15_LEVEL), ("_DITHER", V15 and V15_DITHER), ("_REFPREP", V15 and V15_REFPREP), ("_FORENSICS", V15 and V15_FORENSICS)):
+    os.environ["VC_V15" + _k15] = "1" if _v15v else "0"
+os.environ["VC_V15_CEIL_DB"] = str(V15_CEIL_DB)
 if NGROK_TOKEN or DEEPSEEK_API_KEY:
     print("⚠ 你把令牌直接写进了脚本:不要公开分享/提交这个笔记本;建议改用 Kaggle Secrets。")
 WORK = Path(os.environ.get("VC_WORK") or "/kaggle/working/vc")      # 运行时数据(克隆的声音等)
@@ -332,6 +367,12 @@ V14_TAIL = _v14.TailModel() if _v14 else None          # M1:每卡「整句耗�
 V14_REF = _v14.RefBuffer() if _v14 else None           # M7:最近 45 秒【实际发给浏览器】的播放 PCM(回声相干检测的已知参考)
 V14_TL = _v14.Timeline() if _v14 else None             # M8:时间线 jsonl(脱敏:无文本/无音频/无声纹)
 V14_REG = _v14.Registry() if _v14 else None            # M8:学习资产版本注册表(晋升/回滚)
+try:
+    import v15 as _v15
+except Exception as _e15:  # noqa: BLE001
+    _v15 = None
+    log.warning("v15 模块不可用,按 v14 行为运行: %s", _e15)
+V15C = _v15.Counters() if _v15 else None               # v15:拼接/舒适噪声/限幅/取证 的累计计数(诊断面板)
 V14M = {"xretry": 0, "xretry_ok": 0, "salvaged": 0, "segs": 0, "spoken_rewrites": deque(maxlen=20)}
 
 
@@ -437,6 +478,95 @@ def v13_post(turn, seg, a, final=False):
     if final and lev.carry.size:
         y = np.concatenate([y, lev.flush()])
     return y
+
+
+def v15_post(turn, seg, a, final=False):
+    """v15 样本连续流拼接:零段填充/跳变平滑/点击修复/扩展器/软限幅/TPDF。开关全关或模块缺失 → 原样返回(与 v14 逐字节一致)。
+    任何异常只记日志并返回原音频:后处理永远不能让播放中断。"""
+    if _v15 is None or not _v15.any_audio_on():
+        return a
+    try:
+        st = getattr(seg, "v15", None)
+        if st is None:
+            fl = getattr(turn, "v15_floor", None)
+            if fl is None:
+                fl = turn.v15_floor = _v15.FloorEst()
+            st = seg.v15 = _v15.SegStitch(floor=fl, seed=(int(turn.uid) * 7919 + int(seg.idx) * 104729 + 17) & 0x7FFFFFFF)
+        y = st.process(a) if a.size else a
+        if final:
+            if y.size:
+                y = st.flush(y)
+            if not getattr(seg, "v15_counted", False):
+                seg.v15_counted = True
+                V15C.add_seg(st.st)
+        return y
+    except Exception as e:  # noqa: BLE001
+        log.warning("v15 拼接后处理异常(已跳过,播放不受影响): %s", e)
+        return a
+
+
+def v15_pause_bytes(turn, seg, n):
+    """句间停顿:v15 舒适噪声(与说话人静音电平匹配,首尾淡化)。关闭时输出数字零(= v14)。"""
+    if _v15 is not None and _v15.on("COMFORT") and n > 0:
+        try:
+            fl = getattr(turn, "v15_floor", None)
+            b = _v15.pause_fill(n, _v15.comfort_rms(fl.rms() if fl else None), seed=(int(turn.uid) * 31 + int(seg.idx)) & 0x7FFFFFFF)
+            V15C.add_pause(n)
+            return b
+        except Exception as e:  # noqa: BLE001
+            log.warning("v15 舒适噪声异常(回退数字零): %s", e)
+    return np.zeros(n, "<i2").tobytes()
+
+
+def v15_state():
+    if _v15 is None:
+        return {"available": False}
+    return {"available": True, "switches": _v15.switches(), "counters": V15C.snapshot(),
+            "params": {"ceil_db": _v15.CEIL_DB, "expand_th_db": _v15.EXPAND_TH_DB, "expand_max_db": _v15.EXPAND_MAX_DB, "zero_min_run": _v15.ZERO_MIN_RUN,
+                       "click_th": _v15.CLICK_TH, "comfort_cap_rms": _v15.COMFORT_CAP_RMS}}
+
+
+def v15_forensics_turn(turn):
+    """合成结束后(线程池里)对「实际发给浏览器的 PCM」取证;只分析前 120 秒,不阻塞事件循环。"""
+    if _v15 is None or not _v15.on("FORENSICS") or not turn.gen_pcm:
+        return
+
+    def work():
+        try:
+            pcm = np.frombuffer(b"".join(turn.gen_pcm)[: 2 * SR * 120], dtype="<i2")
+            rep = _v15.analyze(pcm)
+            V15C.add_turn(rep)
+        except Exception as e:  # noqa: BLE001
+            log.warning("v15 取证失败(忽略): %s", e)
+    try:
+        LOOP.run_in_executor(None, work)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def v15_report_items(add):
+    """v15 验收清单:只写测到的;GPU/真机/人耳相关一律「未验证」。"""
+    if _v15 is None:
+        add(30, "v15 增量模块", "未运行", "v15.py 未能导入,系统按 v14 行为运行")
+        return
+    sw, c = _v15.switches(), V15C.snapshot()
+    add(30, "v15 · 开关与回退", "已记录", "开关 %s;全部设为 0(VC_V15=0)= v14 行为(逐字节一致,已由单元测试验证);任一后处理异常只记日志、原样放行" % json.dumps(sw, ensure_ascii=False))
+    lt = c.get("last_turn") or {}
+    if not c["turns_analyzed"]:
+        add(31, "v15 · 输出洁净度取证(数字零段/click/削波/真峰值)", "未运行", "还没有完成的合成轮次(FORENSICS=%s)" % sw["FORENSICS"])
+    else:
+        st31 = "失败" if c["turns_with_problems"] else ("已测量" if MOCK else "通过")
+        add(31, "v15 · 输出洁净度取证(数字零段/click/削波/真峰值)", st31,
+            "已分析 %d 轮,其中 %d 轮有问题;最近一轮:数字零段 %s · click %s · 削波 %s · 真峰值 %s dBFS · 底噪(相对有声) %s dB · 50ms 台阶>12dB %s;累计修复:零段 %d(%d 样本) · 边界跳变 %d · click %d · 限幅最大 %.1f dB" % (
+                c["turns_analyzed"], c["turns_with_problems"], lt.get("zero_runs"), lt.get("click_like"), lt.get("clip_samples"), lt.get("true_peak_dbfs"), lt.get("noise_rel_voiced_db"),
+                lt.get("level_steps_gt_12db"), c["zero_runs"], c["zero_samples"], c["joins_fixed"], c["clicks"], c["limited_db_max"])
+            + ("(MOCK 引擎:只证明链路,不代表真实音质)" if MOCK else ""))
+    add(32, "v15 · 句间停顿用舒适噪声(不输出数字零)", "已记录" if c["pause_fills"] else ("未运行" if sw["COMFORT"] else "已关闭"),
+        "已填充 %d 次停顿,共 %.1f 秒;电平取说话人静音底噪的一半(夹在 3~%.0f RMS)" % (c["pause_fills"], c["pause_ms"] / 1000.0, _v15.COMFORT_CAP_RMS))
+    rq = c.get("ref_quality")
+    add(33, "v15 · 参考语音质量评分", "已记录" if rq else ("未运行" if sw["REFPREP"] else "已关闭"),
+        ("评分 %s/100%s;SNR %s dB · 带宽 %s kHz · 时长 %s s;%s" % (rq["score"], "(建议重录)" if rq["redo"] else "", rq.get("snr_db"), rq.get("bandwidth_khz"), rq.get("seconds"), ";".join(rq["reasons"]) or "无明显问题")) if rq else "上传/录制参考语音后显示")
+    add(34, "v15 · 相似度 / 听感 / 首声 / 欠载=0 的真机结论", "未验证", "沙箱(CPU)只验证了逻辑与客观指标。「更像」只能由你在 /abx 盲测页确认;GPU 上的 TTFA、RTF、欠载=0、双 T4 显存与 2 小时 soak 必须在 Kaggle 实测,未跑之前不得宣称达标")
 
 
 def v13_job_extra(t, seg_i, clean, w):
@@ -1127,7 +1257,7 @@ def state_public():
             "model": (Path(MODEL).name if os.path.isdir(MODEL) else MODEL), "trained": TRAINED, "target": TARGET_RMS[0], "backend": backend_summary(),
             "gpus": gpu_table(), "calibrated": bool(CAL), "sv_model": SV_MODEL, "emotion_pause": EMOTION_PAUSE,
             "perf": {"mode": LATENCY_MODE, "policy": GPU_POLICY, "spc": round(TEXT_STATS["spc"], 3), "send_ahead_ms": SEND_AHEAD_MS}, "train": read_train_progress(),
-            "library": VOICE.get("library"), "v13": v13_state()}
+            "library": VOICE.get("library"), "v13": v13_state(), "v15": v15_state()}
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1152,7 +1282,7 @@ def pump(turn):
             flags = F_SEG if not seg.had_audio else 0
             pause_b = b""
             if turn.pending_pause > 0:
-                pause_b = np.zeros(int(SR * turn.pending_pause / 1000), "<i2").tobytes()
+                pause_b = v15_pause_bytes(turn, seg, int(SR * turn.pending_pause / 1000))
                 turn.pending_pause = 0
                 flags |= F_PAUSE
             audio_b = b"".join(a.astype("<i2").tobytes() for a in seg.out)
@@ -1226,6 +1356,7 @@ def finish_turn(turn):
         LOOP.call_later(0.5, POOL.schedule)                 # v13:轮次结束后,空闲卡继续后台合成桥接音库
     emit(turn, b"", F_END, len(turn.segs))
     art_finish(turn)
+    v15_forensics_turn(turn)
     if turn.sim_wait > 0:
         RECENT[turn.uid] = turn
     gaps = {}
@@ -1363,7 +1494,7 @@ def on_worker_msg(msg):
             return
         seg = t.segs[seg_i]
         t.chunk_log.append((seg_i, seg.worker, time.time() - t.t0))
-        a = v13_post(t, seg, seg.trim.feed(np.frombuffer(data, dtype="<i2")))
+        a = v15_post(t, seg, v13_post(t, seg, seg.trim.feed(np.frombuffer(data, dtype="<i2"))))
         if a.size:
             seg.out.append(a)
             pump(t)
@@ -1422,7 +1553,7 @@ def on_worker_msg(msg):
                 V14M["xretry_ok"] += 1
             if stats.get("salvaged"):
                 V14M["salvaged"] += 1
-        a = v13_post(t, seg, seg.trim.flush(), final=True)
+        a = v15_post(t, seg, v13_post(t, seg, seg.trim.flush(), final=True), final=True)
         if a.size:
             seg.out.append(a)
         if err or stats.get("skipped"):
@@ -1657,7 +1788,18 @@ async def api_voice(request: Request):
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": "无法解码音频(%s)。请上传 wav / flac / mp3 / m4a" % str(e)[:120]}, status_code=415)
     proc, cropped = await LOOP.run_in_executor(None, prepare_reference, a, sr)
+    rq15 = None
+    if _v15 is not None and _v15.on("REFPREP"):
+        try:
+            proc, rq15 = await LOOP.run_in_executor(None, _v15.prepare_reference_v15, proc, SR)
+            V15C.d["ref_quality"] = rq15
+        except Exception as e:  # noqa: BLE001
+            log.warning("v15 参考语音管线失败(回退 v14 处理版): %s", e)
     qc = await LOOP.run_in_executor(None, lambda: aq.reference_qc(proc, SR, orig_sr=sr, channels=ch, text=text or None))
+    if rq15:
+        qc["v15_ref_quality"] = rq15
+        if rq15["redo"]:
+            qc["warnings"].append("v15 参考质量评分 %d/100,建议重录:%s" % (rq15["score"], ";".join(rq15["reasons"]) or "综合评分偏低"))
     if cropped:
         text = ""                                                # 截断后原文字不再严格对应 → 交给 ASR
         qc["warnings"].append("音频超过 30 秒已截断,提供的参考文字不再对应,将重新自动识别(请核对)")
@@ -2089,6 +2231,19 @@ async def index(request: Request):
     return HTMLResponse(h.replace("{{WS_URL}}", ws_url), headers={"Cache-Control": "no-store"})
 
 
+@app.get("/abx", response_class=HTMLResponse)
+async def abx_page():
+    h = read_src("abx.html")
+    if h is None:
+        return HTMLResponse("abx.html 不存在", status_code=404)
+    return HTMLResponse(h, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v15")
+async def api_v15():
+    return v15_state()
+
+
 @app.get("/worklet.js")
 async def worklet():
     return Response(read_src("worklet.js") or "", media_type="text/javascript", headers={"Cache-Control": "no-store"})
@@ -2157,7 +2312,8 @@ def build_report():
     add(8, "环境", "已记录", json.dumps(backend_summary(), ensure_ascii=False, default=str)[:600])
     v13_report_items(add)
     v14_report_items(add)
-    return {"generated": time.strftime("%F %T"), "mock": MOCK, "items": items, "turns_gateway": list(TURN_LOG)[-40:], "turns_browser": ms[-40:], "events": EVENTS, "v13": v13_state(),
+    v15_report_items(add)
+    return {"generated": time.strftime("%F %T"), "mock": MOCK, "items": items, "turns_gateway": list(TURN_LOG)[-40:], "turns_browser": ms[-40:], "events": EVENTS, "v13": v13_state(), "v15": v15_state(),
             "per_gpu": {str(i): {"F_ms": round(W(i)["F"] * 1000, 1), "D_ms": round(W(i)["D"] * 1000, 1), "PRE_ms": round(W(i)["PRE"] * 1000), "chunk_gap_ms": pcts([g * 1000 for g in W(i)["gaps"]])}
                         for i in (range(len(POOL.workers)) if POOL else [])}}
 
@@ -2917,7 +3073,10 @@ class MockEngine:
             if os.environ.get("VC_MOCK_FAIL") == "nan" and "NANTRIGGER" in text:
                 yield np.full(int(SR * d), np.nan, np.float32), SR
                 return
-            yield (0.25 * sig * env).astype(np.float32), SR
+            out_ = (0.25 * sig * env).astype(np.float32)
+            if os.environ.get("VC_MOCK_ZERORUN") == "1" and i == 3 and len(out_) > 3000:      # Mock(v15):句内注入 1920 样本(80ms=一个码帧)数字零段,复现参考克隆里的零段簇
+                out_[600:600 + 1920] = 0.0
+            yield out_, SR
             done += n
             i += 1
             t0 += d
@@ -18578,6 +18737,20 @@ FILES['README.md'] = r'''# 克隆语音播放器 v6 · Qwen3-TTS-1.7B · Kaggle 
 | 多层验证(SPA/DOM/样式/canvas/网络/空白) | 通过 | 待运行 | 跨域 iframe 只能靠视觉+网络层 |
 | Screencast 画面 | 推送正常;整页动画纯帧率 ≈ 截图轮询(无提升) | 待运行(4 vCPU 可能不同) | H.264/WebP 档未实现 |
 | 回退 | 启动失败/失速 3 次自动回退已测 | — | — |
+
+## v15 · 样本连续流拼接 · 舒适噪声停顿 · 软限幅 · 参考管线 · 取证 · 盲测(在 v14 之上,`V15=False` 一键回退 = v14 逐字节一致)
+模块:`v15.py`(核心,numpy)· `audio_forensics.py`(取证命令行)· `abx.html`(/abx 盲测页)· 测试 `tests/test_v15.py` `tests/test_v15_mock.py`。
+| 目标 | v15 的做法 | 沙箱实测(CPU) | Kaggle 真机 |
+|---|---|---|---|
+| 数字零段(800/1920 样本簇) | 填舒适噪声 + 两侧 2ms 淡化(含跨块) | Mock 句内注入 1920 样本零段:7 → 0 | 待你运行(📊 诊断 v15 项) |
+| 句间停顿 | 舒适噪声代替数字零,样本数不变 | 停顿零段 4 → 0 | 待运行 |
+| 块边界硬跳变 | 3ms 衰减偏移平滑 | 0.27 满量程阶跃 → <0.1 | 待运行 |
+| 峰值/削波 | 4× 真峰值 -1.5dBFS 软限幅 + TPDF | 过载信号:削波 >0 → 0,真峰值 ≤ -1.3 | 待运行 |
+| 沙沙 | 仅衰减 <-52dBFS 的底噪(≤6dB) | 有声帧改动 <-50dB | 待听感确认 |
+| 参考语音 | 50Hz 零相位高通 + 边缘淡化 + 质量评分 | 评分/选段单元测试通过 | 相似度是否提升:**未验证** |
+| 相似度 | /abx 盲测 + 二项检验 | 页面与统计逻辑 | **只能由你的耳朵裁决** |
+取证:`python audio_forensics.py 克隆语音1.wav --json`;对比:`python audio_forensics.py --compare v14.wav v15.wav`。
+回退:把脚本顶部 `V15 = False`;或只关某一项,如 `V15_EXPAND = False`(听感发闷/吃字时先关它)。
 '''
 FILES['tests/test_player.js'] = r'''// 播放器 / 帧协议 / 起播规划 单元测试(Node,无需浏览器):  node tests/test_player.js
 "use strict";
@@ -20749,6 +20922,15 @@ def wait_ready(srv, n, opener=None, timeout=30):
     raise AssertionError("产物没有在时限内完成: %s" % [r["status"] for r in rows])
 
 
+def _is_pause(b):
+    """停顿 = 数字零(v14 / V15 关闭)或 v15 舒适噪声(峰值 ≤ 300、RMS ≤ 60,约 -57dBFS 以下)。"""
+    if not any(b):
+        return True
+    import numpy as _np
+    x = _np.frombuffer(b[: len(b) // 2 * 2], dtype="<i2").astype(_np.float64)
+    return bool(len(x)) and float(_np.abs(x).max()) <= 300 and float(_np.sqrt((x ** 2).mean())) <= 60
+
+
 def test_integration_mock_downloads():
     from test_gateway import Server
     srv = Server(VC_MOCK_FAIL="")
@@ -20780,9 +20962,9 @@ def test_integration_mock_downloads():
                     sp = w.readframes(w.getnframes())
                 at = pcm.find(sp, cur)
                 assert at >= cur, "单段内容不在整轮里/顺序错误"
-                assert not any(pcm[cur:at]), "段间只能是静音停顿"
+                assert _is_pause(pcm[cur:at]), "段间只能是静音停顿(v14=数字零;v15=低电平舒适噪声)"
                 cur = at + len(sp)
-            assert not any(pcm[cur:])
+            assert _is_pause(pcm[cur:])
             multi_gpu = multi_gpu or len(r["done"]["gpu_segs"]) > 1
             assert http(srv, "/api/artifacts/%s/verify" % aid)[2] and json.loads(http(srv, "/api/artifacts/%s/verify" % aid)[2])["ok"]
         assert multi_gpu, "Mock 双 GPU 并行应使至少一轮跨两张卡(乱序到达路径被覆盖)"
@@ -21836,9 +22018,21 @@ def secret(name):
         return (os.environ.get(name) or "").strip()
 
 
-def run(cmd, tail=25, env=None, show=None):
-    """运行命令,流式打印关键行;失败时抛出带日志尾部的错误。"""
+def run(cmd, tail=25, env=None, show=None, timeout=None):
+    """运行命令,流式打印关键行;失败时抛出带日志尾部的错误。timeout(秒)= 子进程看门狗:超时直接终止并按失败处理(交给 retry 重试)。"""
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    timer, timed_out = None, []
+    if timeout:
+        def _kill():
+            if p.poll() is None:
+                timed_out.append(1)
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+        timer = threading.Timer(timeout, _kill)
+        timer.daemon = True
+        timer.start()
     last = deque(maxlen=tail)
     n = 0
     for line in p.stdout:
@@ -21850,8 +22044,10 @@ def run(cmd, tail=25, env=None, show=None):
         elif n % 15 == 0:
             print(".", end="", flush=True)
     p.wait()
+    if timer:
+        timer.cancel()
     if p.returncode != 0:
-        raise RuntimeError("命令失败(%s):\n%s" % (" ".join(map(str, cmd[:6])), "\n".join(last)))
+        raise RuntimeError("命令失败%s(%s):\n%s" % ("(超时 %ds 被终止)" % timeout if timed_out else "", " ".join(map(str, cmd[:6])), "\n".join(last)))
     return list(last)
 
 
@@ -21872,6 +22068,24 @@ def disk_free_gb(path="/kaggle/working"):
         return shutil.disk_usage(path if os.path.exists(path) else "/").free / 1e9
     except Exception:
         return 99.0
+
+
+def resource_report():
+    """CPU / 内存 / 磁盘一行摘要(心跳用)。psutil 缺失时退回 /proc/meminfo;任何失败只返回问号。"""
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        cpu = psutil.cpu_percent(interval=None)
+        s = "CPU %.0f%% · 内存 %.1f/%.1fGB(%.0f%%)" % (cpu, (vm.total - vm.available) / 1e9, vm.total / 1e9, vm.percent)
+        if vm.percent > 92:
+            s += " ⚠ 内存紧张(过高会被 Kaggle 杀进程;可减少并发/关闭浏览器功能)"
+        return s
+    except Exception:
+        try:
+            mi = {l.split(":")[0]: int(l.split()[1]) for l in open("/proc/meminfo") if ":" in l}
+            return "内存可用 %.1f/%.1fGB" % (mi["MemAvailable"] / 1e6, mi["MemTotal"] / 1e6)
+        except Exception:
+            return "资源信息不可用"
 
 
 _CURVE = {"shown": False}
@@ -24983,6 +25197,1225 @@ if __name__ == "__main__":
     sys.exit(1 if bad else 0)
 '''
 
+FILES['v15.py'] = r'''# -*- coding: utf-8 -*-
+"""
+v15.py —— v15 增量模块「样本连续流拼接 · 舒适噪声停顿 · 软限幅 + TPDF 抖动 · 点击修复 · 参考语音管线 · 取证」。
+只依赖 numpy(scipy 存在时用来做 DC 高通/中值滤波,没有则回退到 numpy 实现);网关进程与 GPU 进程共用。
+每个子模块有独立开关,全部关闭 = v14 行为(网关里的 v15_* 钩子直接返回原对象,逐字节一致):
+    VC_V15=0               总开关
+    VC_V15_STITCH=0/1      块间连续:直流偏移扣除(仅 >40LSB 且已累计 0.25s) + 块边界跳变平滑 + 数字零段填充(含跨块) + 零段两侧淡化 + 句尾淡出
+    VC_V15_COMFORT=0/1     句间停顿不再输出数字零:用与说话人静音电平匹配的低通舒适噪声,首尾淡化
+    VC_V15_CLICK=0/1       孤立尖峰(click)检测与中值修复(阈值保守,干净语音近似透明)
+    VC_V15_EXPAND=0/1      平滑下行扩展器:只衰减 < -52dBFS 的底噪(最多 6dB,攻 30ms/放 15ms),不是硬噪声门
+    VC_V15_LEVEL=0/1       真峰值(4× Catmull-Rom 估计) -1.5dBFS 前视软限幅,取代硬剪裁
+    VC_V15_DITHER=0/1      float→int16 一次性量化,TPDF 抖动(±1LSB) + 饱和而非回绕
+    VC_V15_REFPREP=0/1     参考语音管线:50Hz 零相位高通 + 边缘淡化 + 质量评分(SNR/削波/带宽/时长) + 可选选段(默认关)
+    VC_V15_FORENSICS=0/1   每轮合成结束后对「实际发给浏览器的 PCM」做取证(零段/跳变/削波/底噪/峰值),写入诊断面板
+诚实声明:本模块在 CPU 上用合成信号验证了「逻辑与客观指标」;没有 GPU/真机/人耳数据。
+    「听起来更像」「相似度提升多少」只能由你在盲测页(/abx)里确认,不得据此宣称已提升。
+"""
+import math
+import os
+from collections import deque
+
+import numpy as np
+
+SR = 24000
+FS16 = 32767.0
+
+try:                                      # scipy 只是加速/更准;缺失时回退
+    from scipy.signal import lfilter as _lfilter, medfilt as _medfilt
+except Exception:  # noqa: BLE001
+    _lfilter = _medfilt = None
+
+
+# ───────────────────────── 开关 ─────────────────────────
+def _flag(name, default="1"):
+    return str(os.environ.get(name, default)).strip().lower() not in ("0", "false", "off", "no", "")
+
+
+def on(name):
+    return _flag("VC_V15") and _flag("VC_V15_" + name)
+
+
+SWITCH_NAMES = ("STITCH", "COMFORT", "CLICK", "EXPAND", "LEVEL", "DITHER", "REFPREP", "FORENSICS")
+
+
+def switches():
+    return {k: on(k) for k in SWITCH_NAMES}
+
+
+def any_audio_on():
+    s = switches()
+    return any(s[k] for k in ("STITCH", "COMFORT", "CLICK", "EXPAND", "LEVEL", "DITHER"))
+
+
+def envf(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except Exception:  # noqa: BLE001
+        return float(default)
+
+
+CEIL_DB = envf("VC_V15_CEIL_DB", -1.5)              # 限幅上限(dBFS,估计真峰值)
+EXPAND_TH_DB = envf("VC_V15_EXPAND_TH_DB", -52.0)    # 扩展器阈值
+EXPAND_MAX_DB = envf("VC_V15_EXPAND_MAX_DB", 6.0)    # 扩展器最大衰减
+ZERO_MIN_RUN = int(envf("VC_V15_ZERO_MIN_RUN", 16))  # ≥ 这么多连续精确 0 才算「数字零段」(16 样本 = 0.67ms)
+CLICK_TH = envf("VC_V15_CLICK_TH", 0.30)             # 点击:偏离 7 点中值 > 0.30 满量程
+COMFORT_CAP_RMS = envf("VC_V15_COMFORT_CAP", 40.0)   # 舒适噪声 RMS 上限(int16 量纲,40 ≈ -58dBFS)
+
+
+def db(x, floor=1e-9):
+    return 20.0 * math.log10(max(float(x), floor))
+
+
+# ───────────────────────── 噪声 / 抖动 ─────────────────────────
+def colored_noise(rng, n, rms):
+    """低通整形的平稳噪声(底噪主要集中在低频):白噪声 × [.5,.35,.15] FIR,再归一到给定 RMS(int16 量纲)。"""
+    if n <= 0:
+        return np.zeros(0, np.float32)
+    w = rng.standard_normal(n + 2).astype(np.float32)
+    y = 0.5 * w[2:] + 0.35 * w[1:-1] + 0.15 * w[:-2]
+    s = float(np.sqrt(np.mean(y * y))) or 1.0
+    return (y * (float(rms) / s)).astype(np.float32)
+
+
+def tpdf(rng, n):
+    return (rng.random(n) - rng.random(n)).astype(np.float32)           # 三角分布 ±1 LSB
+
+
+def quantize(y, rng=None, dither=True):
+    """float(int16 量纲) → int16:可选 TPDF 抖动,饱和(不回绕)。"""
+    y = np.asarray(y, np.float32)
+    if dither and rng is not None:
+        y = y + tpdf(rng, len(y))
+    return np.clip(np.round(y), -FS16, FS16).astype("<i2")
+
+
+class FloorEst:
+    """从「安静但非数字零」的 10ms 帧估计该说话人的静音底噪(int16 RMS)。取较低分位数,避免把语音当底噪。"""
+
+    def __init__(self, maxn=300):
+        self.v = deque(maxlen=maxn)
+
+    def feed(self, y):
+        y = np.asarray(y, np.float32)
+        n = len(y) // 240
+        if n <= 0:
+            return
+        r = np.sqrt((y[: n * 240].reshape(n, 240) ** 2).mean(axis=1))
+        for x in r:
+            if 0.5 <= x < 110.0:
+                self.v.append(float(x))
+
+    def rms(self):
+        if len(self.v) < 5:
+            return None
+        return float(np.percentile(np.asarray(self.v), 30))
+
+
+def comfort_rms(floor_rms):
+    """停顿用的舒适噪声电平:约为实测静音底噪的一半(−6dB),夹在 [3, CAP];没有估计时取 6(≈ -75dBFS)。"""
+    if not floor_rms:
+        return 6.0
+    return float(min(COMFORT_CAP_RMS, max(3.0, 0.5 * floor_rms)))
+
+
+def pause_fill(n, rms, seed=0, fade_ms=8.0):
+    """句间停顿:n 个样本的舒适噪声(int16 LE bytes),首尾余弦淡化,永远不输出数字零。"""
+    if n <= 0:
+        return b""
+    rng = np.random.default_rng(seed)
+    y = colored_noise(rng, n, rms)
+    f = min(n // 2, int(SR * fade_ms / 1000.0))
+    if f > 1:
+        w = (0.5 * (1 - np.cos(np.pi * np.arange(f) / f))).astype(np.float32)
+        y[:f] *= w
+        y[-f:] *= w[::-1]
+    return quantize(y, rng, True).tobytes()
+
+
+# ───────────────────────── 真峰值估计 ─────────────────────────
+def oversampled_peak(x):
+    """4× Catmull-Rom 插值估计每个样本区间内的峰值(绝对值,与输入同量纲)。返回长度 = len(x) 的数组。"""
+    x = np.asarray(x, np.float32)
+    n = len(x)
+    if n < 4:
+        return np.abs(x)
+    p = np.concatenate([[x[0]], x, [x[-1], x[-1]]])
+    p0, p1, p2, p3 = p[:-3], p[1:-2], p[2:-1], p[3:]
+    pk = np.abs(p1)
+    for t in (0.25, 0.5, 0.75):
+        v = 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t ** 3)
+        pk = np.maximum(pk, np.abs(v))
+    return pk[:n]
+
+
+def true_peak_db(x):
+    """x 为 float(±1 满量程)或 int16;返回估计真峰值 dBFS。"""
+    x = np.asarray(x)
+    if x.size == 0:
+        return -120.0
+    if x.dtype.kind in "iu":
+        x = x.astype(np.float32) / 32768.0
+    return db(float(oversampled_peak(x.astype(np.float32)).max()))
+
+
+# ───────────────────────── 段内拼接 / 修复 / 限幅(流式,逐块调用) ─────────────────────────
+class SegStitch:
+    """每个句段一个实例。process(int16 块) → int16 块(样本数守恒);flush 只在句尾做淡出(样本数不变)。
+    处理顺序:零段填充 → DC 高通 → 块边界跳变平滑 → 点击修复 → 下行扩展 → 软限幅 → TPDF 量化。
+    所有步骤都是状态化的(跨块连续),并有独立开关;输入已干净时输出与输入的差值能量远低于 -60dB(见 tests)。"""
+    HIST = 8
+
+    def __init__(self, sw=None, seed=1234, floor=None):
+        self.sw = sw or switches()
+        self.rng = np.random.default_rng(seed)
+        self.floor = floor if floor is not None else FloorEst()
+        self.hist = np.zeros(self.HIST, np.float32)
+        self.started = False
+        self.in_zero = 0
+        self.dc_zi = np.zeros(1, np.float64)
+        self.dc_mean = 0.0
+        self.exp_gdb = 0.0
+        self.lim_g = 1.0
+        self.last = 0.0
+        self.n = 0
+        self.st = {"zero_runs": 0, "zero_samples": 0, "joins_fixed": 0, "clicks": 0, "limited_db": 0.0, "expanded_frames": 0, "samples": 0}
+
+    # --- ① 数字零段:填舒适噪声,两侧硬边做 2ms 余弦淡化 ---
+    def _fill_zero(self, y):
+        n = len(y)
+        z = (y == 0)
+        if not z.any() and self.in_zero == 0:
+            return y
+        e = np.diff(np.concatenate([[0], z.astype(np.int8), [0]]))
+        starts, ends = np.where(e == 1)[0], np.where(e == -1)[0]
+        lvl = comfort_rms(self.floor.rms())
+        F = int(0.002 * SR)
+        for s, t in zip(starts, ends):
+            prior = self.in_zero if s == 0 else 0
+            if prior + (t - s) < ZERO_MIN_RUN:
+                continue
+            y[s:t] = colored_noise(self.rng, t - s, lvl)
+            if prior == 0:
+                self.st["zero_runs"] += 1
+            self.st["zero_samples"] += int(t - s)
+            if s > 0 and abs(y[s - 1]) > 300:                         # 语音被硬截断为零 → 淡出
+                m = min(F, s)
+                y[s - m:s] *= (0.5 * (1 + np.cos(np.pi * np.arange(1, m + 1) / m))).astype(np.float32)
+            if t < n and abs(y[t]) > 300:                             # 从数字零硬起到响亮语音 → 淡入
+                m = min(F, n - t)
+                y[t:t + m] *= (0.5 * (1 - np.cos(np.pi * np.arange(m) / m))).astype(np.float32)
+        if z[-1]:
+            nz = np.where(~z)[0]
+            self.in_zero = int(n - (nz[-1] + 1)) if nz.size else n + self.in_zero
+        else:
+            self.in_zero = 0
+        return y
+
+    # --- ② 直流偏移:慢速 EMA(0.5s)估计,只有 |DC| > 40 LSB(≈0.0012 满量程)且已累计 0.25s 才扣除(干净语音完全不动;不用高通,避免低频相移) ---
+    def _dc(self, y):
+        m = float(y.mean())
+        a = 1.0 if self.n == 0 else min(1.0, len(y) / (0.5 * SR))
+        self.dc_mean += a * (m - self.dc_mean)
+        if self.n >= SR // 4 and abs(self.dc_mean) > 40.0:
+            return y - np.float32(self.dc_mean)
+        return y
+
+    # --- ③ 块边界跳变平滑:块首样本与线性外推预测差太大 → 3ms 衰减偏移修正 ---
+    def _join(self, y):
+        if not self.started or len(y) < 8:
+            return y
+        h = self.hist
+        pred = 2 * h[-1] - h[-2]
+        jump = float(y[0] - pred)
+        thr = max(0.06 * FS16, 6.0 * float(np.std(np.diff(h))))
+        if abs(jump) > thr:
+            L = min(len(y), int(0.003 * SR))
+            y[:L] -= (jump * 0.5 * (1 + np.cos(np.pi * np.arange(L) / L))).astype(np.float32)
+            self.st["joins_fixed"] += 1
+        return y
+
+    # --- ④ 点击:孤立尖峰(≤3 样本),偏离 7 点中值 > CLICK_TH 满量程 ---
+    def _clicks(self, y):
+        ext = np.concatenate([self.hist, y]).astype(np.float64)
+        if _medfilt is not None:
+            m = _medfilt(ext, 7)
+        else:
+            from numpy.lib.stride_tricks import sliding_window_view
+            pad = np.concatenate([np.full(3, ext[0]), ext, np.full(3, ext[-1])])
+            m = np.median(sliding_window_view(pad, 7), axis=1)
+        dev = np.abs(ext - m)[self.HIST:]
+        bad = dev > CLICK_TH * FS16
+        if not bad.any():
+            return y
+        idx = np.where(bad)[0]                                        # 只修孤立点(连续 > 3 个超限样本更像真实的大幅波形,不碰)
+        runs, start = [], idx[0]
+        for a, b in zip(idx[:-1], idx[1:]):
+            if b != a + 1:
+                runs.append((start, a))
+                start = b
+        runs.append((start, idx[-1]))
+        for a, b in runs:
+            if b - a + 1 <= 3:
+                y[a:b + 1] = m[self.HIST + a:self.HIST + b + 1].astype(np.float32)
+                self.st["clicks"] += 1
+        return y
+
+    # --- ⑤ 平滑下行扩展器(只动 < -52dBFS 的底噪;下行 30ms 缓慢,上行瞬时 = 不吃语音起音) ---
+    def _expand(self, y):
+        n = len(y)
+        F = 120
+        nf = (n + F - 1) // F
+        pad = np.zeros(nf * F, np.float32)
+        pad[:n] = y
+        r = np.sqrt((pad.reshape(nf, F) ** 2).mean(axis=1)) / FS16
+        lvl = 20 * np.log10(np.maximum(r, 1e-6))
+        tgt = -EXPAND_MAX_DB * np.clip((EXPAND_TH_DB - lvl) / 6.0, 0.0, 1.0)
+        ka = 1 - math.exp(-5.0 / 30.0)
+        g, prev = np.empty(nf, np.float32), self.exp_gdb
+        for i in range(nf):
+            prev = (prev + (tgt[i] - prev) * ka) if tgt[i] < prev else tgt[i]
+            g[i] = prev
+        if not (g < -0.02).any() and abs(self.exp_gdb) < 0.02:
+            self.exp_gdb = float(prev)
+            return y
+        if (g < -0.5).any():
+            self.st["expanded_frames"] += int((g < -0.5).sum())
+        gs = np.repeat(g, F)[:n].astype(np.float64)
+        K = 24                                                       # 1ms 平滑,避免帧边界阶跃
+        if n > K:                                                    # 块内前视 1ms:上行(开门)提前完成,不吃语音起音;下行不提前
+            gs = np.maximum(gs, np.concatenate([gs[K:], np.full(K, gs[-1])]))
+        ext = np.concatenate([np.full(K - 1, self.exp_gdb), gs])
+        gs = np.convolve(ext, np.ones(K) / K, mode="valid")[:n]
+        self.exp_gdb = float(prev)
+        return (y * (10 ** (gs / 20.0)).astype(np.float32)).astype(np.float32)
+
+    # --- ⑥ 真峰值前视软限幅(平滑增益衰减,禁止削顶) ---
+    def _limit(self, y):
+        ceil = 10 ** (CEIL_DB / 20.0) * FS16
+        pk = oversampled_peak(y)
+        if float(pk.max()) <= ceil and self.lim_g >= 0.9999:
+            return y
+        need = np.minimum(1.0, ceil / np.maximum(pk, 1.0)).astype(np.float32)
+        w = int(0.003 * SR)
+        from numpy.lib.stride_tricks import sliding_window_view
+        mn = sliding_window_view(np.concatenate([np.full(w, self.lim_g, np.float32), need, np.ones(w, np.float32)]), 2 * w + 1).min(axis=1)
+        k = np.hanning(2 * w + 1).astype(np.float32)
+        k /= k.sum()
+        sm = np.convolve(np.concatenate([np.full(w, self.lim_g, np.float32), mn, np.ones(w, np.float32)]), k, mode="same")[w:-w]
+        sm = np.minimum(sm, need)
+        if self.lim_g < 0.9999:                                       # 释放 60ms,跨块连续
+            sm = np.minimum(sm, (1.0 - (1.0 - self.lim_g) * np.exp(-np.arange(len(y)) / (0.06 * SR))).astype(np.float32))
+            sm = np.minimum(sm, need)
+        self.st["limited_db"] = max(self.st["limited_db"], -db(float(sm.min()), 1e-3))
+        self.lim_g = float(sm[-1])
+        return (y * sm).astype(np.float32)
+
+    def process(self, x):
+        x = np.asarray(x)
+        if x.size == 0:
+            return x.astype("<i2")
+        sw = self.sw
+        if not any(sw.get(k) for k in ("STITCH", "CLICK", "EXPAND", "LEVEL", "DITHER")):
+            return x.astype("<i2")
+        y = x.astype(np.float32)
+        self.st["samples"] += len(y)
+        self.floor.feed(y)
+        if sw.get("STITCH"):
+            y = self._fill_zero(y)
+            y = self._dc(y)
+            y = self._join(y)
+        if sw.get("CLICK"):
+            y = self._clicks(y)
+        if sw.get("EXPAND"):
+            y = self._expand(y)
+        if sw.get("LEVEL"):
+            y = self._limit(y)
+        out = quantize(y, self.rng, bool(sw.get("DITHER")))
+        self.hist = np.concatenate([self.hist, out.astype(np.float32)])[-self.HIST:]
+        self.started = True
+        self.n += len(out)
+        self.last = float(out[-1])
+        return out
+
+    def flush(self, tail_pcm=None):
+        """句尾:如果最后一个样本还不接近 0,对 tail_pcm 的最后 12ms 做余弦淡出(样本数不变)。"""
+        if tail_pcm is None or not len(tail_pcm) or not self.sw.get("STITCH"):
+            return tail_pcm
+        t = np.asarray(tail_pcm).astype("<i2")
+        if abs(int(t[-1])) <= 100:
+            return t
+        m = min(len(t), int(0.012 * SR))
+        t = t.copy()
+        t[-m:] = np.round(t[-m:].astype(np.float32) * (0.5 * (1 + np.cos(np.pi * np.arange(1, m + 1) / m))).astype(np.float32)).astype("<i2")
+        return t
+
+
+# ───────────────────────── 取证(也是运行时质量守卫) ─────────────────────────
+def _to_float(pcm):
+    a = np.asarray(pcm)
+    if a.dtype.kind in "iu":
+        return a.astype(np.float32) / 32768.0
+    return a.astype(np.float32)
+
+
+def zero_runs(x, min_len=48):
+    """返回 [(start, length)]:≥ min_len 的连续精确 0 且前后都有信号(不含开头/结尾的静音)。"""
+    z = (np.asarray(x) == 0).astype(np.int8)
+    e = np.diff(np.concatenate([[0], z, [0]]))
+    s, t = np.where(e == 1)[0], np.where(e == -1)[0]
+    return [(int(a), int(b - a)) for a, b in zip(s, t) if b - a >= min_len and a > 0 and b < len(z)]
+
+
+def analyze(pcm, sr=SR):
+    """客观取证指标(满量程 ±1)。每项都可单独复现;不含任何「听感」判断。"""
+    x = _to_float(pcm)
+    n = len(x)
+    if n < 480:
+        return {"n": n, "ok": True, "problems": [], "note": "太短,未分析"}
+    pk = float(np.abs(x).max())
+    fr = 480
+    nf = n // fr
+    f = x[: nf * fr].reshape(nf, fr)
+    r = np.sqrt((f ** 2).mean(axis=1))
+    rdb = 20 * np.log10(np.maximum(r, 1e-6))
+    voiced = r > max(10 ** (-45 / 20), float(np.percentile(r, 90)) * 0.1)
+    rms_v = float(np.sqrt((f[voiced] ** 2).mean())) if voiced.any() else 0.0
+    floor = float(np.percentile(rdb, 5))
+    d = np.abs(np.diff(x))
+    zr = zero_runs(np.asarray(pcm) if np.asarray(pcm).dtype.kind in "iu" else np.round(x * 32768), min_len=int(0.002 * sr))
+    from numpy.lib.stride_tricks import sliding_window_view
+    pad = np.concatenate([np.full(3, x[0]), x, np.full(3, x[-1])])
+    dev = np.abs(x - np.median(sliding_window_view(pad, 7), axis=1))
+    w = 1200                                                                   # 50ms 窗 RMS 台阶(语音内):相邻窗 > 12dB
+    nw = n // w
+    steps = 0
+    if nw > 2:
+        rw = np.sqrt((x[: nw * w].reshape(nw, w) ** 2).mean(axis=1))
+        ok = (rw[:-1] > 10 ** (-40 / 20)) & (rw[1:] > 10 ** (-40 / 20))
+        if ok.any():
+            steps = int((np.abs(20 * np.log10(np.maximum(rw[1:], 1e-9) / np.maximum(rw[:-1], 1e-9)))[ok] > 12.0).sum())
+    rep = {
+        "n": n, "seconds": round(n / sr, 2),
+        "peak_dbfs": round(db(pk), 2),
+        "true_peak_dbfs": round(true_peak_db(x), 2),
+        "rms_voiced_dbfs": round(db(rms_v), 2),
+        "clip_samples": int((np.abs(x) >= 0.999).sum()),
+        "dc": round(float(x.mean()), 5),
+        "zero_runs": len(zr), "zero_samples": int(sum(l for _, l in zr)),
+        "jumps_gt_025": int((d > 0.25).sum()),
+        "click_like": int((dev > CLICK_TH).sum()),
+        "noise_floor_dbfs": round(floor, 1),
+        "noise_rel_voiced_db": round(floor - db(rms_v), 1) if rms_v > 0 else None,
+        "level_steps_gt_12db": steps,
+        "head_rms_10ms": round(float(np.sqrt((x[:240] ** 2).mean())), 4),
+        "tail_rms_10ms": round(float(np.sqrt((x[-240:] ** 2).mean())), 4),
+        "nan_inf": int((~np.isfinite(x)).sum()),
+    }
+    bad = []
+    if rep["zero_runs"]:
+        bad.append("数字零段 %d 处" % rep["zero_runs"])
+    if rep["clip_samples"]:
+        bad.append("削波 %d 样本" % rep["clip_samples"])
+    if rep["true_peak_dbfs"] > -0.5:
+        bad.append("真峰值 %.1f dBFS 过高" % rep["true_peak_dbfs"])
+    if rep["click_like"]:
+        bad.append("疑似 click %d 处" % rep["click_like"])
+    if rep["nan_inf"]:
+        bad.append("NaN/Inf")
+    rep["problems"] = bad
+    rep["ok"] = not bad
+    return rep
+
+
+# ───────────────────────── 参考语音管线(方案 A) ─────────────────────────
+def highpass_zero_phase(a, sr, fc=50.0):
+    """零相位 2 阶 Butterworth 高通(去除房间隆隆声/直流,不改相位)。没有 scipy 时只去直流。"""
+    a = np.asarray(a, np.float32)
+    try:
+        from scipy.signal import butter, sosfiltfilt
+        sos = butter(2, fc / (sr / 2.0), btype="highpass", output="sos")
+        return sosfiltfilt(sos, a.astype(np.float64)).astype(np.float32)
+    except Exception:  # noqa: BLE001
+        return (a - float(a.mean())).astype(np.float32)
+
+
+def edge_fade(a, sr, ms=10.0):
+    a = np.asarray(a, np.float32).copy()
+    m = min(len(a) // 2, int(sr * ms / 1000.0))
+    if m > 1:
+        w = (0.5 * (1 - np.cos(np.pi * np.arange(m) / m))).astype(np.float32)
+        a[:m] *= w
+        a[-m:] *= w[::-1]
+    return a
+
+
+def ref_quality(a, sr):
+    """参考语音质量评分(0~100)+ 明确的「建议重录」判断。SNR = P90 帧电平 − P10 帧电平(粗略,启发式)。"""
+    a = np.asarray(a, np.float32)
+    n = len(a)
+    if n < sr:
+        return {"score": 0, "redo": True, "reasons": ["参考语音短于 1 秒"], "seconds": round(n / sr, 2)}
+    fr = sr // 50
+    nf = n // fr
+    r = np.sqrt((a[: nf * fr].reshape(nf, fr) ** 2).mean(axis=1))
+    rdb = 20 * np.log10(np.maximum(r, 1e-6))
+    blk = 150                                                                    # 3 秒一块:取「最吵的一块」的底噪(局部噪声也算)
+    floors = [float(np.percentile(rdb[i:i + blk], 15)) for i in range(0, max(1, nf - blk // 3), blk)] or [float(np.percentile(rdb, 10))]
+    snr = float(np.percentile(rdb, 90) - max(floors))
+    pk = float(np.abs(a).max())
+    clip = float((np.abs(a) >= 0.999).mean())
+    seg = a[: min(n, sr * 20)]                                                   # 带宽:能量 99.5% 滚降频率
+    sp = np.abs(np.fft.rfft(seg * np.hanning(len(seg)))) ** 2
+    cum = np.cumsum(sp) / max(float(sp.sum()), 1e-12)
+    roll = float(np.searchsorted(cum, 0.995)) / len(sp) * sr / 2.0
+    score, why, sec = 100.0, [], n / sr
+    if sec < 6:
+        score -= 25
+        why.append("时长 %.1f 秒偏短(建议 10~25 秒连续自然语音)" % sec)
+    if snr < 25:
+        score -= 45 if snr < 15 else 30
+        why.append("信噪比约 %.0f dB 偏低(背景噪声/混响明显)" % snr)
+    elif snr < 32:
+        score -= 10
+    if clip > 0.0005:
+        score -= 25
+        why.append("存在削波(%.2f%% 样本)" % (clip * 100))
+    if roll < 5000:
+        score -= 15
+        why.append("有效带宽仅约 %.1f kHz(像电话/强压缩音频)" % (roll / 1000))
+    if pk < 0.02:
+        score -= 20
+        why.append("电平过低")
+    score = max(0.0, score)
+    return {"score": int(round(score)), "redo": score < 60, "reasons": why, "seconds": round(sec, 2), "snr_db": round(snr, 1),
+            "clip_pct": round(clip * 100, 3), "bandwidth_khz": round(roll / 1000, 1), "peak_dbfs": round(db(pk), 1)}
+
+
+def window_score(a, sr):
+    """候选片段「干净度 × 连续性」:SNR 越高、有声占比越高、无削波越好。"""
+    a = np.asarray(a, np.float32)
+    q = ref_quality(a, sr)
+    fr = sr // 50
+    nf = len(a) // fr
+    if nf < 5:
+        return 0.0
+    r = np.sqrt((a[: nf * fr].reshape(nf, fr) ** 2).mean(axis=1))
+    voiced = float((r > max(0.004, float(np.percentile(r, 95)) * 0.08)).mean())
+    return float(q["score"]) / 100.0 * (0.5 + 0.5 * voiced)
+
+
+def select_window(a, sr, target_s=20.0, step_s=2.0):
+    """在 a 里找长度 ≈ target_s 的最佳连续窗口(起止对齐到 ±0.4s 内最安静的 10ms 帧)。返回 (start, end, score)。不足 target 则返回整段。"""
+    a = np.asarray(a, np.float32)
+    L = int(target_s * sr)
+    if len(a) <= L * 1.1:
+        return 0, len(a), window_score(a, sr)
+    best = (0, L, -1.0)
+    for s in range(0, len(a) - L + 1, int(step_s * sr)):
+        sc = window_score(a[s:s + L], sr)
+        if sc > best[2]:
+            best = (s, s + L, sc)
+    fr = sr // 100
+
+    def low(pos, rng_):
+        lo, hi = max(0, pos - rng_), min(len(a) - fr, pos + rng_)
+        idx = np.arange(lo, hi, fr)
+        if idx.size == 0:
+            return pos
+        return int(idx[int(np.argmin([float(np.abs(a[i:i + fr]).mean()) for i in idx]))])
+    return low(best[0], int(0.4 * sr)), low(best[1], int(0.4 * sr)), best[2]
+
+
+def prepare_reference_v15(a, sr, hp_hz=50.0):
+    """在 v14 的 prepare_reference 之后调用(此时已是 24k、峰值 0.7):零相位高通 + 10ms 边缘淡化 + 质量评分。
+    不改变电平策略(峰值 0.7 的约定保持不变,避免未经 GPU 验证的模型条件漂移)。"""
+    y = edge_fade(highpass_zero_phase(a, sr, hp_hz), sr, 10.0)
+    pk = float(np.abs(y).max())
+    if pk > 1e-4:
+        y = y * (0.7 / pk)
+    return y.astype(np.float32), ref_quality(y, sr)
+
+
+# ───────────────────────── 候选重排(挑战者必须明显优于基线才替换) ─────────────────────────
+def candidate_score(pcm, sim=None, cer=None):
+    """返回 (veto_reason|None, score)。veto:NaN、削波、数字零段、点击、真峰值过高 → 一票否决。
+    score = 0.6×相似度(若有,否则 0.5 占位) + 0.25×洁净度 + 0.15×(1−CER)。"""
+    rep = analyze(pcm)
+    if rep.get("n", 0) < 480:
+        return "太短", 0.0
+    for key, why in (("nan_inf", "NaN/Inf"), ("clip_samples", "削波"), ("zero_runs", "数字零段"), ("click_like", "点击")):
+        if rep[key]:
+            return why, 0.0
+    if rep["true_peak_dbfs"] > -0.5:
+        return "真峰值过高", 0.0
+    rel = rep["noise_rel_voiced_db"] if rep["noise_rel_voiced_db"] is not None else -30.0
+    clean = 1.0 - min(1.0, max(0.0, rel + 45.0) / 30.0)
+    s = 0.25 * clean + 0.15 * (1.0 - (cer if cer is not None else 0.0)) + 0.6 * (float(sim) if sim is not None else 0.5)
+    return None, float(s)
+
+
+def pick_best(baseline, challengers, margin=0.03):
+    """baseline/challengers 为 (name, pcm, sim|None)。挑战者必须比当前最优高出 margin 且无否决才替换(抗噪规则)。返回 (name, reason)。"""
+    bv, bs = candidate_score(baseline[1], baseline[2])
+    best, best_s, why = baseline[0], (bs if bv is None else -1.0), ("基线保持" if bv is None else "基线被否决:" + bv)
+    for name, pcm, sim in challengers:
+        v, s = candidate_score(pcm, sim)
+        if v is not None:
+            continue
+        need = best_s + (margin if best_s >= 0 else 0.0)
+        if s > need:
+            best, best_s, why = name, s, "挑战者 %s 明显优于当前最优(%.3f > %.3f)" % (name, s, need)
+    return best, why
+
+
+# ───────────────────────── 运行时累计计数(网关用) ─────────────────────────
+class Counters:
+    def __init__(self):
+        self.d = {"segs": 0, "zero_runs": 0, "zero_samples": 0, "joins_fixed": 0, "clicks": 0, "limited_db_max": 0.0, "expanded_frames": 0,
+                  "pause_fills": 0, "pause_ms": 0, "turns_analyzed": 0, "last_turn": None, "worst_turn": None, "turns_with_problems": 0, "ref_quality": None}
+
+    def add_seg(self, st):
+        self.d["segs"] += 1
+        for k in ("zero_runs", "zero_samples", "joins_fixed", "clicks", "expanded_frames"):
+            self.d[k] += int(st.get(k, 0))
+        self.d["limited_db_max"] = round(max(self.d["limited_db_max"], float(st.get("limited_db", 0.0))), 2)
+
+    def add_pause(self, n):
+        self.d["pause_fills"] += 1
+        self.d["pause_ms"] += int(n * 1000 / SR)
+
+    def add_turn(self, rep):
+        self.d["turns_analyzed"] += 1
+        self.d["last_turn"] = rep
+        if rep.get("problems"):
+            self.d["turns_with_problems"] += 1
+            self.d["worst_turn"] = rep
+
+    def snapshot(self):
+        return dict(self.d)
+'''
+
+FILES['audio_forensics.py'] = r'''# -*- coding: utf-8 -*-
+"""audio_forensics.py —— 取证命令行(永久工具):对任意 WAV/FLAC/WebM 报告 数字零段 / click / 削波 / 真峰值 / 底噪 / 50ms 台阶。
+    python audio_forensics.py 克隆语音1.wav 克隆语音2.wav [--json]
+    python audio_forensics.py --compare v14.wav v15.wav        # 逐项并排对比,v15 不得比 v14 差
+指标均为信号层面的客观量;「像不像」「好不好听」必须由人耳(/abx 盲测页)裁决。"""
+import json
+import os
+import sys
+
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import v15  # noqa: E402
+
+
+def load(path):
+    try:
+        import soundfile as sf
+        a, sr = sf.read(path, dtype="float32", always_2d=True)
+        a = a.mean(axis=1)
+    except Exception:  # noqa: BLE001
+        import subprocess
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-f", "f32le", "-ac", "1", "-ar", "24000", "-"], capture_output=True, check=True).stdout
+        a, sr = np.frombuffer(raw, np.float32), 24000
+    if sr != 24000:
+        try:
+            from scipy.signal import resample_poly
+            from math import gcd
+            g = gcd(24000, int(sr))
+            a, sr = resample_poly(a, 24000 // g, int(sr) // g).astype(np.float32), 24000
+        except Exception:  # noqa: BLE001
+            pass
+    return a, sr
+
+
+def show(path, rep):
+    print("── %s" % path)
+    for k in ("seconds", "peak_dbfs", "true_peak_dbfs", "rms_voiced_dbfs", "clip_samples", "dc", "zero_runs", "zero_samples", "jumps_gt_025", "click_like",
+              "noise_floor_dbfs", "noise_rel_voiced_db", "level_steps_gt_12db", "head_rms_10ms", "tail_rms_10ms"):
+        print("   %-22s %s" % (k, rep.get(k)))
+    print("   %-22s %s" % ("结论", "✅ 未发现客观问题" if rep.get("ok") else "⚠ " + ";".join(rep.get("problems", []))))
+
+
+def main(argv):
+    as_json = "--json" in argv
+    cmp_ = "--compare" in argv
+    files = [a for a in argv if not a.startswith("--")]
+    if not files:
+        print(__doc__)
+        return 2
+    reps = {}
+    for f in files:
+        a, sr = load(f)
+        reps[f] = v15.analyze(np.asarray(a, np.float32), sr)
+    if as_json:
+        print(json.dumps(reps, ensure_ascii=False, indent=1))
+    else:
+        for f, r in reps.items():
+            show(f, r)
+    if cmp_ and len(files) == 2:
+        a, b = reps[files[0]], reps[files[1]]
+        worse = [k for k in ("zero_runs", "click_like", "clip_samples", "level_steps_gt_12db") if (b.get(k) or 0) > (a.get(k) or 0)]
+        print("\n对比(%s → %s):%s" % (files[0], files[1], "✅ 没有变差的客观项" if not worse else "⚠ 变差:" + ",".join(worse)))
+        return 1 if worse else 0
+    return 0 if all(r.get("ok") for r in reps.values()) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
+'''
+
+FILES['abx.html'] = r'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>盲测工作台 · v14 vs v15 · 谁更像参考语音</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 15px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; background: #15171a; color: #e6e8eb; margin: 0; padding: 20px; }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  .card { background: #1e2126; border: 1px solid #2c3037; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  .muted { color: #9aa3ad; font-size: 13px; }
+  button { background: #3b82f6; color: #fff; border: 0; border-radius: 8px; padding: 9px 16px; font-size: 15px; cursor: pointer; margin: 4px 6px 4px 0; }
+  button.sec { background: #2c3037; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  label.f { display: block; margin: 6px 0; }
+  input[type=file] { color: #cbd1d8; }
+  .big { font-size: 28px; font-weight: 700; }
+  .ok { color: #4ade80; } .bad { color: #f87171; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  td, th { border-bottom: 1px solid #2c3037; padding: 4px 8px; text-align: left; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎧 盲测工作台:v14 与 v15 谁更像参考语音?</h1>
+  <div class="muted">全部在你的浏览器里完成,音频文件不会上传。每一轮:先听「参考」,再随机顺序听 A / B(其中一个来自 v14,一个来自 v15),选更像参考的那个。至少 12 轮,系统用二项检验判断 v15 是否显著更像。AI 不能替你「听」,这里的结果才是最终裁判。</div>
+
+  <div class="card">
+    <b>① 选文件</b>(WAV / FLAC / MP3 / WebM 都行;可多选,v14 与 v15 请用<b>同一参考、同一文本</b>各生成若干条)
+    <label class="f">参考语音(1 个或多个):<input id="fRef" type="file" accept="audio/*" multiple></label>
+    <label class="f">v14 克隆(多条):<input id="fA" type="file" accept="audio/*" multiple></label>
+    <label class="f">v15 克隆(多条):<input id="fB" type="file" accept="audio/*" multiple></label>
+    <label class="f"><input id="chkSeg" type="checkbox" checked> 每轮随机截取 5 秒(更快;取消 = 播放整条)</label>
+    <label class="f"><input id="chkNorm" type="checkbox" checked> 播放前把三者响度对齐(避免「更响 = 更像」的偏差,强烈建议开启)</label>
+    <button id="btnStart" disabled>开始盲测</button>
+    <span id="loadMsg" class="muted"></span>
+  </div>
+
+  <div class="card" id="trial" style="display:none">
+    <div class="row"><b id="tIdx"></b><span class="muted" id="tNeed"></span></div>
+    <div class="row">
+      <button id="pR" class="sec">▶ 参考</button>
+      <button id="pA" class="sec">▶ A</button>
+      <button id="pB" class="sec">▶ B</button>
+      <button id="pStop" class="sec">■ 停止</button>
+    </div>
+    <div class="row">
+      <span>更像参考的是:</span>
+      <button id="chA">A</button><button id="chB">B</button><button id="chN" class="sec">听不出差别</button>
+    </div>
+    <div class="muted">提示:耳机、安静环境;不要看文件名;先听参考再听 A/B,可以反复听。</div>
+  </div>
+
+  <div class="card" id="result" style="display:none">
+    <div class="big" id="rWin"></div>
+    <div id="rStat" class="muted"></div>
+    <div id="rVerdict"></div>
+    <div class="row"><button id="btnExport">导出结果 JSON(不含音频)</button><button id="btnAgain" class="sec">再来一轮</button></div>
+    <table id="tbl"></table>
+  </div>
+</div>
+<script>
+(function () {
+  var $ = function (i) { return document.getElementById(i); };
+  var ctx = null, src = null, bufs = { R: [], A: [], B: [] }, trials = [], cur = null, MIN = 12;
+
+  function ac() { if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); return ctx; }
+  function rms(b) { var d = b.getChannelData(0), s = 0, n = 0; for (var i = 0; i < d.length; i += 3) { if (Math.abs(d[i]) > 0.003) { s += d[i] * d[i]; n++; } } return Math.sqrt(s / Math.max(1, n)); }
+
+  async function load(files) {
+    var out = [];
+    for (var i = 0; i < files.length; i++) {
+      var ab = await files[i].arrayBuffer();
+      var b = await ac().decodeAudioData(ab.slice(0));
+      out.push({ name: files[i].name, buf: b, rms: rms(b) });
+    }
+    return out;
+  }
+
+  async function onFiles() {
+    if (!$('fRef').files.length || !$('fA').files.length || !$('fB').files.length) { $('btnStart').disabled = true; return; }
+    $('loadMsg').textContent = '解码中…';
+    try {
+      bufs.R = await load($('fRef').files); bufs.A = await load($('fA').files); bufs.B = await load($('fB').files);
+      $('loadMsg').textContent = '已载入:参考 ' + bufs.R.length + ' · v14 ' + bufs.A.length + ' · v15 ' + bufs.B.length;
+      $('btnStart').disabled = false;
+    } catch (e) { $('loadMsg').textContent = '解码失败:' + e; }
+  }
+  ['fRef', 'fA', 'fB'].forEach(function (i) { $(i).addEventListener('change', onFiles); });
+
+  function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
+
+  function stop() { try { if (src) src.stop(); } catch (e) {} src = null; }
+  function play(item, off, dur) {
+    stop();
+    var c = ac(); if (c.state === 'suspended') c.resume();
+    var s = c.createBufferSource(); s.buffer = item.buf;
+    var g = c.createGain(); g.gain.value = $('chkNorm').checked ? Math.min(8, 0.08 / Math.max(item.rms, 1e-4)) : 1;
+    s.connect(g); g.connect(c.destination);
+    s.start(0, off || 0, dur || undefined); src = s;
+  }
+
+  function newTrial() {
+    var r = pick(bufs.R), a = pick(bufs.A), b = pick(bufs.B), flip = Math.random() < 0.5;
+    var seg = $('chkSeg').checked;
+    function win(it) { var L = it.buf.duration; if (!seg || L <= 5.5) return [0, undefined]; return [Math.random() * (L - 5), 5]; }
+    cur = { ref: r.name, v14: a.name, v15: b.name, v15IsA: flip, win: { R: win(r), A: win(flip ? b : a), B: win(flip ? a : b) },
+            items: { R: r, A: flip ? b : a, B: flip ? a : b } };
+    $('tIdx').textContent = '第 ' + (trials.length + 1) + ' 轮';
+    $('tNeed').textContent = trials.length >= MIN ? '已满 12 轮,可随时查看结果' : '至少还需 ' + (MIN - trials.length) + ' 轮';
+    $('trial').style.display = 'block';
+    $('result').style.display = 'none';
+  }
+
+  function answer(ch) {
+    var pickedV15 = ch === 'N' ? null : ((ch === 'A') === cur.v15IsA);
+    trials.push({ n: trials.length + 1, ref: cur.ref, v14: cur.v14, v15: cur.v15, v15_was: cur.v15IsA ? 'A' : 'B', choice: ch, picked_v15: pickedV15 });
+    if (trials.length >= MIN && trials.length % 4 === 0) showResult(); else newTrial();
+  }
+
+  function binomP(k, n) { // 双侧精确二项检验(p=0.5)
+    function lc(n, k) { var s = 0; for (var i = 1; i <= k; i++) s += Math.log((n - k + i) / i); return s; }
+    var pk = Math.exp(lc(n, k) + n * Math.log(0.5)), p = 0;
+    for (var i = 0; i <= n; i++) { var pi = Math.exp(lc(n, i) + n * Math.log(0.5)); if (pi <= pk * (1 + 1e-9)) p += pi; }
+    return Math.min(1, p);
+  }
+  function wilson(k, n) { var z = 1.96, ph = k / n, d = 1 + z * z / n, c = ph + z * z / (2 * n), m = z * Math.sqrt(ph * (1 - ph) / n + z * z / (4 * n * n)); return [(c - m) / d, (c + m) / d]; }
+
+  function stats() {
+    var dec = trials.filter(function (t) { return t.picked_v15 !== null; }), k = dec.filter(function (t) { return t.picked_v15; }).length, n = dec.length;
+    return { k: k, n: n, ties: trials.length - n, rate: n ? k / n : null, p: n ? binomP(k, n) : null, ci: n ? wilson(k, n) : null };
+  }
+
+  function showResult() {
+    var s = stats();
+    $('trial').style.display = 'none'; $('result').style.display = 'block';
+    $('rWin').textContent = s.n ? ('v15 胜率 ' + (s.rate * 100).toFixed(0) + '%  (' + s.k + '/' + s.n + ')') : '还没有有效选择';
+    $('rStat').textContent = s.n ? ('平局 ' + s.ties + ' 次 · 95% 置信区间 ' + (s.ci[0] * 100).toFixed(0) + '%~' + (s.ci[1] * 100).toFixed(0) + '% · 双侧二项检验 p = ' + s.p.toFixed(4)) : '';
+    var v = '';
+    if (s.n < MIN) v = '<span class="bad">有效轮数不足 ' + MIN + ',结论不可靠。</span>';
+    else if (s.rate >= 0.7 && s.p < 0.05) v = '<span class="ok">✓ v15 显著更像参考(胜率 ≥ 70% 且 p < 0.05)。</span>';
+    else if (s.rate <= 0.3 && s.p < 0.05) v = '<span class="bad">✗ v14 显著更像参考:请把开关改回 v14(VC_V15=0)或逐项关闭 v15 模块。</span>';
+    else v = '<span class="bad">未达到验收线(需要胜率 ≥ 70% 且 p < 0.05)。可继续测更多轮;v15 的后处理主要解决爆音/沙沙/停顿,不保证音色更像。</span>';
+    $('rVerdict').innerHTML = v;
+    $('tbl').innerHTML = '<tr><th>#</th><th>v15 是</th><th>选择</th><th>选了 v15?</th></tr>' + trials.map(function (t) {
+      return '<tr><td>' + t.n + '</td><td>' + t.v15_was + '</td><td>' + t.choice + '</td><td>' + (t.picked_v15 === null ? '平局' : (t.picked_v15 ? '是' : '否')) + '</td></tr>';
+    }).join('');
+  }
+
+  $('btnStart').onclick = function () { trials = []; newTrial(); };
+  $('btnAgain').onclick = newTrial;
+  ['R', 'A', 'B'].forEach(function (k) { $('p' + k).onclick = function () { var w = cur.win[k]; play(cur.items[k], w[0], w[1]); }; });
+  $('pStop').onclick = stop;
+  $('chA').onclick = function () { stop(); answer('A'); };
+  $('chB').onclick = function () { stop(); answer('B'); };
+  $('chN').onclick = function () { stop(); answer('N'); };
+  $('btnExport').onclick = function () {
+    var blob = new Blob([JSON.stringify({ created: new Date().toISOString(), min_trials: MIN, summary: stats(), trials: trials }, null, 1)], { type: 'application/json' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'abx_v14_vs_v15.json'; a.click();
+  };
+})();
+</script>
+</body>
+</html>
+'''
+
+FILES['tests/test_v15.py'] = r'''# -*- coding: utf-8 -*-
+"""v15 单元测试(合成信号,CPU,只依赖 numpy):    python tests/test_v15.py
+只证明「逻辑与客观指标」,不证明听感/相似度(见 v15.py 顶部诚实声明)。"""
+import os
+import sys
+import time
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, HERE)
+import v15  # noqa: E402
+
+SR = 24000
+ALL_ON = {k: True for k in v15.SWITCH_NAMES}
+
+
+def voice(sec=3.0, f0=100.0, amp=0.35, noise_db=-62.0, seed=0, pauses=True):
+    """合成浊音:基频 + 谐波 + 共振峰式包络;可选句中停顿(只有底噪)。"""
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(sec * SR)) / SR
+    x = np.zeros_like(t)
+    for k in range(1, 25):
+        x += np.sin(2 * np.pi * f0 * k * t + k) / k ** 1.1
+    x /= np.abs(x).max()
+    env = 0.6 + 0.4 * np.sin(2 * np.pi * 2.5 * t)
+    x = x * env * amp
+    if pauses:
+        m = np.ones_like(t)
+        m[int(1.0 * SR):int(1.25 * SR)] = 0.0
+        x = x * m
+    x += rng.standard_normal(len(t)) * (10 ** (noise_db / 20.0))
+    return np.round(x * 32767).astype(np.int16)
+
+
+def run(sig, sw, chunk=1920, seed=1):
+    st = v15.SegStitch(sw=sw, seed=seed)
+    out = [st.process(sig[i:i + chunk]) for i in range(0, len(sig), chunk)]
+    return np.concatenate(out), st
+
+
+def rel_db(diff, ref):
+    return 10 * np.log10(max(float(np.mean(diff.astype(np.float64) ** 2)), 1e-12) / max(float(np.mean(ref.astype(np.float64) ** 2)), 1e-12))
+
+
+def test_switch_names_and_all_off_is_identity():
+    old = {k: os.environ.get(k) for k in ("VC_V15",)}
+    os.environ["VC_V15"] = "0"
+    try:
+        assert not any(v15.switches().values())
+        assert not v15.any_audio_on()
+    finally:
+        if old["VC_V15"] is None:
+            os.environ.pop("VC_V15", None)
+    sig = voice()
+    out, _ = run(sig, {k: False for k in v15.SWITCH_NAMES})
+    assert out.dtype == np.dtype("<i2") and np.array_equal(out, sig), "全部关闭必须逐样本一致"
+
+
+def test_clean_speech_is_nearly_transparent():
+    sig = voice(pauses=False)
+    sw = dict(ALL_ON, EXPAND=False)
+    out, st = run(sig, sw)
+    assert len(out) == len(sig)
+    d = rel_db(out.astype(np.int32) - sig.astype(np.int32), sig)
+    assert d < -55, "干净语音差值能量 %.1f dB(应 < -55)" % d
+    assert st.st["clicks"] == 0 and st.st["joins_fixed"] == 0 and st.st["zero_runs"] == 0, st.st
+
+
+def test_expander_only_touches_noise_frames():
+    sig = voice(pauses=True)
+    out, st = run(sig, ALL_ON)
+    x, y = sig.astype(np.float64), out.astype(np.float64)
+    fr = 480
+    n = len(x) // fr
+    rx = np.sqrt((x[: n * fr].reshape(n, fr) ** 2).mean(axis=1))
+    voiced = rx > 3000
+    dv = (x[: n * fr] - y[: n * fr]).reshape(n, fr)[voiced]
+    assert 10 * np.log10(np.mean(dv ** 2) / np.mean(x[: n * fr].reshape(n, fr)[voiced] ** 2)) < -50, "有声帧不应被扩展器改动"
+    q = rx < 200
+    assert q.any() and st.st["expanded_frames"] >= 0
+    ry = np.sqrt((y[: n * fr].reshape(n, fr) ** 2).mean(axis=1))
+    assert ry[q].mean() < rx[q].mean() * 0.8, "底噪帧应被衰减(<6dB 内的平滑衰减)"
+
+
+def test_zero_runs_filled_across_chunks_and_faded():
+    sig = voice(pauses=False).copy()
+    sig[30000:30000 + 1920] = 0                           # 恰好一帧 1920 样本的数字零(与参考克隆里的零段簇一致)
+    sig[50000:50000 + 800] = 0                            # ≈ 33ms 的零段
+    before = v15.analyze(sig)
+    assert before["zero_runs"] >= 2
+    for chunk in (1920, 1000, 777, 4096):                 # 零段跨越不同的块边界
+        out, st = run(sig, ALL_ON, chunk=chunk)
+        after = v15.analyze(out)
+        assert after["zero_runs"] == 0, (chunk, after["zero_runs"], st.st)
+        assert st.st["zero_runs"] >= 2
+        seg = out[30000 + 72:30000 + 1920].astype(np.float64)       # 前 3ms 允许是上一块语音的衰减延续(跳变平滑)
+        assert np.abs(seg).max() < 200, "填充只能是很低电平的舒适噪声,而不是硬语音"
+        assert np.abs(np.diff(out.astype(np.float64) / 32768.0))[29900:32100].max() < 0.12, "零段两侧不应有硬跳变"
+
+
+def test_hard_cut_and_hard_onset_get_faded():
+    sig = voice(pauses=False).copy()
+    sig[20000:22400] = 0
+    out, _ = run(sig, ALL_ON)
+    jumps = np.abs(np.diff(out.astype(np.float64) / 32768.0))
+    seg = jumps[19900:22600]
+    assert seg.max() < 0.12, "硬截断/硬起的相邻样本跳变应被淡化: %.3f" % seg.max()
+
+
+def test_chunk_join_discontinuity_smoothed():
+    sig = voice(pauses=False).astype(np.int32)
+    sig[5760:] += 9000                                   # 在块边界(1920 的整数倍)制造 0.27 满量程的阶跃
+    sig = np.clip(sig, -32767, 32767).astype(np.int16)
+    out, st = run(sig, dict(ALL_ON, LEVEL=False, EXPAND=False), chunk=1920)
+    a = np.abs(np.diff(sig.astype(np.float64)))[5700:5800].max() / 32768.0
+    b = np.abs(np.diff(out.astype(np.float64)))[5700:5800].max() / 32768.0
+    assert a > 0.25 and b < 0.1, (a, b)
+    assert st.st["joins_fixed"] >= 1
+
+
+def test_click_repair_is_isolated_only():
+    sig = voice(pauses=False).copy()
+    sig[40000] = 32000                                   # 孤立尖峰
+    out, st = run(sig, dict(ALL_ON, LEVEL=False))
+    assert abs(int(out[40000])) < 20000 and st.st["clicks"] >= 1, (int(out[40000]), st.st)
+    clean = voice(pauses=False)
+    out2, st2 = run(clean, dict(ALL_ON, LEVEL=False))
+    assert st2.st["clicks"] == 0, "干净语音不应触发点击修复"
+
+
+def test_limiter_no_hard_clip_and_true_peak_ceiling():
+    sig = voice(pauses=False).astype(np.float64) * 3.2          # 过载
+    sig = np.clip(sig, -32767, 32767).astype(np.int16)
+    raw = v15.analyze(sig)
+    out, st = run(sig, dict(ALL_ON, CLICK=False))
+    rep = v15.analyze(out)
+    assert rep["true_peak_dbfs"] <= -1.3, rep
+    assert st.st["limited_db"] > 0.5
+    assert raw["clip_samples"] > 0 and rep["clip_samples"] == 0
+
+
+def test_dither_and_saturate_not_wrap():
+    rng = np.random.default_rng(0)
+    big = np.full(1000, 40000.0, np.float32)
+    q = v15.quantize(big, rng, True)
+    assert q.min() >= 32766 and q.max() <= 32767, "必须饱和,不能回绕为负数"
+    z = v15.quantize(np.zeros(20000, np.float32), rng, True)
+    assert 0.15 < float(np.mean(z != 0)) < 0.5 and np.abs(z).max() <= 2, "TPDF 抖动幅度应 ≤ ±2 LSB"
+
+
+def test_comfort_pause_not_digital_zero_and_matched_level():
+    fl = v15.FloorEst()
+    fl.feed(np.random.default_rng(1).standard_normal(48000).astype(np.float32) * 30.0)
+    lvl = v15.comfort_rms(fl.rms())
+    assert 3.0 <= lvl <= 40.0, lvl
+    b = v15.pause_fill(int(0.26 * SR), lvl, seed=3)
+    p = np.frombuffer(b, "<i2")
+    assert len(p) == int(0.26 * SR) and not (p == 0).all()
+    assert v15.zero_runs(p, 48) == [] or all(s == 0 or s + l == len(p) for s, l in v15.zero_runs(p, 48))
+    r = float(np.sqrt(np.mean(p[len(p) // 4: 3 * len(p) // 4].astype(np.float64) ** 2)))
+    assert 0.5 * lvl < r < 1.6 * lvl, (r, lvl)
+    assert abs(int(p[0])) <= 2 and abs(int(p[-1])) <= 2, "首尾必须淡化到近零,与相邻语音无台阶"
+
+
+def test_analyze_detects_known_defects():
+    clean = voice(pauses=False)
+    rep = v15.analyze(clean)
+    assert rep["ok"] and rep["zero_runs"] == 0, rep
+    bad = clean.copy()
+    bad[30000:31920] = 0
+    bad[10000] = 32767
+    bad2 = v15.analyze(bad)
+    assert bad2["zero_runs"] == 1 and not bad2["ok"] and bad2["click_like"] >= 1, bad2
+    clip = np.clip(clean.astype(np.float64) * 4, -32768, 32767).astype(np.int16)
+    assert v15.analyze(clip)["clip_samples"] > 0
+
+
+def test_ref_quality_scores_clean_above_noisy_and_flags_redo():
+    sig = voice(sec=12.0, pauses=False, noise_db=-70).astype(np.float32) / 32768.0
+    for i in range(0, len(sig), SR):                     # 每秒一个自然停顿,SNR 才有意义
+        sig[i + 18000:i + 24000] *= 0.002
+    good = v15.ref_quality(sig, SR)
+    noisy = sig + np.random.default_rng(0).standard_normal(len(sig)).astype(np.float32) * 0.05
+    bad = v15.ref_quality(noisy, SR)
+    assert good["score"] > bad["score"], (good, bad)
+    assert bad["redo"] and bad["reasons"], bad
+    assert v15.ref_quality(sig[: SR // 2], SR)["redo"]
+
+
+def test_prepare_reference_v15_keeps_peak_convention_and_removes_rumble():
+    t = np.arange(SR * 8) / SR
+    a = (0.3 * np.sin(2 * np.pi * 200 * t) + 0.2 * np.sin(2 * np.pi * 20 * t)).astype(np.float32)
+    y, q = v15.prepare_reference_v15(a, SR)
+    assert abs(float(np.abs(y).max()) - 0.7) < 0.02 and abs(float(y[0])) < 1e-3 and abs(float(y[-1])) < 1e-3
+    spec = np.abs(np.fft.rfft(y))
+    f = np.fft.rfftfreq(len(y), 1 / SR)
+    assert spec[np.argmin(np.abs(f - 20))] < 0.2 * spec[np.argmin(np.abs(f - 200))], "20Hz 隆隆声应被高通压低"
+
+
+def test_select_window_prefers_clean_segment():
+    rng = np.random.default_rng(2)
+    v = voice(sec=45, pauses=False, noise_db=-70).astype(np.float32) / 32768.0
+    for i in range(0, len(v), SR):
+        v[i + 18000:i + 24000] *= 0.002
+    v[: SR * 12] += rng.standard_normal(SR * 12).astype(np.float32) * 0.06          # 前 12 秒很吵
+    s, e, sc = v15.select_window(v, SR, target_s=20.0)
+    assert s >= SR * 10, "应避开前面很吵的片段: start=%.1fs" % (s / SR)
+    assert 18 * SR <= e - s <= 22 * SR
+
+
+def test_pick_best_requires_clear_margin_and_vetoes():
+    base = voice(pauses=False)
+    same = voice(pauses=False)
+    name, why = v15.pick_best(("base", base, 0.80), [("c1", same, 0.81)], margin=0.03)
+    assert name == "base", "提升没超过 margin,不应替换: " + why
+    name, why = v15.pick_best(("base", base, 0.80), [("c2", same, 0.90)], margin=0.03)
+    assert name == "c2", why
+    clip = np.clip(base.astype(np.float64) * 6, -32768, 32767).astype(np.int16)
+    name, why = v15.pick_best(("base", base, 0.80), [("c3", clip, 0.99)], margin=0.03)
+    assert name == "base" and v15.candidate_score(clip)[0] == "削波"
+
+
+def test_counters_snapshot():
+    c = v15.Counters()
+    c.add_seg({"zero_runs": 2, "clicks": 1, "limited_db": 1.2})
+    c.add_pause(SR // 4)
+    c.add_turn({"problems": ["x"], "ok": False})
+    s = c.snapshot()
+    assert s["zero_runs"] == 2 and s["pause_ms"] == 250 and s["turns_with_problems"] == 1
+
+
+def test_process_speed_is_realtime_safe():
+    sig = voice(sec=20.0)
+    t0 = time.time()
+    run(sig, ALL_ON, chunk=1920)
+    el = time.time() - t0
+    assert el < 20.0 / 20.0, "后处理必须远快于实时(>20×):用时 %.2fs / 20s 音频" % el
+
+
+if __name__ == "__main__":
+    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    bad = 0
+    for k, fn in tests:
+        t0 = time.time()
+        try:
+            fn()
+            print("  ✓ %s (%.1fs)" % (k, time.time() - t0))
+        except Exception:  # noqa: BLE001
+            bad += 1
+            import traceback
+            print("  ✗ %s\n%s" % (k, traceback.format_exc()))
+    print("%d 项通过, %d 项失败" % (len(tests) - bad, bad))
+    sys.exit(1 if bad else 0)
+'''
+
+FILES['tests/test_v15_mock.py'] = r'''# -*- coding: utf-8 -*-
+"""tests/test_v15_mock.py —— v15 Mock 集成测试(真实网关 + WebSocket + 两个 Mock GPU 进程;不代表真实模型质量):  python tests/test_v15_mock.py
+可选:VC_V14_BASELINE_DIR=/path/to/v14_app  → 额外验证「VC_V15=0 与 v14 逐字节一致」。"""
+import asyncio
+import json
+import os
+import sys
+import time
+import traceback
+import urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))
+import numpy as np  # noqa: E402
+
+import test_gateway as tg  # noqa: E402
+import test_v13_mock as t13  # noqa: E402
+import v15  # noqa: E402
+
+SR = 24000
+
+
+def run_turn(text=None, **env):
+    srv = tg.Server(**env)
+    try:
+        srv.clone()
+        r = asyncio.run(t13.collect(srv.port, text or tg.LONG, sid="v15"))
+        assert r["done"] and r["chk"].verify_done(r["done"]["frames"], r["done"]["samples"]), "帧协议对账失败"
+        time.sleep(1.0)                                         # 取证在线程池里异步完成
+        return srv.state(), r, json.load(urllib.request.urlopen(srv.url("/api/report"), timeout=10)), srv
+    except Exception:
+        srv.stop()
+        raise
+
+
+def test_pause_is_not_digital_zero_vs_v14():
+    off = run_turn(VC_V15="0")
+    off[3].stop()
+    on = run_turn()
+    on[3].stop()
+    a_off, a_on = v15.analyze(off[1]["pcm"]), v15.analyze(on[1]["pcm"])
+    assert a_off["zero_runs"] >= 2, "v14 行为:句间停顿是数字零 → 应能检出 %s" % a_off
+    assert a_on["zero_runs"] == 0, "v15:停顿必须是舒适噪声,不得有数字零段 %s" % a_on
+    assert on[1]["done"]["samples"] == off[1]["done"]["samples"], "样本数必须守恒(停顿长度不变)"
+    assert not on[1]["done"]["errors"]
+    v = on[0]["v15"]
+    assert v["available"] and v["counters"]["pause_fills"] >= 2 and v["counters"]["turns_analyzed"] >= 1, v
+    print("    [mock] v14 零段=%d(%d 样本) → v15 零段=%d;停顿填充 %d 次 %.2fs;取证问题轮 %d" % (
+        a_off["zero_runs"], a_off["zero_samples"], a_on["zero_runs"], v["counters"]["pause_fills"], v["counters"]["pause_ms"] / 1000, v["counters"]["turns_with_problems"]))
+
+
+def test_injected_zero_run_inside_speech_is_repaired_end_to_end():
+    off = run_turn(VC_V15="0", VC_MOCK_ZERORUN="1")
+    off[3].stop()
+    on = run_turn(VC_MOCK_ZERORUN="1")
+    on[3].stop()
+    a_off, a_on = v15.analyze(off[1]["pcm"]), v15.analyze(on[1]["pcm"])
+    assert not off[1]["done"]["errors"] and not on[1]["done"]["errors"], (off[1]["done"]["errors"], on[1]["done"]["errors"])
+    assert a_on["zero_runs"] == 0 < a_off["zero_runs"], (a_off["zero_runs"], a_on["zero_runs"])
+    assert on[0]["v15"]["counters"]["zero_runs"] >= 1, on[0]["v15"]["counters"]
+    print("    [mock] 句内注入 1920 样本零段:v14 零段 %d → v15 零段 %d;修复计数 %d" % (a_off["zero_runs"], a_on["zero_runs"], on[0]["v15"]["counters"]["zero_runs"]))
+
+
+def test_report_state_routes_and_ref_quality():
+    st, r, rep, srv = run_turn()
+    try:
+        ids = {i["id"]: i for i in rep["items"]}
+        assert all(k in ids for k in (30, 31, 32, 33, 34)), sorted(ids)
+        assert ids[34]["status"] == "未验证", "真机/听感相似度必须如实写「未验证」"
+        assert ids[31]["status"] in ("已测量", "通过"), ids[31]
+        assert rep["v15"]["available"]
+        rq = srv_ref_quality(srv)
+        assert rq and "score" in rq, rq
+        h = urllib.request.urlopen(srv.url("/abx"), timeout=5).read().decode("utf-8")
+        assert "二项检验" in h and "ABX" not in "" and "v15" in h
+        assert json.load(urllib.request.urlopen(srv.url("/api/v15"), timeout=5))["available"]
+    finally:
+        srv.stop()
+
+
+def srv_ref_quality(srv):
+    return json.load(urllib.request.urlopen(srv.url("/api/v15"), timeout=5))["counters"].get("ref_quality")
+
+
+def test_all_v15_off_is_byte_identical_to_v14():
+    base = os.environ.get("VC_V14_BASELINE_DIR")
+    if not base or not Path(base, "app.py").exists():
+        print("    (跳过:未设置 VC_V14_BASELINE_DIR)")
+        return
+    new = run_turn(VC_V15="0")
+    new[3].stop()
+    old_home = tg.HERE
+    tg.HERE = Path(base)
+    try:
+        old = run_turn()
+        old[3].stop()
+    finally:
+        tg.HERE = old_home
+    a, b = new[1]["pcm"], old[1]["pcm"]
+    assert len(a) == len(b) and np.array_equal(a, b), "VC_V15=0 必须与 v14 PCM 逐样本一致(len %d vs %d)" % (len(a), len(b))
+    print("    [mock] VC_V15=0 与 v14 PCM 逐样本一致(%d 样本)" % len(a))
+
+
+if __name__ == "__main__":
+    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    if "--unit" in sys.argv:
+        tests = []
+    bad = 0
+    for k, fn in tests:
+        t0 = time.time()
+        try:
+            fn()
+            print("  ✓ %s (%.1fs)" % (k, time.time() - t0))
+        except Exception:  # noqa: BLE001
+            bad += 1
+            print("  ✗ %s\n%s" % (k, traceback.format_exc()))
+    print("%d 项通过, %d 项失败" % (len(tests) - bad, bad))
+    sys.exit(1 if bad else 0)
+'''
+
 for name, content in FILES.items():
     (APP / name).parent.mkdir(parents=True, exist_ok=True)
     (APP / name).write_text(content, encoding="utf-8")
@@ -25031,8 +26464,8 @@ if not TEST:
     ok, r = smoke()
     if not ok:
         print("  正在安装依赖…", flush=True)
-        retry(lambda: run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5"] + base_pkgs, show=r"(?i)^(error|successfully)"), what="安装基础依赖")
-        retry(lambda: run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5", "--no-deps", "qwen-tts==0.1.1", "faster-qwen3-tts==0.3.2"], show=r"(?i)^(error|successfully)"), what="安装 TTS 依赖")
+        retry(lambda: run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5"] + base_pkgs, show=r"(?i)^(error|successfully)", timeout=1800), what="安装基础依赖")
+        retry(lambda: run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5", "--no-deps", "qwen-tts==0.1.1", "faster-qwen3-tts==0.3.2"], show=r"(?i)^(error|successfully)", timeout=1800), what="安装 TTS 依赖")
         print()
         ok, r = smoke()
     if not ok:
@@ -25103,6 +26536,13 @@ if RUN_TESTS and not TEST:
         r9 = subprocess.run([PY, str(APP / "tests" / "test_v11_ui.py")], capture_output=True, text=True, timeout=600, cwd=str(APP), env=env_t)
         print("  [Python 测试 · v11 工作台真实页面:视口/缩放/点击不偏移/全屏/档位]\n" + "\n".join("   " + l_ for l_ in (r9.stdout + r9.stderr).strip().splitlines()[-10:]))
         rs.append(r9)
+    t15u = subprocess.run([PY, str(APP / "tests" / "test_v15.py")], capture_output=True, text=True, timeout=300, cwd=str(APP), env=env_t)
+    print("  [Python 测试 · v15 增量:拼接/零段/跳变/点击/软限幅/抖动/舒适噪声/取证/参考评分/重排]\n" + "\n".join("   " + l_ for l_ in (t15u.stdout + t15u.stderr).strip().splitlines()[-20:]))
+    rs.append(t15u)
+    if RUN_TESTS == "full":
+        t15m = subprocess.run([PY, str(APP / "tests" / "test_v15_mock.py")], capture_output=True, text=True, timeout=900, cwd=str(APP), env=env_t)
+        print("  [Python 测试 · v15 Mock 集成:停顿零段→0 / 句内零段修复 / 报告项 / /abx]\n" + "\n".join("   " + l_ for l_ in (t15m.stdout + t15m.stderr).strip().splitlines()[-10:]))
+        rs.append(t15m)
     if any(x.returncode != 0 for x in rs):
         print("  ⚠ 有测试未通过(见上)。服务仍会启动,但请把失败项当作已知问题,不要宣称对应功能已验证。")
 
@@ -25175,7 +26615,7 @@ if not TEST:
           "        print('PATH_FAIL', m, repr(e)[:200])\n") % (need,)
     if disk_free_gb() < 12:
         print("  ⚠ 磁盘剩余 %.1fGB,下载模型(约 6~8GB)可能不够;可在右侧 Output 里删除不需要的大文件" % disk_free_gb())
-    last = retry(lambda: run([PY, "-c", dl], env=dict(senv), show=r"^PATH"), tries=3, wait=10, what="下载模型")
+    last = retry(lambda: run([PY, "-c", dl], env=dict(senv), show=r"^PATH", timeout=5400), tries=3, wait=10, what="下载模型")
     fails = [l for l in last if l.startswith("PATH_FAIL")]
     if any(TTS_MODEL in l for l in fails):
         raise RuntimeError("下载 %s 失败:\n%s" % (TTS_MODEL, "\n".join(fails)))
@@ -25419,6 +26859,7 @@ print("   · ngrok 免费版首次打开会有提示页,点 Visit Site 即可")
 print("   · 右上「📊 诊断 / 训练 / 评估」:冷/热 TTFA、欠载/重缓冲、chunk 间隔 P50/P95/P99、双卡状态、验收清单(通过/失败/未运行/未验证)")
 print("   · 💾 下载生成的语音:/voice 页右上「💾 下载」→ 每个文本段 / 每一轮(WAV,可选 FLAC)/ 全部 ZIP(含脱敏 manifest 与 SHA-256);文件在 %s,只在当前 Kaggle 会话内有效,请及时下载" % (WORK / "artifacts"))
 print("   · 🔎 搜索:被 Bing/DDG 等站点限制(401/403/429/验证码)时系统会【停止】请求并显示原因,不会绕过;要更稳定请配置 BRAVE_SEARCH_API_KEY。体检结果:%s" % (OUT / "vc_net_preflight.json"))
+print("   · v15:📊 诊断里的「v15」验收项=每轮取证(数字零段/click/削波/真峰值);%s/abx = 盲测页(参考 vs v14 vs v15,二项检验);关闭某项见脚本顶部 V15_*;沙箱不能证明「更像」,以你的耳朵为准" % public_url)
 print("   · 本单元格会一直运行 = 服务在线,请不要停止它;日志可在网页右上角「运行日志」查看\n", flush=True)
 try:
     from IPython.display import HTML, display
@@ -25461,6 +26902,10 @@ def tick():
         last_beat = time.time()
         n += 1
         free = disk_free_gb()
+        try:
+            print("[%s] 📈 资源 · %s" % (time.strftime("%H:%M:%S"), resource_report()), flush=True)
+        except Exception:
+            pass
         print("[%s] 💓 心跳 #%d · 服务 %s · GPU进程 %s · 声音 %s · %s · 磁盘剩余 %.1fGB" % (time.strftime("%H:%M:%S"), n, "正常" if h else "❌无响应",
               "/".join(w["status"] for w in ws_), (h or {}).get("voice", "?"), gpu_report(), free), flush=True)
         if free < 1.5:                                           # 磁盘保护: 清理旧的参考录音与缓存,免得写满导致服务崩溃
