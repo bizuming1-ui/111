@@ -1,1 +1,123 @@
+# 星河搜索助手 + 克隆语音播放器 · 完美极致优化开发任务提示词 (v16+ · 基于 bizuming1-ui/111 参考代码无损增量)
 
+## 一、任务目标（必须100%达成，零妥协）
+你是顶级语音AI系统工程师 + Kaggle/T4x2优化专家 + 音频信号处理专家。任务是在 https://github.com/bizuming1-ui/111 的“参考代码”（单个超大Kaggle一体化Python脚本，当前v15，Qwen3-TTS-12Hz-1.7B-Base + 双T4 + LoRA + 多语音库 + 流式PCM WebSocket + 浏览器工作台 + 搜索助手 + 实时对话 + 声纹锁 + artifacts + 诊断面板 + 完整版本演进到v15）基础上，进行**精准、最小必要、可独立开关、可一键回退的增量优化**，实现以下极致目标，同时**绝对不破坏、不降级任何已成功功能**（包括但不限于：零样本serve、LoRA train/train_then_serve、多语音库持久化/GitHub同步、鉴权、artifacts完整下载与校验、v13零损坏/v14分位起播/抢救/跨卡/实时对话/声纹/口语化、v15连续流拼接/舒适噪声/软限幅/参考管线/取证/盲测、浏览器全视口工作台、搜索多引擎回退、意图LLM、视觉定位等全部模块及其开关）。
+
+### 核心必须解决的问题（彻底、永久）
+1. **音质零损坏**：任何克隆语音不得有音色/音质/参数损坏、沙沙声（hiss）、爆音（pops/clicks/clipping）、金属声、电流声、低电平噪声尾巴、段边界突变、DC偏置、异常静音。输出必须清晰、自然、人耳级干净。
+2. **相似度极高**：无论参考语音是什么（任何说话人、任何语言、任何时长），每一段克隆语音必须与参考语音“十分相似”（人耳难以区分 + 客观SECS/cosine > 0.85+ 校准后，支持盲测）。现有零样本能力不足必须强化。
+3. **首声极快**：起播延迟显著降低（目标首包 <150-250ms，可配置），不得再“首声变慢”。
+4. **绝对无断连/无停顿播放**：彻底消除任何“播放-停顿-播放-停顿”现象。样本级连续流、零underrun、零rebuffer（网络正常时）、精确时钟同步、浏览器端环形缓冲 + AudioWorklet。舒适噪声/呼吸仅作为真实缺口的自然填充，不得制造人工停顿感。
+5. **多参考语音训练与增量优化（新核心功能）**：
+   - 每个语音库（voice_id）支持上传**多条**参考语音（数量不限）。
+   - 参考语音 + 现场录制**无任何时长限制**（自动智能切段 + 质量过滤）。
+   - 训练时使用多ref（embedding融合 / 多prompt in-context / 数据集concat）。
+   - 训练完成后，可继续上传新ref或现场录制，进行**增量再优化**（resume checkpoint + experience replay + 新数据微调，防灾难性遗忘）。
+   - 支持质量评分、自动筛选优质段、参考锦标赛（多候选生成选最优）。
+6. **资源充分利用**：Kaggle T4 x2 全部榨干（双卡并行推理/预取、一卡train一卡serve、bf16 + flash-attn + torch.compile + gradient checkpointing + 动态显存管理）。Internet On，Secrets保持原有（NGROK_TOKEN等）。
+7. **其他**：保持深灰设计系统、诊断面板扩展（新增hiss/pop/clip/similarity/latency/underrun实时指标 + 盲测页强化）、完整可下载artifacts（含后处理前后对比）、所有诚实声明与单元/集成测试扩展。
+
+最终系统必须“无论给什么参考语音，都能输出完美相似、清晰、快起播、零瑕疵、无缝连续的克隆语音”，并支持持续用更多数据优化。
+
+## 二、研究与资源（必须先深入研究再动手，AI自动下载对比）
+1. **必须完整阅读并理解参考代码**：https://github.com/bizuming1-ui/111 （尤其“参考代码”文件全部头部版本日志 + TTS/音频/训练/播放/Guard/Plan相关所有模块）。用工具提取所有VC_V*开关、run_tts、pump/emit、artifacts、LoRA、voice library逻辑。
+2. **官方与SOTA项目（AI必须git clone / hf download 到沙盒进行实际对比测试）**：
+   - Qwen3-TTS 官方：https://github.com/QwenLM/Qwen3-TTS  + HF Qwen/Qwen3-TTS-12Hz-1.7B-Base / 0.6B-Base + 论文 arxiv:2601.15621 （保持为主模型，强化其流式与tokenizer）。
+   - CosyVoice（尤其3）：https://github.com/FunAudioLLM/CosyVoice （高相似、情感、流式、多语言）。
+   - F5-TTS：https://github.com/SWivid/F5-TTS （快RTF、flow-matching、易fine-tune）。
+   - GPT-SoVITS（v2ProPlus优先）：https://github.com/RVC-Boss/GPT-SoVITS （少样本微调中文天花板，多ref支持好）。
+   - 其他对比：Seed-VC https://github.com/Plachtaa/seed-vc 、OpenVoice、Chatterbox、Fish-Speech、XTTS社区fork、Zonos等。
+   - 音频修复：Demucs / MDX-Net（人声分离）、DeepFilterNet / RNNoise / noisereduce（去嘶）、de-click算法、soft-limiter（torchaudio或自定义）、pyloudnorm / loudness、librosa / scipy信号处理。
+   - 说话人：WavLM / ECAPA-TDNN / Wespeaker 用于embedding融合与声纹增强。
+   - 流式播放：Web Audio API best practices、AudioWorklet环形缓冲示例、PCM流无缝拼接。
+3. **沙盒/模拟器自动对比机制（必须实现）**：
+   - AI自动创建/使用 Docker / Kaggle Notebook 模拟 / Colab / 本地venv 沙盒。
+   - 下载上述所有模型 + 参考代码。
+   - 用标准测试集（干净/噪声/长/短/多语言 ref + 固定文本）跑并行benchmark：SECS相似度、WER/CER（Whisper）、伪影检测（clip count、hiss energy high-freq、pop detection）、首包延迟、RTF、VRAM峰值、主观MOS proxy（或简单AB X）。
+   - 择优：主路径保持/强化Qwen3 + 可选插件式切换其他模型（配置开关）；或混合（Qwen3生成 + CosyVoice tone transfer等）。选出综合最优（质量 > 相似度 > 延迟 > 稳定性 > 显存）并集成。
+   - 记录所有对比日志到诊断面板/artifacts。
+
+## 三、精准实现方法（增量、模块化、开关控制）
+### 3.1 多参考语音系统（新模块，独立开关 VC_MULTI_REF=True）
+- 扩展 voice library：每个voice_id 下 ref_pool = List[RefItem]（path, transcript, duration, snr, clip_score, embedding, quality）。
+- UI：支持多文件上传 + 现场连续录音（无时长限，WebRTC/MediaRecorder分块上传）。
+- 预处理管线（自动、可配置）：
+  1. 格式统一 → 24kHz mono float32。
+  2. VAD（silero或现有）切有效段（0.5-30s，重叠0.1s）。
+  3. 质量门：SNR >15dB、clip ratio <0.1%、静音比合理 → 否则丢弃或标记。
+  4. 可选Demucs人声提取。
+  5. 轻量de-hiss + de-click。
+  6. ASR强制对齐transcript（优先Qwen3-ASR，fallback Whisper）。
+  7. 提取多级embedding（WavLM-SV + ECAPA）并缓存。
+- 训练：LoRA dataset从所有优质ref构建；支持multi-ref conditioning（平均embedding或随机/全部prompt tokens）；增量模式 = load_checkpoint + 新数据epoch + replay buffer旧数据。
+- 推理：零样本用最佳单ref或融合；微调后用adapter。
+- 再优化：新ref加入pool → 触发增量train（后台或MODE切换）→ 热更新模型（不影响serve）。
+
+### 3.2 音质完美管线（VC_AUDIO_PERFECT=True，默认开启轻量）
+- 生成中：强化现有Guard（更严THR、实时hiss/pop检测、码本循环检测）。
+- 流中/后：
+  - 样本级 crossfade 拼接（5-20ms raised-cosine）。
+  - Soft-limiter（knee，lookahead，-1dBFS ceiling）。
+  - 自适应spectral de-hiss（只减稳态噪声，保护语音transient）。
+  - De-click / de-pop（阈值检测 + LPC/插值）。
+  - DC blocker + 可选轻微高通。
+  - 响度：流式恒定（现有v13）+ 最终-23 LUFS可选。
+- 禁止：任何变速、激进压缩、破坏性EQ。所有步骤可单独开关 + 前后对比artifacts。
+- 输出校验：扩展质量检查 + 自动重试如果伪影超标。
+
+### 3.3 起播与无缝连续（强化v14/v15）
+- 更激进P95/分位 + 双卡预取（GPU0当前，GPU1下一句/桥接）。
+- 滚动视界 + 动态水位（基于实测吞吐）。
+- 浏览器端：强化AudioWorklet（精确sample clock、大环形缓冲、underrun预测填舒适噪声/克隆呼吸）。
+- 目标指标写进诊断：ttfa（time-to-first-audio）、underrun_count=0、rebuffer=0、continuity_score=1.0。
+
+### 3.4 模型与训练优化
+- 保持Qwen3-1.7B为主（bf16、flash_attn_2、compile）。
+- 集成择优模型作为可选backend（配置 MODEL_BACKEND="qwen3"|"cosyvoice"|"f5"|"gpt_sovits"|...）。
+- LoRA：支持多ref、更高rank如果显存允许、speaker consistency loss。
+- 双T4：DDP train、model parallel或pipeline inference、显存监控自动降级。
+
+### 3.5 UI/诊断/其他
+- 语音库页：多ref管理（列表、试听、删除、质量分、触发增量train）。
+- 诊断面板：新增所有新指标 + 盲测强化（AB X与参考对比）。
+- 浏览器模拟器要求：在现有工作台或新建简单页，添加醒目“一键复制完整开发提示词”按钮（点击复制本提示词全文或生成最新版到clipboard/下载.md）。用户只需此按钮即可获取完美方案。
+- 所有新功能独立开关（V16_*），默认开启优化但可一键回退到v15行为。
+- 测试：扩展tests/ 覆盖多ref、增量、伪影零、连续播放、长ref、相似度。
+- 诚实声明更新：真实Kaggle T4x2实测为准；沙盒对比结果公开。
+
+### 3.6 多方案（AI必须实现并对比择优）
+- **方案A（推荐主）**：纯强化Qwen3 + 完美音频管线 + 多ref LoRA。最大化兼容现有。
+- **方案B**：Qwen3主 + CosyVoice/F5作为tone-refine或备选backend。
+- **方案C**：GPT-SoVITS微调优先（对中文/角色极致）+ Qwen3流式fallback。
+- **方案D**：混合流水线（多模型ensemble或级联）+ 自动路由。
+AI在沙盒跑完benchmark后，选择综合最优并实现可配置切换，记录理由。
+
+## 四、验收标准（必须全部通过，诊断面板可视化）
+- 任意ref（短/长/噪声/多条）→ 克隆输出：人耳极相似、零沙沙/爆音/损坏、清晰、首声快、全程无缝连续（播放测试underrun=0）。
+- 多ref训练 + 增量再优化有效（相似度/稳定性提升可量化）。
+- 所有旧功能完整可用，开关回退正常。
+- T4x2利用率高，无OOM，延迟/质量达标。
+- artifacts完整、测试通过、文档/注释清晰、可一键在Kaggle运行。
+- 浏览器模拟器复制按钮工作正常。
+
+## 五、执行步骤（AI严格按序）
+1. Clone参考repo + 所有SOTA资源到沙盒。
+2. 完整静态分析参考代码，列出所有修改点（最小diff）。
+3. 实现多ref + 预处理 + 增量train。
+4. 实现完美音频管线 + 起播/连续强化。
+5. 沙盒benchmark多方案 → 择优集成。
+6. 扩展UI/诊断/测试/开关。
+7. 端到端Kaggle模拟验证。
+8. 输出完整更新后的单文件脚本（或模块化但保持一键粘贴Kaggle）+ 变更日志 + 使用说明。
+9. 确保提示词自身可被“复制按钮”输出。
+
+## 六、约束与原则
+- 最小必要改动，代码风格与v15一致，大量注释，可回退。
+- 不引入破坏性依赖（优先已有或轻量）。
+- 隐私/安全：ref音频不外泄，鉴权保持。
+- 商业友好：优先Apache/MIT模型。
+- 成功标准：用户反馈“完美，再也听不出问题，相似度极高，快且无缝，多ref很好用”。
+
+现在立即开始研究、对比、开发。优先保证现有成功功能零降级，然后把所有要求做到极致优秀。完成后给出完整可运行代码 + 详细报告。
+
+（本提示词文件本身也是交付物，支持版本迭代。）
