@@ -1,4 +1,21 @@
 # =============================================================================
+#  v17 增量版(在 v16 之上「可回退的最小增量」· 每个新模块有独立开关 V17_* · 全部关闭 = v16 行为,PCM 逐样本一致)
+#  主题:缺陷检测器 · 不降级闸门 · 版本谱系(晋升/回滚/金丝雀) · 无时长限制入库(分块断点续传 / 录音分片 / 流式切分) · 提示词搜索 ·
+#        参考体检 · Studio 整句 Best-of-N · 引擎路由(冠军=Qwen3,挑战者必须过闸门) · 新页面 /v17 · 快速克隆录音去掉 1800 秒自动停止
+#  怎么用:整个文件粘贴进 Kaggle Notebook 的【一个】代码单元格运行(用法同 v16,见下方原说明)。运行后新增:
+#      · {网页地址}/v17        v17 控制台(上传 / 导入语音库 / 恢复录音 / 谱系 · 闸门 · 晋升 · 回滚 / 提示词搜索 / Studio / 体检)
+#      · 📊 诊断 → 验收清单新增 v17 项(id 50~54),只写测到的;真机项一律「未验证」
+#  v17 诚实声明(请原样保留):
+#   1. 没有任何方法能在数学上保证「所有语音永远没有任何沙沙声/爆音」。v17 把它变成:每条输出都过客观缺陷检测 + 不达标自动重试/如实标注
+#      「未达标放行」+ 用户盲听(/abx)裁决。这是可验证、可持续的「做到最优」的唯一诚实定义。
+#   2. 本版在 CPU 沙箱(合成信号 + Mock 引擎)完成了:缺陷检测召回/误报、闸门拒绝更差候选、谱系晋升/回滚/金丝雀、分块续传/录音恢复、
+#      2 小时音频流式切分无丢样本、V17 开/关 PCM 逐样本一致。【没有】GPU / T4×2 真机 / 人耳数据:
+#      「更像」「沙沙声更少」「引擎更强」「Live 首声/欠载不退化」「Studio 真机通道」「增量训练效果」全部【未验证】,以你在 Kaggle 的实测 + /abx 盲测为准。
+#   3. 候选引擎(IndexTTS2 / CosyVoice3 / F5 / VoxCPM2 / Fish S2)本版只提供「适配器接口 + 路由 + 闸门」,没有安装、没有跑 bench;路由默认永远是 Qwen3 冠军。
+#   4. 所有阈值是启发式、未校准;声纹 cosine 是原始指标,没校准前不显示百分比。许可证以各模型官方仓库为准,商用前请核对。
+#   5. 声纹是生物特征:只克隆本人或已获授权的声音;所有声音数据默认只存私有位置;请把公开仓库 bizuming1-ui/111 改为私有。令牌只放 Kaggle Secrets。
+# =============================================================================
+# =============================================================================
 #  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v16 · 多参考语音库 · 无时长限制入库 · 复合参考 · 增量再优化 · 沙沙声/直流取证 · 首声分段计时 · 在 v15 之上可回退的增量 · v15 · 样本连续流拼接 · 舒适噪声停顿 · 软限幅 · 参考管线 · 取证 · 盲测页 · 在 v14 之上可回退的增量 · v14 · 分位数起播 · 失败不丢句(抢救/跨卡重试) · 实时对话 · 声纹锁 · 口语化文本 · 在 v13 之上可回退的增量 · v13 · 零损坏放行 · 滚动视界起播 · 恒定音量 · 在 v12 之上可回退的增量 · v12 · 真实浏览器级交互 · v10 · 完整可下载的合成音频 · 合规搜索加速 · 在 v9 之上最小必要改动 · 大模型意图理解 · 2 秒静音自动执行 · 真实 Google/Bing 多来源 · 页面视觉理解 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
 #  (在 v6「连续播放优先 · 背压 + 帧序号 + 断线续传 · 无变速 · 完整性检测 · 留出评估」之上无损追加;原语音克隆页在 /voice,根路径 / 是搜索首页)
 #  Qwen3-TTS-12Hz-1.7B-Base 声音克隆  ×  双 T4  ×  LoRA 训练(留出验证)  ×  真实指标面板
@@ -263,6 +280,21 @@ V16_TTFA = True                # M7 首声分段计时(只测量)
 V16_COMPOSITE_SECONDS = 20     # 复合参考总时长上限(秒);ICL 模式下越长首句 prefill 越慢
 V16_SEG_TARGET_SECONDS = 8     # 长音频自动切分的目标片段时长(秒);上限 = 14
 V16_BASE_LR = 1e-4             # 增量再优化的基准学习率(实际 = 基准 × 0.4,夹在 0.3~0.5 倍)
+
+# ╔═══ v17 开关区(在 v16 之上的增量;全部设为 False/总开关 V17=False = v16 行为)═══
+V17 = True                     # v17 总开关(False = v16 行为,PCM 逐样本一致)
+V17_DEFECTS = True             # 缺陷检测器:NaN/削波/语音内数字零段/click/真峰值/沙沙声(相对参考底噪)/块间台阶 —— 只测量,不改音频
+V17_GATE = True                # 不降级闸门:非劣效 + 配对 bootstrap 显著提升(纯函数 + 接口)
+V17_LINEAGE = True             # 版本谱系:不可变版本 · 三项证据才晋升 · 一键回滚 · 金丝雀自动回滚(旧库首次打开自动备份只读快照 → 版本 0)
+V17_INGEST = True              # 无时长限制入库:分块断点续传上传 + 录音分片落盘/恢复 + 流式切分导入(不整段读入内存;只受磁盘剩余保护;不自动删除任何文件)
+V17_PROMPT = True              # 提示词搜索:MMR(质量×声纹多样性,同录音条件簇),固定种子可复现
+V17_REFHEALTH = True           # 参考体检:只给建议(底噪/有损/削波/低信噪比),绝不降噪、绝不改原件
+V17_STUDIO = True              # Studio 整句 Best-of-N + 缺陷择优 + 证书(Live 不动;真机 worker 通道未接入 → 接口返回 501 并如实说明)
+V17_ROUTER = True              # 引擎路由:冠军 = Qwen3-TTS;挑战者必须已安装 + 过闸门才可成为某语音库默认
+V17_UI = True                  # /v17 页面与 /api/v17/* 接口
+V17_REC_UNLIMITED = True       # 快速克隆录音页:去掉 1800 秒自动停止;每 5 秒一片流式上传到服务器(浏览器内存只留前 40 秒)
+V17_MIN_FREE_MB = 300          # 磁盘剩余低于此值 → 暂停新写入(不删除任何文件)
+V17_CHUNK_MB = 4               # 分块上传的块大小(MB);若经 ngrok 上传大文件失败,调小到 1~2
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 
 TEST = os.environ.get("VC_LAUNCH_TEST") == "1"          # 本地自检用(跳过安装/隧道/训练)
@@ -281,6 +313,11 @@ for _k16, _v16v in (("", V16), ("_REFSTORE", V16 and V16_REFSTORE), ("_REFSET", 
     os.environ["VC_V16" + _k16] = "1" if _v16v else "0"
 os.environ["VC_V16_COMPOSITE_S"], os.environ["VC_V16_SEG_TARGET_S"], os.environ["VC_V16_BASE_LR"] = str(V16_COMPOSITE_SECONDS), str(V16_SEG_TARGET_SECONDS), str(V16_BASE_LR)
 os.environ["VC_V16_SEG_MAX_S"] = str(max(float(V16_SEG_TARGET_SECONDS) + 3.0, 14.0))
+for _k17, _v17v in (("", V17), ("_DEFECTS", V17 and V17_DEFECTS), ("_GATE", V17 and V17_GATE), ("_LINEAGE", V17 and V17_LINEAGE), ("_INGEST", V17 and V17_INGEST),
+                    ("_PROMPT", V17 and V17_PROMPT), ("_REFHEALTH", V17 and V17_REFHEALTH), ("_STUDIO", V17 and V17_STUDIO), ("_ROUTER", V17 and V17_ROUTER),
+                    ("_UI", V17 and V17_UI), ("_REC_UNLIMITED", V17 and V17_REC_UNLIMITED)):
+    os.environ["VC_V17" + _k17] = "1" if _v17v else "0"
+os.environ["VC_V17_MIN_FREE_MB"], os.environ["VC_V17_CHUNK_MB"] = str(V17_MIN_FREE_MB), str(V17_CHUNK_MB)
 if NGROK_TOKEN or DEEPSEEK_API_KEY:
     print("⚠ 你把令牌直接写进了脚本:不要公开分享/提交这个笔记本;建议改用 Kaggle Secrets。")
 WORK = Path(os.environ.get("VC_WORK") or "/kaggle/working/vc")      # 运行时数据(克隆的声音等)
@@ -412,6 +449,12 @@ except Exception as _e16:  # noqa: BLE001
     log.warning("v16 模块不可用,按 v15 行为运行: %s", _e16)
 V16C = _v16.Counters() if _v16 else None               # v16:多参考 / 长音频切分 / 取证 的累计计数(诊断面板;portal 共用同一个对象)
 V16T = _v16.StageTimer() if _v16 else None             # v16:首声分段计时(只测量)
+try:                                                      # v17 增量模块:缺失/出错时一切退回 v16 行为
+    import v17 as _v17
+except Exception as _e17:  # noqa: BLE001
+    _v17 = None
+    log.warning("v17 模块不可用,按 v16 行为运行: %s", _e17)
+V17C = _v17.Counters() if _v17 else None               # v17:缺陷体检 / 闸门 / 入库 / Studio 计数(诊断面板;v17_api 共用同一个对象)
 V15C = _v15.Counters() if _v15 else None               # v15:拼接/舒适噪声/限幅/取证 的累计计数(诊断面板)
 V14M = {"xretry": 0, "xretry_ok": 0, "salvaged": 0, "segs": 0, "spoken_rewrites": deque(maxlen=20)}
 
@@ -582,6 +625,48 @@ def v15_forensics_turn(turn):
         LOOP.run_in_executor(None, work)
     except Exception:  # noqa: BLE001
         pass
+
+
+def v17_state():
+    if _v17 is None:
+        return {"available": False}
+    return {"available": True, "version": _v17.VERSION, "switches": _v17.switches(), "counters": V17C.snapshot(), "engines": _v17.ENGINES,
+            "honest": "沙箱只验证逻辑与信号层指标;真机音质/相似度/引擎对比未验证"}
+
+
+def v17_forensics_turn(turn):
+    """v17 缺陷体检(线程池里):v17.detect_defects(NaN/削波/语音内零段/click/真峰值/沙沙声/块间台阶)。只测量,不改任何音频。"""
+    if _v17 is None or not _v17.on("DEFECTS") or not turn.gen_pcm:
+        return
+
+    def work():
+        try:
+            pcm = np.frombuffer(b"".join(turn.gen_pcm)[: 2 * SR * 120], dtype="<i2")
+            V17C.add_turn(_v17.detect_defects(pcm, SR))
+        except Exception as e:  # noqa: BLE001
+            log.warning("v17 体检失败(忽略): %s", e)
+    try:
+        LOOP.run_in_executor(None, work)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def v17_report_items(add):
+    """v17 验收清单:只写测到的;真机/人耳/引擎对比一律「未验证」。"""
+    if _v17 is None:
+        add(50, "v17 增量模块", "未运行", "v17.py 未能导入,系统按 v16 行为运行")
+        return
+    sw, c = _v17.switches(), V17C.snapshot()
+    add(50, "v17 · 开关与回退", "已记录", "开关 %s;VC_V17=0 = v16 行为(v17 不改任何推理/后处理/实时通路音频;PCM 逐样本一致由 tests/test_v17_mock.py 对账)" % sw)
+    if not c["turns_checked"]:
+        add(51, "v17 · 输出缺陷体检(NaN/削波/语音内零段/click/真峰值/沙沙声/台阶)", "未运行", "还没有完成的合成轮次(DEFECTS=%s)" % sw["DEFECTS"])
+    else:
+        add(51, "v17 · 输出缺陷体检(NaN/削波/语音内零段/click/真峰值/沙沙声/台阶)", "失败" if c["turns_red"] else "已测量",
+            "体检 %d 轮:红 %d / 黄 %d / 绿 %d;最近一轮:%s(启发式、未校准;红色=必须重试)" % (c["turns_checked"], c["turns_red"], c["turns_yellow"], c["turns_green"], ";".join(c["last_defects"]) or "无缺陷"))
+    add(52, "v17 · 无时长限制入库(分块续传/录音分片/流式切分)", "已记录", "上传完成 %d、录音结束 %d、导入 %d 次 → 入库 %d 段(跳过 %d 段);无总大小/时长上限,只受磁盘剩余保护;原件永不删除" % (c["uploads_done"], c["rec_done"], c["imports"], c["import_segments"], c["import_rejected"]))
+    add(53, "v17 · 闸门 / 谱系 / 路由 / Studio / 提示词搜索", "已记录", "闸门 %d 次(拒绝 %d / 通过 %d);晋升 %d / 回滚 %d;路由拒绝 %d;Studio %d 次(未达标放行 %d / 失败 %d);提示词搜索 %d 次" % (
+        c["gate_runs"], c["gate_rejects"], c["gate_promotes"], c["lineage_promotes"], c["lineage_rollbacks"], c["router_refusals"], c["studio_renders"], c["studio_best_effort"], c["studio_failed"], c["prompt_searches"]))
+    add(54, "v17 · 真机项:引擎择优 / 音质 / 相似度 / Live 性能 / Studio 真机通道 / 增量训练效果", "未验证", "沙箱(CPU+Mock)只验证逻辑与信号层指标;候选引擎未安装、未跑 bench;Studio 真机通道未接入 GPU worker;「更好」只能由 Kaggle 真机 + /abx 盲测裁决")
 
 
 def v16_state():
@@ -1356,7 +1441,7 @@ def state_public():
             "model": (Path(MODEL).name if os.path.isdir(MODEL) else MODEL), "trained": TRAINED, "target": TARGET_RMS[0], "backend": backend_summary(),
             "gpus": gpu_table(), "calibrated": bool(CAL), "sv_model": SV_MODEL, "emotion_pause": EMOTION_PAUSE,
             "perf": {"mode": LATENCY_MODE, "policy": GPU_POLICY, "spc": round(TEXT_STATS["spc"], 3), "send_ahead_ms": SEND_AHEAD_MS}, "train": read_train_progress(),
-            "library": VOICE.get("library"), "v13": v13_state(), "v15": v15_state(), "v16": v16_state()}
+            "library": VOICE.get("library"), "v13": v13_state(), "v15": v15_state(), "v16": v16_state(), "v17": v17_state()}
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1457,6 +1542,7 @@ def finish_turn(turn):
     art_finish(turn)
     v15_forensics_turn(turn)
     v16_forensics_turn(turn)
+    v17_forensics_turn(turn)
     if turn.sim_wait > 0:
         RECENT[turn.uid] = turn
     gaps = {}
@@ -2415,7 +2501,8 @@ def build_report():
     v14_report_items(add)
     v15_report_items(add)
     v16_report_items(add)
-    return {"generated": time.strftime("%F %T"), "mock": MOCK, "items": items, "turns_gateway": list(TURN_LOG)[-40:], "turns_browser": ms[-40:], "events": EVENTS, "v13": v13_state(), "v15": v15_state(), "v16": v16_state(),
+    v17_report_items(add)
+    return {"generated": time.strftime("%F %T"), "mock": MOCK, "items": items, "turns_gateway": list(TURN_LOG)[-40:], "turns_browser": ms[-40:], "events": EVENTS, "v13": v13_state(), "v15": v15_state(), "v16": v16_state(), "v17": v17_state(),
             "per_gpu": {str(i): {"F_ms": round(W(i)["F"] * 1000, 1), "D_ms": round(W(i)["D"] * 1000, 1), "PRE_ms": round(W(i)["PRE"] * 1000), "chunk_gap_ms": pcts([g * 1000 for g in W(i)["gaps"]])}
                         for i in (range(len(POOL.workers)) if POOL else [])}}
 
@@ -2749,6 +2836,12 @@ except Exception as _e14d:  # noqa: BLE001
     log.warning("v14_dialog 不可用(实时对话/声纹锁关闭,其余照常): %s", _e14d)
 import portal  # noqa: E402
 PORTAL = portal.install(app, globals())
+try:                                                      # v17 接口层(只新增路由;失败不影响 v16 功能)
+    import v17_api as _v17_api
+    V17API = _v17_api.install(app, globals(), PORTAL) if (_v17 and _v17.on("UI")) else None
+except Exception as _e17a:  # noqa: BLE001
+    V17API = None
+    log.warning("v17 接口不可用(不影响 v16 功能): %s", _e17a)
 
 
 def detect_gpus():
@@ -5498,7 +5591,7 @@ class LibraryStore:
     @staticmethod
     def public_sample(s):
         keys = ("sample_id", "created_at", "duration_s", "sr_orig", "sr_proc", "channels", "category", "kind_zh", "text", "text_source", "text_trusted", "transcribe_state", "session",
-                "orig_sha256", "proc_sha256", "qc_summary", "excluded_from_speech_training", "orig_ext", "orig_bytes", "notes", "enabled", "weight", "v16")
+                "orig_sha256", "proc_sha256", "qc_summary", "excluded_from_speech_training", "orig_ext", "orig_bytes", "notes", "enabled", "weight", "v16", "v17")
         return {k: s.get(k) for k in keys}
 
     # ───────── 样本 ─────────
@@ -5559,7 +5652,7 @@ class LibraryStore:
             self._save(lib)
             return s
 
-    def update_sample_meta(self, lib_id, sample_id, enabled=None, weight=None, v16=None, asr_text=None):
+    def update_sample_meta(self, lib_id, sample_id, enabled=None, weight=None, v16=None, asr_text=None, v17=None):
         """v16:多参考管理(白名单字段):启用/停用、权重(0.1~3)、v16 质检信息。不改动音频与文字。"""
         with self.lock:
             lib = self._load(lib_id)
@@ -5572,6 +5665,8 @@ class LibraryStore:
                 s["weight"] = round(min(3.0, max(0.1, float(weight))), 3)
             if v16 is not None and isinstance(v16, dict):
                 s["v16"] = dict(v16)
+            if v17 is not None and isinstance(v17, dict):                    # v17 命名空间:只增字段,不改旧字段
+                s["v17"] = dict(v17)
             if asr_text is not None and not s.get("text_trusted"):          # 自动转写只写【未核对】文字;已核对的文字永不被覆盖
                 s.update(text=str(asr_text).strip(), text_source="asr_auto", text_trusted=False, transcribe_state="asr_unverified")
             self._save(lib)
@@ -11760,18 +11855,64 @@ async function recStart() {
   await Rec.ctx.audioWorklet.addModule("/worklet.js?v=" + Date.now());
   const src = Rec.ctx.createMediaStreamSource(Rec.stream);
   Rec.node = new AudioWorkletNode(Rec.ctx, "vc-rec"); Rec.chunks = [];
-  Rec.node.port.onmessage = (e) => Rec.chunks.push(e.data);
+  Rec.node.port.onmessage = (e) => V17.push(e.data);
   Rec.an = Rec.ctx.createAnalyser(); Rec.an.fftSize = 1024;
   const mute = Rec.ctx.createGain(); mute.gain.value = 0;
   src.connect(Rec.node); src.connect(Rec.an); Rec.node.connect(mute); mute.connect(Rec.ctx.destination);
-  Rec.on = true; Rec.t0 = performance.now(); $("btnRec").classList.add("on"); $("btnRec").textContent = "⏹";
-  Rec.tm = setInterval(() => { const s = (performance.now() - Rec.t0) / 1000; $("recTime").textContent = fmt(s); if (s >= 1800) recStop(); }, 200);
+  await V17.begin(Rec.sr); Rec.on = true; Rec.t0 = performance.now(); $("btnRec").classList.add("on"); $("btnRec").textContent = "⏹";
+  Rec.tm = setInterval(() => { const s = (performance.now() - Rec.t0) / 1000; $("recTime").textContent = fmt(s); if (!V17.unlimited() && s >= 1800) recStop(); }, 200);
   drawLoop(); log("开始录音(不限时长;快速克隆只取前 30 秒内的安静处,要用全部录音请到「语音库」录制/上传,会自动切分)");
 }
+/* v17:无时长限制录音 —— 每 5 秒一片流式上传到服务器(崩溃/刷新最多丢最近 5 秒);浏览器内存只留前 40 秒给「快速克隆」。开关 VC_V17_REC_UNLIMITED / VC_V17_INGEST。 */
+const V17 = {
+  st: null, on: false, sess: null, seq: 0, buf: [], bufN: 0, head: [], headN: 0, sr: 48000, q: Promise.resolve(), pend: [], wl: null,
+  async init() { try { const r = await fetch("/api/v17/status"); if (r.ok) this.st = await r.json(); } catch (e) {} },
+  unlimited() { return !!(this.st && this.st.switches && this.st.switches.REC_UNLIMITED); },
+  streaming() { return !!(this.st && this.st.switches && this.st.switches.REC_UNLIMITED && this.st.switches.INGEST); },
+  async begin(sr) {
+    this.on = false; this.buf = []; this.bufN = 0; this.head = []; this.headN = 0; this.seq = 0; this.sr = sr; this.pend = [];
+    if (!this.streaming()) return;
+    this.sess = "rec_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    try { const r = await fetch("/api/v17/rec/" + this.sess + "/start?sr=" + sr, { method: "POST" }); this.on = r.ok; } catch (e) { this.on = false; }
+    if (this.on) { try { if (navigator.wakeLock) this.wl = await navigator.wakeLock.request("screen"); } catch (e) {} log("v17:录音没有时长上限;每 5 秒保存一片到服务器(会话 " + this.sess + "),刷新/崩溃最多丢最近 5 秒;完整录音可在 /v17 页导入语音库"); }
+  },
+  push(c) {
+    if (!this.on) { Rec.chunks.push(c); return; }
+    if (this.headN < this.sr * 40) { this.head.push(c); this.headN += c.length; }
+    this.buf.push(c); this.bufN += c.length;
+    if (this.bufN >= this.sr * 5) this.flush();
+  },
+  flush() {
+    if (!this.bufN) return this.q;
+    const f = new Float32Array(this.bufN); let o = 0; for (const c of this.buf) { f.set(c, o); o += c.length; }
+    this.buf = []; this.bufN = 0; const seq = this.seq++;
+    this.q = this.q.then(async () => {
+      for (let k = 0; k < 6; k++) {
+        try { const r = await fetch("/api/v17/rec/" + this.sess + "/chunk?seq=" + seq, { method: "POST", body: f.buffer }); if (r.ok) return; } catch (e) {}
+        await new Promise((r) => setTimeout(r, 800 * (k + 1)));
+      }
+      this.pend.push([seq, f]);
+    });
+    return this.q;
+  },
+  async end() {
+    if (!this.on) return;
+    this.flush(); await this.q;
+    for (const [seq, f] of this.pend.splice(0)) { try { await fetch("/api/v17/rec/" + this.sess + "/chunk?seq=" + seq, { method: "POST", body: f.buffer }); } catch (e) {} }
+    let fin = null;
+    try { fin = await (await fetch("/api/v17/rec/" + this.sess + "/finish", { method: "POST" })).json(); } catch (e) {}
+    Rec.chunks = this.head; this.on = false;
+    try { if (this.wl) { this.wl.release(); this.wl = null; } } catch (e) {}
+    if (fin && fin.ok) log("v17:完整录音已保存 " + Math.round(fin.seconds) + " 秒(会话 " + this.sess + ")。快速克隆只用前 40 秒内的安静处;要用全部录音:打开 /v17 → 导入语音库", "o");
+    else log("v17:录音分片未能合成(" + ((fin && fin.error) || "网络错误") + "),已保存的分片在服务器上,可在 /v17 页恢复", "w");
+  },
+};
+V17.init();
 async function recStop() {
   if (!Rec.on) return; Rec.on = false; clearInterval(Rec.tm); cancelAnimationFrame(Rec.raf); drawIdle();
   $("btnRec").classList.remove("on"); $("btnRec").textContent = "🎤";
   Rec.node.port.postMessage("stop"); Rec.stream.getTracks().forEach((t) => t.stop());
+  await V17.end();
   const n = Rec.chunks.reduce((s, c) => s + c.length, 0), f = new Float32Array(n); let o = 0; for (const c of Rec.chunks) { f.set(c, o); o += c.length; }
   const sr = Rec.sr; try { await Rec.ctx.close(); } catch (e) {}
   if (n / sr < 2) { addErr("录音太短(不足 2 秒),请重新录制"); return; }
@@ -27634,6 +27775,2234 @@ class Counters:
             return dict(self.d)
 '''
 
+FILES['tests/test_v17.py'] = r'''# -*- coding: utf-8 -*-
+"""tests/test_v17.py —— v17 单元测试(合成信号,只证明逻辑/流程,不证明真实音质):  python tests/test_v17.py
+覆盖:缺陷检测(召回/误报) · 不降级闸门(注入更差候选必须被拒) · 版本谱系/晋升/回滚/金丝雀 · 提示词搜索可复现 · 参考体检不改原件 ·
+      Studio Best-of-N · 引擎路由 · 分块断点续传 · 录音崩溃恢复/分卷 · 2 小时流式切分无丢样本 · 开关全关。"""
+import hashlib
+import json
+import os
+import struct
+import sys
+import tempfile
+import time
+import traceback
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))
+import numpy as np  # noqa: E402
+
+import v17  # noqa: E402
+import v17_ingest as I  # noqa: E402
+
+SR = 24000
+
+
+def speech(sec=6, seed=0, floor=1e-4):
+    rng = np.random.default_rng(seed)
+    n = int(sec * SR)
+    t = np.arange(n) / SR
+    f0 = 120 + 20 * np.sin(2 * np.pi * 0.7 * t)
+    ph = 2 * np.pi * np.cumsum(f0) / SR
+    s = sum(np.sin(k * ph) / k for k in range(1, 12))
+    env = np.convolve((np.sin(2 * np.pi * 2.2 * t) > -0.3).astype(float), np.ones(1200) / 1200, "same")
+    fr = rng.normal(0, 0.03, n) * (np.sin(2 * np.pi * 1.3 * t + 1) > 0.6) * env
+    return (0.18 * s * env + fr + rng.normal(0, floor, n)).astype(np.float32)
+
+
+def kinds(x, **kw):
+    return [d["kind"] for d in v17.detect_defects(x, **kw)["defects"]]
+
+
+# ───────── M1 缺陷检测 ─────────
+def test_clean_speech_has_no_red_false_positive():
+    fp = sum(1 for s in range(20) if v17.detect_defects(speech(seed=s))["level"] == "red")
+    assert fp == 0, "清洁语音红色误报 %d/20" % fp
+
+
+def test_injected_defects_are_detected():
+    b = speech()
+    x = b.copy(); x[40000] += 0.5; assert "click" in kinds(x)
+    for amp in (0.08, 0.12, 0.2, 0.4):
+        x = b.copy(); x[44444] += amp; assert "click" in kinds(x), amp
+    x = b.copy(); x[30000:30010] = 1.0; assert "clip" in kinds(x)
+    x = b.copy(); x[1000] = np.nan; assert "nan_inf" in kinds(x)
+    t = np.arange(6 * SR) / SR
+    tone = (0.2 * np.sin(2 * np.pi * 180 * t)).astype(np.float32); tone[50000:50200] = 0
+    assert "zero_run" in kinds(tone)
+    z = tone.copy(); z[:3000] = 0; z[-3000:] = 0; z[50000:50200] = 0.1 * np.sin(np.arange(200))
+    assert "zero_run" not in kinds(z), "开头/结尾的零不是语音内零段"
+
+
+def test_hiss_relative_to_reference_floor():
+    rng = np.random.default_rng(3); n = 8 * SR; t = np.arange(n) / SR
+    gate = np.convolve((np.sin(2 * np.pi * 0.8 * t) > 0).astype(float), np.ones(2400) / 2400, "same")
+    voice = (0.2 * np.sin(2 * np.pi * 170 * t) * gate).astype(np.float32)
+    ref = voice + rng.normal(0, 0.00008, n).astype(np.float32)
+    out = voice + rng.normal(0, 0.0006, n).astype(np.float32)
+    hr = v17._v16.hf_noise_metrics(ref, SR)["hf_floor_dbfs"]
+    assert "hiss" in kinds(out, ref_hf_db=hr) and "hiss" not in kinds(ref, ref_hf_db=hr)
+    json.dumps(v17.detect_defects(out, ref_hf_db=hr))
+
+
+def test_detect_does_not_mutate_input():
+    x = speech(); y = x.copy(); v17.detect_defects(x); assert np.array_equal(x, y)
+
+
+# ───────── M2 闸门 + 谱系 ─────────
+def _base(n=24):
+    rng = np.random.default_rng(0)
+    return {"sim": 0.80 + rng.normal(0, 0.01, n), "cer": 0.05 + rng.normal(0, 0.005, n), "defect_rate": np.zeros(n), "utmos": 3.5 + rng.normal(0, 0.05, n), "hf_floor_db": -70 + rng.normal(0, .3, n)}
+
+
+def _chal(base, **fx):
+    c = {k: np.array(v) for k, v in base.items()}
+    c["red_defects"] = np.zeros(len(c["sim"]))
+    for k, f in fx.items():
+        c[k] = f(c[k])
+    return c
+
+
+def test_gate_rejects_worse_and_accepts_better():
+    b = _base()
+    assert v17.gate_decide(b, _chal(b, sim=lambda a: a + 0.03))["promote"]
+    assert not v17.gate_decide(b, _chal(b, sim=lambda a: a - 0.03))["promote"], "更差候选必须被拒"
+    assert not v17.gate_decide(b, _chal(b))["promote"], "无显著提升保持冠军"
+    assert not v17.gate_decide(b, _chal(b, sim=lambda a: a + 0.03, cer=lambda a: a + 0.05))["promote"]
+    assert not v17.gate_decide(b, _chal(b, sim=lambda a: a + 0.03, hf_floor_db=lambda a: a + 5))["promote"], "沙沙声变大必须被拒"
+    c = _chal(b, sim=lambda a: a + 0.03); c["red_defects"] = np.r_[np.ones(2), np.zeros(len(c["sim"]) - 2)]
+    assert not v17.gate_decide(b, c)["promote"], "出现红色缺陷必须被拒"
+    nb = {k: v for k, v in b.items() if k != "cer"}
+    assert not v17.gate_decide(nb, _chal(b, sim=lambda a: a + 0.03))["promote"], "必需指标缺失=未验证=不晋升"
+
+
+def test_lineage_promote_rollback_canary_and_persistence():
+    d = tempfile.mkdtemp(); p = os.path.join(d, "l.json")
+    L = v17.Lineage(p); L.ensure_v0(snapshot="a")
+    c1 = L.add_candidate(snapshot="b")
+    b = _base()
+    assert not L.promote(c1, v17.gate_decide(b, _chal(b, sim=lambda a: a - 0.03)), True, True)["ok"]
+    good = v17.gate_decide(b, _chal(b, sim=lambda a: a + 0.03))
+    assert not L.promote(c1, good, True, False)["ok"], "缺试合成不得晋升"
+    assert L.promote(c1, good, True, True)["ok"] and L.champion() == c1
+    assert L.rollback()["ok"] and L.champion() == "m_000"
+    assert v17.Lineage(p).champion() == "m_000" and len(v17.Lineage(p).d["versions"]) == 2, "版本永不删除、重载一致"
+    L3 = v17.Lineage(os.path.join(d, "l3.json")); L3.ensure_v0(); c = L3.add_candidate(); L3.promote(c, {"promote": True}, True, True)
+    for _ in range(20):
+        r = L3.canary(False)
+    assert r.get("rolled_back") and L3.champion() == "m_000"
+    assert v17.fixed_seed("m_000", "你好", 1) == v17.fixed_seed("m_000", "你好", 1)
+
+
+def test_snapshot_backup_is_readonly_and_idempotent():
+    d = tempfile.mkdtemp(); src = os.path.join(d, "library.json"); open(src, "w").write("{}")
+    a = v17.snapshot_backup(src, os.path.join(d, "bk")); b = v17.snapshot_backup(src, os.path.join(d, "bk"))
+    assert a == b and not os.access(a, os.W_OK) or os.geteuid() == 0
+
+
+# ───────── 提示词搜索 / 体检 / Studio / 路由 ─────────
+def test_prompt_search_is_reproducible_and_respects_flags():
+    rng = np.random.default_rng(0)
+    segs = [{"id": "s%02d" % i, "seconds": float(rng.uniform(3, 9)), "quality": float(rng.uniform(55, 95)), "emb": rng.normal(size=16), "cond": "A" if i < 8 else "B", "enabled": True, "verified": True} for i in range(12)]
+    segs[3]["enabled"] = False; segs[5]["verified"] = False
+    a, b = v17.mmr_select(segs, seed=7), v17.mmr_select(segs, seed=7)
+    assert a == b and "s03" not in a and "s05" not in a
+    assert sum(s["seconds"] for s in segs if s["id"] in a) <= 20.0 + 1e-6
+    assert len({s["cond"] for s in segs if s["id"] in a}) == 1, "同一录音条件簇"
+    cs = v17.prompt_candidates(segs, n=4, seed=7)
+    assert len({tuple(c["ids"]) for c in cs}) == len(cs)
+
+
+def test_ref_health_flags_without_modifying():
+    rng = np.random.default_rng(0); t = np.arange(10 * SR) / SR
+    clean = (0.2 * np.sin(2 * np.pi * 150 * t) * (np.sin(2 * np.pi * .6 * t) > -.2)).astype(np.float32) + rng.normal(0, 5e-5, len(t)).astype(np.float32)
+    noisy = clean + rng.normal(0, 0.004, len(t)).astype(np.float32); keep = noisy.copy()
+    assert v17.ref_health(clean, SR)["flags"] == [] and "noisy" in v17.ref_health(noisy, SR)["flags"]
+    assert np.array_equal(keep, noisy)
+    n = 48000 * 8; W = np.fft.rfft(rng.normal(0, 0.05, n)); W[np.fft.rfftfreq(n, 1 / 48000) > 16000] *= 1e-3
+    assert "lossy" in v17.ref_health(np.fft.irfft(W, n).astype(np.float32), 48000)["flags"]
+
+
+def test_studio_best_of_n_and_honest_failure():
+    calls = []
+
+    def synth(text, seed, temperature, rep_penalty):
+        calls.append(seed); k = len(calls)
+        y = (0.2 * np.sin(2 * np.pi * 160 * np.arange(3 * SR) / SR)).astype(np.float32)
+        if k <= 2: y[30000] += 0.6
+        if k == 3: raise RuntimeError("OOM")
+        return y
+    c = v17.studio_render("你好", synth, n=4)["certificate"]
+    assert c["status"] == "pass" and [x["level"] for x in c["candidates"]] == ["red", "red", "error", "green"]
+
+    def allbad(text, seed, temperature, rep_penalty):
+        y = (0.2 * np.sin(2 * np.pi * 160 * np.arange(3 * SR) / SR)).astype(np.float32); y[30000] += 0.6; return y
+    r = v17.studio_render("坏", allbad, n=3, max_rounds=2)
+    assert r["certificate"]["status"] == "best_effort" and r["pcm"] is not None and "未达标放行" in r["certificate"]["note"]
+    r = v17.studio_render("崩", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")), n=2, max_rounds=1)
+    assert r["certificate"]["status"] == "failed" and r["pcm"] is None
+    a, b = v17.finalize_pcm16(np.full(1000, .5, np.float32), 1), v17.finalize_pcm16(np.full(1000, .5, np.float32), 1)
+    assert np.array_equal(a, b) and a.dtype == np.int16
+
+
+def test_router_champion_default_and_gate_required():
+    R = v17.Router(os.path.join(tempfile.mkdtemp(), "d.json")); inst = ["qwen3", "indextts2"]
+    assert R.engine_for("L") == "qwen3"
+    assert not R.set_engine("L", "indextts2", {"promote": True})["ok"], "未安装"
+    assert not R.set_engine("L", "indextts2", {"promote": False}, installed=inst)["ok"], "未过闸门"
+    assert R.engine_for("L", "indextts2", installed=inst) == "qwen3"
+    assert R.set_engine("L", "indextts2", {"promote": True}, installed=inst)["ok"] and R.engine_for("L", installed=inst) == "indextts2"
+
+
+def test_subprocess_engine_protocol():
+    w = "import sys,json,base64,numpy as np\nfor l in sys.stdin:\n  y=np.full(480,0.1,np.float32); print(json.dumps({'pcm_b64':base64.b64encode(y.tobytes()).decode(),'sr':24000}),flush=True)\n"
+    E = v17.SubprocessEngine([sys.executable, "-c", w]).load()
+    try:
+        y, sr = E.synthesize("hi", E.make_speaker_state(np.zeros(10), "t"), seed=3)
+        assert len(y) == 480 and sr == 24000
+    finally:
+        E.release()
+
+
+# ───────── 入库 ─────────
+def test_resumable_upload():
+    U = I.UploadStore(tempfile.mkdtemp()); data = os.urandom(3_000_000); sha = hashlib.sha256(data).hexdigest()
+    uid = U.create("../../x y.wav", size=len(data), sha256=sha)["id"]; cs = 1_000_000
+    U.append(uid, 0, data[:cs], hashlib.sha256(data[:cs]).hexdigest())
+    try: U.append(uid, 0, data[:cs]); assert False
+    except I.IngestError as e: assert e.status == 409 and e.extra["expected"] == cs
+    try: U.append(uid, cs, b"x" * cs, "0" * 64); assert False
+    except I.IngestError as e: assert e.status == 422
+    try: U.finish(uid); assert False
+    except I.IngestError as e: assert e.status == 409
+    U.append(uid, cs, data[cs:2 * cs]); U.append(uid, 2 * cs, data[2 * cs:])
+    r = U.finish(uid); assert r["sha256"] == sha and ".." not in os.path.relpath(r["path"], U.root) and U.finish(uid)["sha256"] == sha
+    bad = U.create("b", size=3, sha256="0" * 64)["id"]; U.append(bad, 0, b"abc")
+    try: U.finish(bad); assert False
+    except I.IngestError as e: assert e.status == 422 and os.path.exists(U._p(bad, ".part"))
+    assert U.abort(bad)["kept_in"] == "trash/"
+    try: I.UploadStore(U.root, min_free_mb=10 ** 9).create("c"); assert False
+    except I.DiskLow as e: assert e.status == 507
+
+
+def test_recording_crash_recovery_gaps_and_volumes():
+    root = tempfile.mkdtemp(); R = I.RecStore(root); sr = 24000
+    ch = (0.1 * np.sin(2 * np.pi * 200 * np.arange(sr * 5) / sr)).astype(np.float32)
+    R.start("rec_test_01", sr)
+    for i in range(20): R.chunk("rec_test_01", i, (ch * (1 + i / 100)).astype(np.float32).tobytes())
+    R2 = I.RecStore(root)                                           # 模拟崩溃重启
+    assert [s["id"] for s in R2.list_unfinished()] == ["rec_test_01"]
+    for i in range(20, 40):
+        if i != 30: R2.chunk("rec_test_01", i, (ch * (1 + i / 100)).astype(np.float32).tobytes())
+    assert R2.chunk("rec_test_01", 5, (ch * 1.05).astype(np.float32).tobytes())["dup"]
+    try: R2.chunk("rec_test_01", 5, b"\x00" * 8); assert False
+    except I.IngestError as e: assert e.status == 409
+    try: R2.finish("rec_test_01"); assert False
+    except I.IngestError as e: assert e.extra["missing"] == [30]
+    R2.chunk("rec_test_01", 30, (ch * 1.30).astype(np.float32).tobytes())
+    r = R2.finish("rec_test_01"); w = I.WavMap(r["files"][0])
+    assert w.n == 40 * len(ch) and np.allclose(w.slice(30 * len(ch), 31 * len(ch)), ch * 1.30)
+    old = I.RecStore.MAX_PART_BYTES; I.RecStore.MAX_PART_BYTES = len(ch) * 4 * 7
+    try:
+        R3 = I.RecStore(tempfile.mkdtemp()); R3.start("rec_vol_01", sr)
+        for i in range(20): R3.chunk("rec_vol_01", i, ch.tobytes())
+        rv = R3.finish("rec_vol_01"); assert len(rv["files"]) >= 3 and sum(I.WavMap(p).n for p in rv["files"]) == 20 * len(ch)
+        R3.start("rec_gap_01", sr)
+        for i in (0, 1, 3): R3.chunk("rec_gap_01", i, ch.tobytes())
+        assert I.WavMap(R3.finish("rec_gap_01", allow_gaps=True)["files"][0]).n == 4 * len(ch)
+    finally:
+        I.RecStore.MAX_PART_BYTES = old
+
+
+def test_stream_split_long_audio_no_lost_samples():
+    sr = 16000; n = sr * 1800                                          # 30 分钟(完整的 2 小时用例见开发报告;CI 里缩短)
+    p = os.path.join(tempfile.mkdtemp(), "long.wav"); rng = np.random.default_rng(1)
+    with open(p, "wb") as f:
+        f.write(b"RIFF" + struct.pack("<I", 36 + n * 2) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16) + b"data" + struct.pack("<I", n * 2))
+        done = 0
+        while done < n:
+            L = int(rng.uniform(4, 9) * sr); t = np.arange(L) / sr
+            y = 0.25 * np.sin(2 * np.pi * rng.uniform(110, 220) * t) * np.sin(np.pi * t / t[-1]) + rng.normal(0, 3e-4, L)
+            y = np.concatenate([y, rng.normal(0, 3e-4, int(rng.uniform(0.5, 1.0) * sr))])[:n - done]
+            f.write((np.clip(y, -1, 1) * 32767).astype(np.int16).tobytes()); done += len(y)
+    w = I.WavMap(p); prev, cnt, mx = 0, 0, 0
+    for a, b in I.stream_split(w, window_s=300):
+        assert a == prev, "首尾必须相接"; prev = b; cnt += 1; mx = max(mx, (b - a) / sr)
+    assert prev == w.n and cnt > 100 and mx <= 17.5, (prev, w.n, cnt, mx)
+
+
+def test_switches_off_means_off():
+    old = dict(os.environ)
+    try:
+        os.environ["VC_V17"] = "0"
+        assert not any(v17.switches().values())
+        os.environ["VC_V17"] = "1"; os.environ["VC_V17_STUDIO"] = "0"
+        assert v17.on("DEFECTS") and not v17.on("STUDIO")
+    finally:
+        os.environ.clear(); os.environ.update(old)
+
+
+if __name__ == "__main__":
+    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    bad = 0
+    for k, fn in tests:
+        t0 = time.time()
+        try:
+            fn(); print("  ✓ %s (%.1fs)" % (k, time.time() - t0))
+        except Exception:  # noqa: BLE001
+            bad += 1; print("  ✗ %s\n%s" % (k, traceback.format_exc()))
+    print("%d 项通过, %d 项失败" % (len(tests) - bad, bad))
+    sys.exit(1 if bad else 0)
+'''
+
+FILES['tests/test_v17_mock.py'] = r'''# -*- coding: utf-8 -*-
+"""tests/test_v17_mock.py —— v17 Mock 集成测试(真实网关 + HTTP + 两个 Mock GPU 进程;不代表真实模型质量):  python tests/test_v17_mock.py
+覆盖:状态/页面/报告项 · 分块断点续传上传 → 流式导入语音库 · 录音分片 → 导入 · 谱系/闸门/晋升/回滚(HTTP) · Studio 证书 · 提示词搜索 ·
+      输出缺陷体检计数 · VC_V17=0 回退(接口 404 + 与 v17 开启时 PCM 逐样本一致 = golden PCM)。"""
+import asyncio
+import base64
+import hashlib
+import io
+import json
+import sys
+import time
+import traceback
+import urllib.parse
+import urllib.request
+import wave
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))
+import numpy as np  # noqa: E402
+
+import test_gateway as tg  # noqa: E402
+import test_portal as tp  # noqa: E402
+import test_v13_mock as t13  # noqa: E402
+import test_v16_mock as t16m  # noqa: E402
+
+_http = tp._http
+SR = 24000
+
+
+def poll_job(srv, jid, timeout=120):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        j = _http(srv, "GET", "/api/v17/jobs/" + jid)[1]["job"]
+        if j["state"] != "running":
+            return j
+        time.sleep(0.4)
+    raise AssertionError("导入超时")
+
+
+def upload(srv, name, data, chunk=1_500_000, resume_probe=True):
+    code, c, _ = _http(srv, "POST", "/api/v17/uploads?name=%s&size=%d&sha256=%s" % (urllib.parse.quote(name), len(data), hashlib.sha256(data).hexdigest()))
+    assert code == 200 and c["ok"], c
+    uid, off, probed = c["id"], 0, False
+    while off < len(data):
+        blk = data[off:off + chunk]
+        code, r, _ = _http(srv, "PATCH", "/api/v17/uploads/%s?offset=%d&sha=%s" % (uid, off, hashlib.sha256(blk).hexdigest()), blk, timeout=60)
+        assert code == 200, r
+        if resume_probe and not probed and off > 0:                      # 模拟网络抖动:客户端把上一块又发了一次 → 服务器告知期望偏移
+            code2, r2, _ = _http(srv, "PATCH", "/api/v17/uploads/%s?offset=%d" % (uid, off - chunk), data[off - chunk:off])
+            assert code2 == 409 and r2["expected"] == r["offset"], (code2, r2)
+            probed = True
+        off = r["offset"]
+    code, f, _ = _http(srv, "POST", "/api/v17/uploads/%s/finish" % uid, {})
+    assert code == 200 and f["sha256"] == hashlib.sha256(data).hexdigest(), f
+    return uid
+
+
+def test_status_page_and_report_items():
+    srv = tg.Server()
+    try:
+        s = _http(srv, "GET", "/api/v17/status")[1]
+        assert s["ok"] and all(s["switches"].values()) and s["champion_engine"] == "qwen3" and s["engines"]["qwen3"]["installed"]
+        assert s["thresholds"]["calibrated"] is False and "未验证" in s["honest"]
+        code, html, _ = _http(srv, "GET", "/v17")
+        assert code == 200
+        rep = _http(srv, "GET", "/api/report")[1]
+        assert rep["v17"]["available"] and any("v17" in (i.get("title") or "") for i in rep["items"]), "报告里必须有 v17 验收项"
+        item54 = [i for i in rep["items"] if "v17 · 真机项" in (i.get("title") or "")][0]
+        assert "未验证" in json.dumps(item54, ensure_ascii=False), "真机项必须如实标「未验证」"
+    finally:
+        srv.stop()
+
+
+def test_chunked_upload_then_streaming_import_into_library():
+    srv = tg.Server()
+    try:
+        lid = t16m.new_lib(srv)
+        data, x = t16m.long_wav(95.0)
+        uid = upload(srv, "my long rec.wav", data)
+        assert _http(srv, "GET", "/api/v17/uploads/" + uid)[1]["status"] == "done"
+        code, r, _ = _http(srv, "POST", "/api/v17/import", {"lib_id": lid, "upload_id": uid})
+        assert code == 200 and r["ok"], r
+        job = poll_job(srv, r["job"]["id"])
+        assert job["state"] == "done" and job["saved"] >= 6, job
+        lib = _http(srv, "GET", "/api/libs/" + lid)[1]["library"]
+        durs = [s["duration_s"] for s in lib["samples"]]
+        assert sum(durs) > 0.80 * (len(x) / SR), "不得截断:入库总时长 %.1f / %.1f" % (sum(durs), len(x) / SR)
+        assert all((s.get("v17") or {}).get("health", {}).get("score") is not None for s in lib["samples"]), "每段都有 v17 参考体检"
+        assert all((s.get("v16") or {}).get("score") is not None for s in lib["samples"])
+        v = _http(srv, "GET", "/api/libs/%s/v17" % lid)[1]
+        assert v["ok"] and v["timeline"]["champion"] == "m_000" and v["router"]["engine"] == "qwen3"
+        assert list((Path(srv.tmp) / "v17" / "backup" / lid).glob("library.json.v16.bak")), "旧库迁移前必须有只读快照"
+        rep = _http(srv, "GET", "/api/report")[1]
+        assert rep["v17"]["counters"]["uploads_done"] == 1 and rep["v17"]["counters"]["import_segments"] >= 6
+    finally:
+        srv.stop()
+
+
+def test_recording_session_chunks_then_import():
+    srv = tg.Server()
+    try:
+        lid = t16m.new_lib(srv)
+        _d, x = t16m.long_wav(48.0)
+        assert _http(srv, "POST", "/api/v17/rec/rec_mock_001/start?sr=%d" % SR)[1]["ok"]
+        per = SR * 5
+        chunks = [x[i:i + per].astype("<f4").tobytes() for i in range(0, len(x), per)]
+        for i, b in enumerate(chunks):
+            if i == 3: continue                                      # 丢一片(模拟网络失败)
+            assert _http(srv, "POST", "/api/v17/rec/rec_mock_001/chunk?seq=%d" % i, b)[0] == 200
+        code, r, _ = _http(srv, "POST", "/api/v17/rec/rec_mock_001/finish")
+        assert code == 409 and r["missing"] == [3], (code, r)         # 缺片拒绝结束
+        assert any(s["id"] == "rec_mock_001" for s in _http(srv, "GET", "/api/v17/rec")[1]["unfinished"]), "刷新后可恢复"
+        assert _http(srv, "POST", "/api/v17/rec/rec_mock_001/chunk?seq=3", chunks[3])[0] == 200
+        code, f, _ = _http(srv, "POST", "/api/v17/rec/rec_mock_001/finish", timeout=60)
+        assert code == 200 and abs(f["seconds"] - len(x) / SR) < 0.5, f
+        code, r, _ = _http(srv, "POST", "/api/v17/import", {"lib_id": lid, "rec_session": "rec_mock_001"})
+        job = poll_job(srv, r["job"]["id"])
+        assert job["state"] == "done" and job["saved"] >= 3, job
+    finally:
+        srv.stop()
+
+
+def test_lineage_gate_promote_rollback_over_http():
+    srv = tg.Server()
+    try:
+        lid = t16m.new_lib(srv)
+        base = {"sim": [0.80, 0.81, 0.79, 0.80, 0.82, 0.80], "cer": [0.05, 0.05, 0.06, 0.05, 0.04, 0.05], "defect_rate": [0] * 6}
+        worse = {"sim": [0.70, 0.71, 0.69, 0.70, 0.72, 0.70], "cer": [0.05] * 6, "defect_rate": [0] * 6, "red_defects": [0] * 6}
+        better = {"sim": [0.84, 0.85, 0.83, 0.84, 0.86, 0.84], "cer": [0.05, 0.04, 0.05, 0.05, 0.04, 0.05], "defect_rate": [0] * 6, "red_defects": [0] * 6}
+        assert _http(srv, "GET", "/api/libs/%s/v17" % lid)[1]["timeline"]["champion"] == "m_000"
+        c1 = _http(srv, "POST", "/api/libs/%s/v17/candidates" % lid, {"recipe": "lora_incr"})[1]["version"]
+        g = _http(srv, "POST", "/api/libs/%s/v17/gate" % lid, {"champion": base, "challenger": worse})[1]["result"]
+        assert g["promote"] is False
+        r = _http(srv, "POST", "/api/libs/%s/v17/models/%s/promote" % (lid, c1), {"champion": base, "challenger": worse, "load_ok": True, "trial_ok": True})[1]
+        assert r["ok"] is False and _http(srv, "GET", "/api/libs/%s/v17" % lid)[1]["timeline"]["champion"] == "m_000", "更差候选必须被拒"
+        r = _http(srv, "POST", "/api/libs/%s/v17/models/%s/promote" % (lid, c1), {"champion": base, "challenger": better, "load_ok": True, "trial_ok": False})[1]
+        assert r["ok"] is False, "缺试合成不得晋升"
+        r = _http(srv, "POST", "/api/libs/%s/v17/models/%s/promote" % (lid, c1), {"champion": base, "challenger": better, "load_ok": True, "trial_ok": True})[1]
+        assert r["ok"] and r["champion"] == c1
+        r = _http(srv, "POST", "/api/libs/%s/v17/models/parent/rollback" % lid, {})[1]
+        assert r["ok"] and r["champion"] == "m_000"
+        tl = _http(srv, "GET", "/api/libs/%s/v17" % lid)[1]["timeline"]
+        assert [v["status"] for v in tl["versions"]] == ["champion", "rolled_back"], "回滚后旧版本保留不删除"
+        e = _http(srv, "POST", "/api/libs/%s/v17/engine" % lid, {"engine": "indextts2", "gate": {"promote": True}})[1]
+        assert e["ok"] is False and e["effective"] == "qwen3", "未安装的挑战者引擎不得成为默认"
+    finally:
+        srv.stop()
+
+
+def test_studio_certificate_and_prompt_search():
+    srv = tg.Server()
+    try:
+        code, j, _ = _http(srv, "POST", "/api/v17/studio/render", {"text": "你好,这是一次整句渲染测试。", "n": 6, "seed": 1}, timeout=60)
+        assert code == 200 and j["ok"] and j["mock"] and j["certificate"]["status"] == "pass", j
+        cands = j["certificate"]["candidates"]
+        assert any(c["level"] == "red" for c in cands) and j["certificate"]["chosen_seed"] in [c["seed"] for c in cands if c["level"] in ("green", "yellow")]
+        w = wave.open(io.BytesIO(base64.b64decode(j["wav_b64"])))
+        assert w.getframerate() == SR and w.getnframes() > SR and hashlib.sha256(base64.b64decode(j["wav_b64"])).hexdigest() == j["sha256"]
+        assert _http(srv, "POST", "/api/v17/studio/render", {"text": ""})[0] == 400
+        lid = t16m.new_lib(srv)
+        data, _x = t16m.long_wav(60.0)
+        _http(srv, "POST", "/api/libs/%s/samples?consent=1&ext=wav" % lid, data, timeout=120)
+        lib = _http(srv, "GET", "/api/libs/" + lid)[1]["library"]
+        for s in lib["samples"][:5]:
+            _http(srv, "PATCH", "/api/libs/%s/samples/%s" % (lid, s["sample_id"]), {"text": "核对过的文字", "trusted": True})
+        a = _http(srv, "POST", "/api/libs/%s/prompt-bank/search" % lid, {"seed": 7})[1]
+        b = _http(srv, "POST", "/api/libs/%s/prompt-bank/search" % lid, {"seed": 7})[1]
+        assert a["ok"] and a["candidates"] and a["candidates"] == b["candidates"], "同库同数据同种子 → 同一结果"
+    finally:
+        srv.stop()
+
+
+def run_turn_pcm(**env):
+    srv = tg.Server(**env)
+    try:
+        srv.clone()
+        r = asyncio.run(t13.collect(srv.port, tg.LONG, sid="v17"))
+        assert r["done"] and r["chk"].verify_done(r["done"]["frames"], r["done"]["samples"])
+        time.sleep(1.2)
+        rep = json.load(urllib.request.urlopen(srv.url("/api/report"), timeout=10))
+        return np.asarray(r["pcm"]).astype(np.int16), rep
+    finally:
+        srv.stop()
+
+
+def test_defect_counters_and_golden_pcm_equal_when_off():
+    pcm_on, rep_on = run_turn_pcm()
+    assert rep_on["v17"]["counters"]["turns_checked"] >= 1, rep_on["v17"]["counters"]
+    pcm_off, rep_off = run_turn_pcm(VC_V17="0")
+    assert not any(rep_off["v17"]["switches"].values()) and rep_off["v17"]["counters"]["turns_checked"] == 0
+    assert len(pcm_on) == len(pcm_off) and len(pcm_on) > SR, (len(pcm_on), len(pcm_off))
+    assert np.array_equal(pcm_on, pcm_off), "V17 开/关的输出 PCM 必须逐样本一致(v17 不改任何音频);不一致样本 %d" % int((pcm_on != pcm_off).sum())
+
+
+def test_v17_off_routes_are_gone():
+    srv = tg.Server(VC_V17="0")
+    try:
+        assert _http(srv, "GET", "/api/v17/status")[0] == 404
+        assert _http(srv, "GET", "/v17")[0] == 404
+        assert _http(srv, "GET", "/api/libs")[0] == 200, "旧接口不受影响"
+    finally:
+        srv.stop()
+
+
+if __name__ == "__main__":
+    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    bad = 0
+    for k, fn in tests:
+        t0 = time.time()
+        try:
+            fn(); print("  ✓ %s (%.1fs)" % (k, time.time() - t0))
+        except Exception:  # noqa: BLE001
+            bad += 1; print("  ✗ %s\n%s" % (k, traceback.format_exc()))
+    print("%d 项通过, %d 项失败" % (len(tests) - bad, bad))
+    sys.exit(1 if bad else 0)
+'''
+
+FILES['v17.html'] = r'''<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>v17 控制台 · 无限时长入库 / 谱系 / 闸门 / Studio</title>
+<style>
+:root{--bg:#15171a;--card:#1d2024;--line:#2c3036;--tx:#e6e8eb;--mut:#9aa1ab;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--acc:#7aa2ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.55 system-ui,"PingFang SC","Microsoft YaHei",sans-serif}
+header{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+header a{color:var(--acc);text-decoration:none}main{max-width:1100px;margin:0 auto;padding:16px;display:grid;gap:14px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+h2{margin:0 0 8px;font-size:15px}small,.mut{color:var(--mut)}button{background:#2a3140;color:var(--tx);border:1px solid #3a4152;border-radius:7px;padding:7px 12px;cursor:pointer;min-height:36px}
+button:hover{background:#343d52}button:disabled{opacity:.5;cursor:not-allowed}input,select,textarea{background:#101215;color:var(--tx);border:1px solid var(--line);border-radius:7px;padding:7px;max-width:100%}
+textarea{width:100%;min-height:90px;font-family:ui-monospace,Consolas,monospace;font-size:12px}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top;font-size:13px}
+.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;border:1px solid var(--line)}.on{color:var(--ok)}.offc{color:var(--bad)}
+.bar{height:8px;background:#101215;border-radius:6px;overflow:hidden}.bar>i{display:block;height:100%;background:var(--acc);width:0}
+pre{white-space:pre-wrap;word-break:break-all;background:#101215;border:1px solid var(--line);border-radius:7px;padding:8px;margin:6px 0;max-height:260px;overflow:auto;font-size:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}.warn{color:var(--warn)}
+</style></head><body>
+<header><b>v17 控制台</b><a href="/">首页</a><a href="/voice">克隆语音</a><a href="/abx">/abx 盲测</a><span class="mut" id="ver"></span></header>
+<main>
+<section><h2>0 · 状态与诚实声明</h2><div id="sw" class="row"></div><div class="mut" id="honest"></div><div id="cnt" class="mut"></div></section>
+
+<section><h2>1 · 无时长限制上传(分块 · 断点续传 · 每块 SHA-256)</h2>
+<div class="row"><input type="file" id="file" multiple> <button id="upGo">开始 / 续传</button> <span class="mut">块大小由服务端给出;刷新页面后重新选择同一文件即可从断点继续</span></div>
+<div id="upList"></div>
+<div class="row"><b>未完成的上传(服务端):</b><button id="upRefresh">刷新</button></div><div id="upInc" class="mut"></div></section>
+
+<section><h2>2 · 导入语音库(流式切分 → 质检 → 参考体检 → 入库)</h2>
+<div class="row"><select id="libSel"></select><label><input type="checkbox" id="consent"> 这是我本人的声音,或已获声音所有者明确授权</label><label><input type="checkbox" id="ack"> 忽略质检阻断项(不推荐)</label></div>
+<div class="row"><select id="srcSel"></select><button id="impGo">导入所选来源</button></div><div class="bar"><i id="impBar"></i></div><pre id="impOut">—</pre>
+<div class="row"><b>可恢复的录音会话(崩溃/刷新后):</b><button id="recRefresh">刷新</button></div><div id="recInc" class="mut"></div></section>
+
+<section><h2>3 · 版本谱系 · 不降级闸门 · 回滚</h2>
+<div class="row"><button id="linLoad">加载当前库谱系</button><button id="linCand">登记候选版本</button><button id="linRb">回滚到父版本</button></div><div id="lin" class="mut">—</div>
+<div class="mut">闸门输入(JSON;每个指标是同一留出集、同一批种子的逐句序列,至少 5 句):</div>
+<textarea id="gateIn">{"champion":{"sim":[0.80,0.81,0.79,0.80,0.82,0.80],"cer":[0.05,0.05,0.06,0.05,0.04,0.05],"defect_rate":[0,0,0,0,0,0]},
+ "challenger":{"sim":[0.83,0.84,0.82,0.83,0.85,0.83],"cer":[0.05,0.04,0.05,0.05,0.04,0.05],"defect_rate":[0,0,0,0,0,0],"red_defects":[0,0,0,0,0,0]}}</textarea>
+<div class="row"><button id="gateGo">运行闸门</button><input id="promId" placeholder="候选版本 id,如 m_001" size="16"><label><input type="checkbox" id="loadOk"> 已成功加载</label><label><input type="checkbox" id="trialOk"> 试合成通过缺陷检测</label><button id="promGo">晋升(需闸门+加载+试合成)</button></div><pre id="gateOut">—</pre></section>
+
+<section><h2>4 · 提示词搜索(MMR · 固定种子可复现)</h2><div class="row"><input id="seed" type="number" value="0" style="width:90px"><button id="psGo">搜索候选子集</button></div><pre id="psOut">—</pre></section>
+
+<section><h2>5 · Studio 模式(整句 Best-of-N · 缺陷检测择优 · 证书)</h2>
+<div class="row"><input id="stText" value="今天天气很好,我们一起去公园散步吧。" size="40"><input id="stN" type="number" value="4" min="1" max="8" style="width:70px"><button id="stGo">渲染</button></div>
+<audio id="stAu" controls style="width:100%;display:none"></audio><pre id="stOut">—</pre></section>
+
+<section><h2>6 · 音质体检(每轮输出的信号层检测,只测量)</h2><pre id="hl">—</pre></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let ST=null,CHUNK=4<<20,UP=JSON.parse(localStorage.getItem("v17up")||"{}");
+const J=async(u,o)=>{const r=await fetch(u,o);let j={};try{j=await r.json()}catch(e){}j._s=r.status;return j};
+const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");
+async function status(){const j=await J("/api/v17/status");ST=j;$("ver").textContent=j.version+(j.mock?" · MOCK 引擎":"");CHUNK=j.chunk_bytes||CHUNK;
+$("sw").innerHTML=Object.entries(j.switches||{}).map(([k,v])=>`<span class="pill ${v?"on":"offc"}">${k}:${v?"开":"关"}</span>`).join("");
+$("honest").textContent=j.honest||"";$("cnt").textContent="计数:"+JSON.stringify(j.counters);$("hl").textContent=JSON.stringify(j.counters,null,1)+"\n阈值(启发式,未校准):"+JSON.stringify(j.thresholds)}
+async function libs(){const j=await J("/api/libs");const arr=j.libraries||j.libs||(Array.isArray(j)?j:[]);$("libSel").innerHTML=arr.map(l=>`<option value="${l.library_id||l.id}">${l.name||l.library_id||l.id}</option>`).join("")||'<option value="">(还没有语音库,请先在首页「语音库」创建)</option>'}
+const fkey=f=>f.name+"|"+f.size+"|"+f.lastModified;
+async function sendFile(f,row){let k=fkey(f),uid=UP[k];let off=0;
+ if(uid){const s=await J("/api/v17/uploads/"+uid);if(s.ok&&s.status==="open")off=s.offset;else if(s.ok&&s.status==="done"){row.textContent=f.name+" ✅ 已完成(之前)";return uid}else uid=null}
+ if(!uid){const c=await J(`/api/v17/uploads?name=${encodeURIComponent(f.name)}&size=${f.size}`,{method:"POST"});if(!c.ok){row.textContent="创建失败:"+c.error;return null}uid=c.id;UP[k]=uid;localStorage.setItem("v17up",JSON.stringify(UP));if(c.chunk_bytes)CHUNK=c.chunk_bytes}
+ while(off<f.size){const buf=await f.slice(off,off+CHUNK).arrayBuffer();const h=hex(await crypto.subtle.digest("SHA-256",buf));let ok=false;
+  for(let t=0;t<6&&!ok;t++){try{const r=await fetch("/api/v17/uploads/"+uid,{method:"PATCH",headers:{"Upload-Offset":off,"X-Chunk-SHA256":h},body:buf});const j=await r.json();
+   if(r.ok){off=j.offset;ok=true}else if(r.status===409&&j.expected!=null){off=j.expected;ok=true}else if(r.status===507){row.textContent="磁盘不足,已暂停:"+j.error;return null}else await new Promise(z=>setTimeout(z,600*(t+1)))}catch(e){await new Promise(z=>setTimeout(z,800*(t+1)))}}
+  if(!ok){row.textContent=f.name+" ⚠ 网络中断,点「开始 / 续传」继续(已保存 "+(off/1048576).toFixed(1)+" MB)";return null}
+  row.innerHTML=`${f.name} ${(off/1048576).toFixed(1)}/${(f.size/1048576).toFixed(1)} MB<div class="bar"><i style="width:${(100*off/f.size).toFixed(1)}%"></i></div>`}
+ const fin=await J(`/api/v17/uploads/${uid}/finish`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+ row.textContent=fin.ok?`${f.name} ✅ 已入库 sha256=${fin.sha256.slice(0,12)}…`:`${f.name} ❌ ${fin.error}`;return fin.ok?uid:null}
+$("upGo").onclick=async()=>{const fs=[...$("file").files];$("upList").innerHTML="";for(const f of fs){const d=document.createElement("div");$("upList").appendChild(d);await sendFile(f,d)}await srcs();status()};
+async function srcs(){const u=await J("/api/v17/uploads");const r=await J("/api/v17/rec");const opts=[];
+ $("upInc").textContent=(u.incomplete||[]).map(x=>`${x.name} 已收 ${(x.offset/1048576).toFixed(1)}MB`).join(";")||"无";
+ $("recInc").innerHTML=(r.unfinished||[]).map(x=>`${x.id}:${x.chunks} 片 ≈ ${x.seconds}s${x.missing.length?" 缺片 "+x.missing.slice(0,5):""} <button onclick="recFin('${x.id}')">结束并合成</button>`).join("<br>")||"无";
+ Object.entries(UP).forEach(([k,uid])=>opts.push(`<option value="u:${uid}">上传 ${k.split("|")[0]}</option>`));$("srcSel").innerHTML=opts.join("")}
+async function recFin(id){const j=await J(`/api/v17/rec/${id}/finish`,{method:"POST"});if(!j.ok&&j.missing){if(!confirm("缺少分片 "+j.missing.slice(0,8)+",是否用静音补齐后合成?"))return;await J(`/api/v17/rec/${id}/finish?allow_gaps=1`,{method:"POST"})}
+ const o=document.createElement("option");o.value="r:"+id;o.textContent="录音 "+id;$("srcSel").appendChild(o);srcs()}
+$("upRefresh").onclick=srcs;$("recRefresh").onclick=srcs;
+$("impGo").onclick=async()=>{const v=$("srcSel").value;if(!v)return;const body={lib_id:$("libSel").value,ack:$("ack").checked,consent:$("consent").checked};if(v[0]==="u")body.upload_id=v.slice(2);else body.rec_session=v.slice(2);
+ const j=await J("/api/v17/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(!j.ok){$("impOut").textContent=j.error;return}
+ const id=j.job.id;const t=setInterval(async()=>{const s=(await J("/api/v17/jobs/"+id)).job||{};$("impBar").style.width=(s.total?100*s.done/s.total:5)+"%";$("impOut").textContent=JSON.stringify(s,null,1);if(s.state!=="running"){clearInterval(t);status()}},1000)};
+$("linLoad").onclick=async()=>{const j=await J(`/api/libs/${$("libSel").value}/v17`);if(!j.ok){$("lin").textContent=j.error;return}const t=j.timeline;
+ $("lin").innerHTML=`冠军:<b>${t.champion}</b> · 引擎路由:${j.router.engine} · 参考体检标记:${JSON.stringify(j.ref_health_flags)}<table><tr><th>版本</th><th>父</th><th>引擎</th><th>配方</th><th>状态</th><th>快照</th></tr>`+t.versions.map(v=>`<tr><td>${v.id}</td><td>${v.parent||"-"}</td><td>${v.engine}</td><td>${v.recipe}</td><td>${v.status}</td><td>${(v.snapshot||"").slice(0,10)}</td></tr>`).join("")+"</table>"};
+$("linCand").onclick=async()=>{const j=await J(`/api/libs/${$("libSel").value}/v17/candidates`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});$("gateOut").textContent=JSON.stringify(j,null,1);$("linLoad").click()};
+$("linRb").onclick=async()=>{const j=await J(`/api/libs/${$("libSel").value}/v17/models/parent/rollback`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});$("gateOut").textContent=JSON.stringify(j,null,1);$("linLoad").click()};
+$("gateGo").onclick=async()=>{let b;try{b=JSON.parse($("gateIn").value)}catch(e){$("gateOut").textContent="JSON 格式错误";return}
+ const j=await J(`/api/libs/${$("libSel").value||"x"}/v17/gate`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});$("gateOut").textContent=j.result?(j.result.promote?"✅ ":"⛔ ")+j.result.reason+"\n"+j.result.checks.map(c=>`${c.status==="pass"?"✔":c.status==="fail"?"✘":"?"} ${c.name}: ${c.detail}`).join("\n"):JSON.stringify(j);status()};
+$("promGo").onclick=async()=>{let b;try{b=JSON.parse($("gateIn").value)}catch(e){return}b.load_ok=$("loadOk").checked;b.trial_ok=$("trialOk").checked;
+ const j=await J(`/api/libs/${$("libSel").value}/v17/models/${$("promId").value}/promote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});$("gateOut").textContent=JSON.stringify(j,null,1);$("linLoad").click()};
+$("psGo").onclick=async()=>{const j=await J(`/api/libs/${$("libSel").value}/prompt-bank/search`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({seed:+$("seed").value})});$("psOut").textContent=JSON.stringify(j,null,1)};
+$("stGo").onclick=async()=>{$("stOut").textContent="渲染中…";const j=await J("/api/v17/studio/render",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:$("stText").value,n:+$("stN").value})});
+ if(j.wav_b64){$("stAu").src="data:audio/wav;base64,"+j.wav_b64;$("stAu").style.display="block"}$("stOut").textContent=j.certificate?(j.certificate.status+" · "+j.certificate.note+"\n"+j.certificate.candidates.map(c=>`seed ${c.seed} ${c.level} ${(c.defects||[]).join(",")} score=${c.total}`).join("\n")+"\n"+(j.honest||"")):(j.error||JSON.stringify(j));status()};
+status();libs();srcs();setInterval(status,8000);
+</script></body></html>
+'''
+
+FILES['v17.py'] = r'''# -*- coding: utf-8 -*-
+"""
+v17.py —— v17 增量模块「缺陷检测 · 不降级闸门 · 版本谱系 · 提示词搜索 · 参考体检 · Studio Best-of-N · 引擎路由」
+只依赖 numpy(v15/v16 存在时复用其取证函数);网关与 GPU 进程共用;纯 CPU 逻辑,可在无 GPU 沙箱里单元测试。
+每个子模块有独立开关,全部关闭 = v16 行为(本模块不改任何既有推理 / 后处理 / 实时通路的音频,PCM 逐样本一致):
+    VC_V17=0                  总开关
+    VC_V17_DEFECTS=0/1        缺陷检测器(NaN/削波/数字零段/click/真峰值/沙沙声(相对参考底噪)/块间台阶),只测量
+    VC_V17_GATE=0/1           不降级闸门:非劣效 + 配对 bootstrap 显著提升(纯函数)
+    VC_V17_LINEAGE=0/1        版本谱系:不可变版本 · 晋升 · 回滚 · 金丝雀自动回滚(只写 v17 命名空间,不改旧字段)
+    VC_V17_INGEST=0/1         无时长限制入库:分块断点续传上传 + 录音流式分片落盘(.part → 校验 → 原子改名)
+    VC_V17_PROMPT=0/1         提示词搜索:MMR(质量×声纹多样性)选 ≤20 秒子集,固定种子可复现
+    VC_V17_REFHEALTH=0/1      参考体检:只给「建议」,绝不降噪、绝不改原件(只做 50Hz 零相位高通/直流保护的建议)
+    VC_V17_STUDIO=0/1         Studio 模式:整句 Best-of-N + 缺陷检测择优 + 重试阶梯;Live 实时模式完全不动
+    VC_V17_ROUTER=0/1         引擎路由:冠军 = Qwen3-TTS;挑战者必须过硬门槛 + 显著优于冠军才可成为某语音库默认
+    VC_V17_UI=0/1             /v17 页面与 /api/v17/* 接口
+    VC_V17_REC_UNLIMITED=0/1  快速克隆录音页去掉 1800 秒自动停止
+诚实声明:本模块在 CPU 上用合成信号验证「逻辑与客观指标」;没有 GPU / 真机 / 人耳数据。
+    「更像」「沙沙声更少」只能由 T4×2 真机实测 + /abx 盲测裁决;所有阈值是启发式、未校准;没有证据一律标注「未验证」。
+"""
+import hashlib
+import json
+import math
+import os
+import secrets
+import threading
+import time
+
+import numpy as np
+
+SR = 24000
+VERSION = "v17.0"
+
+try:  # 复用 v15 / v16 的取证函数;缺失则用本模块自带的最小实现
+    import v15 as _v15
+except Exception:  # noqa: BLE001
+    _v15 = None
+try:
+    import v16 as _v16
+except Exception:  # noqa: BLE001
+    _v16 = None
+
+
+# ───────────────────────── 开关 ─────────────────────────
+def _flag(name, default="1"):
+    return str(os.environ.get(name, default)).strip().lower() not in ("0", "false", "off", "no", "")
+
+
+def on(name):
+    return _flag("VC_V17") and _flag("VC_V17_" + name)
+
+
+SWITCH_NAMES = ("DEFECTS", "GATE", "LINEAGE", "INGEST", "PROMPT", "REFHEALTH", "STUDIO", "ROUTER", "UI", "REC_UNLIMITED")
+
+
+def switches():
+    return {k: on(k) for k in SWITCH_NAMES}
+
+
+def envf(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except Exception:  # noqa: BLE001
+        return float(default)
+
+
+def _db(v, floor=1e-9):
+    return 20.0 * math.log10(max(float(v), floor))
+
+
+def to_float(pcm):
+    a = np.asarray(pcm)
+    if a.dtype.kind in "iu":
+        return a.astype(np.float32) / 32768.0
+    return a.astype(np.float32)
+
+
+# ═════════════════════════ M1 缺陷检测器 ═════════════════════════
+HF_ABS_WARN_DB = -58.0       # 与 v16 一致的绝对沙沙声告警线(启发式,未校准)
+HF_REL_MARGIN_DB = 6.0       # H3:相对「参考自身底噪」允许多出 6 dB(启发式,未校准)
+CLICK_RATIO = 10.0           # 二阶差分尖峰 / 局部平均 的倍数
+CLICK_ABS = 0.04             # 二阶差分绝对下限(满量程 ±1)
+STEP_DB = 12.0               # 20ms 窗 RMS 台阶阈值(自然起音会误报,所以只记黄色)
+TRUE_PEAK_LIMIT_DB = -0.5
+
+RED_KINDS = ("nan_inf", "clip", "zero_run", "click", "true_peak")
+YELLOW_KINDS = ("hiss", "level_step", "dc")
+
+
+def _uniform_mean(a, w):
+    c = np.concatenate([[0.0], np.cumsum(a, dtype=np.float64)])
+    half = w // 2
+    idx = np.arange(len(a))
+    lo = np.maximum(idx - half, 0)
+    hi = np.minimum(idx + half + 1, len(a))
+    return (c[hi] - c[lo]) / np.maximum(hi - lo, 1)
+
+
+def find_clicks(x, sr=SR):
+    """孤立尖峰(click/pop)检测,返回 [秒]。二阶差分 > max(CLICK_ABS, CLICK_RATIO × 局部平均);1.5ms 内合并为一次。"""
+    x = np.asarray(x, np.float32)
+    if len(x) < 64:
+        return []
+    d2 = np.abs(x[2:] - 2 * x[1:-1] + x[:-2]).astype(np.float64)
+    loc = _uniform_mean(d2, max(int(0.010 * sr) | 1, 9))
+    hit = np.where(d2 > np.maximum(CLICK_ABS, CLICK_RATIO * loc))[0]
+    out, last = [], -10 ** 9
+    gap = int(0.0015 * sr)
+    for i in hit:
+        if i - last > gap:
+            out.append(round(float(i + 1) / sr, 4))
+        last = i
+    return out
+
+
+def find_digital_zero_runs(x, sr=SR, min_ms=2.0):
+    """语音内部的数字零段:≥ min_ms 的连续精确 0,且前后 20ms 都不是静音(排除开头/结尾/真停顿)。返回 [(秒, 毫秒)]。"""
+    x = np.asarray(x, np.float32)
+    n = len(x)
+    z = np.concatenate([[0], (x == 0).astype(np.int8), [0]])
+    e = np.diff(z)
+    s, t = np.where(e == 1)[0], np.where(e == -1)[0]
+    w = int(0.020 * sr)
+    out = []
+    for a, b in zip(s, t):
+        if (b - a) < int(min_ms * 1e-3 * sr) or a < w or b + w > n:
+            continue
+        before = float(np.sqrt(np.mean(x[a - w:a] ** 2)))
+        after = float(np.sqrt(np.mean(x[b:b + w] ** 2)))
+        if before > 10 ** (-45 / 20) and after > 10 ** (-45 / 20):
+            out.append((round(float(a) / sr, 4), round(float(b - a) * 1000.0 / sr, 1)))
+    return out
+
+
+def _true_peak_db(x):
+    if _v15 is not None:
+        try:
+            return float(_v15.true_peak_db(x))
+        except Exception:  # noqa: BLE001
+            pass
+    n = len(x)
+    if n == 0:
+        return -120.0
+    X = np.fft.rfft(x)
+    Y = np.zeros(n * 2 + 1, np.complex128)
+    Y[: len(X)] = X
+    y = np.fft.irfft(Y, n * 4) * 4.0
+    return _db(np.abs(y).max())
+
+
+def level_steps(x, sr=SR, win_ms=20.0, thr_db=STEP_DB):
+    """相邻 20ms 窗 RMS 台阶(两窗都 > -40 dBFS 才算),返回 (最大台阶 dB, 超阈次数, 位置[秒])。"""
+    w = int(win_ms * 1e-3 * sr)
+    nw = len(x) // w
+    if nw < 3:
+        return 0.0, 0, []
+    r = np.sqrt((np.asarray(x[: nw * w], np.float32).reshape(nw, w) ** 2).mean(axis=1))
+    ok = (r[:-1] > 10 ** (-40 / 20)) & (r[1:] > 10 ** (-40 / 20))
+    if not ok.any():
+        return 0.0, 0, []
+    st = np.abs(20 * np.log10(np.maximum(r[1:], 1e-9) / np.maximum(r[:-1], 1e-9)))
+    st = np.where(ok, st, 0.0)
+    pos = np.where(st > thr_db)[0]
+    return round(float(st.max()), 1), int(len(pos)), [round(float((p + 1) * w) / sr, 3) for p in pos[:20]]
+
+
+def detect_defects(pcm, sr=SR, ref_hf_db=None):
+    """对一段输出做缺陷体检。返回 dict:level(green/yellow/red)/defects/events/metrics/score。
+    红色(必须重试/不放行):NaN/Inf、削波、语音内数字零段、click、真峰值超限;
+    黄色(提示):沙沙声(绝对线或相对参考底噪 +6dB)、块间台阶、直流偏移。score 越小越好,用于 Best-of-N 排序。"""
+    x = to_float(pcm)
+    n = len(x)
+    rep = {"n": n, "seconds": round(n / float(sr), 2), "defects": [], "events": {}, "metrics": {}, "level": "green", "score": 0.0}
+    if n < 480:
+        rep["note"] = "太短,未分析"
+        return rep
+    bad = ~np.isfinite(x)
+    if bad.any():
+        rep["defects"].append({"kind": "nan_inf", "severity": "red", "detail": "NaN/Inf %d 样本" % int(bad.sum())})
+        x = np.where(bad, 0.0, x).astype(np.float32)
+    clip = int((np.abs(x) >= 0.999).sum())
+    if clip:
+        rep["defects"].append({"kind": "clip", "severity": "red", "detail": "削波 %d 样本" % clip})
+    zr = find_digital_zero_runs(x, sr)
+    if zr:
+        rep["events"]["zero_runs"] = zr[:20]
+        rep["defects"].append({"kind": "zero_run", "severity": "red", "detail": "语音内数字零段 %d 处" % len(zr)})
+    ck = find_clicks(x, sr)
+    if ck:
+        rep["events"]["clicks"] = ck[:20]
+        rep["defects"].append({"kind": "click", "severity": "red", "detail": "疑似 click %d 处(首个 %.3fs)" % (len(ck), ck[0])})
+    tp = _true_peak_db(x)
+    rep["metrics"]["true_peak_dbfs"] = round(tp, 2)
+    if tp > TRUE_PEAK_LIMIT_DB:
+        rep["defects"].append({"kind": "true_peak", "severity": "red", "detail": "真峰值 %.1f dBFS 超过 %.1f" % (tp, TRUE_PEAK_LIMIT_DB)})
+    hf = None
+    if _v16 is not None:
+        try:
+            hf = _v16.hf_noise_metrics(x, sr).get("hf_floor_dbfs")
+        except Exception:  # noqa: BLE001
+            hf = None
+    rep["metrics"]["hf_floor_dbfs"] = hf
+    if hf is not None:
+        rel = ref_hf_db is not None and hf > float(ref_hf_db) + HF_REL_MARGIN_DB
+        if hf > HF_ABS_WARN_DB or rel:
+            why = "高于参考自身底噪 %.1f dB" % (hf - float(ref_hf_db)) if rel else "绝对底噪 %.0f dBFS/bin" % hf
+            rep["defects"].append({"kind": "hiss", "severity": "yellow", "detail": "疑似沙沙声:%s(启发式,未校准)" % why})
+    mx, cnt, pos = level_steps(x, sr)
+    rep["metrics"]["max_level_step_db"] = mx
+    if cnt:
+        rep["events"]["level_steps"] = pos
+        rep["defects"].append({"kind": "level_step", "severity": "yellow", "detail": "20ms 响度台阶 >%.0fdB 共 %d 处(含自然起音,未区分)" % (STEP_DB, cnt)})
+    dc = float(x.mean())
+    rep["metrics"]["dc"] = round(dc, 5)
+    if abs(dc) > 0.01:
+        rep["defects"].append({"kind": "dc", "severity": "yellow", "detail": "直流偏移 %.3f" % dc})
+    score = 0.0
+    for d in rep["defects"]:
+        score += 100.0 if d["severity"] == "red" else 10.0
+    if hf is not None:
+        score += max(0.0, hf - (-80.0)) * 0.05
+    rep["score"] = round(score, 3)
+    sev = {d["severity"] for d in rep["defects"]}
+    rep["level"] = "red" if "red" in sev else ("yellow" if "yellow" in sev else "green")
+    return rep
+
+
+# ═════════════════════════ M2 不降级闸门(非劣效 + 显著提升) ═════════════════════════
+def paired_bootstrap(diffs, n_boot=2000, seed=0):
+    """配对差值的 bootstrap:返回 (均值, 5% 分位, 95% 分位)。固定种子可复现。"""
+    d = np.asarray(diffs, np.float64)
+    if len(d) == 0:
+        return 0.0, 0.0, 0.0
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(d), size=(n_boot, len(d)))
+    m = d[idx].mean(axis=1)
+    return float(d.mean()), float(np.percentile(m, 5)), float(np.percentile(m, 95))
+
+
+# metric -> (方向:+1 越大越好 / -1 越小越好, 非劣效容差, 是否主指标(可作为「显著提升」依据))
+GATE_METRICS = {
+    "sim": (+1, 0.005, True),        # 说话人相似度(多评估器均值);ε=0.005
+    "sim2": (+1, 0.005, True),       # 第二评估器(ECAPA/CAM++);缺失则标注「未验证」
+    "cer": (-1, 0.01, True),         # ASR 回读字错率
+    "utmos": (+1, 0.10, True),
+    "dnsmos": (+1, 0.10, False),
+    "hf_floor_db": (-1, 1.0, False),  # 沙沙声:安静帧 6k+ 底噪(dBFS/bin),越低越好;H3 不得高于冠军 +1dB
+    "defect_rate": (-1, 0.0, True),   # 每句是否含红色缺陷(0/1)
+}
+GATE_REQUIRED = ("sim", "cer", "defect_rate")   # 缺任何一项 = 未验证 = 不晋升(宁可不换)
+
+
+def gate_decide(champion, challenger, min_n=5, n_boot=2000, seed=0, require=GATE_REQUIRED, red_cap=0):
+    """不降级闸门。champion / challenger: {指标名: 等长序列(同一留出集、同一批种子逐句配对)}。
+    规则(提示词1 §7.6/§9.1):
+      ① 硬门槛:挑战者红色缺陷句数 ≤ red_cap(默认 0;H1/H2)——`red_defects` 序列(每句红色缺陷个数)可选;
+      ② 非劣效:每个有数据的指标,配对差的 bootstrap 5% 下界(按方向统一为「越大越好」)必须 > -容差;
+      ③ 显著提升:至少一个主指标的 5% 下界 > 0;
+      ④ 必需指标缺失 → 「未验证」→ 不晋升。没有证据不宣称更好。
+    返回 {promote, checks:[{name,status:pass|fail|unverified,detail}], reason}。"""
+    checks = []
+    ok_all, any_sig = True, False
+
+    def add(name, status, detail):
+        checks.append({"name": name, "status": status, "detail": detail})
+
+    n_ref = None
+    for m, (sgn, tol, primary) in GATE_METRICS.items():
+        b, c = champion.get(m), challenger.get(m)
+        if b is None or c is None:
+            if m in require:
+                add(m, "unverified", "缺少数据(必需指标),不晋升")
+                ok_all = False
+            else:
+                add(m, "unverified", "缺少数据(可选指标,不参与裁决)")
+            continue
+        b, c = np.asarray(b, np.float64), np.asarray(c, np.float64)
+        if len(b) != len(c) or len(b) < min_n:
+            add(m, "unverified", "样本对数不足(<%d)或长度不一致" % min_n)
+            if m in require:
+                ok_all = False
+            continue
+        n_ref = len(b)
+        d = (c - b) * sgn                                   # 统一成「越大越好」
+        mean, lo, hi = paired_bootstrap(d, n_boot=n_boot, seed=seed)
+        noninf = lo > -tol - 1e-12 if tol > 0 else (c.mean() <= b.mean() + 1e-12 if sgn < 0 else mean >= -1e-12)
+        if not noninf:
+            ok_all = False
+            add(m, "fail", "劣于冠军:均值差 %.4f,5%%下界 %.4f(容差 %.4f)" % (mean, lo, tol))
+        else:
+            sig = bool(primary and lo > 0)
+            any_sig = any_sig or sig
+            add(m, "pass", "非劣效;均值差 %+.4f,5%%下界 %.4f%s" % (mean, lo, " · 显著提升" if sig else ""))
+    rd = challenger.get("red_defects")
+    if rd is not None:
+        tot = int(np.sum(np.asarray(rd) > 0))
+        if tot > red_cap:
+            ok_all = False
+            add("red_defects", "fail", "挑战者有 %d 句含红色缺陷(上限 %d)" % (tot, red_cap))
+        else:
+            add("red_defects", "pass", "红色缺陷句数 %d ≤ %d" % (tot, red_cap))
+    else:
+        add("red_defects", "unverified", "未提供逐句红色缺陷数")
+    if not any_sig and ok_all:
+        ok_all = False
+        reason = "未提升:没有任何主指标显著优于冠军,保留冠军"
+    elif not ok_all:
+        bad = [c_["name"] for c_ in checks if c_["status"] in ("fail",)] or [c_["name"] for c_ in checks if c_["status"] == "unverified" and c_["name"] in require]
+        reason = "未通过闸门:" + "、".join(bad)
+    else:
+        reason = "通过:全部非劣效且至少一个主指标显著提升"
+    return {"promote": bool(ok_all), "checks": checks, "reason": reason, "n": n_ref}
+
+
+# ═════════════════════════ M3 版本谱系 · 晋升 · 回滚 · 金丝雀 ═════════════════════════
+def snapshot_sha(items):
+    """数据快照哈希:按 id 排序的 (id, sha) 序列 → sha256。训练前冻结,版本记录它。"""
+    h = hashlib.sha256()
+    for k, v in sorted((str(a), str(b)) for a, b in items):
+        h.update(("%s:%s\n" % (k, v)).encode("utf-8"))
+    return h.hexdigest()
+
+
+def fixed_seed(*parts):
+    """固定种子(回滚后同输入逐样本一致的前提)。"""
+    h = hashlib.sha256("|".join(str(p) for p in parts).encode("utf-8")).digest()
+    return int.from_bytes(h[:4], "big")
+
+
+class Lineage:
+    """每个语音库一份 v17 版本谱系(JSON,原子写)。版本不可变:只增不改;旧版本永不覆盖;可随时回滚。
+    版本 0 = 旧库迁移出的冠军(兼容 v16 数据,旧字段一个都不动)。"""
+
+    def __init__(self, path):
+        self.path = str(path)
+        self.lock = threading.RLock()
+        self.d = {"schema": 1, "champion": None, "versions": {}, "events": [], "consent": None}
+        if os.path.exists(self.path):
+            try:
+                self.d = json.load(open(self.path, "r", encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                bak = self.path + ".corrupt.%d" % int(time.time())
+                os.replace(self.path, bak)               # 损坏文件改名保留,绝不删除用户数据
+        else:
+            self.d["created_at"] = time.strftime("%FT%T")
+
+    # --- 内部 ---
+    def _save(self):
+        tmp = self.path + ".part"
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self.d, f, ensure_ascii=False, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self.path)
+
+    def _ev(self, kind, **kw):
+        self.d["events"].append(dict(kw, kind=kind, at=time.strftime("%FT%T")))
+        self.d["events"] = self.d["events"][-500:]
+
+    # --- 同意 / 迁移 ---
+    def set_consent(self, owner_or_authorized, note=""):
+        with self.lock:
+            self.d["consent"] = {"owner_or_authorized": bool(owner_or_authorized), "at": time.strftime("%FT%T"), "note": str(note)[:200]}
+            self._save()
+
+    def ensure_v0(self, engine="qwen3", snapshot="", meta=None):
+        """旧库首次进入 v17:建「版本 0」并设为冠军(幂等)。"""
+        with self.lock:
+            if "m_000" not in self.d["versions"]:
+                self.d["versions"]["m_000"] = {"id": "m_000", "parent": None, "engine": engine, "recipe": "v16-legacy", "snapshot": snapshot,
+                                               "metrics": {}, "status": "champion", "created_at": time.strftime("%FT%T"), "meta": dict(meta or {}),
+                                               "canary": {"uses": 0, "bad": 0}}
+                self.d["champion"] = "m_000"
+                self._ev("migrate_v0", version="m_000")
+                self._save()
+            return self.d["versions"]["m_000"]
+
+    # --- 版本 ---
+    def add_candidate(self, parent=None, engine="qwen3", recipe="lora", snapshot="", metrics=None, params=None):
+        with self.lock:
+            if parent is None:
+                parent = self.d["champion"]
+            if parent is not None and parent not in self.d["versions"]:
+                raise KeyError("父版本不存在: %s" % parent)
+            vid = "m_%03d" % len(self.d["versions"])
+            self.d["versions"][vid] = {"id": vid, "parent": parent, "engine": engine, "recipe": recipe, "snapshot": snapshot, "metrics": dict(metrics or {}),
+                                       "params": dict(params or {}), "status": "candidate", "created_at": time.strftime("%FT%T"), "canary": {"uses": 0, "bad": 0}}
+            self._ev("candidate", version=vid, parent=parent)
+            self._save()
+            return vid
+
+    def champion(self):
+        with self.lock:
+            return self.d["champion"]
+
+    def promote(self, vid, gate_result, load_ok=False, trial_ok=False, force_reason=None):
+        """三项证据才晋升:闸门通过 + 成功加载 + 试合成通过缺陷检测(沿用 v10/v16)。force 需要书面理由并记录。"""
+        with self.lock:
+            v = self.d["versions"].get(vid)
+            if v is None:
+                return {"ok": False, "reason": "版本不存在"}
+            if v["status"] == "champion":
+                return {"ok": True, "reason": "已是冠军", "champion": vid}
+            gate_ok = bool(gate_result and gate_result.get("promote"))
+            if not (gate_ok and load_ok and trial_ok):
+                if not (force_reason and str(force_reason).strip()):
+                    miss = [n for n, ok in (("闸门", gate_ok), ("加载", load_ok), ("试合成", trial_ok)) if not ok]
+                    self._ev("promote_refused", version=vid, missing=miss)
+                    self._save()
+                    return {"ok": False, "reason": "证据不足,保留冠军:缺 " + "、".join(miss), "champion": self.d["champion"]}
+            old = self.d["champion"]
+            if old and old in self.d["versions"]:
+                self.d["versions"][old]["status"] = "retired"
+            v["status"] = "champion"
+            v["promoted_at"] = time.strftime("%FT%T")
+            v["promote_basis"] = {"gate": gate_ok, "load": bool(load_ok), "trial": bool(trial_ok), "forced": bool(force_reason), "force_reason": (str(force_reason)[:200] if force_reason else None)}
+            self.d["champion"] = vid
+            self._ev("promote", version=vid, previous=old)
+            self._save()
+            return {"ok": True, "champion": vid, "previous": old}
+
+    def rollback(self, to=None, reason="manual"):
+        """回滚:默认回到冠军的父版本;被回滚的版本标记 rolled_back(保留,不删除)。"""
+        with self.lock:
+            cur = self.d["champion"]
+            tgt = to or (self.d["versions"].get(cur, {}) or {}).get("parent")
+            if not tgt or tgt not in self.d["versions"] or tgt == cur:
+                return {"ok": False, "reason": "没有可回滚的目标", "champion": cur}
+            if cur in self.d["versions"]:
+                self.d["versions"][cur]["status"] = "rolled_back"
+            self.d["versions"][tgt]["status"] = "champion"
+            self.d["champion"] = tgt
+            self._ev("rollback", from_=cur, to=tgt, reason=str(reason)[:200])
+            self._save()
+            return {"ok": True, "champion": tgt, "from": cur}
+
+    def canary(self, ok, min_uses=20, max_bad_rate=0.10):
+        """金丝雀:冠军晋升后的真实使用结果。达到 min_uses 且坏率 > max_bad_rate 自动回滚到父版本。"""
+        with self.lock:
+            cur = self.d["champion"]
+            v = self.d["versions"].get(cur)
+            if v is None or v.get("parent") is None:
+                return {"rolled_back": False}
+            c = v["canary"]
+            c["uses"] += 1
+            c["bad"] += 0 if ok else 1
+            if c["uses"] >= min_uses and c["bad"] / float(c["uses"]) > max_bad_rate:
+                r = self.rollback(reason="canary bad_rate=%.2f" % (c["bad"] / c["uses"]))
+                r["rolled_back"] = bool(r.get("ok"))
+                return r
+            self._save()
+            return {"rolled_back": False, "uses": c["uses"], "bad": c["bad"]}
+
+    def timeline(self):
+        with self.lock:
+            return {"champion": self.d["champion"], "versions": [dict(v) for _, v in sorted(self.d["versions"].items())], "events": list(self.d["events"][-50:]), "consent": self.d.get("consent")}
+
+
+def snapshot_backup(src_path, backup_dir):
+    """旧语音库首次迁移前:备份为只读快照(提示词1 §9.2)。已存在则不重复备份。返回备份路径或 None。"""
+    import shutil
+    if not os.path.exists(src_path):
+        return None
+    os.makedirs(backup_dir, exist_ok=True)
+    dst = os.path.join(backup_dir, os.path.basename(src_path) + ".v16.bak")
+    if os.path.exists(dst):
+        return dst
+    shutil.copy2(src_path, dst)
+    os.chmod(dst, 0o444)
+    return dst
+
+
+# ═════════════════════════ M4 提示词搜索(MMR:质量 × 声纹多样性,同录音条件簇) ═════════════════════════
+def _cos(a, b):
+    a, b = np.asarray(a, np.float64), np.asarray(b, np.float64)
+    d = float(np.linalg.norm(a) * np.linalg.norm(b))
+    return float(a @ b) / d if d > 0 else 0.0
+
+
+def mmr_select(segments, max_total_s=20.0, max_k=6, lam=0.7, min_quality=50.0, seed=0, cluster=None):
+    """从库里挑 ≤ max_total_s 秒的提示子集。segments: [{id, seconds, quality(0~100), emb(可选), cond(录音条件簇,可选), enabled, verified}]。
+    仅用「已启用 + 已核对 + 质量达线」;若有 cond,只在总质量最高的那个簇里选(避免把不同麦克风/房间硬拼)。
+    注意:20 秒只是「推理时放进模型的提示窗口」,不限制入库与训练。固定 seed → 结果可复现(并列时用稳定哈希破平)。"""
+    pool = [s for s in segments if s.get("enabled", True) and s.get("verified", True) and float(s.get("quality", 0)) >= min_quality and float(s.get("seconds", 0)) > 0.5]
+    if not pool:
+        return []
+    if cluster is None and any(s.get("cond") for s in pool):
+        tot = {}
+        for s in pool:
+            tot[s.get("cond")] = tot.get(s.get("cond"), 0.0) + float(s["quality"]) * float(s["seconds"])
+        cluster = max(sorted(tot, key=str), key=lambda k: tot[k])
+    if cluster is not None:
+        pool = [s for s in pool if s.get("cond") == cluster] or pool
+    chosen, total = [], 0.0
+    qmax = max(float(s["quality"]) for s in pool) or 1.0
+
+    def tb(s):
+        return fixed_seed(seed, s["id"]) / 4294967296.0 * 1e-6
+
+    rest = list(pool)
+    while rest and len(chosen) < max_k:
+        best, bs = None, -1e18
+        for s in rest:
+            if total + float(s["seconds"]) > max_total_s + 1e-9:
+                continue
+            div = 0.0
+            if chosen and s.get("emb") is not None:
+                sims = [_cos(s["emb"], c["emb"]) for c in chosen if c.get("emb") is not None]
+                div = max(sims) if sims else 0.0
+            sc = lam * float(s["quality"]) / qmax - (1 - lam) * div + tb(s)
+            if sc > bs:
+                best, bs = s, sc
+        if best is None:
+            break
+        chosen.append(best)
+        total += float(best["seconds"])
+        rest.remove(best)
+    return [s["id"] for s in chosen]
+
+
+def prompt_candidates(segments, n=4, max_total_s=20.0, seed=0):
+    """生成 n 个互不相同的候选子集(不同 λ),交给真合成 + 打分后择优;去重,顺序固定。"""
+    outs, seen = [], set()
+    for lam in (0.7, 0.9, 0.5, 0.3, 1.0, 0.1):
+        ids = tuple(mmr_select(segments, max_total_s=max_total_s, lam=lam, seed=seed))
+        if ids and ids not in seen:
+            seen.add(ids)
+            outs.append({"ids": list(ids), "lam": lam})
+        if len(outs) >= n:
+            break
+    return outs
+
+
+def prompt_bank_key(ids, texts_sha=""):
+    return hashlib.sha256(("|".join(sorted(map(str, ids))) + "#" + texts_sha).encode("utf-8")).hexdigest()[:16]
+
+
+def pick_best_prompt(cands, scores):
+    """scores 越大越好;并列取靠前者(稳定)。返回 (索引, 候选)。"""
+    if not cands or len(cands) != len(scores):
+        return None, None
+    i = int(np.argmax(np.asarray(scores, np.float64)))
+    return i, cands[i]
+
+
+# ═════════════════════════ M5 参考体检(只给建议,绝不降噪、绝不改原件) ═════════════════════════
+def ref_health(x, sr):
+    """对一条参考素材体检并给出「建议」。不修改音频。
+    指标:带宽(99.9% 能量截止)、有损编码痕迹(≥32k 采样率时 16k 以上断崖)、削波占比、直流、安静帧 HF 底噪、SNR 估计。"""
+    x = to_float(x)
+    n = len(x)
+    out = {"seconds": round(n / float(sr), 2), "flags": [], "advice": [], "metrics": {}}
+    if n < sr // 2:
+        out["flags"].append("too_short")
+        out["advice"].append("素材不足 0.5 秒,不入提示池")
+        return out
+    out["metrics"]["clip_frac"] = round(float((np.abs(x) >= 0.999).mean()), 5)
+    out["metrics"]["dc"] = round(float(x.mean()), 5)
+    seg = x[: min(n, 60 * sr)]
+    nfft = 4096
+    m = len(seg) // nfft
+    if m >= 1:
+        sp = (np.abs(np.fft.rfft(seg[: m * nfft].reshape(m, nfft) * np.hanning(nfft), axis=1)) ** 2).mean(axis=0)
+        cum = np.cumsum(sp) / max(sp.sum(), 1e-20)
+        bw = float(np.searchsorted(cum, 0.999)) / (len(sp) - 1) * sr / 2
+        out["metrics"]["bandwidth_hz"] = round(bw, 0)
+        if sr >= 32000:
+            f = np.fft.rfftfreq(nfft, 1.0 / sr)
+            mid = sp[(f >= 12000) & (f < 15500)].mean()
+            hi = sp[(f >= 16500)].mean() if (f >= 16500).any() else mid
+            cliff = 10 * math.log10(max(hi, 1e-20) / max(mid, 1e-20))
+            out["metrics"]["cliff_16k_db"] = round(cliff, 1)
+            if cliff < -35:
+                out["flags"].append("lossy")
+                out["advice"].append("疑似有损来源(webm/mp3/m4a 的 16k 以上断崖):可用,但优先选无损/更干净的素材")
+    if _v16 is not None:
+        try:
+            hf = _v16.hf_noise_metrics(x, sr)["hf_floor_dbfs"]
+        except Exception:  # noqa: BLE001
+            hf = None
+        out["metrics"]["hf_floor_dbfs"] = hf
+        if hf is not None and hf > -62.0:
+            out["flags"].append("noisy")
+            out["advice"].append("安静处高频底噪偏高(%.0f dBFS/bin):ICL 会把底噪当音色复制。建议在安静环境重录;不要对它做激进降噪(会磨平音色)" % hf)
+    fr = 480
+    nf = n // fr
+    r = np.sqrt((x[: nf * fr].reshape(nf, fr) ** 2).mean(axis=1))
+    if nf >= 10:
+        sig = float(np.percentile(r, 90))
+        flo = float(np.percentile(r, 10))
+        snr = _db(sig) - _db(flo)
+        out["metrics"]["snr_est_db"] = round(snr, 1)
+        if snr < 25:
+            out["flags"].append("low_snr")
+            out["advice"].append("信噪比估计偏低(%.0f dB):建议换更安静的片段" % snr)
+    if out["metrics"]["clip_frac"] > 0.001:
+        out["flags"].append("clipped")
+        out["advice"].append("录音有削波:请降低麦克风增益重录")
+    if abs(out["metrics"]["dc"]) > 0.01:
+        out["flags"].append("dc")
+        out["advice"].append("直流偏移:入库时仅做 50Hz 零相位高通保护(v15 既有)")
+    pen = {"too_short": 100, "lossy": 10, "noisy": 25, "low_snr": 15, "clipped": 30, "dc": 5}
+    out["score"] = max(0, 100 - sum(pen.get(k, 0) for k in out["flags"]))
+    return out
+
+
+# ═════════════════════════ M6 Studio 模式:整句 Best-of-N + 缺陷检测择优 + 重试阶梯 ═════════════════════════
+def finalize_pcm16(y, seed=0, dither=True):
+    """全程 float32,只在最后量化一次,TPDF 抖动(±1 LSB)。"""
+    y = np.nan_to_num(np.asarray(y, np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    if dither:
+        rng = np.random.default_rng(seed)
+        y = y + ((rng.random(len(y)) - rng.random(len(y))) / 32768.0).astype(np.float32)
+    return np.clip(np.round(y * 32768.0), -32768, 32767).astype(np.int16)
+
+
+def retry_ladder(seed=0, temperature=0.9, rep_penalty=1.05, n=4):
+    """重试阶梯(沿用 v13/v14 思路):换种子 → 降温 → 提高重复惩罚。"""
+    out = []
+    for i in range(n):
+        out.append({"seed": fixed_seed("studio", seed, i), "temperature": round(max(0.5, temperature - 0.08 * max(0, i - 1)), 3),
+                    "rep_penalty": round(rep_penalty + (0.05 if i >= 3 else 0.0), 3)})
+    return out
+
+
+def studio_render(text, synth_fn, n=4, ref_hf_db=None, sim_fn=None, cer_fn=None, base=None, seed=0, budget_s=None, sr=SR, max_rounds=2):
+    """整句非流式渲染并择优。synth_fn(text, seed=, temperature=, rep_penalty=) → float32/int16 PCM(可抛异常)。
+    打分 total = 缺陷分 − 50×SIM + 100×CER(越小越好);红色缺陷候选永远排在无红色候选之后。
+    全部候选都有红色缺陷 → 继续下一轮阶梯;耗尽后选分最小者并如实标注「未达标放行」,绝不静默放行。
+    Live 实时模式不经过这里(所以 TTFA/欠载不受影响)。"""
+    t0 = time.time()
+    base = dict(base or {})
+    cands, chosen = [], None
+    for rnd in range(max_rounds):
+        ladder = retry_ladder(seed=seed + rnd * 977, temperature=base.get("temperature", 0.9), rep_penalty=base.get("rep_penalty", 1.05), n=n)
+        for p in ladder:
+            if budget_s is not None and time.time() - t0 > budget_s and cands:
+                break
+            c = {"round": rnd, "seed": p["seed"], "temperature": p["temperature"], "rep_penalty": p["rep_penalty"]}
+            try:
+                y = to_float(synth_fn(text, seed=p["seed"], temperature=p["temperature"], rep_penalty=p["rep_penalty"]))
+                if len(y) == 0:
+                    raise ValueError("空音频")
+                rep = detect_defects(y, sr, ref_hf_db=ref_hf_db)
+                c.update(level=rep["level"], defects=[d["kind"] for d in rep["defects"]], defect_score=rep["score"], seconds=rep["seconds"])
+                tot = rep["score"]
+                if sim_fn is not None:
+                    c["sim"] = float(sim_fn(y)); tot -= 50.0 * c["sim"]
+                if cer_fn is not None:
+                    c["cer"] = float(cer_fn(y, text)); tot += 100.0 * c["cer"]
+                c["total"] = round(tot, 4)
+                c["_y"] = y
+            except Exception as e:  # noqa: BLE001
+                c.update(level="error", error=str(e)[:120], total=1e9)
+            cands.append(c)
+        ok = [c for c in cands if c.get("level") in ("green", "yellow")]
+        if ok:
+            chosen = min(ok, key=lambda c: (c["total"], c["seed"]))
+            break
+    status = "pass" if chosen is not None else "best_effort"
+    if chosen is None:
+        valid = [c for c in cands if "_y" in c]
+        chosen = min(valid, key=lambda c: (c["total"], c["seed"])) if valid else None
+        if chosen is None:
+            status = "failed"
+    cert = {"status": status, "n_evaluated": len(cands), "elapsed_s": round(time.time() - t0, 3), "validated": "沙箱信号层检测;真实音质/相似度未验证(需真机 + /abx)",
+            "candidates": [{k: v for k, v in c.items() if k != "_y"} for c in cands],
+            "chosen_seed": chosen["seed"] if chosen else None,
+            "note": {"pass": "已选出无红色缺陷的最优候选", "best_effort": "未达标放行:所有候选都含红色缺陷,已选缺陷最轻者,请人工试听或重试", "failed": "全部候选合成失败,无音频可放行"}[status]}
+    pcm = chosen["_y"] if chosen else None
+    return {"pcm": pcm, "certificate": cert}
+
+
+# ═════════════════════════ M7 引擎适配 + 路由(冠军 / 挑战者制度) ═════════════════════════
+ENGINES = {
+    "qwen3": {"name": "Qwen3-TTS-12Hz-1.7B-Base", "champion": True, "license": "Apache-2.0(以官方仓库为准,执行时请核实)", "installed": True, "validated": "v16 既有路径,真机已跑通"},
+    "indextts2": {"name": "IndexTTS2", "champion": False, "license": "[待核]", "installed": False, "validated": "未验证(沙箱无 GPU,未安装)"},
+    "cosyvoice3": {"name": "CosyVoice3-0.5B", "champion": False, "license": "[待核]", "installed": False, "validated": "未验证"},
+    "f5": {"name": "F5-TTS", "champion": False, "license": "[待核]", "installed": False, "validated": "未验证"},
+    "voxcpm2": {"name": "VoxCPM2", "champion": False, "license": "[待核]", "installed": False, "validated": "未验证"},
+    "fish_s2": {"name": "Fish Audio S2", "champion": False, "license": "研究/非商用,需核对", "installed": False, "validated": "未验证"},
+}
+CHAMPION_ENGINE = "qwen3"
+
+
+class EngineAdapter:
+    """统一引擎接口(每个引擎应在独立虚拟环境/独立进程里运行,用 JSON 行协议通信)。输出一律 float32 单声道 + 真实采样率。"""
+    name = "base"
+
+    def load(self):  # noqa: D401
+        raise NotImplementedError
+
+    def make_speaker_state(self, ref_audio, ref_text):
+        raise NotImplementedError
+
+    def synthesize(self, text, state, seed=0, **kw):
+        raise NotImplementedError
+
+    def release(self):
+        pass
+
+
+class SubprocessEngine(EngineAdapter):
+    """JSON 行协议适配器:子进程读一行 JSON 请求、写一行 JSON 响应({"pcm_b64","sr"} 或 {"error"})。独立 venv 避免 torch/transformers 版本冲突。"""
+
+    def __init__(self, cmd, timeout=120):
+        import subprocess
+        self.cmd, self.timeout, self.proc, self._sp = cmd, timeout, None, subprocess
+        self.lock = threading.Lock()
+
+    def load(self):
+        self.proc = self._sp.Popen(self.cmd, stdin=self._sp.PIPE, stdout=self._sp.PIPE, stderr=self._sp.DEVNULL, text=True, bufsize=1)
+        return self
+
+    def _call(self, obj):
+        import base64
+        with self.lock:
+            self.proc.stdin.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            self.proc.stdin.flush()
+            line = self.proc.stdout.readline()
+        if not line:
+            raise RuntimeError("引擎进程已退出")
+        r = json.loads(line)
+        if "error" in r:
+            raise RuntimeError(r["error"])
+        return np.frombuffer(base64.b64decode(r["pcm_b64"]), np.float32).copy(), int(r["sr"])
+
+    def make_speaker_state(self, ref_audio, ref_text):
+        return {"ref_text": ref_text, "ref_len": int(len(ref_audio))}
+
+    def synthesize(self, text, state, seed=0, **kw):
+        return self._call({"op": "synth", "text": text, "seed": int(seed), "state": state, "kw": kw})
+
+    def release(self):
+        try:
+            if self.proc:
+                self.proc.stdin.close()
+                self.proc.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+class Router:
+    """每个语音库一份 decision(冠军引擎 + 依据)。挑战者必须:已安装 + 闸门 promote=True,才可成为默认;否则永远是 Qwen3 冠军。"""
+
+    def __init__(self, path):
+        self.path = str(path)
+        self.lock = threading.Lock()
+        self.d = {}
+        if os.path.exists(self.path):
+            try:
+                self.d = json.load(open(self.path, "r", encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                self.d = {}
+
+    def _save(self):
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        tmp = self.path + ".part"
+        json.dump(self.d, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        os.replace(tmp, self.path)
+
+    def engine_for(self, lib_id, requested=None, installed=None):
+        installed = set(installed) if installed is not None else {k for k, v in ENGINES.items() if v["installed"]}
+        rec = self.d.get(lib_id) or {}
+        eng = requested or rec.get("engine") or CHAMPION_ENGINE
+        if eng != CHAMPION_ENGINE:
+            ok = (rec.get("engine") == eng and rec.get("gate_promote") is True) or False
+            if eng not in installed or (requested is None and not ok):
+                return CHAMPION_ENGINE
+            if requested is not None and not ok and not rec.get("manual_override"):
+                return CHAMPION_ENGINE
+        return eng
+
+    def set_engine(self, lib_id, engine, gate_result, report_ref="", installed=None):
+        installed = set(installed) if installed is not None else {k for k, v in ENGINES.items() if v["installed"]}
+        with self.lock:
+            if engine == CHAMPION_ENGINE:
+                self.d[lib_id] = {"engine": CHAMPION_ENGINE, "gate_promote": True, "at": time.strftime("%FT%T"), "evidence": "冠军默认"}
+                self._save()
+                return {"ok": True, "engine": CHAMPION_ENGINE}
+            if engine not in ENGINES or engine not in installed:
+                return {"ok": False, "reason": "引擎未安装/未验证,保持冠军 Qwen3"}
+            if not (gate_result and gate_result.get("promote")):
+                return {"ok": False, "reason": "未通过闸门(硬门槛 + 显著优于冠军),保持冠军 Qwen3"}
+            self.d[lib_id] = {"engine": engine, "gate_promote": True, "at": time.strftime("%FT%T"), "evidence": report_ref or "gate", "gate": gate_result.get("reason")}
+            self._save()
+            return {"ok": True, "engine": engine}
+
+
+# ═════════════════════════ 计数器(诊断面板用,线程安全) ═════════════════════════
+class Counters:
+    KEYS = ("turns_checked", "turns_red", "turns_yellow", "turns_green", "last_defects", "gate_runs", "gate_rejects", "gate_promotes",
+            "uploads_done", "rec_done", "imports", "import_segments", "import_rejected", "studio_renders", "studio_best_effort",
+            "studio_failed", "prompt_searches", "lineage_promotes", "lineage_rollbacks", "router_refusals")
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.d = {k: 0 for k in self.KEYS}
+        self.d["last_defects"] = []
+        self.d["last_hf_dbfs"] = None
+
+    def inc(self, k, n=1):
+        with self.lock:
+            self.d[k] = self.d.get(k, 0) + n
+
+    def add_turn(self, rep):
+        with self.lock:
+            self.d["turns_checked"] += 1
+            self.d["turns_" + rep.get("level", "green")] = self.d.get("turns_" + rep.get("level", "green"), 0) + 1
+            self.d["last_defects"] = [x["detail"] for x in rep.get("defects", [])][:6]
+            self.d["last_hf_dbfs"] = (rep.get("metrics") or {}).get("hf_floor_dbfs")
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.d)
+'''
+
+FILES['v17_api.py'] = r'''# -*- coding: utf-8 -*-
+"""
+v17_api.py —— v17 的 HTTP 接口层(只新增路由,不改任何旧路由;认证沿用全局 AuthMiddleware)。
+  GET  /v17                                   v17 控制台页面
+  GET  /api/v17/status                        开关 / 计数 / 引擎 / 阈值 / 诚实声明
+  POST /api/v17/uploads?name=&size=&sha256=   创建可恢复上传会话          GET /api/v17/uploads(未完成列表)
+  PATCH /api/v17/uploads/{id}                 追加分块(Upload-Offset / X-Chunk-SHA256)    GET /api/v17/uploads/{id}(断点状态)
+  POST /api/v17/uploads/{id}/finish           校验 + 原子入库                              DELETE → 只移入 trash/
+  POST /api/v17/rec/{sess}/start?sr=  /chunk?seq=  /finish?allow_gaps=0   GET /api/v17/rec/{sess}   GET /api/v17/rec(可恢复会话)
+  POST /api/v17/import                        {upload_id|rec_session, lib_id} 后台:流式切分 → 质检 → 入库(+参考体检)   GET /api/v17/jobs/{id}
+  GET  /api/libs/{lid}/v17                    谱系时间线 + 路由决定 + 参考体检摘要
+  POST /api/libs/{lid}/v17/candidates         登记候选版本(记录数据快照哈希)
+  POST /api/libs/{lid}/v17/gate               不降级闸门(纯函数)
+  POST /api/libs/{lid}/v17/models/{m}/promote | rollback      三项证据才晋升;一键回滚
+  POST /api/libs/{lid}/prompt-bank/search     MMR 提示词搜索(固定种子可复现)
+  POST /api/libs/{lid}/v17/engine             引擎路由(挑战者必须过闸门)
+  POST /api/v17/studio/render                 Studio Best-of-N(MOCK 引擎可端到端验证;真机 worker 通道未接入 → 501 如实说明)
+所有接口在对应开关关闭时返回 404 并说明开关名。
+"""
+import asyncio
+import base64
+import hashlib
+import io
+import json
+import os
+import secrets
+import shutil
+import wave
+from pathlib import Path
+
+import numpy as np
+
+import v17 as V
+import v17_ingest as I
+
+HONEST = ("沙箱(CPU+Mock)只验证逻辑与客观指标;真机音质/相似度/Live 性能/引擎对比均「未验证」。"
+          "所有阈值是启发式、未校准;「更好」只能由真机 bench + /abx 盲测裁决。")
+
+
+def install(app, G, P):
+    from fastapi import Request
+    from fastapi.responses import HTMLResponse, JSONResponse
+
+    log = G.get("log")
+    work = Path(os.environ.get("VC_WORK") or "/tmp/vc") / "v17"
+    work.mkdir(parents=True, exist_ok=True)
+    up = I.UploadStore(work / "ingest", min_free_mb=int(V.envf("VC_V17_MIN_FREE_MB", 300)))
+    rec = I.RecStore(work / "ingest", min_free_mb=int(V.envf("VC_V17_MIN_FREE_MB", 300)))
+    C = G.get("V17C") or V.Counters()
+    router = V.Router(work / "router.json")
+    lineages, jobs = {}, {}
+    HERE = Path(__file__).resolve().parent
+
+    def err(msg, code=400, **kw):
+        return JSONResponse(dict({"ok": False, "error": msg}, **kw), status_code=code)
+
+    def off(name):
+        return err("v17 的 %s 已关闭(VC_V17_%s=0 或 VC_V17=0)" % (name, name), 404)
+
+    def wrap(fn):
+        import functools
+
+        @functools.wraps(fn)
+        async def inner(*a, **kw):
+            try:
+                return await fn(*a, **kw)
+            except I.IngestError as e:
+                return err(str(e), e.status, **e.extra)
+            except Exception as e:  # noqa: BLE001
+                name = type(e).__name__
+                if name == "StoreError":
+                    return err(str(e), getattr(e, "code", 400))
+                if log:
+                    log.warning("v17 接口异常 %s: %s", fn.__name__, e)
+                return err("v17 接口错误(%s: %s)" % (name, str(e)[:120]), 500)
+        return inner
+
+    async def jbody(request):
+        try:
+            j = await request.json()
+            return j if isinstance(j, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def lineage(lid):
+        if lid not in lineages:
+            P.store.get(lid)                                    # 不存在 → StoreError 404
+            lineages[lid] = V.Lineage(work / "lineage" / (lid + ".json"))
+        return lineages[lid]
+
+    def eligible_samples(lid):
+        lib = P.store.get(lid)
+        return [s for s in lib["samples"] if s.get("enabled", True) and s.get("category") == "speech"]
+
+    # ───────────── 页面 / 状态 ─────────────
+    @app.get("/v17", response_class=HTMLResponse)
+    async def v17_page():
+        p = HERE / "v17.html"
+        if not p.exists():
+            return HTMLResponse("v17.html 不存在", status_code=404)
+        return HTMLResponse(p.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/v17/status")
+    async def v17_status():
+        return {"ok": True, "version": V.VERSION, "switches": V.switches(), "counters": C.snapshot(),
+                "engines": V.ENGINES, "champion_engine": V.CHAMPION_ENGINE, "mock": bool(G.get("MOCK")),
+                "chunk_bytes": int(V.envf("VC_V17_CHUNK_MB", 4) * 1048576), "rec_chunk_seconds": 5,
+                "thresholds": {"hf_abs_warn_db": V.HF_ABS_WARN_DB, "hf_rel_margin_db": V.HF_REL_MARGIN_DB, "click_ratio": V.CLICK_RATIO,
+                               "click_abs": V.CLICK_ABS, "step_db": V.STEP_DB, "true_peak_limit_db": V.TRUE_PEAK_LIMIT_DB, "calibrated": False},
+                "honest": HONEST}
+
+    @app.get("/api/v17/health/audio")
+    async def v17_health():
+        if not V.on("DEFECTS"):
+            return off("DEFECTS")
+        return {"ok": True, "counters": C.snapshot(), "note": "每轮输出的信号层体检(只测量,不改音频);真实音质未验证"}
+
+    # ───────────── 上传(分块断点续传) ─────────────
+    @app.post("/api/v17/uploads")
+    @wrap
+    async def u_create(request: Request):
+        if not V.on("INGEST"):
+            return off("INGEST")
+        q = request.query_params
+        size = int(q.get("size") or 0) or None
+        return dict(up.create(q.get("name") or "upload.bin", size=size, sha256=q.get("sha256")), ok=True, chunk_bytes=int(V.envf("VC_V17_CHUNK_MB", 4) * 1048576))
+
+    @app.get("/api/v17/uploads")
+    @wrap
+    async def u_list():
+        return {"ok": True, "incomplete": up.list_incomplete()}
+
+    @app.get("/api/v17/uploads/{uid}")
+    @wrap
+    async def u_status(uid: str):
+        return dict(up.status(uid), ok=True)
+
+    @app.patch("/api/v17/uploads/{uid}")
+    @wrap
+    async def u_patch(uid: str, request: Request):
+        if not V.on("INGEST"):
+            return off("INGEST")
+        data = await request.body()
+        off_ = int(request.headers.get("Upload-Offset") or request.query_params.get("offset") or 0)
+        return dict(up.append(uid, off_, data, request.headers.get("X-Chunk-SHA256") or request.query_params.get("sha")), ok=True)
+
+    @app.post("/api/v17/uploads/{uid}/finish")
+    @wrap
+    async def u_finish(uid: str, request: Request):
+        r = up.finish(uid, (await jbody(request)).get("sha256"))
+        C.inc("uploads_done")
+        P.audit.event("v17_upload", "ok", None, request.scope.get("vc_sid"), size=r["size"])
+        return dict(r, ok=True)
+
+    @app.delete("/api/v17/uploads/{uid}")
+    @wrap
+    async def u_abort(uid: str):
+        return dict(up.abort(uid), ok=True)
+
+    # ───────────── 录音分片 ─────────────
+    @app.get("/api/v17/rec")
+    @wrap
+    async def r_list():
+        return {"ok": True, "unfinished": rec.list_unfinished()}
+
+    @app.post("/api/v17/rec/{sess}/start")
+    @wrap
+    async def r_start(sess: str, request: Request):
+        if not V.on("INGEST"):
+            return off("INGEST")
+        return dict(rec.start(sess, int(request.query_params.get("sr") or 48000)), ok=True)
+
+    @app.post("/api/v17/rec/{sess}/chunk")
+    @wrap
+    async def r_chunk(sess: str, request: Request):
+        if not V.on("INGEST"):
+            return off("INGEST")
+        return dict(rec.chunk(sess, int(request.query_params.get("seq") or 0), await request.body(), request.headers.get("X-Chunk-SHA256") or request.query_params.get("sha")), ok=True)
+
+    @app.post("/api/v17/rec/{sess}/finish")
+    @wrap
+    async def r_finish(sess: str, request: Request):
+        r = await G["LOOP"].run_in_executor(None, lambda: rec.finish(sess, allow_gaps=request.query_params.get("allow_gaps") == "1"))
+        C.inc("rec_done")
+        return dict(r, ok=True)
+
+    @app.get("/api/v17/rec/{sess}")
+    @wrap
+    async def r_status(sess: str):
+        return dict(rec.status(sess), ok=True)
+
+    # ───────────── 导入语音库(流式切分 → 质检 → 入库) ─────────────
+    def _to_wav(path):
+        """WAV(PCM16/float32)直接用;其他格式用 ffmpeg 流式转成 PCM16 24k 单声道到磁盘(不进内存)。"""
+        try:
+            I.WavMap(path).close()
+            return path, False
+        except I.IngestError:
+            pass
+        if not shutil.which("ffmpeg"):
+            raise I.IngestError("该格式需要 ffmpeg 解码,但系统没有 ffmpeg;请上传 WAV(PCM16/float32)", 415)
+        out = str(work / "ingest" / ("conv_%s.wav" % secrets.token_hex(4)))
+        import subprocess
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", path, "-vn", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", out], capture_output=True, text=True, timeout=3600)
+        if r.returncode != 0:
+            raise I.IngestError("ffmpeg 解码失败:%s" % r.stderr[-160:], 415)
+        return out, True
+
+    async def _run_import(job, lid, paths, ack, activate):
+        loop = G["LOOP"]
+        SRr = G["SR"]
+        import portal as _portal
+        import v16 as _v16
+        base = "v17_" + secrets.token_hex(3)
+        saved, rejected, ids = [], [], []
+        try:
+            for fi, path in enumerate(paths):
+                wavp, tmp = await loop.run_in_executor(None, _to_wav, path)
+                w = I.WavMap(wavp)
+                sr = w.sr
+                segs = await loop.run_in_executor(None, lambda: list(I.stream_split(w, min_s=3.0, target_s=V.envf("VC_V16_SEG_TARGET_S", 8.0), max_s=V.envf("VC_V16_SEG_MAX_S", 14.0), window_s=300.0)))
+                job["total"] += len(segs)
+                for i, (s0, e0) in enumerate(segs):
+                    seg = await loop.run_in_executor(None, w.slice, s0, e0)
+                    proc, _c = await loop.run_in_executor(None, G["prepare_reference"], seg, sr)
+                    vq = await loop.run_in_executor(None, _v16.segment_quality, proc, SRr)
+                    if not vq["usable"]:
+                        rejected.append({"file": fi, "index": i, "seconds": round(len(seg) / sr, 1), "reasons": vq["reasons"][:3]})
+                        job["done"] += 1
+                        continue
+                    qc = await loop.run_in_executor(None, lambda: G["aq"].reference_qc(proc, SRr, orig_sr=sr, channels=1, text=None))
+                    if qc["blocking"] and not ack:
+                        rejected.append({"file": fi, "index": i, "seconds": round(len(seg) / sr, 1), "reasons": (qc.get("warnings") or ["质检阻断"])[:3]})
+                        job["done"] += 1
+                        continue
+                    health = V.ref_health(proc, SRr) if V.on("REFHEALTH") else None
+                    notes = ["v17 流式入库 %d/%d(起点 %.0f 秒);原件保存在 v17/ingest,未改动" % (i + 1, len(segs), s0 / sr)]
+                    sess = "%s_p%d" % (base, int(s0 / sr // 300))
+                    smp = await loop.run_in_executor(None, lambda: P.store.add_sample(lid, _portal.wav_bytes_mono16(seg, sr), "wav", _portal.wav_bytes_mono16(proc, SRr), len(proc) / SRr, sr, 1, qc, "", "", False, session=sess, notes=notes))
+                    meta = {k: vq.get(k) for k in ("score", "snr_db", "clip_pct", "hf_floor_dbfs", "voiced_frac", "bandwidth_khz")}
+                    meta.update(split_from=base, index=i, of=len(segs), t0_s=round(s0 / sr, 1))
+                    P.store.update_sample_meta(lid, smp["sample_id"], v16=meta, v17=({"health": health} if health else None))
+                    saved.append(smp["sample_id"])
+                    job["saved"] = len(saved)
+                    job["done"] += 1
+                w.close()
+                if tmp:
+                    try:
+                        os.remove(wavp)
+                    except OSError:
+                        pass
+            job["rejected"] = rejected[:50]
+            C.inc("imports")
+            C.inc("import_segments", len(saved))
+            C.inc("import_rejected", len(rejected))
+            P.mark()
+            if saved and activate:
+                lib = P.store.get(lid)
+                P.store.set_active(lid)
+                best = max((x for x in lib["samples"] if x["sample_id"] in set(saved)), key=lambda x: _v16.sample_rank_score(x))
+                P.store.set_ref(lid, best["sample_id"])
+                await P.activate(lid)
+            job["state"] = "done" if saved else "error"
+            job["message"] = ("已入库 %d 段(跳过 %d 段);文字将由后台转写/待你核对" % (len(saved), len(rejected))) if saved else "没有可用片段(详见 rejected)"
+        except Exception as e:  # noqa: BLE001
+            job["state"], job["message"] = "error", "导入失败:%s" % str(e)[:160]
+            if log:
+                log.warning("v17 导入失败: %s", e)
+
+    @app.post("/api/v17/import")
+    @wrap
+    async def v17_import(request: Request):
+        if not V.on("INGEST"):
+            return off("INGEST")
+        j = await jbody(request)
+        lid = j.get("lib_id")
+        lib = P.store.get(lid)
+        if not lib["consent"]["confirmed"]:
+            if j.get("consent") is True:
+                P.store.set_consent(lid, True)
+            else:
+                return err("请先确认:这是你本人的声音,或已获得声音所有者的明确授权", 400)
+        paths = []
+        for uid in (j.get("upload_ids") or ([j["upload_id"]] if j.get("upload_id") else [])):
+            st = up.status(uid)
+            if not st.get("final"):
+                return err("上传 %s 尚未完成(请先 finish)" % uid, 409)
+            paths.append(st["final"])
+        if j.get("rec_session"):
+            st = rec.status(j["rec_session"])
+            if st["status"] != "done":
+                return err("录音会话尚未结束(请先 finish)", 409)
+            meta = json.load(open(work / "ingest" / "rec" / j["rec_session"] / "meta.json", "r", encoding="utf-8"))
+            paths += list(meta.get("files") or [])
+        if not paths:
+            return err("没有可导入的文件(需要 upload_id / rec_session)", 400)
+        jid = "j_" + secrets.token_hex(4)
+        job = jobs[jid] = {"id": jid, "state": "running", "total": 0, "done": 0, "saved": 0, "rejected": [], "message": "处理中…"}
+        asyncio.get_running_loop().create_task(_run_import(job, lid, paths, bool(j.get("ack")), bool(j.get("activate"))))
+        return {"ok": True, "job": job}
+
+    @app.get("/api/v17/jobs/{jid}")
+    @wrap
+    async def v17_job(jid: str):
+        if jid not in jobs:
+            return err("任务不存在", 404)
+        return {"ok": True, "job": jobs[jid]}
+
+    # ───────────── 谱系 / 闸门 / 路由 ─────────────
+    @app.get("/api/libs/{lid}/v17")
+    @wrap
+    async def lib_v17(lid: str):
+        if not V.on("LINEAGE"):
+            return off("LINEAGE")
+        L = lineage(lid)
+        if L.champion() is None:                                   # 旧库首次进入 v17:先备份只读快照,再迁移为「版本 0」
+            V.snapshot_backup(str(P.store.root / lid / "library.json"), str(work / "backup" / lid))
+            elig = eligible_samples(lid)
+            L.ensure_v0(snapshot=V.snapshot_sha([(s["sample_id"], s.get("proc_sha256", "")) for s in elig]), meta={"samples": len(elig)})
+        lib = P.store.get(lid)
+        flags = {}
+        for s in lib["samples"]:
+            h = (s.get("v17") or {}).get("health")
+            for f in (h or {}).get("flags", []):
+                flags[f] = flags.get(f, 0) + 1
+        return {"ok": True, "timeline": L.timeline(), "router": {"engine": router.engine_for(lid)}, "ref_health_flags": flags, "samples": len(lib["samples"]), "honest": HONEST}
+
+    @app.post("/api/libs/{lid}/v17/candidates")
+    @wrap
+    async def lib_cand(lid: str, request: Request):
+        if not V.on("LINEAGE"):
+            return off("LINEAGE")
+        j = await jbody(request)
+        elig = eligible_samples(lid)
+        snap = V.snapshot_sha([(s["sample_id"], s.get("proc_sha256", "")) for s in elig])
+        vid = lineage(lid).add_candidate(parent=j.get("parent"), engine=j.get("engine", "qwen3"), recipe=j.get("recipe", "lora_incr"), snapshot=snap, params=j.get("params"))
+        return {"ok": True, "version": vid, "snapshot": snap}
+
+    @app.post("/api/libs/{lid}/v17/gate")
+    @wrap
+    async def lib_gate(lid: str, request: Request):
+        if not V.on("GATE"):
+            return off("GATE")
+        j = await jbody(request)
+        r = V.gate_decide(j.get("champion") or {}, j.get("challenger") or {}, seed=int(j.get("seed", 0)))
+        C.inc("gate_runs")
+        C.inc("gate_promotes" if r["promote"] else "gate_rejects")
+        return {"ok": True, "result": r, "honest": "闸门只比较你提供的逐句指标;指标本身是否来自真机评估由你负责标注"}
+
+    @app.post("/api/libs/{lid}/v17/models/{mid}/promote")
+    @wrap
+    async def lib_promote(lid: str, mid: str, request: Request):
+        if not V.on("LINEAGE"):
+            return off("LINEAGE")
+        j = await jbody(request)
+        gate = j.get("gate")
+        if gate is None and j.get("champion") and j.get("challenger") and V.on("GATE"):
+            gate = V.gate_decide(j["champion"], j["challenger"])
+        r = lineage(lid).promote(mid, gate, bool(j.get("load_ok")), bool(j.get("trial_ok")), j.get("force_reason"))
+        C.inc("lineage_promotes" if r.get("ok") else "gate_rejects")
+        return dict(r, gate=gate)
+
+    @app.post("/api/libs/{lid}/v17/models/{mid}/rollback")
+    @wrap
+    async def lib_rollback(lid: str, mid: str, request: Request):
+        if not V.on("LINEAGE"):
+            return off("LINEAGE")
+        r = lineage(lid).rollback(to=None if mid in ("parent", "-") else mid, reason=(await jbody(request)).get("reason", "manual"))
+        if r.get("ok"):
+            C.inc("lineage_rollbacks")
+        return r
+
+    @app.post("/api/libs/{lid}/v17/engine")
+    @wrap
+    async def lib_engine(lid: str, request: Request):
+        if not V.on("ROUTER"):
+            return off("ROUTER")
+        j = await jbody(request)
+        r = router.set_engine(lid, j.get("engine", V.CHAMPION_ENGINE), j.get("gate"), report_ref=j.get("report", ""))
+        if not r.get("ok"):
+            C.inc("router_refusals")
+        return dict(r, effective=router.engine_for(lid))
+
+    @app.post("/api/libs/{lid}/prompt-bank/search")
+    @wrap
+    async def lib_prompt(lid: str, request: Request):
+        if not V.on("PROMPT"):
+            return off("PROMPT")
+        j = await jbody(request)
+        lib = P.store.get(lid)
+        import v16 as _v16
+        segs = [{"id": s["sample_id"], "seconds": float(s.get("duration_s") or 0), "quality": float(_v16.sample_rank_score(s)), "enabled": s.get("enabled", True),
+                 "verified": bool(s.get("text_trusted")), "cond": s.get("session")} for s in lib["samples"] if s.get("category") == "speech"]
+        cands = V.prompt_candidates(segs, n=int(j.get("n", 4)), max_total_s=float(j.get("max_seconds", 20)), seed=int(j.get("seed", 0)))
+        C.inc("prompt_searches")
+        return {"ok": True, "candidates": cands, "key": [V.prompt_bank_key(c["ids"]) for c in cands], "seed": int(j.get("seed", 0)),
+                "note": "20 秒只是推理时放进模型的提示窗口,不限制入库与训练;最优子集需用真合成 + 打分裁决(真机,未验证)"}
+
+    # ───────────── Studio ─────────────
+    def _mock_synth(text, seed, temperature, rep_penalty, demo=False):
+        sr = V.SR
+        n = int(sr * min(8.0, 0.18 * max(len(text), 6)))
+        t = np.arange(n) / sr
+        r = np.random.default_rng(seed)
+        y = (0.18 * np.sin(2 * np.pi * (150 + 25 * r.random()) * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 3 * t)) + r.normal(0, 1e-4, n)).astype(np.float32)
+        if demo:                                                # 演示:第 1 个候选带 click,Studio 必须把它淘汰
+            y[n // 2] += 0.6
+        return y
+
+    @app.post("/api/v17/studio/render")
+    @wrap
+    async def studio(request: Request):
+        if not V.on("STUDIO"):
+            return off("STUDIO")
+        j = await jbody(request)
+        text = str(j.get("text") or "").strip()
+        if not text:
+            return err("请输入文字", 400)
+        if not G.get("MOCK"):
+            return err("Studio 真机通道未接入:为保证 Live 不降级,本版没有改动 GPU worker(未在真机验证)。"
+                       "纯逻辑(Best-of-N/缺陷检测/证书)已在沙箱验证,可用 Kaggle bench 单元格或 MOCK 引擎体验。", 501, honest=HONEST)
+        n = max(1, min(8, int(j.get("n", 4))))
+        calls = [0]
+
+        def synth(t, **k):
+            calls[0] += 1
+            return _mock_synth(t, demo=bool(j.get("demo", True)) and calls[0] == 1, **k)
+        res = await G["LOOP"].run_in_executor(None, lambda: V.studio_render(text, synth, n=n, seed=int(j.get("seed", 0))))
+        C.inc("studio_renders")
+        st = res["certificate"]["status"]
+        if st == "best_effort":
+            C.inc("studio_best_effort")
+        if st == "failed":
+            C.inc("studio_failed")
+        out = {"ok": st != "failed", "certificate": res["certificate"], "mock": True, "honest": "MOCK 引擎:只证明链路,不代表真实音质"}
+        if res["pcm"] is not None:
+            pcm = V.finalize_pcm16(res["pcm"], seed=res["certificate"]["chosen_seed"] or 0)
+            bio = io.BytesIO()
+            with wave.open(bio, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(V.SR)
+                w.writeframes(pcm.tobytes())
+            out["wav_b64"] = base64.b64encode(bio.getvalue()).decode()
+            out["sha256"] = hashlib.sha256(bio.getvalue()).hexdigest()
+        return out
+
+    return {"upload": up, "rec": rec, "router": router, "jobs": jobs, "counters": C}
+'''
+
+FILES['v17_ingest.py'] = r'''# -*- coding: utf-8 -*-
+"""
+v17_ingest.py —— 无时长限制入库(提示词1 §7.2/§7.3,提示词2 §6.2/§6.3):
+  UploadStore  分块断点续传上传:每块 SHA-256 校验 · 偏移不符返回期望偏移(断线后只补缺块) · .part → 校验 → 原子改名 · 不设总大小/时长上限
+  RecStore     现场录音分片落盘:每片独立文件(崩溃/刷新可恢复) · seq 幂等 · 缺片明示 · 合成 WAV 时按 ≤3GB 自动滚动分卷(避开 WAV 4GB 头部上限)
+  WavMap       WAV 内存映射读取(PCM16 / float32),不把整段音频读进内存
+  stream_split 超长音频按窗口流水线切分(首尾相接、无丢样本、内存与时长无关)
+只受磁盘剩余保护:磁盘不足 → 抛 DiskLow 暂停新写入,【绝不自动删除用户文件】(中止的上传只移入 trash/)。
+依赖:numpy(切分时复用 v16.split_long_audio)。纯 CPU,可单测。
+"""
+import hashlib
+import json
+import os
+import re
+import shutil
+import struct
+import threading
+import time
+
+import numpy as np
+
+
+class IngestError(Exception):
+    def __init__(self, msg, status=400, **extra):
+        super().__init__(msg)
+        self.status, self.extra = status, extra
+
+
+class DiskLow(IngestError):
+    def __init__(self, free):
+        super().__init__("磁盘剩余不足(%.0f MB),已暂停新写入;不会删除任何已有文件" % (free / 1048576), 507)
+
+
+_SAFE = re.compile(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+")
+
+
+def safe_name(name, default="file"):
+    base = os.path.basename(str(name or "")).strip()
+    base = _SAFE.sub("_", base)[:100].lstrip(".")
+    return base or default
+
+
+def _free(path):
+    try:
+        return shutil.disk_usage(path).free
+    except Exception:  # noqa: BLE001
+        return 1 << 60
+
+
+def _atomic_json(path, obj):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+# ═════════════════════════ 分块断点续传上传 ═════════════════════════
+class UploadStore:
+    def __init__(self, root, min_free_mb=300):
+        self.root = os.path.abspath(root)
+        self.min_free = int(min_free_mb) << 20
+        self.lock = threading.RLock()
+        for d in ("sessions", "files", "trash"):
+            os.makedirs(os.path.join(self.root, d), exist_ok=True)
+
+    def _p(self, uid, ext):
+        if not re.fullmatch(r"u_[0-9a-f]{16}", uid or ""):
+            raise IngestError("无效的上传会话 ID", 404)
+        return os.path.join(self.root, "sessions", uid + ext)
+
+    def _meta(self, uid):
+        try:
+            return json.load(open(self._p(uid, ".json"), "r", encoding="utf-8"))
+        except FileNotFoundError:
+            raise IngestError("上传会话不存在", 404)
+
+    def create(self, name, size=None, sha256=None, meta=None):
+        with self.lock:
+            if _free(self.root) < self.min_free:
+                raise DiskLow(_free(self.root))
+            uid = "u_" + hashlib.sha256(("%s|%s|%s" % (name, time.time_ns(), os.urandom(8).hex())).encode()).hexdigest()[:16]
+            m = {"id": uid, "name": safe_name(name), "size": int(size) if size else None, "sha256": (sha256 or "").lower() or None, "created": time.strftime("%FT%T"), "status": "open", "meta": dict(meta or {})}
+            _atomic_json(self._p(uid, ".json"), m)
+            open(self._p(uid, ".part"), "ab").close()
+            return {"id": uid, "offset": 0, "name": m["name"]}
+
+    def status(self, uid):
+        m = self._meta(uid)
+        part = self._p(uid, ".part")
+        off = os.path.getsize(part) if os.path.exists(part) else (m.get("final_size") or 0)
+        return {"id": uid, "offset": off, "status": m["status"], "name": m["name"], "size": m["size"], "final": m.get("final")}
+
+    def append(self, uid, offset, data, chunk_sha256=None):
+        """追加一块。offset 必须等于当前已收字节数;否则 409 并告知期望偏移(客户端据此续传,只补缺块)。"""
+        with self.lock:
+            m = self._meta(uid)
+            if m["status"] != "open":
+                raise IngestError("会话已 %s" % m["status"], 409)
+            part = self._p(uid, ".part")
+            cur = os.path.getsize(part)
+            if int(offset) != cur:
+                raise IngestError("偏移不符,期望 %d" % cur, 409, expected=cur)
+            if chunk_sha256 and hashlib.sha256(data).hexdigest() != chunk_sha256.lower():
+                raise IngestError("块校验失败(SHA-256 不符),请重传该块", 422, expected=cur)
+            if _free(self.root) < self.min_free + len(data):
+                raise DiskLow(_free(self.root))
+            with open(part, "ab") as f:
+                f.write(data)
+                f.flush()
+            return {"id": uid, "offset": cur + len(data)}
+
+    def finish(self, uid, sha256=None):
+        """校验大小与整体 SHA-256(若提供) → fsync → 原子改名到 files/。不通过则保留 .part 不改名。"""
+        with self.lock:
+            m = self._meta(uid)
+            if m["status"] == "done":
+                return {"id": uid, "path": m["final"], "size": m["final_size"], "sha256": m["final_sha256"], "name": m["name"]}
+            part = self._p(uid, ".part")
+            size = os.path.getsize(part)
+            if m["size"] is not None and size != m["size"]:
+                raise IngestError("大小不符:已收 %d,声明 %d(缺块,请续传)" % (size, m["size"]), 409, expected=size)
+            h = hashlib.sha256()
+            with open(part, "rb") as f:
+                for blk in iter(lambda: f.read(8 << 20), b""):
+                    h.update(blk)
+            dig = h.hexdigest()
+            want = (sha256 or m.get("sha256") or "").lower()
+            if want and dig != want:
+                raise IngestError("整体 SHA-256 不符,文件已保留为 .part,不会入库", 422)
+            with open(part, "rb+") as f:
+                os.fsync(f.fileno())
+            final = os.path.join(self.root, "files", "%s__%s" % (uid, m["name"]))
+            os.replace(part, final)
+            m.update(status="done", final=final, final_size=size, final_sha256=dig, finished=time.strftime("%FT%T"))
+            _atomic_json(self._p(uid, ".json"), m)
+            return {"id": uid, "path": final, "size": size, "sha256": dig, "name": m["name"]}
+
+    def abort(self, uid):
+        """中止:.part 与元数据移入 trash/(不删除)。"""
+        with self.lock:
+            m = self._meta(uid)
+            for ext in (".part", ".json"):
+                p = self._p(uid, ext)
+                if os.path.exists(p):
+                    shutil.move(p, os.path.join(self.root, "trash", os.path.basename(p)))
+            return {"id": uid, "status": "aborted", "kept_in": "trash/"}
+
+    def list_incomplete(self):
+        out = []
+        d = os.path.join(self.root, "sessions")
+        for fn in sorted(os.listdir(d)):
+            if fn.endswith(".json"):
+                try:
+                    s = self.status(fn[:-5])
+                    if s["status"] == "open":
+                        out.append(s)
+                except IngestError:
+                    pass
+        return out
+
+
+# ═════════════════════════ 录音分片落盘 / 恢复 / 合成 ═════════════════════════
+def _wav_header_f32(sr, nsamples):
+    data = nsamples * 4
+    return (b"RIFF" + struct.pack("<I", 36 + data) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 3, 1, int(sr), int(sr) * 4, 4, 32) + b"data" + struct.pack("<I", data))
+
+
+class RecStore:
+    MAX_PART_BYTES = 3 << 30        # 单个 WAV 卷 ≤3GB(WAV 头部 32 位上限 4GB),超出自动分卷
+
+    def __init__(self, root, min_free_mb=300):
+        self.root = os.path.abspath(root)
+        self.min_free = int(min_free_mb) << 20
+        self.lock = threading.RLock()
+        os.makedirs(os.path.join(self.root, "rec"), exist_ok=True)
+        os.makedirs(os.path.join(self.root, "rec_out"), exist_ok=True)
+
+    def _d(self, sess):
+        if not re.fullmatch(r"[0-9A-Za-z_\-]{6,64}", sess or ""):
+            raise IngestError("无效的录音会话 ID", 400)
+        return os.path.join(self.root, "rec", sess)
+
+    def start(self, sess, sr, meta=None):
+        with self.lock:
+            d = self._d(sess)
+            os.makedirs(d, exist_ok=True)
+            mp = os.path.join(d, "meta.json")
+            if not os.path.exists(mp):
+                _atomic_json(mp, {"id": sess, "sr": int(sr), "created": time.strftime("%FT%T"), "meta": dict(meta or {}), "status": "open"})
+            return self.status(sess)
+
+    def chunk(self, sess, seq, data, chunk_sha256=None):
+        """幂等:同一 seq 内容相同 → 直接确认;内容不同 → 409。数据 = 小端 float32 单声道。"""
+        with self.lock:
+            d = self._d(sess)
+            if not os.path.exists(os.path.join(d, "meta.json")):
+                raise IngestError("录音会话未开始", 404)
+            if len(data) % 4:
+                raise IngestError("分片长度不是 4 字节的整数倍(应为 float32)", 422)
+            if chunk_sha256 and hashlib.sha256(data).hexdigest() != chunk_sha256.lower():
+                raise IngestError("分片校验失败", 422)
+            p = os.path.join(d, "%08d.f32" % int(seq))
+            if os.path.exists(p):
+                if open(p, "rb").read() == data:
+                    return {"seq": int(seq), "dup": True}
+                raise IngestError("seq %d 已存在且内容不同" % int(seq), 409)
+            if _free(self.root) < self.min_free + len(data):
+                raise DiskLow(_free(self.root))
+            with open(p + ".part", "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(p + ".part", p)
+            return {"seq": int(seq), "dup": False}
+
+    def _seqs(self, sess):
+        d = self._d(sess)
+        return sorted(int(f[:8]) for f in os.listdir(d) if f.endswith(".f32"))
+
+    def status(self, sess):
+        d = self._d(sess)
+        try:
+            m = json.load(open(os.path.join(d, "meta.json"), "r", encoding="utf-8"))
+        except FileNotFoundError:
+            raise IngestError("录音会话不存在", 404)
+        seqs = self._seqs(sess)
+        missing = [i for i in range(seqs[-1] + 1) if i not in set(seqs)] if seqs else []
+        nbytes = sum(os.path.getsize(os.path.join(d, "%08d.f32" % s)) for s in seqs)
+        return {"id": sess, "sr": m["sr"], "status": m["status"], "chunks": len(seqs), "missing": missing, "seconds": round(nbytes / 4.0 / m["sr"], 2)}
+
+    def finish(self, sess, allow_gaps=False):
+        """按 seq 顺序流式拼成 float32 WAV(≤3GB 自动分卷);有缺片默认拒绝并列出缺片(allow_gaps=True 则以静音补齐并记入报告)。"""
+        with self.lock:
+            st = self.status(sess)
+            if st["missing"] and not allow_gaps:
+                raise IngestError("缺少分片 %s,请补传后再结束(或明确允许补静音)" % st["missing"][:10], 409, missing=st["missing"])
+            d, sr = self._d(sess), st["sr"]
+            seqs = self._seqs(sess)
+            base = os.path.join(self.root, "rec_out", sess)
+            outs = []
+            cur = {"f": None, "n": 0}
+
+            def open_vol():
+                if cur["f"]:
+                    self._patch(cur["f"], cur["n"])
+                    cur["f"].close()
+                path = "%s.part%02d.wav" % (base, len(outs) + 1)
+                cur["f"], cur["n"] = open(path, "wb"), 0
+                cur["f"].write(_wav_header_f32(sr, 0))
+                outs.append(path)
+
+            def put(b):
+                if cur["n"] * 4 + len(b) > self.MAX_PART_BYTES:
+                    open_vol()
+                cur["f"].write(b)
+                cur["n"] += len(b) // 4
+
+            open_vol()
+            unit = os.path.getsize(os.path.join(d, "%08d.f32" % seqs[0])) if seqs else 0
+            expect = 0
+            for s in seqs:
+                for _ in range(max(0, s - expect)):                 # 缺片补静音(仅 allow_gaps)
+                    put(b"\x00" * unit)
+                with open(os.path.join(d, "%08d.f32" % s), "rb") as fh:
+                    put(fh.read())
+                expect = s + 1
+            self._patch(cur["f"], cur["n"])
+            cur["f"].flush()
+            os.fsync(cur["f"].fileno())
+            cur["f"].close()
+            if len(outs) == 1:
+                os.replace(outs[0], base + ".wav")
+                outs = [base + ".wav"]
+            with open(os.path.join(d, "meta.json"), "r", encoding="utf-8") as fh:
+                m = json.load(fh)
+            m.update(status="done", files=outs, gaps=st["missing"], finished=time.strftime("%FT%T"))
+            _atomic_json(os.path.join(d, "meta.json"), m)
+            return {"id": sess, "files": outs, "sr": sr, "gaps": st["missing"], "seconds": st["seconds"]}
+
+    @staticmethod
+    def _patch(f, nsamples):
+        """回填 RIFF 与 data 块大小(头部长度固定 44 字节)。"""
+        pos = f.tell()
+        f.seek(4)
+        f.write(struct.pack("<I", 36 + nsamples * 4))
+        f.seek(40)
+        f.write(struct.pack("<I", nsamples * 4))
+        f.seek(pos)
+
+    def list_unfinished(self):
+        out = []
+        for sess in sorted(os.listdir(os.path.join(self.root, "rec"))):
+            try:
+                s = self.status(sess)
+                if s["status"] == "open":
+                    out.append(s)
+            except IngestError:
+                pass
+        return out
+
+
+# ═════════════════════════ WAV 内存映射读取 + 流式切分 ═════════════════════════
+class WavMap:
+    """只读 WAV(PCM16 / float32),np.memmap 映射,按需取片段转 float32;不整段读入内存。"""
+
+    def __init__(self, path):
+        self.path = path
+        with open(path, "rb") as f:
+            hdr = f.read(12)
+            if hdr[:4] != b"RIFF" or hdr[8:12] != b"WAVE":
+                raise IngestError("不是 WAV 文件", 415)
+            fmt = None
+            while True:
+                h = f.read(8)
+                if len(h) < 8:
+                    raise IngestError("WAV 缺少 data 块", 415)
+                cid, sz = h[:4], struct.unpack("<I", h[4:])[0]
+                if cid == b"fmt ":
+                    fmt = struct.unpack("<HHIIHH", f.read(16))
+                    f.seek(sz - 16, 1)
+                elif cid == b"data":
+                    off = f.tell()
+                    break
+                else:
+                    f.seek(sz + (sz & 1), 1)
+        tag, ch, self.sr, _br, _ba, bits = fmt
+        if tag == 0xFFFE:
+            tag = 3 if bits == 32 else 1
+        if (tag, bits) not in ((1, 16), (3, 32)):
+            raise IngestError("仅支持 PCM16 / float32 WAV(其他格式请先用 ffmpeg 流式转换)", 415)
+        self.ch, self.dtype = ch, (np.int16 if tag == 1 else np.float32)
+        total = (os.path.getsize(path) - off) // (bits // 8)
+        self.mm = np.memmap(path, dtype=self.dtype, mode="r", offset=off, shape=(total,))
+        self.n = total // ch
+
+    def slice(self, a, b):
+        x = np.asarray(self.mm[a * self.ch:b * self.ch])
+        if self.ch > 1:
+            x = x.reshape(-1, self.ch).mean(axis=1)
+        return x.astype(np.float32) / 32768.0 if self.dtype == np.int16 else x.astype(np.float32)
+
+    def close(self):
+        try:
+            del self.mm
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def stream_split(wav, min_s=3.0, target_s=8.0, max_s=14.0, window_s=600.0, pause_ms=250):
+    """生成器:逐段产出 (start, end) 样本下标,首尾相接、无重叠、无丢样本;内存只与 window_s 有关,与总时长无关。"""
+    import v16 as _v16
+    sr, n = wav.sr, wav.n
+    W = int(window_s * sr)
+    pos = 0
+    while pos < n:
+        end = min(n, pos + W)
+        a = wav.slice(pos, end)
+        segs = _v16.split_long_audio(a, sr, min_s=min_s, target_s=target_s, max_s=max_s, pause_ms=pause_ms)
+        if end < n and len(segs) > 1:
+            for s0, s1 in segs[:-1]:               # 窗口最后一段可能被截断:留到下一窗口重新切
+                yield (pos + s0, pos + s1)
+            pos = pos + segs[-1][0]
+        else:
+            for s0, s1 in segs:
+                yield (pos + s0, pos + s1)
+            pos = end
+'''
+
 for name, content in FILES.items():
     (APP / name).parent.mkdir(parents=True, exist_ok=True)
     (APP / name).write_text(content, encoding="utf-8")
@@ -27768,6 +30137,13 @@ if RUN_TESTS and not TEST:
         t16m = subprocess.run([PY, str(APP / "tests" / "test_v16_mock.py")], capture_output=True, text=True, timeout=900, cwd=str(APP), env=env_t)
         print("  [Python 测试 · v16 Mock 集成:长音频切分入库/复合参考/停用与主参考/增量预览/报告项/V16=0 回退]\n" + "\n".join("   " + l_ for l_ in (t16m.stdout + t16m.stderr).strip().splitlines()[-10:]))
         rs.append(t16m)
+    t17u = subprocess.run([PY, str(APP / "tests" / "test_v17.py")], capture_output=True, text=True, timeout=300, cwd=str(APP), env=env_t)
+    print("  [Python 测试 · v17 增量:缺陷检测/闸门/谱系/提示词搜索/参考体检/Studio/路由/分块续传/录音恢复/流式切分/开关]\n" + "\n".join("   " + l_ for l_ in (t17u.stdout + t17u.stderr).strip().splitlines()[-22:]))
+    rs.append(t17u)
+    if RUN_TESTS == "full":
+        t17m = subprocess.run([PY, str(APP / "tests" / "test_v17_mock.py")], capture_output=True, text=True, timeout=900, cwd=str(APP), env=env_t)
+        print("  [Python 测试 · v17 Mock 集成:上传→导入/录音恢复/谱系闸门HTTP/Studio证书/提示词搜索/体检计数/V17 开关PCM逐样本一致]\n" + "\n".join("   " + l_ for l_ in (t17m.stdout + t17m.stderr).strip().splitlines()[-12:]))
+        rs.append(t17m)
     if any(x.returncode != 0 for x in rs):
         print("  ⚠ 有测试未通过(见上)。服务仍会启动,但请把失败项当作已知问题,不要宣称对应功能已验证。")
 
@@ -28097,6 +30473,7 @@ print("   · 💾 下载生成的语音:/voice 页右上「💾 下载」→ 每
 print("   · 🔎 搜索:被 Bing/DDG 等站点限制(401/403/429/验证码)时系统会【停止】请求并显示原因,不会绕过;要更稳定请配置 BRAVE_SEARCH_API_KEY。体检结果:%s" % (OUT / "vc_net_preflight.json"))
 print("   · v15:📊 诊断里的「v15」验收项=每轮取证(数字零段/click/削波/真峰值);%s/abx = 盲测页(参考 vs v14 vs v15,二项检验);关闭某项见脚本顶部 V15_*;沙箱不能证明「更像」,以你的耳朵为准" % public_url)
 print("   · v16:首页「语音库」→ 每个库的「📚 多参考管理」:上传/录音不限时长(>30 秒自动在停顿处切片 + 后台转写,请核对文字);≥2 条已核对参考会自动拼成复合参考;「继续优化」= 增量再优化(需已晋升模型;MODE=train + TRAIN_FROM_LIBRARY=True 执行)。关闭某项见脚本顶部 V16_*;真机效果未验证,以 /abx 盲测为准")
+print("   · v17:%s/v17 = 控制台(无限时长上传[断点续传] / 导入语音库 / 恢复录音 / 谱系·闸门·晋升·回滚 / 提示词搜索 / Studio);快速克隆录音已无 1800 秒上限(每 5 秒一片存服务器)。诊断→验收清单 v17 项(50~54);真机项=未验证;关闭某项见脚本顶部 V17_*(V17=False = v16 行为)" % public_url)
 print("   · 本单元格会一直运行 = 服务在线,请不要停止它;日志可在网页右上角「运行日志」查看\n", flush=True)
 try:
     from IPython.display import HTML, display
