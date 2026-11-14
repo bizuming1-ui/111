@@ -1,1 +1,499 @@
+# 【开发任务提示词】Qwen3-TTS-1.7B「参考音色一致克隆」稳定系统
 
+> 适用仓库:https://github.com/bizuming1-ui/biyesheji
+> 目标模型:`Qwen/Qwen3-TTS-12Hz-1.7B-Base`(零样本声音克隆,ICL 模式)
+> 工作模式:**ReAct(推理+行动)+ TDD(测试驱动)+ 微步迭代**
+> 语言:全程使用中文向我汇报;代码注释、日志使用中文。
+
+---
+
+## 0. 给人看的使用说明(AI 可忽略本节)
+
+1. 点击页面上的「一键复制全文」,把本文件原样粘贴到 GitHub(如 `PROMPT.md`),或直接作为第一条消息发给具备 **Bash/Terminal 工具调用(Tool Use)** 能力的 AI(Claude Code / Cursor Agent / OpenHands / Aider / Codex CLI / Cline 等)。
+2. AI 需要的运行环境:Linux 沙盒(推荐带 NVIDIA GPU:Kaggle / Colab / Modal / RunPod / 本地 Docker + nvidia-container-toolkit)。
+3. 你需要额外提供(缺失时 AI 必须主动向你索取,不得猜测):
+   - 生成这 8 条克隆语音的**原始合成脚本/服务代码**(仓库里只有音频与 manifest,没有源码);
+   - 参考语音的**逐字文本 ref_text**(或授权 AI 用 ASR 转写后由你校对);
+   - 你要合成的**目标语种与典型文本**;
+   - 你的**运行硬件**(manifest 中出现 `/kaggle/working` 与 `gpu0`,疑似 Kaggle 多 GPU,请确认)。
+
+---
+
+## 1. 角色设定与硬性工作协议
+
+你是一名 **资深软件工程师 + 资深声音克隆(Voice Cloning / Zero-shot TTS)工程师 + 音频信号处理工程师**。
+
+### 1.1 不可违反的规则(Hard Rules)
+
+1. **不得猜测,必须实测。** 任何关于音频参数、模型参数名、API 签名的结论,都必须通过 `grep` / `sed -n` / `python3 -c` / 阅读源码 / 运行实验得到证据。不知道就说"不知道,下一步去验证"。
+2. **微步迭代:禁止一次性改完所有代码。** 一次只改一个模块、一个变量;改完立即验证;验证不过立即回滚。
+3. **改动前先备份:** `cp -a <文件> <文件>.bak.$(date +%Y%m%d_%H%M%S)`;或使用 `git commit` 创建回滚点。
+4. **TDD:** 先写失败的测试(红)→ 写最小实现(绿)→ 重构。每个模块改完立即运行 `python3 - <<'EOF' ... EOF` 单测,验证**语法 + 逻辑**。
+5. **精准读代码:** 只用 `grep -n`、`sed -n 'a,bp'`、`awk` 精准定位,不整文件倾倒。
+6. **每一步只用一两句话汇报「当前状态 + 下一步动作」**,格式固定:
+   `【状态】……(一句话)  【下一步】……(一句话)`
+7. **多方案必须在沙盒里自动对比,择优选择**,并输出对比表(见第 6 节)。选择依据是**指标数据**,不是直觉。
+8. **全部模块走通后**,才允许跑端到端(E2E)回归;E2E 不过则回到失败模块继续微步迭代。
+9. **合规:** 仓库 README 声明「AI 合成语音:仅限本人或已获明确授权的声音;不得伪装成真人原始录音」。必须保留 `synthetic: true` 标记与 manifest 的 SHA-256 机制,**不得移除或弱化**。
+
+### 1.2 ReAct 循环(每一步都按此执行)
+
+```
+Thought(推理):我当前要验证/解决的唯一问题是什么?假设是什么?
+Action(行动):执行 1 条或 1 组 Bash 命令 / 1 处最小代码修改
+Observation(观察):命令输出 / 测试结果
+Reflection(反思):假设成立吗?指标变好还是变坏?回滚还是继续?
+Report(汇报):【状态】+【下一步】,各一句话
+```
+
+---
+
+## 2. 项目事实(已由我实测,AI 开工第一步须独立复核)
+
+### 2.1 仓库内容
+
+- `参考语音1.webm`:**唯一的参考语音**(真人)。
+- `克隆语音1~8.wav`:8 条克隆结果;`克隆语音1~8.zip`:对应的「精确副本 + 分段 + manifest.json + README.txt」。
+- **仓库内没有任何源码**,因此"原版管线"的真实代码需向用户索取;在拿到前,只能通过 manifest 逆向其参数。
+
+### 2.2 参考语音(`参考语音1.webm`)实测
+
+| 项目 | 实测值 | 含义 |
+|---|---|---|
+| 容器/编码 | WebM / **Opus** | 有损压缩;典型的浏览器 `MediaRecorder` 产物 |
+| 采样率/声道 | 48000 Hz / **立体声** | 需下混为单声道并重采样到 24 kHz 供模型使用 |
+| 时长 | **约 27.2 s**(解码后统计;容器 Duration 为 N/A) | 容器无时长元数据,须解码计数 |
+| RMS | **约 −33.5 dBFS** | **非常轻**(录音增益低) |
+| 峰值 | **约 −16.0 dBFS** | 很大的动态余量 |
+| 基频 F0 中位数(粗测) | **约 106 Hz** | 男声低音区 |
+
+### 2.3 克隆语音(8 条)实测
+
+| 编号 | 时长 | 分段数 | manifest 状态 | RMS(dBFS) | 说明 |
+|---|---|---|---|---|---|
+| 1 | 4.91 s | 2 | quality_warning | −18.89 | 块间响度突变 20.1 / 20.7 dB |
+| 2 | 4.50 s | 2 | ready | −22.65 | 无告警 |
+| 3 | 119.10 s | 25 | quality_warning | −19.17 | 共 20 条告警,突变最高 23.2 dB |
+| 4 | 25.28 s | 6 | quality_warning | −19.45 | 突变 13.6~21.6 dB |
+| 5 | 11.72 s | 4 | quality_warning | −18.84 | 突变 15.7~18.9 dB |
+| 6 | 11.72 s | 4 | quality_warning | −18.84 | **与 5 逐字节相同(SHA-256 一致)** → 固定 seed 在同文本/同硬件下可完全复现 |
+| 7 | 21.46 s | 5 | quality_warning | −19.65 | 突变 13.8~15.0 dB |
+| 8 | 205.89 s | 62 | quality_warning | −19.46 | 共 49 条告警;**第 20、44 段合成失败**:`AudioCorrupt: 疑似被 max_new_tokens 截断(生成未自然结束)`,其中第 44 段近似无声(有声帧 0.0%) |
+
+- 全部克隆为 **24000 Hz / 单声道 / int16 PCM**(与模型输出采样率一致)。
+- 全部克隆的**峰值恰为 −1.5 dBFS**(多条完全相同)→ 强烈暗示存在**逐段峰值归一化/限幅**。
+
+### 2.4 manifest.json 暴露的真实生成参数(所有 8 条完全一致)
+
+```
+model.id           = Qwen/Qwen3-TTS-12Hz-1.7B-Base
+model.trained      = false          ← 并未做任何微调训练,是零样本克隆
+temperature        = 0.7
+top_p              = 0.9
+top_k              = 50
+repetition_penalty = 1.05
+seed               = 42
+latency_mode       = continuous     ← 流式/连续出块
+gpu_policy         = parallel       ← 多 GPU 并行
+运行路径            = /kaggle/working/vc_diag/...(Kaggle 环境)
+播放                = 24000 Hz, mono, 含句间停顿 pause_s(克隆8为 2.78 s)
+质检阈值            = clip_level 32700, boundary_step_warn 0.35, silence_db −60, max_silence_s 4.0 …
+```
+
+### 2.5 由事实得出的「问题清单」(P0 = 必须优先解决)
+
+| 级别 | 问题 | 证据 |
+|---|---|---|
+| **P0** | **音量/动态与参考差距巨大** | 克隆 RMS≈−19 dBFS、峰值 −1.5;参考 RMS≈−33.5、峰值 −16 → 约 **14~15 dB** 差 |
+| **P0** | **块间(chunk)响度突变 12~23 dB** | 7/8 条 `quality_warning`;突变几乎每句都有 |
+| **P0** | **合成失败/截断/近似无声** | 克隆8 第 20、44 段 `max_new_tokens` 截断 |
+| P1 | **音色稳定性未量化** | 没有说话人相似度/F0/LTAS 指标,无法证明"一模一样" |
+| P1 | **未做微调(trained=false)** 而用户认为是"训练" | 需澄清并对比"微调"方案 |
+| P1 | 极短分段(5 字 / 1.2 s)响度与韵律不稳 | 克隆1 第1段 5 字 1.2 s |
+| P2 | 精度/注意力实现可能影响数值稳定 | Kaggle 常见 T4/P100:T4 不原生支持 bf16、不支持 FlashAttention-2(待实测) |
+| P2 | 多 GPU parallel 的数值差异 | 待实测 |
+
+---
+
+## 3. 目标定义与诚实边界
+
+**用户目标(原话提炼):** 所有克隆语音都要与参考语音有"一模一样的音色、音质等语音数据",并且**声音十分稳定**。
+
+**诚实边界(必须写进最终报告):**
+- 零样本/微调生成的语音与真人录音**不可能做到波形或数学上 100% 相同**;能做到的是在**可量化指标**上逼近到"人耳与说话人验证模型都难以区分"。
+- 克隆的信息上限取决于参考音:仅 27 s、Opus 有损、低电平的录音是**信息天花板**。
+- 因此把"一模一样"**工程化为 6 个维度的量化验收**(见第 8 节),并把**参考音自身不同片段之间的指标**作为"真人天花板"基准。
+
+---
+
+## 4. 自问自答记录(一次一问,逐步追问,已选最优答案)
+
+> 以下每一问都是"关键信息"问题,答案均**基于实测或可验证的官方事实**。执行 AI 须逐条复核;若发现某答案与实测不符,**立即修订该条并继续追问**,不得沿用。
+
+**Q1. "一模一样"能否被精确定义和测量?**
+A:不能数学等同,但可定义为 6 维度:① 说话人相似度(speaker embedding 余弦)② 基频与韵律统计(F0 均值/标准差/语速)③ 长时平均频谱 LTAS 与噪声底(音质/信道)④ 响度与动态(LUFS/LRA/峰值)⑤ 可懂度(CER/WER)⑥ 稳定性(多次/多文本/多块方差)。以参考音为金标准,验收阈值见第 8 节。
+→ 追问 Q2。
+
+**Q2. 哪一段才是"参考语音"?它的真实规格是什么?**
+A:仓库只有 `参考语音1.webm`,Opus 立体声 48 kHz,约 27.2 s,RMS≈−33.5 dBFS,峰值≈−16 dBFS,F0≈106 Hz(见 2.2)。这是唯一金标准。
+→ 追问 Q3。
+
+**Q3. 8 条克隆是怎么生成的?是不是"训练"出来的?**
+A:manifest 明确 `model.trained=false`:是 Qwen3-TTS-12Hz-1.7B-Base 的**零样本克隆**,并非训练/微调。参数 temperature 0.7、top_p 0.9、top_k 50、repetition_penalty 1.05、seed 42、continuous 流式、parallel 多 GPU。
+→ 追问 Q4。
+
+**Q4. 既然没训练,"训练+复刻"需求应如何落地?**
+A:并行评估两条路:(a) **零样本 ICL 的极致工程化**(参考音工程 + 稳定性工程 + 质检闭环);(b) **微调(SFT/LoRA)**。仅 27 s 数据微调有严重过拟合风险,所以 (b) 作为对照实验,只有在指标显著优于 (a) 且泛化(不同文本)不退化时才采纳。
+→ 追问 Q5。
+
+**Q5. 当前最大的不一致来源是什么?按证据排序。**
+A:① 整体电平差 ~14.7 dB(克隆 −19 vs 参考 −33.5 RMS);② 块间响度突变 12~23 dB;③ 截断/无声失败;④ 峰值恒定 −1.5 dBFS 的逐段归一化;⑤ F0 粗测 100~105 Hz vs 参考 106 Hz(偏差较小,需精测)。
+→ 追问 Q6。
+
+**Q6. 块间响度突变 12~23 dB 的根因是什么?**
+A:**不下结论**,列出可证伪假设并逐个实验:
+- H1:流式解码(Qwen3-TTS-Tokenizer-12Hz 的 chunked decode)缺少足够左上下文/重叠,导致块边界增益不连续;
+- H2:管线对每个 chunk/段做了**独立峰值归一化或限幅**(峰值恒 −1.5 dBFS 是强证据),破坏相对响度;
+- H3:`latency_mode=continuous` 的首包/后续包策略不同;
+- H4:`repetition_penalty`/采样随机性造成韵律能量起伏;
+- H5:多 GPU parallel 下各块来自不同设备/不同数值路径。
+实验:关闭逐段归一化 → 非流式整句合成 → 增加解码重叠 → 单 GPU → 固定 dtype,逐项做 A/B,以"突变 dB 的最大值与 P95"为指标。
+→ 追问 Q7。
+
+**Q7. 是否有参考音的文本 `ref_text`?它对音色有影响吗?**
+A:manifest "默认不含文本、参考音频、声纹向量",所以未知。Qwen3-TTS-Base 的 ICL 克隆需要 `ref_audio + ref_text`;若 `x_vector_only_mode=True` 则只用说话人向量,**官方说明克隆质量可能下降**。决策:用 **ICL 模式(x_vector_only_mode=False)**;ref_text 用 Whisper large-v3 / FunASR 转写后**由用户逐字校对**,锁定为 `ref_text.txt` 并计算 SHA-256。
+→ 追问 Q8。
+
+**Q8. 参考音要不要降噪、增益、重采样?会不会"洗掉"音色/音质?**
+A:默认采用「**保真(Faithful)**」策略:只做 ① 解码 Opus ② 立体声下混(左右声道相关性先检验,若近乎相同则取均值)③ 重采样 24 kHz(高质量 sinc,如 soxr_vhq)④ 可选的**纯增益**调整(不改频谱)。**不做降噪/增强**(降噪会改变音质与说话人特征)。对 3 个版本做 A/B:(原样 / 仅增益 / 轻度降噪 DeepFilterNet),以第 8 节指标决定,默认选 Faithful。
+→ 追问 Q9。
+
+**Q9. 参考音应使用整段 27 s,还是截取最优片段?**
+A:实验网格:{整段 27 s, 最干净 15 s, 10 s, 6 s, 3 s} × {不同起点}。每个配置用 N 条固定评测文本、M 个 seed 合成,统计「说话人相似度均值/方差、CER、突变 dB」。选**均值高且方差小**的配置并**锁定**。同时遵守:片段在句子边界切、不含明显呼吸爆音/拖尾、ref_text 与片段严格逐字对应。
+→ 追问 Q10。
+
+**Q10. 目标语种是什么?要不要用 `language="Auto"`?**
+A:仓库文件名为中文,但需 ASR 检测参考音语种并向用户确认。**稳定性优先:显式传入 `language`(如 "Chinese"),不使用 Auto**,避免语种自适应带来的音色/韵律摇摆。跨语种合成(参考音语种 ≠ 目标语种)单独做回归测试。
+→ 追问 Q11。
+
+**Q11. "音质一模一样"是要复刻参考音的底噪/信道特征,还是要更干净?**
+A:用户原话是"一模一样",默认 **Profile-Faithful(保真)**:匹配参考音的 LTAS(1/3 倍频程)、噪声底与动态;另提供可选 **Profile-Clean(干净)**,默认关闭。两个 Profile 都要输出,评测分别计算。
+→ 追问 Q12。
+
+**Q12. 响度目标如何确定?参考音太轻(−33.5 dBFS RMS)怎么办?**
+A:`master` 版本:按参考音的**积分响度 LUFS(ITU-R BS.1770,pyloudnorm)**统一整篇增益(**整篇一个增益,不逐块**),峰值留 ≥1 dB 余量;`播放版`:在 master 上额外 +ΔdB(例如目标 −23 LUFS)方便试听,并明确标注。验收以 master 为准。
+→ 追问 Q13。
+
+**Q13. 采样率与带宽如何处理?要不要超分?**
+A:模型输出固定 24 kHz。参考音 48 kHz 但经 Opus 编码后高频可能已被截断(用频谱截止频率实测)。**禁止用 AI 超分伪造高频**,除非实验证明说话人相似度/MOS 都提升且不引入伪影。评测前统一重采样:说话人嵌入用 16 kHz,LTAS 用 24 kHz。
+→ 追问 Q14。
+
+**Q14. "声音十分稳定"具体指什么?**
+A:拆成 5 种稳定性:① **同文本多次**(不同 seed)一致 ② **不同文本**之间一致 ③ **块间/句间**一致(响度、音高、语速不跳变)④ **长文本**不漂移(开头与结尾音色一致)⑤ **跨会话/跨机器/跨 GPU** 可复现。每种都有对应指标(第 8 节)。
+→ 追问 Q15。
+
+**Q15. `seed=42` 固定是否就能保证稳定?**
+A:不能。克隆5、6 逐字节相同,证明**同文本+同硬件+同 seed 可复现**;但不同文本的采样轨迹仍不同,且 GPU 并行/atomic 操作/不同 GPU 型号会引入数值差异。所以还需要:best-of-N(多候选择优)+ 质检门禁 + 重试策略 + 固化 `voice_clone_prompt`。
+→ 追问 Q16。
+
+**Q16. 采样参数怎么选?**
+A:当前 0.7/0.9/50/1.05。网格实验:temperature ∈ {0.3, 0.5, 0.7, 0.9}、top_p ∈ {0.8, 0.9, 0.95}、top_k ∈ {20, 50}、repetition_penalty ∈ {1.0, 1.05, 1.1} 以及贪心(do_sample=False)。**参数名与是否被 `generate_voice_clone` 透传,必须读源码确认**(`grep -n "temperature\|top_p\|repetition_penalty\|max_new_tokens\|do_sample" qwen_tts/inference/*.py`),不得凭记忆。以"相似度方差↓、CER↓、突变↓"评分。
+→ 追问 Q17。
+
+**Q17. 流式 continuous 模式是否应保留?**
+A:**双轨制**:离线批量(最终交付)使用**非流式整句合成**以最大化稳定与质量;在线预览才用流式。实验对比两者在突变 dB、相似度、CER 上的差异;若流式更差,则最终交付只走离线轨。
+→ 追问 Q18。
+
+**Q18. `gpu_policy=parallel` 是否导致音色漂移?**
+A:做 A/B:同一 `voice_clone_prompt`、同文本、同 seed,在 GPU0/GPU1/CPU(小样本)分别合成,比较嵌入余弦与 F0 差异。若差异显著,则最终交付**固定单一设备**,并用 `torch.use_deterministic_algorithms(True)`、`CUBLAS_WORKSPACE_CONFIG=:4096:8`、关闭 TF32 非确定路径做可复现性测试。
+→ 追问 Q19。
+
+**Q19. 如何分句?极短句(5 字/1.2 s)怎么办?**
+A:规则化分句:最小 8~10 字或 ≥2 s(过短则与相邻句合并),最大约 12~15 s(超长则在标点/韵律停顿处切分);数字、日期、英文缩写先做文本规范化(TN);标点保持稳定。分句策略作为超参实验,以突变与相似度方差评分。
+→ 追问 Q20。
+
+**Q20. 如何防止 `max_new_tokens` 截断与近似无声?**
+A:① 按文本字数×语速估算期望时长,`max_new_tokens` = 期望帧数×安全系数(12Hz 码率:每秒约 12 帧 × 码本组,**具体帧率与 token 结构读源码/配置确认**);② 检测"自然结束"(EOS)而非撞上限;③ 有声帧比例 < 阈值、末尾能量不衰减、时长异常(过短/过长)判为失败;④ 失败后**自动换 seed 重试**(例如 42→1042→2042),并记录日志;⑤ 超过重试次数则降级(缩短句子/改参数)而不是输出坏音频。
+→ 追问 Q21。
+
+**Q21. 说话人相似度用哪个模型度量?**
+A:三模型互验避免单一偏差:**ECAPA-TDNN**(SpeechBrain `speechbrain/spkrec-ecapa-voxceleb`)、**WavLM-base-plus-sv**(`microsoft/wavlm-base-plus-sv`)、**Resemblyzer**(`resemble-ai/Resemblyzer`)。统一 16 kHz 单声道,取整段嵌入余弦;并给出「参考音自身两半(A/B)之间的相似度」作为天花板。
+→ 追问 Q22。
+
+**Q22. 如何避免"评测泄漏"(用参考音评参考音)?**
+A:参考音 27 s 切成 A/B 两半(句子边界):A 用于克隆、B 作为**留出真人对照**;评估克隆 vs B 的相似度,并以 A vs B 的真人相似度为天花板;只有目标≥天花板×0.9 才算"接近真人"。
+→ 追问 Q23。
+
+**Q23. 基频与韵律如何测?**
+A:Parselmouth(Praat)或 librosa.pyin:F0 中位数、均值、标准差、5%~95% 范围、语速(字/秒)、停顿分布。粗测显示参考 F0≈106 Hz,克隆≈100~105 Hz,需用精确算法重测并设定阈值。
+→ 追问 Q24。
+
+**Q24. 音质如何量化?**
+A:LTAS(1/3 倍频程能量曲线与参考的最大/平均偏差)、噪声底(无声段 RMS)、削波比、DC 偏置、谱截止频率、UTMOS(`tarepan/SpeechMOS`)、DNSMOS(Microsoft DNS-Challenge),以及 manifest 内已有的 `quality.metrics`。注意参考音本身 MOS 可能不高,**"一模一样"的目标是逼近参考而非超越参考**。
+→ 追问 Q25。
+
+**Q25. 可懂度/文本正确率怎么保证?**
+A:Whisper large-v3(`openai/whisper`)或 FunASR Paraformer(`modelscope/FunASR`)转写,计算 CER(中文)/ WER(英文),门禁 ≤ 3%;并检测漏读、重复读、尾部幻觉。
+→ 追问 Q26。
+
+**Q26. 允许哪些后处理?如何避免后处理破坏音色?**
+A:允许且**必须通过回归门禁**(后处理后说话人相似度不得下降 >0.005):整篇统一增益(LUFS 匹配)、真峰值限制(−1 dBTP)、20~50 ms 等功率交叉淡化、DC 去除、可选的 LTAS 轻度匹配(Matchering `sergree/matchering` 或自写 EQ,限制 ±3 dB)。**禁止逐块独立归一化**。
+→ 追问 Q27。
+
+**Q27. 峰值恒为 −1.5 dBFS 说明了什么?应如何修正?**
+A:说明存在逐段/逐块峰值归一化(或限幅)。这会让每块相对响度失真,是突变的最可能原因之一(H2)。修正:所有块以**同一个全局增益**输出(增益由参考 LUFS 与整篇响度计算),只在最后做一次真峰值保护。
+→ 追问 Q28。
+
+**Q28. 是否应该微调(训练)模型?**
+A:官方说明 Base 模型可用于微调(见 Qwen3-TTS 仓库的 finetuning 目录,**须先核实目录与脚本名**)。但仅 27 s 数据:严重过拟合/泛化差/授权风险。决策:作为**方案 E 的对照实验**。如果用户能提供 **≥10~30 分钟**同一说话人的干净录音(并确认授权),微调才有价值;否则采用零样本极致工程化为最终方案。
+→ 追问 Q29。
+
+**Q29. 若不微调,如何进一步逼近?**
+A:(1) 参考音网格搜索+锁定 `voice_clone_prompt`(`create_voice_clone_prompt` 一次构建、`torch.save` 落盘、校验哈希、全局复用);(2) **best-of-N 重排序**:每句生成 N=4~8 候选(不同 seed),按「说话人相似度 + F0 偏差 + 响度偏差 + CER + 无截断」综合打分取最优;(3) **全局一致性约束**:相邻句之间也比较嵌入与 F0,若跳变则重生成;(4) 可选的**音色校正二段**:用 Seed-VC / OpenVoice 以参考音为目标做轻度转换,**仅当指标提升且无伪影**才启用(方案 D)。
+→ 追问 Q30。
+
+**Q30. 沙盒/硬件对稳定性有什么风险?**
+A:manifest 路径显示在 Kaggle(常见 T4×2 / P100)。**风险(待实测):** T4(Turing)不原生支持 bf16、不支持 FlashAttention-2;`dtype`(fp16/bf16/fp32)和 `attn_implementation`(flash_attention_2/sdpa/eager)可能改变数值与音色。必须用同一 prompt、同文本、同 seed 做 dtype×attention 矩阵测试,选**相似度最高且方差最小**的组合并固化。
+→ 追问 Q31。
+
+**Q31. 没有原版源码,"原版回归基线"怎么建?**
+A:两层基线:
+- **金标准基线(Golden):** 对仓库 8 条克隆 wav + 参考音,计算全部指标写入 `baseline.json`(含 SHA-256)。任何改动不得使指标变差。
+- **Mock 基线(无 GPU 也能 TDD):** 写 `MockQwen3TTSModel`(与真实 `generate_voice_clone` / `create_voice_clone_prompt` 同签名,返回确定性信号:按文本长度生成带包络的正弦+噪声,固定 24 kHz),让"分句、重试、质检、拼接、归一化、manifest"等管线逻辑在无 GPU 时也能跑通单测;再用真实模型跑一次"原版参数复刻"(0.7/0.9/50/1.05/seed42/分段)得到 **Replica 基线**。
+→ 追问 Q32。
+
+**Q32. 如何验证"复现性"本身?**
+A:克隆5=克隆6(SHA-256 相同)是已有证据。测试:同一输入连续 3 次、重启进程后 1 次、换 GPU 1 次,比较 PCM SHA-256 与指标差;允许"位级不同但指标差在容差内"。
+→ 追问 Q33。
+
+**Q33. 质量门禁(Quality Gate)如何设计才能"真实可靠"?**
+A:两级:**段级**(clip 比、有声帧比例、尾部能量、时长合理性、相似度、F0、CER)与**篇级**(相邻段嵌入余弦 ≥0.9、相邻块响度跳变 ≤3 LU、全篇 LUFS 偏差 ≤±1 LU、开头 vs 结尾相似度差 ≤0.02)。任何一项失败 → 重试/降级,**不允许带告警静默交付**(原版 7/8 条是 `quality_warning` 仍被交付,这是要杜绝的)。
+→ 追问 Q34。
+
+**Q34. 还有哪些我没问到的关键点?**
+A:请执行 AI **继续自问自答**,至少覆盖:呼吸/口水声保留策略、情感/语速可控性(CustomVoice 指令 vs Base)、批量(batch)是否影响单条一致性(需做 batch=1 vs batch=N 对比)、`ref_audio` 以 numpy 元组/路径/base64 的等价性、显存与吞吐、模型权重 SHA-256 校验(manifest 中 `38fc7fc5…b857c`)、日志与可审计性、授权与水印。每个问题需带**实验证据**后才能写入最终决策。
+→ 若全部通过,进入第 5 节。
+
+---
+
+## 5. 总体决策(100% 把握的前提)
+
+当且仅当以下全部成立,AI 才可宣布"完全理解并开始最终方案":
+1. 已向用户确认/索取:原始合成脚本、ref_text(或授权 ASR)、目标语种、硬件;
+2. 已独立复核第 2 节所有实测数据(附命令与输出);
+3. Q6 的假设 H1~H5 至少完成了 A/B 实验并给出根因证据;
+4. 已完成 Mock 基线 + Golden 基线 + Replica 基线并全部通过;
+5. 已明确"一模一样"的 6 维度验收阈值,并获得用户认可。
+
+---
+
+## 6. 多方案并行对比(AI 须在沙盒中自动下载安装并实测,择优)
+
+| 方案 | 内容 | 目的 |
+|---|---|---|
+| **A 基线复刻** | 原参数(0.7/0.9/50/1.05/seed42,流式,parallel) | 复刻原版缺陷,作为回归基线 |
+| **B 参考音工程 + 稳定性工程** | 锁定 prompt、非流式、分句规则、重试、best-of-N、质检门禁、全局增益 | **预期主力方案** |
+| **C B + 后处理** | 整篇 LUFS 匹配、真峰值限制、交叉淡化、LTAS 轻度匹配 | 缩小响度/音质差距 |
+| **D C + 音色校正二段** | Seed-VC / OpenVoice 以参考音为目标做轻度 VC | 提升说话人相似度,须验证无伪影 |
+| **E 微调(对照)** | 对 Base 做 SFT/LoRA(参考音 + 高分合成数据/用户追加录音) | 评估是否值得;防过拟合 |
+| **F 官方 API 对照** | 阿里云 DashScope `qwen-tts` 声音复刻 API | 官方能力天花板对照 |
+| **G 跨模型天花板(仅基准)** | CosyVoice / F5-TTS / IndexTTS2 / GPT-SoVITS / Fish-Speech | 判断 Qwen3-TTS 方案是否触顶;**最终生成器仍必须是 Qwen3-TTS-1.7B** |
+
+### 6.1 择优规则(先硬门禁,后加权评分)
+
+**硬门禁(任一不过则淘汰):** 无截断/无声失败;CER ≤ 3%;篇级相邻块响度跳变 ≤ 3 LU;无削波;可复现。
+**加权评分(可调):** 说话人相似度 35% + 稳定性(方差/跳变)25% + 响度/动态匹配 15% + LTAS/噪声底匹配 10% + F0/韵律 10% + 可懂度 5%。
+**输出:** `report/compare.md`(表格 + 箱线图/直方图 + 结论 + 失败案例音频 + 复现命令)。
+
+---
+
+## 7. 目标系统架构(模块化,每个模块独立单测)
+
+| 模块 | 职责 | 关键测试(TDD) |
+|---|---|---|
+| **M0 env** | 依赖/GPU/版本探测与固化(`pip freeze`、CUDA、torch、qwen-tts、模型权重 SHA-256) | 版本断言、权重校验 |
+| **M1 ref_prep** | 解码 webm/Opus → 下混 → 重采样 24k → 分片 → 留出 A/B | 采样率/声道/时长/幂等断言 |
+| **M2 asr_text** | Whisper/FunASR 转写 + 人工校对锁定 `ref_text.txt` | CER 对照用户校对稿 |
+| **M3 prompt_lock** | `create_voice_clone_prompt` 一次构建并落盘/哈希/加载校验 | 重载后嵌入一致、哈希稳定 |
+| **M4 text_norm_split** | 文本规范化 + 分句(最小/最大长度、合并规则) | 边界用例(数字/英文/长句/极短句) |
+| **M5 synth** | 单段合成:固定参数、max_new_tokens 估算、设备/精度固定、候选 N | Mock 模型上的确定性/重试逻辑 |
+| **M6 qc_gate** | 段级与篇级质检(见 Q33) | 对 8 条金标准样本的期望判定 |
+| **M7 rerank** | best-of-N 综合打分与选优 | 合成数据上的排序正确性 |
+| **M8 assemble_post** | 整篇增益、交叉淡化、真峰值、停顿插入 | 无逐块归一化断言;边界连续性 |
+| **M9 metrics** | 说话人相似度/F0/LTAS/LUFS/UTMOS/CER 统一计算库 | 与已知样本数值回归 |
+| **M10 manifest** | 沿用并扩展原 manifest:增加 ref_hash、prompt_hash、门禁结果、重试日志;保留 synthetic 标记与 SHA-256 | schema 校验、哈希校验 |
+| **M11 cli_api** | 批量 CLI + 可选 FastAPI(流式预览轨) | 冒烟测试 |
+
+**目录建议:** `voiceclone/{env,ref_prep,asr,prompt,textproc,synth,qc,rerank,post,metrics,manifest,cli}.py`、`tests/`、`baseline/`、`report/`、`artifacts/`。
+
+---
+
+## 8. 验收指标与阈值(初始值,须用「真人天花板」与基线校准后由用户确认)
+
+| 维度 | 指标 | 目标(初始) |
+|---|---|---|
+| 说话人相似度 | ECAPA 余弦(克隆 vs 留出 B) | ≥ 真人天花板(A vs B)× 0.90,且 ≥ 原版基线 + 0.03 |
+| 说话人一致性 | 同一说话人全部克隆两两余弦 | 均值 ≥ 0.90,标准差 ≤ 0.02 |
+| 音高 | F0 中位数偏差 / F0 标准差比 | ≤ ±5%(或 ±5 Hz)/ 0.8~1.25 |
+| 响度 | 整篇 LUFS 与参考偏差 | ≤ ±1 LU(master 版) |
+| 动态 | 相邻块(400 ms 窗)短时响度跳变 | P95 ≤ 3 LU,最大 ≤ 6 LU(原版 12~23 dB) |
+| 音质 | LTAS 1/3 倍频程平均偏差 / 最大偏差 | ≤ 2 dB / ≤ 4 dB |
+| 噪声底 | 无声段 RMS 与参考差 | ≤ 3 dB |
+| 峰值 | 真峰值 | ≤ −1 dBTP,且不再恒定 −1.5 dBFS 逐段限幅 |
+| 可懂度 | CER/WER | ≤ 3% |
+| 稳定性 | 同文本 8 个 seed 的相似度标准差 | ≤ 0.015 |
+| 长文本 | 开头 20 s vs 结尾 20 s 相似度差 | ≤ 0.02 |
+| 可靠性 | 截断/无声失败率 | 0%(通过重试后);首次失败率须记录 |
+| 复现性 | 同硬件同输入重复 | PCM SHA-256 相同;跨设备指标差在容差内 |
+
+---
+
+## 9. 微步迭代 + TDD 执行协议(分阶段,逐阶段验证后才进入下一阶段)
+
+> 每阶段的模板:`cp 备份 → grep/sed 精读 → 先写失败测试 → 最小改动 → python3 - <<'EOF' 验证 → 一两句汇报`。
+
+### S0 环境探测与沙盒准备
+- `nvidia-smi; python3 -V; pip -V; ffmpeg -version; df -h; free -g`
+- 创建虚拟环境、安装依赖(见第 10 节)。无 GPU 时仅跑 Mock 轨,并明确告知用户"真实模型实验需 GPU"。
+- 验证样例:
+```
+python3 - <<'EOF'
+import sys, importlib
+for m in ["torch","soundfile","numpy","librosa","pyloudnorm"]:
+    try: importlib.import_module(m); print(m,"OK")
+    except Exception as e: print(m,"MISSING",e)
+EOF
+```
+
+### S1 下载仓库与数据体检
+- `git clone https://github.com/bizuming1-ui/biyesheji`;校验 SHA-256;解压 8 个 zip,汇总 manifest 到 `baseline/manifests.csv`;复核第 2 节所有数字。
+
+### S2 Mock 脚本跑通"原版"流程(回归基线 ①)
+- 写 `mock_qwen_tts.py`(同签名、确定性输出)与 `legacy_pipeline_replica.py`(按 manifest 参数、分段、逐段峰值 −1.5 dBFS 归一化、continuous 分块),**故意复刻原版缺陷**,并用测试证明缺陷可被检测到(突变 > 12 dB 被判定为告警)。
+- 单测:`python3 - <<'EOF'` 断言输出为 24000 Hz/mono/int16,manifest schema 正确,同 seed 两次输出 SHA-256 相同。
+
+### S3 Golden 基线(回归基线 ②)
+- 对参考音与 8 条克隆跑 M9 全部指标 → `baseline/baseline.json`。写测试:指标函数在已知合成信号(固定频率正弦、已知响度)上数值正确。
+
+### S4 参考音工程(M1~M3)
+- 解码/下混/重采样;A/B 切分;ASR 转写 + 用户校对;构建并落盘 `voice_clone_prompt`;**网格搜索参考片段配置**并锁定。每个子步骤单独测试与备份。
+
+### S5 根因实验(Q6 的 H1~H5)
+- 一次只改一个变量:关逐段归一化 / 非流式 / 增加重叠 / 单 GPU / 固定 dtype 与 attention;记录"突变 dB"变化,**用数据确认根因**后再改代码。
+
+### S6 稳定性工程(M4~M8)
+- 分句 → 合成 → 质检 → 重排序 → 全局增益与拼接;逐模块实现、逐模块单测、逐模块回归 Golden 基线。
+
+### S7 多方案对比(第 6 节)
+- 自动安装各方案依赖、批量评测、生成 `report/compare.md`,按择优规则选出最终方案并说明依据。
+
+### S8 端到端(E2E)回归
+- 全流程:输入文本 → 分句 → 合成 → 质检 → 重排 → 拼接 → 后处理 → manifest。对 8 条原文本(若无原文本则用 ASR 从 8 条克隆反推)重新合成,与基线逐项对比,要求**所有硬门禁通过且综合分显著提升**。
+- 运行 3 次复现性测试 + 重启进程 + 换 GPU。
+
+### S9 交付
+- 产出清单见第 11 节;向用户提交"指标前后对比表 + 可复现命令 + 已知局限"。
+
+---
+
+## 10. 沙盒/模拟器与依赖清单(AI 自行下载安装并对比,择优)
+
+**运行环境(择优):** Docker + nvidia-container-toolkit(首选,可复现)/ Kaggle Notebook / Google Colab / Modal / RunPod / 本地 conda。
+**浏览器侧模拟(如需验证 Web 播放链路):** Playwright 无头浏览器(`microsoft/playwright`),验证 24 kHz PCM 流式播放与 MediaRecorder 录制 webm 的链路。
+**Python 依赖(版本须固化):** `qwen-tts`、`torch`、`transformers`、`soundfile`、`numpy`、`scipy`、`librosa`、`pyloudnorm`、`praat-parselmouth`、`speechbrain`、`resemblyzer`、`openai-whisper` 或 `funasr`、`soxr`、`imageio-ffmpeg`/系统 `ffmpeg`、`pytest`。
+**可选:** `deepfilternet`、`matchering`、`seed-vc`、`SpeechMOS`、`flash-attn`(仅在 GPU 支持时)。
+
+**模型下载:**
+```
+pip install -U "huggingface_hub[cli]" modelscope
+huggingface-cli download Qwen/Qwen3-TTS-Tokenizer-12Hz --local-dir ./Qwen3-TTS-Tokenizer-12Hz
+huggingface-cli download Qwen/Qwen3-TTS-12Hz-1.7B-Base --local-dir ./Qwen3-TTS-12Hz-1.7B-Base
+# 中国大陆可用 ModelScope:
+modelscope download --model Qwen/Qwen3-TTS-12Hz-1.7B-Base --local_dir ./Qwen3-TTS-12Hz-1.7B-Base
+```
+
+---
+
+## 11. 交付物清单
+
+1. `voiceclone/` 源码包 + `tests/`(pytest,覆盖 M0~M11);
+2. `baseline/`:Mock、Replica、Golden 三类基线与 `baseline.json`;
+3. `ref/`:处理后的参考音、`ref_text.txt`、锁定的 `voice_clone_prompt.pt` 及哈希;
+4. `report/compare.md`:多方案对比、根因实验记录、最终选择及依据;
+5. `artifacts/`:重新生成的 8 条克隆(wav + manifest + 质检结果),manifest 保留 `synthetic: true` 与 SHA-256;
+6. `README.md`:一键运行命令、参数说明、已知局限、复现指南;
+7. `CHANGELOG.md`:每个微步的「备份文件 → 改动 → 测试结果 → 指标变化」。
+
+---
+
+## 12. 风险与应急
+
+| 风险 | 应对 |
+|---|---|
+| 无 GPU / 显存不足 | Mock 轨完成逻辑开发;真实模型用 fp16 + 小批量;必要时使用云 GPU |
+| 参考音信息不足(27 s、有损、低电平) | 请用户补充更长/更干净的授权录音;开启方案 E 评估 |
+| 微调过拟合 | 留出集监控;LoRA 小学习率;早停;不同文本泛化测试 |
+| 后处理伤害音色 | 回归门禁:相似度下降 >0.005 即回滚 |
+| 非确定性 | 固化设备/精度/种子;best-of-N 兜底;记录全部随机源 |
+| 合规风险 | 仅限本人或已授权声音;保留合成标记与哈希;不得伪装为真人原始录音 |
+| 官方 API/模型变更 | 以官方 README 与源码为准,版本号写入 manifest |
+
+---
+
+## 13. 参考资源(AI 须逐一访问核实可用性;失效则检索替代)
+
+**Qwen3-TTS 官方**
+- GitHub:https://github.com/QwenLM/Qwen3-TTS
+- Base 1.7B 模型(HF):https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base
+- Tokenizer(HF):https://huggingface.co/Qwen/Qwen3-TTS-Tokenizer-12Hz
+- ModelScope:https://modelscope.cn/models/Qwen/Qwen3-TTS-12Hz-1.7B-Base
+- 官方博客:https://qwen.ai/blog?id=qwen3tts-0115
+- DashScope 声音复刻 API(中国大陆):https://help.aliyun.com/zh/model-studio/qwen-tts-voice-cloning
+- DashScope 声音复刻 API(国际):https://www.alibabacloud.com/help/en/model-studio/qwen-tts-voice-cloning
+- 关键 API(READMEs 已确认):`Qwen3TTSModel.from_pretrained`、`create_voice_clone_prompt(ref_audio, ref_text, x_vector_only_mode)`、`generate_voice_clone(text, language, ref_audio/ref_text 或 voice_clone_prompt)`
+
+**说话人/质量/可懂度评测**
+- SpeechBrain ECAPA-TDNN:https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb
+- WavLM 说话人验证:https://huggingface.co/microsoft/wavlm-base-plus-sv
+- Resemblyzer:https://github.com/resemble-ai/Resemblyzer
+- Whisper:https://github.com/openai/whisper
+- FunASR:https://github.com/modelscope/FunASR
+- SpeechMOS(UTMOS):https://github.com/tarepan/SpeechMOS
+- DNSMOS(DNS-Challenge):https://github.com/microsoft/DNS-Challenge
+- pyloudnorm(BS.1770):https://github.com/csteinmetz1/pyloudnorm
+- Parselmouth(Praat):https://github.com/YannickJadoul/Parselmouth
+- librosa:https://github.com/librosa/librosa
+- Montreal Forced Aligner:https://github.com/MontrealCorpusTools/Montreal-Forced-Aligner
+
+**音频处理**
+- DeepFilterNet:https://github.com/Rikorose/DeepFilterNet
+- Demucs:https://github.com/facebookresearch/demucs
+- Matchering:https://github.com/sergree/matchering
+- FFmpeg:https://ffmpeg.org/
+- soxr:https://github.com/dofuuz/python-soxr
+
+**音色校正/对照模型(方案 D/G)**
+- Seed-VC:https://github.com/Plachtaa/seed-vc
+- OpenVoice:https://github.com/myshell-ai/OpenVoice
+- CosyVoice:https://github.com/FunAudioLLM/CosyVoice
+- F5-TTS:https://github.com/SWivid/F5-TTS
+- IndexTTS:https://github.com/index-tts/index-tts
+- GPT-SoVITS:https://github.com/RVC-Boss/GPT-SoVITS
+- Fish-Speech:https://github.com/fishaudio/fish-speech
+
+**沙盒/环境**
+- Docker NVIDIA Toolkit:https://github.com/NVIDIA/nvidia-container-toolkit
+- Playwright:https://github.com/microsoft/playwright
+- Kaggle Notebooks:https://www.kaggle.com/code
+- Modal:https://modal.com/ ,RunPod:https://www.runpod.io/
+
+---
+
+## 14. 开工指令(请立刻按此执行,不要先写大段代码)
+
+1. 用一两句话复述你对本任务的理解,并**一次只问我一个**你仍不确定的关键问题(若第 3 节所需信息缺失,优先索取:原始合成脚本 / ref_text / 目标语种 / 硬件)。
+2. 执行 **S0 → S1**:探测环境、克隆仓库、复核第 2 节所有实测数据,并汇报【状态】与【下一步】。
+3. 执行 **S2**:先写 Mock 脚本跑通"原版"流程,建立回归基线,再进入后续微步迭代。
+4. 全程遵守第 1 节硬性协议;全部模块通过后再做 **S8 端到端回归**,最后按第 11 节交付。
+
+> **最终目标一句话:** 让所有克隆语音在说话人相似度、基频韵律、响度动态、音质频谱、可懂度与稳定性 6 个维度上,**可量化地、可复现地**逼近参考语音,并且**零截断、零响度突变、零静默失败**。
