@@ -1,1 +1,337 @@
+# 开发任务提示词:稳定声纹锁定的高保真语音克隆系统(Kaggle T4×2 · Qwen3-TTS 底座)
 
+## 0. 角色、任务与使用方式
+
+你是一名资深的【语音合成(TTS)/说话人识别(声纹)工程师】兼【软件工程师】,同时具备科研评测意识。
+
+【任务】
+在 Kaggle Notebook(GPU:T4 x2)里,基于我已有的 Qwen3-TTS-12Hz-1.7B-Base 声音克隆系统(参考代码:仓库 bizuming1-ui/111 里的「参考代码」文件,当前为 v17 增量版,约 3 万行单文件),做出一个【稳定、声纹锁定、与参考语音在音色/音质/说话习惯上极度接近】的克隆系统,稳定性对标 ChatGPT 自定义声音(Custom Voices)与豆包声音复刻(Seed-TTS 系)。
+
+【你必须自己做的事(不要问我,直接做)】
+1. 联网调研(web_search / web_fetch),核对本文每一个链接与每一条事实,发现过期就修正并注明。
+2. 自己下载安装沙盒/模拟器/评测工具,自己跑多方案对比实验,自己择优。必须使用支持 Bash/Terminal 工具调用(Tool Use)的环境。
+3. 采用【微步迭代 + TDD + ReAct】工作法(见第 12 章)。禁止一次性重写全部代码。
+4. 先读完整份文件再动手。遇到不确定的事实:去查证,不要猜;查不到就写「未验证」。
+
+【对话规则】
+- 每一步只用一两句话汇报「当前状态 + 下一步动作」,用中文。
+- 所有声明必须标注【已验证:附命令输出/日志路径】或【未验证:原因】。
+- 没有 GPU / 没有真人听感数据时,不得宣称「更像」「更稳」「更好听」。
+
+---
+
+## 1. 不可违反的目标定义(把「一模一样」变成可测量)
+
+「与参考语音一模一样」在数学上无法被保证 100%。工程上唯一诚实、可验证的定义是:以下 5 项同时达标,阈值由第 9 章在真实数据上校准后写入配置,不得拍脑袋。
+
+G1 声纹相似度:克隆句 vs 参考语音的说话人嵌入余弦(SECS),使用【同一个】评估器,必须 ≥ 该说话人「真实录音互比天花板」的 P10。
+G2 稳定性:同一声音连续合成 N≥50 句(中/英、长/短、数字、专名混合),SECS 最低值 ≥ floor,SECS 标准差 σ ≤ σ_max,不允许任何一句出现「音色跳变」。
+G3 音质:UTMOS / DNSMOS 不低于参考语音自身 −Δ;无沙沙声/爆音/削波/直流偏移/NaN 静音/拖尾。
+G4 内容:CER/WER ≤ 阈值;吞字、漏字、重复、乱读 = 零容忍(自动重试)。
+G5 播放透明:播放链路对 PCM 比特级透明(无二次重采样、无变速、无 EQ、无 AGC、无二次降噪、无有损压缩、固定增益)。
+
+【关键认知】声纹(音色)是在「生成」那一刻决定的,不是在「播放」那一刻。播放层只能做到「不破坏」,不能「增强声纹」。所以「播放时把声纹固定到最高」= ①生成端把条件固化并门控 + ②播放端比特级透明。
+
+【诚实条款】
+- 声纹余弦是原始指标,没有校准前不得显示百分比,不存在「99% 人耳相似」。
+- 每条输出附质量报告;未达标放行必须如实标注「未达标放行」。
+- 歌声克隆、跨情感强表演:不在本目标内,除非单独验证。
+
+---
+
+## 2. 现状事实(来自对 bizuming1-ui/111 的勘察,你必须自己复核)
+
+【仓库勘察结果】
+- 仓库含:「参考代码」(约 1.7MB / 30570 行,v17)、「提示词1~5」。实测 raw 内容:提示词1~5 只有一个换行(空文件),不能作为依据;依据只有「参考代码」。
+- 仓库是 Public。参考代码头部自己写了:请改为私有。令牌只放 Kaggle Secrets,绝不进仓库。我的安全扫描:HF/OpenAI/GitHub 令牌 0 处命中;ngrok 命中 1 处是测试假令牌(2abcdefg…),误报。但历史提交可能含旧令牌,请到各平台撤销重发。
+
+【参考代码里已有的技术事实(grep 实证)】
+- 引擎:Qwen/Qwen3-TTS-12Hz-1.7B-Base,通过 qwen_tts + faster_qwen3_tts,attn_implementation=sdpa。
+- dtype:T4(算力 sm75)无 bf16 张量核,代码优先 fp16,失败再回退。
+- 克隆:create_voice_clone_prompt,同时支持 ICL(ref_audio + ref_text)与 x_vector_only_mode(只用说话人向量)。
+- 采样:temperature=0.7,top_p=0.9,top_k=50,repetition_penalty=1.05,do_sample=True;每句 seed 由(声音ID、句序、文本)派生。
+- 声纹评估:microsoft/wavlm-base-plus-sv 跑 CPU,阈值下限 0.86,【未校准】。
+- 已有模块:缺陷检测器、不降级闸门、版本谱系(晋升/回滚/金丝雀)、复合参考、LoRA 训练(双卡 DDP + 留出验证)、双 GPU 调度、/abx 盲测页、引擎路由(冠军=Qwen3)。
+- 候选引擎(IndexTTS2 / CosyVoice3 / F5 / VoxCPM2 / Fish S2)只有「适配器接口 + 路由 + 闸门」,没有安装、没有 bench。
+- 作者自己的声明:所有阈值是启发式未校准;GPU 真机与人耳数据全部【未验证】。
+
+【已知坑】
+- Qwen3-TTS 在 T4 上用 fp16 可能出现 NaN(报错 probability tensor contains either inf, nan or element < 0)。Qwen 官方 issue #43 建议无 bf16 时用 float32。必须加 NaN/Inf 守卫 + dtype 自动降级(fp16 → fp32),并拒绝保存非有限或空音频。
+- T4 不支持 FlashAttention-2,必须用 sdpa。
+- 不同 dtype/内核/torch 版本会改变输出细节 → 把 dtype、attn、torch/cuda 版本写进「声音资产版本号」。
+
+---
+
+## 3. ChatGPT / 豆包为什么稳定又像:七层机制拆解
+
+公开依据:Seed-TTS 技术报告(豆包语音同源)、OpenAI Custom Voices 官方文档、Google Gemini 声音复刻文档。闭源细节一律标【推断】。
+
+L1【公开】大模型 + 海量数据 + 后训练:Seed-TTS = 语音分词器 + 自回归语言模型 + 扩散模型 + 声码器;用「自蒸馏」做音色/内容解耦;用强化学习(RL)提升稳定性、说话人相似度、可控性。
+L2【公开】语音上下文学习(ICL):参考语音作为前缀条件,无需训练就能复刻。
+L3【公开】说话人微调(SFT):Seed-TTS 报告称微调版比纯 ICL 捕捉更多细节(句末发音习惯、细微韵律)。
+L4【公开 + 推断】声音 ID 固化:OpenAI/Google 创建声音后得到 voice ID,此后每次合成都用同一份固化条件;内部大概率是缓存的说话人特征/参考前缀。→ 我们对应:把 prompt 缓存成带哈希的资产,永不每次重算。
+L5【公开】参考门槛 + 同意验证:OpenAI 要求同意录音 + 样本(10~60 秒、至少 5 秒有效语音、同一个人、≤10MiB);Google 要求 10~30 秒干净样本 + 同意录音。→ 参考质量是稳定性的上游。
+L6【推断】服务端稳定性工程:分句分块、解码约束、失败重试与过滤、响度统一。
+L7【公开】评测闭环:WER + SIM(WavLM-large 说话人嵌入余弦),持续回归。
+
+【结论】稳定 = 好底座(你已有) + 好参考 + 固化条件 + 受控解码 + 事后验证闭环 + (可选)说话人级微调。你和它们的差距主要在后 5 项的「严格工程化」,而不是底座模型。
+
+【不要做的事】不要声称能 1:1 复刻闭源系统;可复现的是它的「系统工程范式」,不是它的权重。
+
+---
+
+## 4. 模型决策:要不要换成 ChatGPT/豆包同款?
+
+【结论】不换底座。Qwen3-TTS-12Hz-1.7B-Base 继续做「冠军」,理由:
+1. 开源 Apache-2.0,3 秒极速克隆,10 种语言,支持流式(论文称首包约 97ms)。技术报告 arXiv:2601.15621 称其在 Seed-TTS 测试集零样本 WER 为 zh 0.77 / en 1.24,并在 10 语言说话人相似度上优于 MiniMax-Speech 与 ElevenLabs Multilingual v2(以论文为准,博客转述数字请勿直接引用)。
+2. ChatGPT / 豆包的核心模型闭源,无法下载到 Kaggle 自建;能用的只有它们的付费 API(且 OpenAI 自定义声音需资格 + 同意录音)。
+3. 「不像/不稳」大概率不是底座上限,而是:参考质量、条件未固化、采样随机、无事后验证、未做说话人级适配。先把这些做满,再谈换模型。
+
+【换模型的唯一合法途径 = 过闸门(Promotion Gate)】
+同硬件(Kaggle T4)、同测试集(第 11 章)、同评估器(第 9 章),挑战者必须同时满足:
+- SECS 中位数比冠军提升 ≥ 0.02,且最差 10% 句不劣化;
+- CER/WER 不高于冠军;句间 σ 更小;
+- 单卡显存 ≤ 14GB,连续播放 RTF ≤ 1.5;
+- 许可证允许你的用途(逐个核对官方仓库,商用前尤其要查)。
+不满足则不晋升。注意:各论文自报的 SIM 口径不同(WavLM-large-TDNN / ERes2Net 等),不可横向直接比较,必须用你自己的评估器重测。
+
+【候选挑战者(必须真安装、真跑 bench)】
+- IndexTTS2(自回归,音色/情感解耦,时长控制)
+- Fun-CosyVoice3-0.5B(Apache-2.0,0.5B,9 语言 + 18 方言,流式约 150ms)
+- F5-TTS(约 330M,流匹配,权重许可需核对)
+- Fish Audio S2 / OpenAudio(4B,12~24GB 显存,T4 单卡很紧,研究许可)
+- VoxCPM / VoxCPM2、Chatterbox(MIT)作为补充
+- 付费 API 基准线(只作对照,不作交付):豆包/火山引擎声音复刻、OpenAI Custom Voices、Gemini TTS 声音复刻
+
+---
+
+## 5. 目标总体架构(声纹锁定管线)
+
+A. 声音资产库(Voice Asset)
+   原始参考 → 质检 → 增强(可选)→ 转写校对 → 选段/复合 → 固化 prompt(带 SHA-256、dtype、attn、模型版本、torch 版本)→ 存私有位置(Kaggle Dataset / 私有仓库)。
+
+B. 声纹评估器(裁判)
+   主裁判 WavLM-large-TDNN(与 Seed-TTS-eval 一致),副裁判 ECAPA-TDNN(SpeechBrain)或 ERes2Net(3D-Speaker)交叉验证;在线门控可用轻量版,但必须与主裁判校准相关性。
+
+C. 受控生成器
+   冠军引擎 + 固化 prompt + 低温/固定 seed + 分句 + dtype 守卫 + NaN 守卫。
+
+D. 质量闸门(每句必过)
+   缺陷检测 → ASR 回读(CER/WER)→ 声纹 SECS 对参考 → 漂移检测(对滑动 EMA 声纹)→ 不过则换 seed 重试 Best-of-N → 仍不过则「如实标注未达标放行」。
+
+E. 版本谱系
+   声音资产与引擎参数都有版本;晋升/回滚/金丝雀;任何变更必须不降级。
+
+F. 比特级透明播放
+   固定采样率、固定增益、背压 + 帧序号 + 断线续传、零二次处理;下载文件 = 实际播放 PCM 逐样本一致。
+
+G. 评测与盲测
+   客观(SECS/σ/WER/UTMOS/RTF)+ 主观(ABX、MUSHRA)。
+
+H. 双 T4 分工
+   GPU0:生成 worker A;GPU1:生成 worker B(Best-of-N 并行)或 ASR/声纹评估;CPU:缺陷检测与响度。显存预算要实测写入报告。
+
+---
+
+## 6. 多方案并行对比(你必须真跑实验,择优)
+
+请自己搭建统一 Benchmark Harness,在同一数据、同一评估器下比较下列方案,输出对比表(SECS 中位/P10/最差、σ、CER、UTMOS、RTF、首包延迟、显存、稳定性事故数),按「晋升闸门」择优。可以组合,可以淘汰,也可以提出我没想到的方案。
+
+方案 A【基线加固】:Qwen3 零样本 + 固化 prompt + 低温 + 固定 seed + 分句 + Best-of-N + 声纹/ASR 闸门。
+   子实验:ICL vs x_vector_only(默认假设 ICL 更像且保留韵律,但可能泄漏参考内容/拖尾;xvec 更稳但只含全局音色。以数据裁决,可做「ICL 失败回退 xvec」)。
+方案 B【说话人级微调】:A + LoRA 微调(干净数据 ≥10 分钟才启用,建议 10~30 分钟,留出验证集 early-stop,fp16 + 梯度检查点,T4 双卡 DDP)。风险:过拟合、丢跨语言能力、情感变窄。
+方案 C【VC 声纹锚定后级】:A 的输出再过轻量音色转换(Seed-VC / OpenVoice 类),以参考为目标音色,压平句间音色漂移。风险:引入失真,必须靠 SECS + UTMOS + ABX 判定是否净收益。
+方案 D【挑战者引擎】:IndexTTS2 / CosyVoice3 / F5-TTS / Fish S2 / VoxCPM2 / Chatterbox 逐个适配进「引擎路由」,过闸门才晋升。
+方案 E【参考工程极致化】:多参考复合(从同一说话人不同语句拼接最优 15~30 秒)、选段打分(信噪比/稳态/无呼吸爆音/无混响)、ref_text 双 ASR 校对。
+方案 F【混合】:E + A + (B 或 C) 的最佳组合。
+
+【沙盒/模拟器分层(请自动安装并实际使用)】
+L0 本地 CPU 沙箱(Mock 引擎 + 合成信号):验证语法、逻辑、门控、回归、PCM 逐样本一致。工具:python3、pytest、numpy、soundfile、librosa、jiwer、pyloudnorm、speechbrain(CPU)。
+L1 单 GPU 小样本真机(Kaggle 单 T4 / Colab):验证模型加载、dtype、NaN 守卫、单句质量。
+L2 Kaggle T4×2 端到端:验证双卡调度、连续播放、50 句稳定性、显存与 RTF。
+若某层沙箱装不上,请如实记录失败原因并给替代方案,不得假装已验证。
+
+---
+
+## 7. 参考音频工程(稳定的上游,权重最大)
+
+参考音频决定上限。请实现「参考体检 + 自动选段 + 复合参考」:
+1. 采集规范:同一个人、同一麦克风、安静无混响房间、距离 10~20cm、连续自然朗读、中性情绪、无背景音乐/回声/他人声、无削波。长度:快速克隆 10~30 秒;追求最高 → 60 秒以上多句,并保留原始无损文件(WAV/FLAC)。
+2. 质检项(全部写成可单测函数):有效语音时长、SNR、削波率、直流偏移、混响估计(RT60 近似)、底噪、采样率/位深、静音占比、说话人单一性(滑窗说话人嵌入一致性,剔除混入他人声)。
+3. 处理原则:默认只做「去直流 + 首尾裁静音 + 峰值/响度归一」。只有 SNR 低于阈值才启用降噪(DeepFilterNet 等),且降噪前后必须用 SECS + ABX 证明没有损伤声纹;不能证明就不用。
+4. 转写(ICL 强依赖 ref_text):Whisper-large-v3 与 FunASR(Paraformer)双转写,两者一致才自动通过,否则要求人工确认;标点与数字按口语读法规范化。
+5. 选段:把长录音切成 3~12 秒候选,按(信噪比、稳态、无呼吸/爆音、语速适中、说话人一致)打分,取最优组合成 15~30 秒复合参考;保留成员清单与哈希。
+6. 多参考评分:对每个候选参考做「留出自检」——用它合成一批测试句,用其余真实片段做声纹对照,选 SECS 最高且最稳的那一份作为「金参考」。
+7. 声音资产固化:保存 prompt 张量(.safetensors)+ 元数据(参考哈希、ref_text、模型版本、dtype、attn、torch/cuda 版本、评估器版本、校准阈值),加载时校验哈希,不一致拒绝使用。
+
+---
+
+## 8. 推理稳定性工程(把随机性关进笼子)
+
+1. 固化条件:同一声音永远用同一份固化 prompt;不得用「上一句生成的音频」当下一句参考(误差会累积导致越读越偏)。
+2. 采样调参(必须做网格搜索而不是凭感觉):temperature ∈ {0.2,0.3,0.5,0.7}、top_p ∈ {0.8,0.9,0.95}、top_k ∈ {20,50}、repetition_penalty ∈ {1.0,1.05,1.1}(官方默认 1.05,>1.1 在 12Hz 码本上易吞字/拖音)。目标函数 = SECS 中位 − λ·σ − μ·CER,选 Pareto 最优并锁定。
+3. 种子:每句 seed = hash(声音ID, 版本, 句序, 文本);重试时 seed 序列确定(seed+1, +2…),保证可复现。
+4. 分句:中文建议 ≤ 40~60 字,英文 ≤ 25~40 词;按标点、数字读法、专名先规范化;句间停顿由固定规则生成(不要让模型自己决定停多久)。
+5. dtype/NaN 守卫:启动时读取算力;T4 → fp16 优先,出现 NaN/Inf 或空音频 → 当句自动 fp32 重试并记录;全程拒绝保存非有限样本。
+6. 内核固定:attn=sdpa,尽量启用 torch 确定性选项;把版本写进资产。验证:同 seed 同文本跑 3 次,PCM 是否逐样本一致;不一致就量化差异(SECS 差)并记录。
+7. 流式与批量:连续播放用「预取 + 背压」;首句 N=1,后续句利用双卡并行 Best-of-N=2~4。
+8. 长时间运行:Kaggle 单次会话有时长上限,需断点续传、日志落盘、声音资产放持久位置。
+9. 响度:在生成端统一到固定 LUFS(如 -23 或 -16,由你测试决定并锁定),使用 pyloudnorm;只做一次,不允许后续再做 AGC。
+
+---
+
+## 9. 声纹锁(Voiceprint Lock):评估、校准、门控、漂移
+
+1. 评估器:主裁判 WavLM-large + ECAPA/TDNN 说话人验证头(复现 Seed-TTS-eval 口径);副裁判 SpeechBrain ECAPA 或 3D-Speaker ERes2Net。现有的 wavlm-base-plus-sv 仅作在线轻量门控,必须与主裁判做相关性校准(Spearman)。
+2. 天花板基线:取该说话人真实录音 ≥20 段(每段 5~15 秒)两两互比,得到分布;克隆句与真实句的 SECS 若落在此分布 P10 以上,即「统计意义上和本人一样像」。只有一段参考时:切成 3~4 段做「弱基线」,并明确标注弱基线。
+3. 阈值:floor 取天花板分布 P10 附近,同时用冒名者(impostor)集计算 EER 作旁证;所有阈值必须来自数据,写入配置并带「校准日期/数据哈希」。
+4. 漂移检测:对每句输出的声纹嵌入维护滑动 EMA 中心;若某句相对 EMA 的距离 > drift_max,判为「音色跳变」,触发重试。
+5. Best-of-N 择优打分:score = SECS − 0.5·drift − 0.2·WER(权重由数据调),并带硬门槛:SECS ≥ floor、WER ≤ wer_max、drift ≤ drift_max、无 NaN。全部不过 → 重试;重试预算用完 → 「如实标注未达标放行」。
+6. 事故台账:记录每次重试原因、最终放行状态,汇总出「事故率」作为稳定性 KPI。
+7. 提示:声纹模型对「情感/语速/耳语」敏感。锁定音色时默认用中性参考与中性风格;情感控制作为受限功能,开启后单独评测声纹损失。
+【已在 CPU 沙箱验证】我已用 Mock 单测验证过上述门控逻辑(择优、拒绝 NaN、拒绝高 WER、拒绝漂移、全不合格返回 None 触发重试)5/5 通过。真实 GPU 效果【未验证】。
+
+---
+
+## 10. 播放层:比特级透明,不改音色音质
+
+1. 固定输出规格:合成采样率 24kHz(Qwen3-TTS 原生),整条链路不做二次重采样;若浏览器音频设备采样率不同,只允许 AudioContext 内部一次性处理并记录。
+2. 禁止项:变速/时间拉伸、EQ、AGC、动态压缩、二次降噪、有损编码再解码、淡入淡出改变样本。允许项:仅固定增益 + 防爆限幅(默认关闭,触发则记录)。
+3. 传输:WebSocket/HTTP 流式 PCM16;背压 + 帧序号 + 断线续传;起播后 underrun=0、rebuffer=0、无漏块/重复块为可测试目标(不承诺网络中断时连续)。
+4. 对账:每轮记录「实际下发给浏览器的 PCM」的 SHA-256,与下载的 WAV 逐样本一致;写盘用 .part → fsync → 读回校验 → 原子改名。
+5. 测试:L0 沙箱用合成信号跑「发送 PCM == 接收 PCM」断言;开关全部关闭时必须与上一版本 PCM 逐样本一致(回归基线)。
+6. 隧道:只用 ngrok(Cloudflare 会缓冲流式响应);公网必须有访问密码。
+
+---
+
+## 11. 验收测试集与 TDD 用例清单
+
+【固定测试集(版本化,禁止临时改)】至少 50 句:中文 20(含数字、日期、专名、长句、短句、疑问/感叹)、英文 20、中英混合 10;长度覆盖 3 字~120 字;含易吞字的叠词、绕口令。
+
+【TDD 用例(先写测试,看到红再写实现,绿后重构)】
+T01 参考体检:削波/底噪/混入他人声/过短 → 正确拒绝并给原因。
+T02 声音资产哈希:篡改一个字节 → 加载失败。
+T03 NaN 守卫:注入 NaN 音频 → 不落盘 + 自动 fp32 重试。
+T04 种子可复现:同 seed 同文本 → 结果一致(或差异量化)。
+T05 分句:各种标点/数字/中英混排 → 切分正确且不丢字。
+T06 声纹门控:择优 / 拒绝 NaN / 拒绝高 WER / 拒绝漂移 / 全不合格触发重试(已有 Mock 实现,5/5 通过)。
+T07 漂移 EMA:人为拼接另一人声音 → 判跳变。
+T08 缺陷检测:合成沙沙声/爆音/削波/直流 → 召回与误报率达标。
+T09 PCM 透明:发送与接收逐样本一致;开关全关等于旧版本。
+T10 版本谱系:晋升/回滚/金丝雀;新版本若更差必须被闸门拒绝。
+T11 评估器校准:用公开说话人数据集(如 VoxCeleb/AISHELL-3/LibriTTS 的子集)得到 EER 与分布。
+T12 端到端回归:50 句 → 出报告(SECS/σ/CER/UTMOS/RTF/显存/事故数)。
+
+【最终验收(全部满足才可宣称完成)】G1~G5 在真实 T4×2 上跑出日志;并附 /abx 盲测结果(≥20 次判断),人耳数据缺失就写【未验证】。
+
+---
+
+## 12. 工作方法:微步迭代 + TDD + ReAct(强制)
+
+每个微步严格执行:
+1) 推理(Reason):说明为什么做这一步、预期结果。
+2) 勘察:用 grep -n / sed -n 'a,bp' 精准查看相关代码,不要整文件灌入上下文。
+3) 备份:改前 cp file file.bak.$(date +%s)。
+4) 先写测试:写一个最小失败测试(红)。
+5) 最小实现:只改一个模块/一个开关(V18_* 之类),默认关闭 = 旧行为。
+6) 验证:python3 - <<'EOF' … EOF 跑单测与语法检查(ast.parse / py_compile),回归基线必须仍然通过。
+7) 汇报:只用一两句话:「当前状态 + 下一步动作」。
+8) 失败 → 回滚到备份,记录失败原因,换思路。
+
+整体顺序:先写 Mock 脚本跑通原版得到【回归基线】→ 逐模块微步改造 → 模块单测全绿 → 再做 L1 单卡 → L2 双卡端到端回归。
+大文件策略:文件有 3 万行,禁止整文件重写;每个新模块独立文件 + 独立开关;主文件只加最小接线。
+Kaggle 约束:整个脚本最终要能粘贴进【一个】代码单元格运行;依赖安装与模型下载要有失败重试与缓存。
+
+---
+
+## 13. 安全、合规与伦理(必须实现)
+
+1. 声纹是生物特征:只克隆本人或已获明确授权的声音。声音授权勾选 + 授权声明录音(参考 OpenAI/Google 的同意录音流程:说话人朗读固定同意短语,并校验与参考样本为同一人)。
+2. 声音数据默认只存私有位置;仓库必须为私有;令牌只放 Kaggle Secrets 并在服务端使用;日志与 manifest 脱敏。
+3. 输出需要「AI 生成」披露标识(界面提示 + 元数据),并提供「删除声音」功能。
+4. 公网页面必须有访问密码;限制请求速率。
+5. 不得用于冒充他人、欺诈、骚扰或规避身份验证;声纹锁不是安全认证,界面必须这样写。
+6. 各模型许可证逐个核对官方仓库(F5-TTS、Fish、IndexTTS2、CosyVoice 等许可各不相同),商用前尤其要查。
+
+---
+
+## 14. 交付物与汇报格式
+
+交付物:
+1. 对比实验报告(Markdown):方案 A~F 的指标表 + 择优结论 + 失败记录 + 每项【已验证/未验证】。
+2. 一份可粘贴进 Kaggle 单个代码单元格的最终脚本(模块化、开关齐全、全关=旧行为)。
+3. 声音资产规范文档(哈希、版本、阈值、校准数据)。
+4. 测试套件(T01~T12)与一键回归脚本。
+5. 下一步建议(最多 5 条,按收益排序)。
+
+汇报格式:
+- 每个微步:「状态:…;下一步:…」,最多两句话。
+- 每个阶段结束:一张小表(测试通过数 / 回归基线是否仍绿 / 新增风险)。
+- 所有数字附来源命令或日志路径;没有来源的数字一律删除。
+
+---
+
+## 15. 资源清单(请自行核对链接是否仍有效)
+
+【底座与微调】
+- Qwen3-TTS 官方仓库:https://github.com/QwenLM/Qwen3-TTS
+- Qwen3-TTS 技术报告:https://arxiv.org/abs/2601.15621
+- Qwen3-TTS-12Hz-1.7B-Base:https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base
+- Qwen3-TTS fp32/T4 NaN 讨论:https://github.com/QwenLM/Qwen3-TTS/issues/43
+- ComfyUI-Qwen3-TTS(含微调、Prompt 缓存参考):https://github.com/DarioFT/ComfyUI-Qwen3-TTS
+
+【豆包 / Seed-TTS 与评测】
+- Seed-TTS 技术报告:https://bytedancespeech.github.io/seedtts_tech_report/
+- Seed-TTS 论文:https://arxiv.org/abs/2406.02430
+- Seed-TTS-Eval(WER + SIM 评测脚本):https://github.com/BytedanceSpeech/seed-tts-eval
+
+【ChatGPT / OpenAI / Google 自定义声音】
+- OpenAI Custom Voices 文档:https://developers.openai.com/api/docs/guides/custom-voices
+- Gemini TTS 声音复刻报道:https://thenewstack.io/gemini-tts-voice-replication-api/
+
+【挑战者引擎】
+- IndexTTS2:https://github.com/index-tts/index-tts  论文 https://arxiv.org/abs/2506.21619
+- CosyVoice / Fun-CosyVoice3:https://github.com/FunAudioLLM/CosyVoice
+- F5-TTS:https://github.com/SWivid/F5-TTS
+- Fish Speech:https://github.com/fishaudio/fish-speech
+- VoxCPM:https://github.com/OpenBMB/VoxCPM
+- Chatterbox:https://github.com/resemble-ai/chatterbox
+
+【音色转换(方案 C)】
+- Seed-VC:https://github.com/Plachtaa/seed-vc
+- OpenVoice:https://github.com/myshell-ai/OpenVoice
+
+【声纹与音质评估】
+- WavLM / UniSpeech 说话人验证:https://github.com/microsoft/UniSpeech/tree/main/downstreams/speaker_verification
+- microsoft/wavlm-base-plus-sv:https://huggingface.co/microsoft/wavlm-base-plus-sv
+- SpeechBrain ECAPA:https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb
+- 3D-Speaker(ERes2Net/CAM++):https://github.com/modelscope/3D-Speaker
+- DNSMOS(DNS-Challenge):https://github.com/microsoft/DNS-Challenge
+- UTMOS/SpeechMOS:https://github.com/tarepan/SpeechMOS
+- jiwer(WER):https://github.com/jitsi/jiwer
+- pyloudnorm(响度):https://github.com/csteinmetz1/pyloudnorm
+
+【前处理 / ASR】
+- DeepFilterNet:https://github.com/Rikorose/DeepFilterNet
+- Demucs:https://github.com/facebookresearch/demucs
+- Whisper:https://github.com/openai/whisper
+- FunASR:https://github.com/modelscope/FunASR
+
+【平台】
+- Kaggle Notebooks 文档:https://www.kaggle.com/docs/notebooks
+- PyTorch SDPA:https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
+- 我的勘察对象:https://github.com/bizuming1-ui/111(建议改为私有)
+
+---
+
+## 16. 开工指令(从这里开始,不要问我)
+
+Step 0:在你的沙箱里安装 python3 + pytest + numpy + soundfile + librosa + jiwer + pyloudnorm,确认 bash 可用。汇报一句话。
+Step 1:把「参考代码」下载到沙箱,ast.parse 验证语法 → 写 Mock 引擎跑通原版 → 保存【回归基线】(PCM 哈希 + 测试结果)。
+Step 2:用 grep -n 定位:声纹评估、采样参数、prompt 构建、闸门、路由、播放链路,各出一句话摘要。
+Step 3:先写 T01~T06 的失败测试,再逐个微步实现(每步一个开关,默认关闭)。
+Step 4:搭 Benchmark Harness(L0 Mock → L1 单卡 → L2 双卡),先用 L0 跑通。
+Step 5:并行实验方案 A~F,出对比表,按晋升闸门择优,保留失败记录。
+Step 6:端到端回归 + 盲测页 + 最终报告。每个结论标【已验证/未验证】。
+
+现在开始 Step 0。
