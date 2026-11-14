@@ -230,6 +230,15 @@ FRESH_TRAIN = False            # True = 忽略已有 checkpoint,从头训练
 BEST_MODEL_DIR = "/kaggle/working/best_model"   # 微调后的模型目录(存在则自动使用)
 USE_TRAINED_MODEL = True
 TTS_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+# —— v18:TTS 引擎(默认换成 VoxCPM2;一行切回 v17 的 Qwen3) ——
+TTS_ENGINE = "voxcpm2"         # "voxcpm2" = OpenBMB VoxCPM2(2B · 48kHz→24kHz · 冻结声纹缓存 · 流式) | "qwen3" = v17 原引擎。voxcpm2 装不上/加载失败 → 自动回退 qwen3(不会因此启动失败)
+VOXCPM_MODEL = "openbmb/VoxCPM2"   # Apache-2.0
+VOXCPM_VERSION = "2.0.3"       # 固定到本脚本核对过 API 的 PyPI 版本(2.0.3 的 generate_with_prompt_cache_streaming/build_prompt_cache 已对照源码核对;它没有 seed 参数,适配层已兼容)
+VOX_STEPS = 10                 # 扩散步数(官方默认 10)。实测 RTF 高于 VOX_RTF_TARGET 时自动降(最低 6),每次降 2;降到够用为止
+VOX_RTF_TARGET = 0.85          # 试合成实测 RTF 目标(<1 才能边生成边播且不断流;留 15% 余量)
+VOX_AUTOSTEPS = True           # False = 固定使用 VOX_STEPS(RTF 偏高时起播会等更久,但每句画质一致)
+VOX_CLONE_MODE = "auto"        # auto = 有可信文字+参考≤20s 用「参考+续写」(最像),试合成 ASR 复核不过自动退回「纯参考」 | reference = 永远纯参考(最稳,不依赖文字)
+VOX_OPTIMIZE = True            # torch.compile(首次加载多几分钟,之后更快;失败自动改为不编译)
 DEEPSEEK_MODEL = "deepseek-flash"   # 文字理解/总结模型(无效时自动退回 deepseek-chat);非思考模式 + JSON 输出
 DEEPSEEK_VISION_MODEL = "deepseek-flash"   # 页面视觉理解模型(按官方文档支持图片输入;首次使用后才显示「已实测」)
 VAD_SILENCE_MS = 2000          # 说话停止后多久自动结束录音并执行(毫秒)
@@ -2930,6 +2939,16 @@ _SCHED = {
 }
 SCHED = dict(_SCHED[LATENCY_MODE])
 SCHED["calib"] = [2, 4, 8, 12, 4, 8, 12]                       # 声音就绪时的校准合成: 块大小多样,网关才能拆分「每帧生成时间 F」和「每块解码开销 D」
+# ───── v18:引擎选择(默认 qwen3 = v17 原行为逐样本不变;voxcpm2 = OpenBMB VoxCPM2 · 2B · 48kHz→24kHz) ─────
+ENGINE = os.environ.get("VC_ENGINE", "qwen3").strip().lower()
+if ENGINE not in ("qwen3", "voxcpm2"):
+    ENGINE = "qwen3"
+VOX_MODEL = os.environ.get("VC_VOX_MODEL", "openbmb/VoxCPM2")
+if ENGINE == "voxcpm2":
+    # VoxCPM2 每个 LM 步 = 6.25Hz = 2 个 12.5Hz 码帧(160ms) → 块大小取 2 的倍数;首块只等 1 个 LM 步(最快首声),之后逐步变大摊薄开销
+    SCHED.update({"continuous": {"first": [2, 2, 4, 6], "second": [4, 6, 8], "rest": [8]},
+                  "low_latency": {"first": [2, 2, 2, 4], "second": [4, 6], "rest": [6]}}[LATENCY_MODE])
+    SCHED["calib"] = [2, 4, 8, 4, 8, 2, 6]                      # 块大小多样,网关才能拆分 F(每帧生成)与 D(每块开销)
 # 起播规划参数(网关用实测速度模拟全程到达时间线后得到所需起播水位 need;这里只决定安全系数/下限/上限)
 PLAN_K = {"low_latency": 0.6, "continuous": 1.25}[LATENCY_MODE]
 PLAN_FLOOR_MS = {"low_latency": 150, "continuous": 350}[LATENCY_MODE]
@@ -3730,6 +3749,335 @@ class RealEngine:
         return (out.get("text") or "").strip()
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  v18 · VoxCPM2 引擎适配器(VC_ENGINE=voxcpm2)
+#  设计要点(每条都对应「首声要快」或「播放不断流/不出错」):
+#   ① 声纹条件只在 set_voice 时冻结一次(build_prompt_cache),之后每句复用 → 不再每句重新编码参考音频(官方 generate() 每句都会重编码)
+#   ② 流式:每个 LM 步(160ms 音频)立刻解码;首块只等 1 步;FrameCoalescer 按 SCHED 合并后送出,与网关的成本模型(dt=F·帧+D)一致
+#   ③ 48k→24k:有状态 FIR 抽取器(跨块保留状态,块边界无台阶);模型采样率不是 24k 的整数倍直接拒绝
+#   ④ dtype:T4(sm75)没有 bf16 张量核 → fp16 优先;试合成体检(NaN/无声/失控)不过自动换 fp32/bf16 重载
+#   ⑤ 克隆模式:有可信文字 → 「参考+续写」(最像);试合成经 ASR 复核 CER 超阈值或异常 → 自动退回「纯参考」(不依赖文字,最稳)
+#   ⑥ 扩散步数自适应:实测 RTF 高于目标才降步数(最低 6),优先保证不断流;所有句子用同一步数,避免句间音质不一致
+#   ⑦ 开头的 "(…)" 会被 VoxCPM2 当风格指令 → sanitize_text 去掉开头括号字符
+#  诚实声明:T4 上的真实 RTF / 首声 / 音质 / 稳定性【未验证:需在 Kaggle T4×2 实测】;沙箱只验证了逻辑、API 契约(对照真实 voxcpm 源码)和链路。
+# ═══════════════════════════════════════════════════════════════════════════════
+PROBE_TEXT = "你好，我已经准备好了，今天天气真不错，我们可以开始聊天了。"
+CALIB_TEXT = "今天天气真好，我们一起出去走走吧。"
+
+
+class VoxCPM2Engine(RealEngine):
+    name = "voxcpm2"
+
+    def __init__(self, idx, send, fake=False):
+        super().__init__(idx, send)
+        self.fake = bool(fake)
+        self.vox = None
+        self.tts = None
+        self.native_sr = 48000
+        self.cache = None
+        self.cache_mode = ""
+        self.steps = int(os.environ.get("VC_VOX_STEPS", "10"))
+        self.steps_min = int(os.environ.get("VC_VOX_STEPS_MIN", "6"))
+        self.cfg_value = float(os.environ.get("VC_VOX_CFG", "2.0"))
+        self.rtf_target = float(os.environ.get("VC_VOX_RTF_TARGET", "0.85"))
+        self.autosteps = os.environ.get("VC_VOX_AUTOSTEPS", "1") == "1"
+        self.cer_max = float(os.environ.get("VC_VOX_CER_MAX", "0.35"))
+        self.custom_ok = False
+        self.probe_log = []
+        self._seed_kw = False
+
+    # ───── 加载 ─────
+    def _snapshot(self):
+        if os.path.isdir(VOX_MODEL):
+            return VOX_MODEL
+        from huggingface_hub import snapshot_download
+        return snapshot_download(VOX_MODEL, ignore_patterns=["*.msgpack", "*.h5", "*.onnx", "flax_*", "tf_*", "*.ot", "*.gguf"])
+
+    def load(self, force_dtype=None):
+        import vox_audio as va
+        t0 = time.time()
+        if self.fake:
+            from vox_fake import FakeVoxCPM
+            self.vox, self.dtype, self.order = FakeVoxCPM(), "fake", ["fake"]
+            self.mode = "VoxCPM2 假模型(仅链路测试)"
+        else:
+            import torch
+            if not torch.cuda.is_available():
+                raise RuntimeError("PyTorch 看不到 GPU(请在 Kaggle 右侧 Settings 里把 Accelerator 选成 GPU T4 x2)")
+            major = torch.cuda.get_device_capability(0)[0]
+            self.order = va.dtype_order(major, os.environ.get("VC_VOX_DTYPE", ""))
+            self.dtype = force_dtype or self.order[0]
+            self.say("loading", "定位 VoxCPM2 权重…")
+            out = va.patched_model_dir(self._snapshot(), self.dtype, str(WORK / ("voxcpm2_" + self.dtype)))
+            from voxcpm import VoxCPM
+            want_opt = os.environ.get("VC_VOX_OPTIMIZE", "1") == "1"
+            self.say("loading", "加载 VoxCPM2 (%s)%s…" % (self.dtype, " + torch.compile 预热(首次较慢)" if want_opt else ""))
+            try:
+                self.vox = VoxCPM.from_pretrained(out, load_denoiser=False, optimize=want_opt, local_files_only=True, device="cuda")
+                self.mode = "VoxCPM2 流式" + (" · torch.compile" if want_opt else "")
+            except Exception as e:  # noqa: BLE001
+                if not want_opt:
+                    raise
+                log.warning("[GPU%d] VoxCPM2 optimize=True 失败,改 optimize=False: %s", self.idx, e)
+                log.warning(traceback.format_exc())
+                self._free()
+                self.vox = VoxCPM.from_pretrained(out, load_denoiser=False, optimize=False, local_files_only=True, device="cuda")
+                self.mode = "VoxCPM2 流式(未编译)"
+        self.tts = self.vox.tts_model
+        self.native_sr = int(getattr(self.tts, "sample_rate", 48000))
+        va.StreamDecimator.for_rates(self.native_sr, SR)                    # 非整数倍 → ValueError → 拒绝启动
+        self.sr = SR
+        try:
+            import inspect
+            self._seed_kw = "seed" in inspect.signature(self.tts._generate_with_prompt_cache).parameters      # PyPI 2.0.3 没有 seed 参数;git 主干有(且 seed=None 会随机)
+        except Exception:  # noqa: BLE001
+            self._seed_kw = False
+        self.say("loaded", "模型就绪 · %s · %s · 原生 %dHz→%dHz · %.0fs" % (self.mode, self.dtype, self.native_sr, SR, time.time() - t0))
+
+    def _free(self):
+        self.vox = None
+        self.tts = None
+        self.cache = None
+        if not self.fake:
+            super()._free()
+
+    def backend_info(self):
+        info = {"mock": self.fake, "engine": "voxcpm2", "dtype": self.dtype, "mode": self.mode, "model": VOX_MODEL, "streaming": True, "custom_two_phase": False,
+                "backend": "VoxCPM2(2B · %dHz→%dHz 抽取 · 冻结声纹缓存 · 流式)" % (self.native_sr, SR) if not self.fake else "VoxCPM2 假模型(非真实模型)",
+                "native_sr": self.native_sr, "clone_mode": self.cache_mode, "steps": self.steps, "cfg": self.cfg_value, "prompt_cached": self.cache is not None,
+                "device": "none" if self.fake else None}
+        if self.fake:
+            return info
+        import importlib.metadata as md
+        import torch
+        info["device"] = torch.cuda.get_device_name(0)
+        for pk in ("torch", "transformers", "voxcpm", "accelerate"):
+            try:
+                info["v_" + pk] = md.version(pk)
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            tot, n = 0.0, 0
+            for p_ in self.tts.parameters():
+                tot += float(torch.sum(torch.abs(p_.detach()), dtype=torch.float32))
+                n += p_.numel()
+            info["weights_params"], info["weights_abs_sum"] = n, round(tot, 2)        # 权重指纹:两张卡必须一致
+        except Exception as e:  # noqa: BLE001
+            info["weights_fp_error"] = str(e)[:100]
+        return info
+
+    # ───── 假引擎下的打分/识别(无 torch):与 MockEngine 相同的诚实占位 ─────
+    def spk_qc(self, path):
+        return MockEngine.spk_qc(self, path) if self.fake else super().spk_qc(path)
+
+    def spk_cmp(self, gen_path, ref_paths):
+        return MockEngine.spk_cmp(self, gen_path, ref_paths) if self.fake else super().spk_cmp(gen_path, ref_paths)
+
+    def score(self, pcm):
+        return MockEngine.score(self, pcm) if self.fake else super().score(pcm)
+
+    def asr(self, path):
+        return MockEngine.asr(self, path) if self.fake else super().asr(path)
+
+    def _prep_scorer(self, path):
+        if not self.fake:
+            return super()._prep_scorer(path)
+
+    # ───── 声纹冻结 ─────
+    def _ref_seconds(self, path):
+        try:
+            import soundfile as sf
+            i = sf.info(path)
+            return float(i.frames) / float(i.samplerate)
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    def _clone_modes(self, path, text, xvec):
+        pref = os.environ.get("VC_VOX_CLONE_MODE", "auto").strip().lower()
+        can_cont = bool((text or "").strip()) and not xvec and 0 < self._ref_seconds(path) <= float(os.environ.get("VC_VOX_PROMPT_MAX_S", "20"))
+        if pref == "reference" or not can_cont:
+            return ["reference"]
+        return ["ref_continuation", "reference"]
+
+    def _ref_for_reference_mode(self, path):
+        """纯参考模式不需要文字 → 过长的参考在最安静处截断(默认 ≤15s;更长的参考只会拖慢首句 prefill)。续写模式不裁(文字对不上)。"""
+        import vox_audio as va
+        mx = float(os.environ.get("VC_VOX_REF_MAX_S", "15"))
+        try:
+            import hashlib
+            import soundfile as sf
+            a, sr = sf.read(path, dtype="float32", always_2d=False)
+            if a.ndim > 1:
+                a = a.mean(axis=1)
+            if len(a) <= mx * sr:
+                return path
+            b = va.trim_at_quiet(a, sr, mx)
+            h = hashlib.sha1((path + str(os.path.getmtime(path)) + str(mx)).encode()).hexdigest()[:10]
+            WORK.mkdir(parents=True, exist_ok=True)
+            out = str(WORK / ("vox_ref_%s.wav" % h))
+            sf.write(out, b, sr, subtype="PCM_16")
+            log.info("[GPU%d] 参考音频 %.1fs → 在安静处截为 %.1fs(纯参考模式)", self.idx, len(a) / sr, len(b) / sr)
+            return out
+        except Exception as e:  # noqa: BLE001
+            log.warning("[GPU%d] 参考裁剪失败,使用原文件: %s", self.idx, e)
+            return path
+
+    def _build_cache(self, mode, path, text):
+        if mode == "ref_continuation":
+            self.cache = self.tts.build_prompt_cache(prompt_text=text.strip(), prompt_wav_path=path, reference_wav_path=path)
+        else:
+            self.cache = self.tts.build_prompt_cache(reference_wav_path=self._ref_for_reference_mode(path))
+        self.cache_mode = mode
+
+    def _make_prompt(self, path, text, xvec):
+        self.ref = (path, text, bool(xvec))
+        self.prompt = None
+
+    # ───── 试合成(体检 + 可选 ASR 复核) ─────
+    def _probe(self, text, check_asr=True):
+        import vox_audio as va
+        t0, first, parts, ch, tp = time.time(), None, [], [], time.time()
+        self.last_frames = 0
+        for a, sr in self.stream(text, "first"):
+            now = time.time()
+            first = first if first is not None else now - t0
+            ch.append((round(now - tp, 4), len(a)))
+            tp = now
+            parts.append(np.asarray(a, np.float32))
+        wall = time.time() - t0
+        x = np.concatenate(parts) if parts else np.zeros(0, np.float32)
+        ok, why = va.check_probe(x, text, SR)
+        cer = None
+        if ok and check_asr and not self.fake and os.environ.get("VC_VOX_PROBE_ASR", "1") == "1" and self.cache_mode == "ref_continuation":
+            try:
+                import tempfile
+                import soundfile as sf
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                    sf.write(tf.name, x, SR, subtype="PCM_16")
+                hyp = self.asr(tf.name)
+                os.unlink(tf.name)
+                cer = va.cer(text, hyp)
+                if cer > self.cer_max:
+                    ok, why = False, "试合成经 ASR 复核 CER=%.2f > %.2f(续写模式疑似文字对不上/吞字),识别为「%s」" % (cer, self.cer_max, hyp[:40])
+            except Exception as e:  # noqa: BLE001
+                log.warning("[GPU%d] 试合成 ASR 复核失败(忽略,不阻塞): %s", self.idx, e)
+        return {"x": x, "ok": ok, "why": why, "first": first or wall, "wall": wall, "dur": len(x) / SR, "ch": ch, "cer": cer}
+
+    def set_voice(self, path, text, xvec):
+        self._make_prompt(path, text, xvec)
+        modes = self._clone_modes(path, text, xvec)
+        chosen, res, bad = None, None, None
+        self.probe_log = []
+        for attempt in range(3):
+            for mode in modes:
+                self.say("voice", "冻结声纹(%s,%s)并试合成…" % (mode, self.dtype))
+                try:
+                    self._build_cache(mode, path, text)
+                    res = self._probe(PROBE_TEXT)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("[GPU%d] 模式 %s 试合成异常: %s", self.idx, mode, e)
+                    log.warning(traceback.format_exc())
+                    res = {"ok": False, "why": "%s: %s" % (type(e).__name__, str(e)[:120]), "x": np.zeros(0, np.float32), "first": 0.0, "wall": 0.0, "dur": 0.0, "ch": [], "cer": None}
+                self.probe_log.append({"dtype": self.dtype, "mode": mode, "ok": res["ok"], "why": res["why"], "cer": res["cer"]})
+                if res["ok"]:
+                    chosen = mode
+                    break
+                bad = "%s/%s: %s" % (self.dtype, mode, res["why"])
+                log.warning("[GPU%d] 试合成未通过(%s)", self.idx, bad)
+            if chosen:
+                break
+            alt = [d for d in self.order if d != self.dtype]
+            if attempt < 2 and alt and not self.fake:
+                self.say("loading", "%s 精度试合成异常,改用 %s 重新加载…" % (self.dtype, alt[0]))
+                self._free()
+                self.load(force_dtype=alt[0])
+                self._make_prompt(path, text, xvec)
+        if not chosen:
+            raise RuntimeError(bad or "VoxCPM2 试合成失败")
+        self.cache_mode = chosen
+        x = res["x"]
+        pcm = (np.clip(x, -1, 1) * 32767).astype(np.int16)
+        info = {"rtf": round(res["wall"] / max(res["dur"], 1e-3), 2), "ttfa": round(res["first"], 2), "dtype": self.dtype, "mode": "%s · %s" % (self.mode, chosen), "sr": SR,
+                "rms": round(speech_rms(pcm), 1), "sim": None, "prompt_cached": True, "clone_mode": chosen, "steps": self.steps, "probe": self.probe_log[-3:], "cer": res["cer"]}
+        self._prep_scorer(path)
+        try:
+            s = self.score(pcm)
+            info["sim"] = None if s is None else round(s, 4)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[GPU%d] 试合成打分失败: %s", self.idx, e)
+        # 第二次试合成(图/缓存已热)才是真实速度;RTF 过高 → 降扩散步数(最低 steps_min)直到 ≤ 目标,优先保证不断流
+        import vox_audio as va
+        for _ in range(4):
+            try:
+                c = self._probe(CALIB_TEXT, check_asr=False)
+                if c["ok"] and c["dur"] > 1.0:
+                    info["rtf"], info["ttfa"], info["ch"] = round(c["wall"] / c["dur"], 2), round(c["first"], 2), c["ch"]
+                    ns = va.next_steps(self.steps, info["rtf"], self.rtf_target, self.steps_min) if self.autosteps else None
+                    if ns is None:
+                        break
+                    self.say("voice", "RTF %.2f 高于目标 %.2f:扩散步数 %d → %d(优先不断流)" % (info["rtf"], self.rtf_target, self.steps, ns))
+                    log.warning("[GPU%d] RTF %.2f > %.2f:扩散步数 %d → %d", self.idx, info["rtf"], self.rtf_target, self.steps, ns)
+                    self.steps = ns
+                    info["steps"] = ns
+                else:
+                    break
+            except Exception as e:  # noqa: BLE001
+                log.warning("[GPU%d] 第二次试合成失败(忽略): %s", self.idx, e)
+                break
+        info["steps"] = self.steps
+        return info
+
+    # ───── 流式合成 ─────
+    def stream(self, text, profile, seed=None):
+        import vox_audio as va
+        text = va.sanitize_text(text)
+        if not text:
+            return
+        if self.cache is None:
+            raise RuntimeError("声音尚未就绪(没有冻结的声纹缓存)")
+        sched = SCHED.get(profile, SCHED["rest"])
+        _seed_all(seed)
+        go = getattr(self, "gen_opts", None) or {}
+        frames = int(go.get("max_new") or min(MAX_NEW_TOKENS, max(120, int(len(text) * 7))))
+        kw = dict(target_text=text, prompt_cache=self.cache, min_len=2, max_len=va.patches_for_frames(min(frames, MAX_NEW_TOKENS)),
+                  inference_timesteps=self.steps, cfg_value=self.cfg_value, retry_badcase=False)
+        if self._seed_kw:
+            kw["seed"] = SEED if seed is None else int(seed)
+        dec = va.StreamDecimator.for_rates(self.native_sr, SR)
+        co = va.FrameCoalescer(sched)
+        total = 0
+        gen = self.tts.generate_with_prompt_cache_streaming(**kw)
+        try:
+            for item in gen:
+                wav = item[0] if isinstance(item, (tuple, list)) else item
+                a = self._to_np(wav).astype(np.float32)
+                if dec is not None:
+                    a = dec.process(a)
+                for blk in co.push(a):
+                    total += len(blk)
+                    self.last_frames = total // va.SPF
+                    yield blk, SR
+            tail = dec.flush() if dec is not None else np.zeros(0, np.float32)
+            for blk in co.push(tail) + co.flush():
+                total += len(blk)
+                self.last_frames = total // va.SPF
+                yield blk, SR
+        finally:
+            try:
+                gen.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def make_engine(idx, send, cfg):
+    """按配置创建引擎。mock=True 且没开 VC_VOX_FAKE → MockEngine(v17 原测试路径不变);mock=True 且 VC_VOX_FAKE=1 → VoxCPM2 适配器 + 假模型。"""
+    if cfg.get("mock") and not (ENGINE == "voxcpm2" and os.environ.get("VC_VOX_FAKE") == "1"):
+        return MockEngine(idx, send)
+    if ENGINE == "voxcpm2":
+        return VoxCPM2Engine(idx, send, fake=bool(cfg.get("mock")))
+    return RealEngine(idx, send)
+
+
 def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
     """每张 GPU 一个进程。必须在 import torch 之前设置 CUDA_VISIBLE_DEVICES。"""
     if not cfg.get("mock"):
@@ -3742,9 +4090,22 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
         res_q.put(m)
 
     try:
-        eng = MockEngine(idx, send) if cfg.get("mock") else RealEngine(idx, send)
+        eng = make_engine(idx, send, cfg)
         send("status", idx, "loading", "启动中…")
-        eng.load()
+        try:
+            eng.load()
+        except Exception as e0:  # noqa: BLE001  v18:VoxCPM2 加载失败 → 回退 v17 的 Qwen3(两张卡行为一致:同样的环境同样的失败);回退会在状态里如实显示
+            if isinstance(eng, VoxCPM2Engine) and not eng.fake and os.environ.get("VC_VOX_FALLBACK", "1") == "1":
+                log.error("[GPU%d] VoxCPM2 加载失败,回退 Qwen3-TTS:\n%s", idx, traceback.format_exc())
+                send("status", idx, "loading", "VoxCPM2 加载失败(%s: %s)→ 回退 Qwen3-TTS…" % (type(e0).__name__, str(e0)[:80]))
+                try:
+                    eng._free()
+                except Exception:  # noqa: BLE001
+                    pass
+                eng = RealEngine(idx, send)
+                eng.load()
+            else:
+                raise
         send("status", idx, "ready", "就绪")
     except Exception as e:  # noqa: BLE001
         log.error("[GPU%d] 引擎加载失败:\n%s", idx, traceback.format_exc())
@@ -30003,6 +30364,668 @@ def stream_split(wav, min_s=3.0, target_s=8.0, max_s=14.0, window_s=600.0, pause
             pos = end
 '''
 
+FILES['vox_audio.py'] = r'''# -*- coding: utf-8 -*-
+"""
+vox_audio.py —— VoxCPM2 适配层的【纯函数】部分(无 torch 依赖,可在无 GPU 沙箱里单测)
+
+  StreamDecimator   有状态 48k→24k 抗混叠抽取器(linear-phase FIR + 跨块保留滤波器状态 → 块边界无台阶/无爆音;总输出长度 = ceil(N/2))
+  FrameCoalescer    把模型每步吐出的小块(VoxCPM2 每步 160ms)按 SCHED 重新合并成「N 帧」块,与网关起播规划器的成本模型一致
+  sanitize_text     VoxCPM2 把文本开头的 "(...)" 当作【风格/声音设计指令】;用户文本里的开头括号会被误当指令 → 这里去掉开头括号字符
+  patched_model_dir 在不改原 HF 快照的前提下生成「dtype 已改写」的模型目录(权重用软链接),让 T4(sm75,无 bf16 张量核)可以用 fp16
+  dtype_order       T4 优先 fp16 → fp32 → bf16;Ampere+ 优先 bf16
+  next_steps        扩散步数自适应:实测 RTF 高于目标才降,最低不低于下限(只在必要时牺牲细节,换取不断流)
+  trim_at_quiet     参考音频过长时在【最安静处】截断(只用于「纯参考」模式;续写模式不裁,因为文字对不上)
+  check_probe       试合成体检:NaN / 无声 / 时长与文字量明显不符(失控)
+
+诚实声明:这些函数只证明【逻辑正确】;VoxCPM2 在 T4 上的真实速度/音质/稳定性【未验证:需在 Kaggle T4×2 实测】。
+"""
+import json
+import math
+import os
+
+import numpy as np
+
+SPF = 1920                    # 24kHz 下 12.5Hz「码帧」= 1920 样本(与 worker/网关全系统的帧口径一致)
+VOX_PATCH_FRAMES = 2          # VoxCPM2 每个 LM 步 = 6.25Hz = 4 个 VAE 潜帧 = 160ms = 2 个 12.5Hz 码帧
+
+
+class StreamDecimator:
+    """整数倍抽取(默认 2:48k→24k)。Kaiser 窗 FIR(161 阶,≈90dB 阻带),lfilter 保留状态,按全局下标选样 → 块切分方式不影响结果。"""
+
+    def __init__(self, factor=2, numtaps=161, beta=9.0, cutoff=0.46):
+        from scipy.signal import firwin
+        self.m = int(factor)
+        self.h = firwin(int(numtaps), cutoff / (self.m / 2.0), window=("kaiser", beta)).astype(np.float64)    # 截止频率相对旧 Nyquist;2 倍时 0.46*24k≈11.0kHz
+        self.D = (len(self.h) - 1) // 2                                                                     # 线性相位群延迟(输入采样点)
+        self.zi = np.zeros(len(self.h) - 1)
+        self.pos = 0                                                                                        # 已送入滤波器的输入样本总数(含 flush 的补零)
+
+    @staticmethod
+    def for_rates(native, target):
+        if int(native) == int(target):
+            return None
+        if int(native) % int(target) != 0:
+            raise ValueError("模型采样率 %s 不是目标 %s 的整数倍:拒绝启动(不做非整数倍重采样,避免变速/变调)" % (native, target))
+        return StreamDecimator(int(native) // int(target))
+
+    def _run(self, x):
+        from scipy.signal import lfilter
+        y, self.zi = lfilter(self.h, [1.0], x.astype(np.float64), zi=self.zi)
+        lo, hi = self.pos, self.pos + len(x)
+        g0 = max(lo, self.D)
+        g0 += (-(g0 - self.D)) % self.m                      # 第一个满足 (g-D)%m==0 且 g>=D 的全局下标
+        self.pos = hi
+        if g0 >= hi:
+            return np.zeros(0, np.float32)
+        return y[g0 - lo::self.m].astype(np.float32)
+
+    def process(self, x):
+        x = np.asarray(x, dtype=np.float32).reshape(-1)
+        return self._run(x) if x.size else np.zeros(0, np.float32)
+
+    def flush(self):
+        """补 D 个零让滤波器把尾巴吐完(总输出 = ceil(N/m))。"""
+        return self._run(np.zeros(self.D, np.float32))
+
+
+class FrameCoalescer:
+    """把小块合并成 sched 指定的帧数(1 帧=1920 样本@24k);用完 sched 后一直用最后一个值。不拆块、不丢样本。"""
+
+    def __init__(self, sched, spf=SPF, slack=128):
+        self.sched, self.spf, self.i, self.slack = list(sched) or [8], spf, 0, int(slack)
+        self.buf, self.n = [], 0
+
+    def _need(self):
+        # slack:抽取器群延迟(161 阶 → 首块少 40 样本)会让「刚好 1 个 LM 步」的首块差一点点达不到阈值,从而白等一整个 LM 步(≈160ms);留 128 样本(≈5ms)容差
+        return self.sched[min(self.i, len(self.sched) - 1)] * self.spf - self.slack
+
+    def push(self, a):
+        out = []
+        if a.size:
+            self.buf.append(a)
+            self.n += a.size
+        if self.n >= self._need():
+            out.append(np.concatenate(self.buf))
+            self.buf, self.n = [], 0
+            self.i += 1
+        return out
+
+    def flush(self):
+        if self.n:
+            o = [np.concatenate(self.buf)]
+            self.buf, self.n = [], 0
+            return o
+        return []
+
+
+def sanitize_text(t):
+    """去掉开头的括号字符,避免被 VoxCPM2 当成「声音设计 / 风格控制」指令(官方格式:文本开头的 "(描述)正文")。句中括号不动。"""
+    t = " ".join((t or "").replace("\r", " ").replace("\n", " ").split())
+    i = 0
+    while i < len(t) and t[i] in "(（[【{｛":
+        i += 1
+    t = t[i:].lstrip()
+    if i:                                                      # 开头括号被去掉后,把紧随其后(前 12 个字符内)的第一个闭括号也去掉,不动正文
+        for j, ch in enumerate(t[:12]):
+            if ch in ")）]】}｝":
+                t = t[:j] + t[j + 1:]
+                break
+    return t.strip()
+
+
+def patches_for_frames(frames12):
+    """12.5Hz 码帧预算 → VoxCPM2 的 max_len(LM 步数,每步 2 帧)。留 4 步余量,至少 8 步。"""
+    return max(8, int(math.ceil(float(frames12) / VOX_PATCH_FRAMES)) + 4)
+
+
+def dtype_order(major, force=""):
+    base = ["bfloat16", "float16", "float32"] if int(major) >= 8 else ["float16", "float32", "bfloat16"]
+    f = (force or "").strip().lower()
+    f = {"fp16": "float16", "bf16": "bfloat16", "fp32": "float32"}.get(f, f)
+    if f in base:
+        base.remove(f)
+        base.insert(0, f)
+    return base
+
+
+def next_steps(cur, rtf, target, lo):
+    """返回下一档扩散步数;None=不用再降。每次降 2 步(LM/VAE 开销不随步数缩放,所以不奢望线性提速)。"""
+    if rtf is None or rtf <= target or cur <= lo:
+        return None
+    return max(int(lo), int(cur) - 2)
+
+
+def trim_at_quiet(a, sr, max_s, win_s=2.5):
+    a = np.asarray(a, dtype=np.float32)
+    n = int(max_s * sr)
+    if len(a) <= n:
+        return a
+    f = max(1, int(0.02 * sr))
+    lo = max(int(1.0 * sr), n - int(win_s * sr))
+    best, bi = None, n
+    for s in range(lo, n - f, f // 2 or 1):
+        e = float(np.sqrt(np.mean(a[s:s + f] ** 2)))
+        if best is None or e < best:
+            best, bi = e, s + f // 2
+    out = a[:bi].copy()
+    k = min(len(out), int(0.01 * sr))
+    if k > 1:
+        out[-k:] *= np.linspace(1, 0, k, dtype=np.float32)       # 10ms 淡出,截断点不爆音
+    return out
+
+
+def check_probe(a, text, sr):
+    """试合成体检:返回 (ok, 原因)。a 为 float32@sr。"""
+    a = np.asarray(a, dtype=np.float32).reshape(-1)
+    if a.size == 0:
+        return False, "没有任何音频输出"
+    if not np.all(np.isfinite(a)):
+        return False, "输出含 NaN/Inf(精度溢出)"
+    dur = len(a) / float(sr)
+    rms = float(np.sqrt(np.mean(a ** 2)))
+    if dur < 0.3:
+        return False, "输出过短(%.2fs)" % dur
+    if rms < 0.003:
+        return False, "输出几乎无声(RMS %.5f)" % rms
+    n = max(1, len((text or "").strip()))
+    if dur > max(4.0, 1.2 * n):
+        return False, "时长 %.1fs 与文字量 %d 字严重不符(疑似失控循环)" % (dur, n)
+    return True, "ok"
+
+
+def patched_model_dir(src, dtype, out):
+    """src=HF 快照目录;out=目标目录。config.json 复制并把 dtype 改成指定值,其余文件软链到 src。幂等;不修改 src。"""
+    import shutil
+    cfg = os.path.join(out, "config.json")
+    if os.path.exists(cfg):
+        try:
+            if json.load(open(cfg, encoding="utf-8")).get("dtype") == dtype:
+                return out
+        except Exception:  # noqa: BLE001
+            pass
+    tmp = "%s.tmp%d" % (out, os.getpid())
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp, exist_ok=True)
+    for name in os.listdir(src):
+        p = os.path.join(src, name)
+        if name == "config.json":
+            c = json.load(open(p, encoding="utf-8"))
+            c["dtype"] = dtype
+            json.dump(c, open(os.path.join(tmp, name), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        else:
+            try:
+                os.symlink(os.path.realpath(p), os.path.join(tmp, name))
+            except OSError:
+                shutil.copy2(p, os.path.join(tmp, name))
+    if os.path.exists(out):
+        shutil.rmtree(out, ignore_errors=True)
+    try:
+        os.replace(tmp, out)
+    except OSError:                                                # 另一个 worker 抢先建好了(内容相同)
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
+def cer(ref, hyp):
+    """字符错误率(去标点/空白/大小写后的 Levenshtein / len(ref));用于「试合成 → ASR 复核」。ref 为空返回 1.0。"""
+    import re
+    norm = lambda t: re.sub(r"[\W_]+", "", (t or "").lower(), flags=re.UNICODE)
+    a, b = norm(ref), norm(hyp)
+    if not a:
+        return 1.0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1] / float(len(a))
+'''
+FILES['vox_fake.py'] = r'''# -*- coding: utf-8 -*-
+"""
+vox_fake.py —— 与真实 voxcpm(2.0.3 / git 主干)同签名的假模型,仅用于无 GPU 的链路测试(VC_VOX_FAKE=1)。
+  · 方法名/参数名与真实源码逐一对应(tests/test_vox.py::test_real_source_signature_contract 会对照真实源码核对);
+  · 每步产出 7680 样本@48kHz(= 4 个 VAE 潜帧 = 160ms),和真实流式一致;每步 sleep step_ms 模拟 RTF;
+  · 输出里故意带 15kHz 成分,用来证明 48k→24k 抽取器真的把它滤掉(不会混叠成可闻噪声)。
+不能证明真实音质/速度。
+"""
+import os
+import time
+
+import numpy as np
+
+PATCH = 7680
+
+
+class FakeTensor:
+    def __init__(self, a):
+        self.a = np.asarray(a, dtype=np.float32)
+
+    def cpu(self):
+        return self
+
+    def float(self):
+        return self
+
+    def flatten(self):
+        return FakeTensor(self.a.reshape(-1))
+
+    def squeeze(self, *_):
+        return FakeTensor(self.a.reshape(-1)[None, :]) if self.a.ndim > 1 else self
+
+    def numpy(self):
+        return self.a
+
+
+class _TTS:
+    sample_rate = 48000
+
+    def __init__(self, step_ms, prefill_ms):
+        self.step, self.pre = step_ms / 1000.0, prefill_ms / 1000.0
+        self.config = type("C", (), {"dtype": "float16"})()
+        self.calls = 0
+        self.last_kwargs = None
+
+    def build_prompt_cache(self, prompt_text=None, prompt_wav_path=None, reference_wav_path=None, trim_silence_vad=False):
+        if (prompt_wav_path is None) != (prompt_text is None):
+            raise ValueError("prompt_wav_path and prompt_text must both be provided or both be None")
+        if prompt_wav_path is None and reference_wav_path is None:
+            raise ValueError("At least one of prompt_wav_path or reference_wav_path must be provided")
+        return {"mode": "ref_continuation" if (prompt_wav_path and reference_wav_path) else ("reference" if reference_wav_path else "continuation"), "prompt_text": prompt_text}
+
+    def generate_with_prompt_cache_streaming(self, *args, **kw):
+        return self._gen(*args, **kw)
+
+    def _gen(self, target_text, prompt_cache, min_len=2, max_len=2000, inference_timesteps=10, cfg_value=2.0,
+             retry_badcase=False, retry_badcase_max_times=3, retry_badcase_ratio_threshold=6.0, streaming_prefix_len=4):
+        self.calls += 1
+        self.last_kwargs = dict(target_text=target_text, max_len=max_len, steps=inference_timesteps, cfg=cfg_value)
+        text = target_text or ""
+        if "NANTRIGGER" in text and os.environ.get("VC_MOCK_FAIL") == "nan":
+            time.sleep(self.pre)
+            yield FakeTensor(np.full((1, PATCH), np.nan, np.float32)), None, None
+            return
+        n_patch = max(2, int(np.ceil(max(0.6, len(text) * 0.2) / 0.16)))
+        n_patch = min(n_patch, int(max_len))
+        f0 = 140 + (sum(map(ord, text)) % 5) * 25
+        time.sleep(self.pre)
+        t0 = 0.0
+        for i in range(n_patch):
+            time.sleep(self.step * (inference_timesteps / 10.0) * 0.8 + self.step * 0.2)
+            t = np.arange(PATCH) / 48000.0 + t0
+            sig = sum(np.sin(2 * np.pi * f0 * h * t) / h for h in range(1, 6))
+            env = 0.6 + 0.4 * np.sin(2 * np.pi * 3 * t)
+            x = 0.25 * sig * env + 0.02 * np.sin(2 * np.pi * 15000 * t)
+            t0 += PATCH / 48000.0
+            yield FakeTensor(x[None, :].astype(np.float32)), None, None
+
+
+class FakeVoxCPM:
+    def __init__(self, step_ms=None, prefill_ms=None):
+        s = float(os.environ.get("VC_VOX_FAKE_STEP_MS", "120")) if step_ms is None else step_ms
+        p = float(os.environ.get("VC_VOX_FAKE_PREFILL_MS", "300")) if prefill_ms is None else prefill_ms
+        self.tts_model = _TTS(s, p)
+'''
+FILES['tests/test_vox.py'] = r'''# -*- coding: utf-8 -*-
+"""VoxCPM2 适配层单测(无 GPU):纯函数 + 假 VoxCPM + 对真实 voxcpm 源码签名的契约检查。用法: python tests/test_vox.py [--unit]"""
+import os, sys, ast, math, time, json, tempfile
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ["VC_ENGINE"] = "voxcpm2"                      # 必须在 import infer_dual_gpu 之前
+os.environ.setdefault("VC_WORK", tempfile.mkdtemp()); os.environ.setdefault("VC_DIAG_DIR", tempfile.mkdtemp())
+os.environ["VC_VOX_FAKE_PREFILL_MS"] = "5"; os.environ["VC_VOX_FAKE_STEP_MS"] = "3"
+import numpy as np
+import vox_audio as va
+
+OK = []
+def T(f):
+    OK.append(f); return f
+
+@T
+def test_decimator_chunked_equals_oneshot():
+    rng = np.random.default_rng(1); x = (rng.standard_normal(48000 * 2) * 0.1).astype(np.float32)
+    one = va.StreamDecimator().process(x); one = np.concatenate([one, va.StreamDecimator().process(x)[:0]])
+    d1 = va.StreamDecimator(); full = np.concatenate([d1.process(x), d1.flush()])
+    d2 = va.StreamDecimator(); parts = []; i = 0
+    for n in [7680, 1, 3, 7680, 4097, 7680, 100, 13]:           # 故意用奇数/极小块,检验相位与状态
+        parts.append(d2.process(x[i:i + n])); i += n
+    parts.append(d2.process(x[i:])); parts.append(d2.flush())
+    ch = np.concatenate(parts)
+    assert len(full) == len(ch) == math.ceil(len(x) / 2), (len(full), len(ch))
+    assert np.max(np.abs(full - ch)) < 1e-6, np.max(np.abs(full - ch))
+
+@T
+def test_decimator_tone_gain_and_alias():
+    t = np.arange(48000) / 48000.0
+    for f, lo, hi in [(300, -0.1, 0.1), (1000, -0.1, 0.1), (4000, -0.1, 0.1), (8000, -0.2, 0.2)]:
+        d = va.StreamDecimator(); y = np.concatenate([d.process(np.sin(2 * np.pi * f * t).astype(np.float32)), d.flush()])
+        g = 20 * np.log10(np.sqrt(np.mean(y[2000:-2000] ** 2)) / (1 / np.sqrt(2)))
+        assert lo < g < hi, (f, g)
+    for f in (15000, 20000):                                     # 高于 12k 的成分必须被滤掉,不得折叠成可闻的混叠
+        d = va.StreamDecimator(); y = np.concatenate([d.process(np.sin(2 * np.pi * f * t).astype(np.float32)), d.flush()])
+        g = 20 * np.log10(np.sqrt(np.mean(y[2000:-2000] ** 2)) / (1 / np.sqrt(2)) + 1e-12)
+        assert g < -60, (f, g)
+
+@T
+def test_decimator_no_boundary_click():
+    t = np.arange(48000 * 3) / 48000.0; x = (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    d = va.StreamDecimator(); outs = []
+    for i in range(0, len(x), 7680): outs.append(d.process(x[i:i + 7680]))
+    outs.append(d.flush()); y = np.concatenate(outs)
+    assert np.max(np.abs(np.diff(y[400:-400]))) < 0.3 * 2 * np.pi * 220 / 24000 * 1.2    # 一阶差分不超过正弦理论最大斜率的 1.2 倍 → 块边界无台阶
+
+@T
+def test_decimator_rejects_bad_ratio():
+    try: va.StreamDecimator.for_rates(44100, 24000); assert False
+    except ValueError: pass
+    assert va.StreamDecimator.for_rates(24000, 24000) is None
+    assert va.StreamDecimator.for_rates(48000, 24000).m == 2
+
+@T
+def test_coalescer_schedule():
+    c = va.FrameCoalescer([2, 4, 8]); out = []
+    for _ in range(12): out += c.push(np.ones(1920, np.float32))     # 每次 1 帧
+    out += c.flush()
+    sizes = [len(o) // 1920 for o in out]
+    assert sizes == [2, 4, 6] or sum(sizes) == 12 and sizes[0] == 2 and sizes[1] == 4, sizes
+    assert sum(len(o) for o in out) == 12 * 1920
+
+@T
+def test_sanitize_text_blocks_style_instruction():
+    assert va.sanitize_text("(开心地)你好") == "开心地你好"
+    assert va.sanitize_text("（笑）你好") == "笑你好"
+    assert va.sanitize_text("你好(世界)") == "你好(世界)"           # 句中括号保留
+    assert va.sanitize_text("  \n你好 \n 世界 ") == "你好 世界"
+    assert va.sanitize_text("((((") == ""
+
+@T
+def test_patch_budget_and_dtype_order():
+    assert va.patches_for_frames(100) == 54 and va.patches_for_frames(1) == 8
+    assert va.dtype_order(7, "") == ["float16", "float32", "bfloat16"]
+    assert va.dtype_order(8, "") == ["bfloat16", "float16", "float32"]
+    assert va.dtype_order(7, "float32")[0] == "float32" and len(set(va.dtype_order(7, "float32"))) == 3
+
+@T
+def test_steps_tuner():
+    assert va.next_steps(10, 0.7, 0.85, 6) is None
+    assert va.next_steps(10, 1.2, 0.85, 6) == 8 and va.next_steps(8, 1.2, 0.85, 6) == 6 and va.next_steps(6, 1.2, 0.85, 6) is None
+
+@T
+def test_trim_at_quiet():
+    sr = 16000; t = np.arange(sr * 30) / sr
+    a = np.sin(2 * np.pi * 200 * t).astype(np.float32) * 0.5
+    a[int(sr * 14.2):int(sr * 14.6)] = 0.0                     # 14.2~14.6 s 是停顿
+    b = va.trim_at_quiet(a, sr, 15.0)
+    assert 14.1 * sr <= len(b) <= 15.0 * sr and abs(b[-1]) < 0.05, len(b) / sr
+    assert len(va.trim_at_quiet(a[:sr * 5], sr, 15.0)) == sr * 5
+
+@T
+def test_chunk_validator():
+    ok, why = va.check_probe(np.zeros(24000, np.float32), "你好", 24000); assert not ok
+    ok, why = va.check_probe(np.full(24000, np.nan, np.float32), "你好", 24000); assert not ok and "NaN" in why
+    t = np.arange(24000 * 3) / 24000; ok, why = va.check_probe((0.2 * np.sin(2 * np.pi * 200 * t)).astype(np.float32), "你好我们开始吧", 24000); assert ok, why
+    ok, why = va.check_probe((0.2 * np.sin(2 * np.pi * 200 * np.arange(24000 * 40) / 24000)).astype(np.float32), "你好", 24000); assert not ok       # 2 个字却 40 秒 → 失控
+
+@T
+def test_patched_config_dir():
+    d = tempfile.mkdtemp(); src = os.path.join(d, "snap"); os.makedirs(src)
+    json.dump({"architecture": "voxcpm2", "dtype": "bfloat16", "max_length": 8192}, open(os.path.join(src, "config.json"), "w"))
+    open(os.path.join(src, "model.safetensors"), "wb").write(b"x" * 10); open(os.path.join(src, "audiovae.pth"), "wb").write(b"y")
+    out = va.patched_model_dir(src, "float16", os.path.join(d, "out"))
+    c = json.load(open(os.path.join(out, "config.json")))
+    assert c["dtype"] == "float16" and c["architecture"] == "voxcpm2"
+    assert open(os.path.join(out, "model.safetensors"), "rb").read() == b"x" * 10 and os.path.islink(os.path.join(out, "model.safetensors"))
+    assert json.load(open(os.path.join(src, "config.json")))["dtype"] == "bfloat16"       # 原快照不得被改
+    assert va.patched_model_dir(src, "float16", os.path.join(d, "out")) == out             # 幂等
+
+@T
+def test_fake_vox_contract_streaming_chunks():
+    import vox_fake
+    m = vox_fake.FakeVoxCPM(step_ms=1)
+    cache = m.tts_model.build_prompt_cache(prompt_text="你好", prompt_wav_path="x.wav", reference_wav_path="x.wav")
+    n = 0; k = 0
+    for wav, _tok, _feat in m.tts_model.generate_with_prompt_cache_streaming(target_text="你好世界", prompt_cache=cache, max_len=20, inference_timesteps=10, cfg_value=2.0):
+        a = wav.flatten().float().cpu().numpy(); assert len(a) == 7680 and a.dtype == np.float32; n += len(a); k += 1
+    assert k >= 2 and m.tts_model.sample_rate == 48000
+
+@T
+def test_real_source_signature_contract():
+    """用 PyPI voxcpm==2.0.3 与 git 主干的真实源码(若本机有)核对:我调用的方法/参数名必须存在(防止凭记忆写 API)。"""
+    cands = [p for p in (os.environ.get("VOXCPM_SRC"), "/tmp/pipchk/whl/voxcpm/model/voxcpm2.py", "/tmp/vox/src/voxcpm/model/voxcpm2.py") if p and os.path.exists(p)]
+    if not cands:
+        print("    (本机没有 voxcpm 源码,契约检查跳过)"); return
+    for p in cands:
+        t = ast.parse(open(p, encoding="utf-8").read()); fn = {}
+        for n in ast.walk(t):
+            if isinstance(n, ast.FunctionDef): fn.setdefault(n.name, [a.arg for a in n.args.args + n.args.kwonlyargs])
+        for need, args in {"build_prompt_cache": ["prompt_text", "prompt_wav_path", "reference_wav_path"],
+                           "generate_with_prompt_cache_streaming": [],
+                           "_generate_with_prompt_cache": ["target_text", "prompt_cache", "min_len", "max_len", "inference_timesteps", "cfg_value", "streaming", "streaming_prefix_len"]}.items():
+            assert need in fn, (p, need)
+            for a in args: assert a in fn[need], (p, need, a)
+
+@T
+def test_cer():
+    assert va.cer("你好，世界！", "你好 世界") == 0.0
+    assert abs(va.cer("今天天气真好", "今天天汽真好") - 1 / 6) < 1e-9
+    assert va.cer("Hello World", "hello  world.") == 0.0
+    assert va.cer("", "x") == 1.0 and va.cer("abc", "") == 1.0
+
+
+def _engine(step_ms=3):
+    os.environ["VC_VOX_FAKE_STEP_MS"] = str(step_ms)
+    import infer_dual_gpu as g
+    msgs = []
+    e = g.VoxCPM2Engine(0, lambda *m: msgs.append(m), fake=True); e.load()
+    return g, e, msgs
+
+def _ref_wav(sec=6.0, sr=16000):
+    import soundfile as sf
+    p = os.path.join(tempfile.mkdtemp(), "ref.wav"); t = np.arange(int(sec * sr)) / sr
+    sf.write(p, (0.2 * np.sin(2 * np.pi * 180 * t)).astype(np.float32), sr); return p
+
+@T
+def test_engine_selection_and_sched():
+    import infer_dual_gpu as g
+    assert g.ENGINE == "voxcpm2" and g.SCHED["first"][0] == 2 and all(v % 2 == 0 for k in ("first", "second", "rest") for v in g.SCHED[k])
+    e = g.make_engine(0, lambda *a: None, {"mock": True}); assert isinstance(e, g.VoxCPM2Engine) is (os.environ.get("VC_VOX_FAKE") == "1")
+    os.environ["VC_VOX_FAKE"] = "1"; e = g.make_engine(0, lambda *a: None, {"mock": True}); assert isinstance(e, g.VoxCPM2Engine) and e.fake
+    os.environ.pop("VC_VOX_FAKE")
+    assert type(g.make_engine(0, lambda *a: None, {"mock": True})).__name__ == "MockEngine"
+
+@T
+def test_engine_stream_length_blocks_and_alias():
+    g, e, _ = _engine(); e.set_voice(_ref_wav(), "你好我们开始", False)
+    blocks = [a for a, sr in e.stream("你好世界今天天气真不错", "first")]
+    n_patch = int(np.ceil(max(0.6, len("你好世界今天天气真不错") * 0.2) / 0.16))
+    assert sum(len(b) for b in blocks) == n_patch * 3840, (sum(len(b) for b in blocks), n_patch)
+    assert 2 * 1920 - 128 <= len(blocks[0]) <= 2 * 1920 and all(b.dtype == np.float32 for b in blocks)   # 首块只等 1 个 LM 步(含抽取器 40 样本群延迟的容差)
+    assert e.last_frames == n_patch * 2
+    y = np.concatenate(blocks); S = np.abs(np.fft.rfft(y[2000:-2000] * np.hanning(len(y) - 4000)))
+    f = np.fft.rfftfreq(len(y) - 4000, 1 / 24000); peak = S.max()
+    assert S[(abs(f - 9000) < 150)].max() / peak < 10 ** (-60 / 20), "15kHz 成分折叠到 9kHz 了(混叠)"
+
+@T
+def test_engine_block_boundaries_are_continuous():
+    g, e, _ = _engine(); e.set_voice(_ref_wav(), "你好我们开始", False)
+    blocks = [a for a, sr in e.stream("连续性测试句子，块边界不能有台阶。", "rest")]
+    y = np.concatenate(blocks); edges = np.cumsum([len(b) for b in blocks])[:-1]
+    d = np.abs(np.diff(y)); local = np.median(d) * 20 + 1e-6
+    assert all(d[i - 1] < max(local, 0.15) for i in edges), [d[i - 1] for i in edges]
+
+@T
+def test_engine_set_voice_info_and_cache_reuse():
+    g, e, _ = _engine(); info = e.set_voice(_ref_wav(), "你好我们开始", False)
+    for k in ("rtf", "ttfa", "dtype", "mode", "sr", "rms", "sim", "prompt_cached", "ch", "clone_mode", "steps"): assert k in info, k
+    assert info["sr"] == 24000 and info["clone_mode"] == "ref_continuation" and info["prompt_cached"]
+    c0 = e.cache; list(e.stream("你好", "first")); list(e.stream("再见", "rest")); assert e.cache is c0       # 缓存冻结:生成不会重建
+    bi = e.backend_info(); assert bi["streaming"] is True and bi["engine"] == "voxcpm2" and bi["mock"] is True
+
+@T
+def test_engine_autosteps_lowers_only_when_slow():
+    g, e, _ = _engine(step_ms=150); info = e.set_voice(_ref_wav(), "你好我们开始", False)     # 假模型 10 步 RTF≈0.95>0.85 → 8 步 ≈0.8 即停(够用就不再降)
+    assert e.steps == 8 and info["steps"] == 8 and info["rtf"] <= 0.9, (e.steps, info["rtf"])
+    g, e2, _ = _engine(step_ms=30); e2.set_voice(_ref_wav(), "你好我们开始", False)
+    assert e2.steps == 10, e2.steps                                                         # 快 → 不动,保持最高画质
+    os.environ["VC_VOX_AUTOSTEPS"] = "0"
+    try:
+        g, e3, _ = _engine(step_ms=150); e3.set_voice(_ref_wav(), "你好我们开始", False); assert e3.steps == 10   # 关闭开关 → 不动
+    finally: os.environ.pop("VC_VOX_AUTOSTEPS")
+
+@T
+def test_engine_mode_fallback_to_reference():
+    g, e, _ = _engine(); orig = e.tts.build_prompt_cache
+    def bad(prompt_text=None, prompt_wav_path=None, reference_wav_path=None, **k):
+        if prompt_wav_path: raise RuntimeError("续写模式坏了")
+        return orig(reference_wav_path=reference_wav_path)
+    e.tts.build_prompt_cache = bad
+    info = e.set_voice(_ref_wav(), "你好我们开始", False)
+    assert info["clone_mode"] == "reference" and not e.probe_log[0]["ok"] and e.probe_log[-1]["ok"]
+    g, e3, _ = _engine(); assert e3.set_voice(_ref_wav(), "", False)["clone_mode"] == "reference"          # 没文字 → 直接纯参考
+    g, e4, _ = _engine(); assert e4.set_voice(_ref_wav(), "文字", True)["clone_mode"] == "reference"       # x-vector 模式 → 纯参考
+    g, e5, _ = _engine(); assert e5.set_voice(_ref_wav(30.0), "文字" * 30, False)["clone_mode"] == "reference"  # 参考 > 20s → 纯参考
+
+@T
+def test_engine_all_modes_fail_raises():
+    g, e, _ = _engine()
+    def bad(*a, **k): raise RuntimeError("全坏")
+    e.tts.build_prompt_cache = bad
+    try: e.set_voice(_ref_wav(), "你好我们开始", False); assert False
+    except RuntimeError as ex: assert "全坏" in str(ex)
+
+@T
+def test_engine_sanitize_budget_and_cancel():
+    g, e, _ = _engine(); e.set_voice(_ref_wav(), "你好我们开始", False)
+    list(e.stream("(开心地)今天天气真好", "first")); assert not e.tts.last_kwargs["target_text"].startswith("(")
+    e.gen_opts = {"max_new": 10}; blocks = list(e.stream("这是一句很长很长很长很长很长的话需要被预算截断", "rest"))
+    assert e.tts.last_kwargs["max_len"] == va.patches_for_frames(10) == 9 and sum(len(b) for b, in [(x[0],) if isinstance(x, tuple) else (x,) for x in blocks]) <= 9 * 3840
+    e.gen_opts = None; gen = e.stream("取消测试取消测试取消测试", "first"); next(gen); gen.close()       # 中途关闭不得抛异常
+    assert list(e.stream("   ", "first")) == []
+
+@T
+def test_engine_nan_is_not_hidden():
+    g, e, _ = _engine(); e.set_voice(_ref_wav(), "你好我们开始", False)
+    os.environ["VC_MOCK_FAIL"] = "nan"
+    try:
+        y = np.concatenate([a for a, _ in e.stream("NANTRIGGER 你好", "first")])
+        assert not np.all(np.isfinite(y)), "NaN 被悄悄吞掉了"
+        try: g._f2pcm(y); assert False, "NaN 必须在 PCM 量化处抛 AudioCorrupt"
+        except Exception as ex: assert "AudioCorrupt" in type(ex).__name__ or "NaN" in str(ex) or "nan" in str(ex).lower(), ex
+    finally: os.environ.pop("VC_MOCK_FAIL")
+
+
+if __name__ == "__main__":
+    bad, skipped = 0, 0
+    SLOW = {"test_engine_autosteps_lowers_only_when_slow"}            # --unit(启动自检)跳过 20 秒级的慢测试
+    for f in OK:
+        if "--unit" in sys.argv and f.__name__ in SLOW: skipped += 1; continue
+        t0 = time.time()
+        try: f(); print("  ✓ %s (%.1fs)" % (f.__name__, time.time() - t0))
+        except Exception as e:
+            bad += 1; import traceback; print("  ✗ %s: %r" % (f.__name__, e)); traceback.print_exc()
+    print("%d 项通过, %d 项失败%s" % (len(OK) - bad - skipped, bad, (",%d 项慢测试在 --unit 下跳过" % skipped) if skipped else "")); sys.exit(1 if bad else 0)
+'''
+FILES['tests/e2e_vox.py'] = r'''# -*- coding: utf-8 -*-
+"""
+端到端(无 GPU):起真实网关 + 双 worker(VoxCPM2 适配器 + 假模型) → 克隆 → 多句朗读,用【虚拟播放器】量化「首声延迟」与「播放-停顿-播放」。
+虚拟播放器:已收音频 ≥ 计划起播水位(plan.prebuf_ms)才起播,之后按实时速度消耗;播放头追上已收样本 = 一次欠载(停顿),停顿期间等数据到来再继续。
+用法: python tests/e2e_vox.py [--step-ms 60,150,400] [--text "..."]
+注意:假模型只验证【调度/规划/链路】;真实 RTF / 音质必须在 Kaggle T4×2 上实测(本脚本在 Kaggle 里同样可跑,但那时 VC_VOX_FAKE 要关)。
+"""
+import argparse, asyncio, json, os, sys, time
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, "tests"))
+os.environ.update(VC_ENGINE="voxcpm2", VC_VOX_FAKE="1")
+import numpy as np
+import test_gateway as tg
+import protocol as pr
+SR = 24000
+
+
+async def play_turn(port, text, sid="e2e"):
+    import websockets
+    ws = await websockets.connect("ws://127.0.0.1:%d/ws" % port, max_size=None)
+    await ws.send(json.dumps({"type": "hello", "sid": sid}))
+    t_send = time.time(); await ws.send(json.dumps({"type": "say", "text": text, "opts": {"tts": True}}))
+    chk, uid, plan, done, ev, cum, played_ack, t_ack = None, None, None, None, [], 0, 0, 0.0
+    t_first = None
+    while True:
+        try: m = await asyncio.wait_for(ws.recv(), 60)
+        except asyncio.TimeoutError: break
+        now = time.time()
+        if isinstance(m, (bytes, bytearray)):
+            if chk is None: continue
+            act, f = chk.accept(bytes(m)); assert act == "ok", (act, f)
+            cum += f["n"]; ev.append((now, cum)); t_first = t_first or now
+        else:
+            j = json.loads(m)
+            if j["type"] == "turn_start": uid = j["turn"]; chk = pr.FrameChecker(uid, SR)
+            elif j["type"] == "plan": plan = j
+            elif j["type"] == "turn_done": done = j
+        if uid is not None and now - t_ack > 0.25 and t_first:           # 模拟播放进度回执(背压用)
+            await ws.send(json.dumps({"type": "ack", "turn": uid, "next_seq": chk.expected if chk else 0, "played": int(min(cum, max(0, (now - t_first)) * SR)), "level_ms": 0})); t_ack = now
+        if done is not None and chk and chk.ended: break
+    await ws.close()
+    return dict(ev=ev, plan=plan, done=done, t_send=t_send, total=cum, chk_ok=bool(chk and chk.ended))
+
+
+def simulate(ev, prebuf_ms, ended):
+    """返回 (起播时刻相对 t0, 欠载次数, 总停顿 s)。"""
+    if not ev: return None, 0, 0.0
+    need = prebuf_ms / 1000.0 * SR
+    start_i = next((i for i, (t, c) in enumerate(ev) if c >= need), len(ev) - 1)
+    t_play = ev[start_i][0]; played_at_t = 0.0; under, stall = 0, 0.0
+    prev_t, prev_c = ev[start_i]
+    pos = 0.0                                              # 已播放秒数
+    cur_t = t_play
+    for t, c in ev[start_i + 1:]:
+        have = prev_c / SR                                 # 此刻已到数据(秒)
+        play_until = pos + (t - cur_t)                     # 若不停顿,到 t 时播放头位置
+        if play_until > have + 1e-3:                       # 播放头追上数据 → 停顿
+            under += 1
+            pos = have; stall += play_until - have; cur_t = t
+        else:
+            pos = play_until; cur_t = t
+        prev_c = c
+    return t_play, under, stall
+
+
+def clone_long(srv, wait_s=300):
+    import urllib.request
+    r = srv.post("/api/voice?consent=1&text=" + urllib.request.quote("今天天气真好我们一起出去走走吧") + "&ext=wav", tg.wav_bytes(tg.speechlike(10.0)))
+    assert r.get("ok"), r
+    t0 = time.time()
+    while time.time() - t0 < wait_s:
+        v = srv.state()["voice"]
+        if v["state"] == "ready": return v
+        if v["state"] == "error": raise RuntimeError(v)
+        time.sleep(0.5)
+    raise RuntimeError("clone timeout")
+
+
+LONG = "今天天气真好，我们一起出去走走吧。路上可以看看花，也可以拍几张照片。回来的时候，顺便买一点水果，晚上一起吃。你觉得这样安排怎么样？如果下雨了我们就改去博物馆，那里也很有意思，还有安静的咖啡厅可以休息。"
+
+def main():
+    ap = argparse.ArgumentParser(); ap.add_argument("--step-ms", default="60,150,400"); ap.add_argument("--text", default=LONG); a = ap.parse_args()
+    rows, bad = [], 0
+    for sm in [float(x) for x in a.step_ms.split(",")]:
+        srv = tg.Server(VC_VOX_FAKE_STEP_MS=sm, VC_VOX_FAKE_PREFILL_MS=250, VC_MOCK_FAIL="")
+        try:
+            clone_long(srv)
+            bk = srv.state()["backend"]["workers"]; eng = [v.get("engine") for v in bk.values()]; assert all(e == "voxcpm2" for e in eng), bk
+            r = asyncio.run(play_turn(srv.port, a.text))
+            pre = (r["plan"] or {}).get("prebuf_ms", 0)
+            t_play, under, stall = simulate(r["ev"], pre, r["chk_ok"])
+            ttfa = (r["ev"][0][0] - r["t_send"]) if r["ev"] else None
+            st = {k: (list(v.values())[0] if isinstance(v, dict) and v else v) for k, v in {"rtf": {w: x.get("rtf") for w, x in srv.state()["backend"]["workers"].items()}}.items()}
+            rows.append(dict(step_ms=sm, engine=eng, chunks_ok=r["chk_ok"], audio_s=round(r["total"] / SR, 1), ttfa_s=round(ttfa, 2) if ttfa else None, plan_prebuf_ms=pre,
+                             play_start_after_send_s=round(t_play - r["t_send"], 2) if t_play else None, underruns=under, stall_s=round(stall, 3), plan_mode=(r["plan"] or {}).get("v13_mode"), bridge=(r["plan"] or {}).get("bridge")))
+            if not r["chk_ok"] or under: bad += 1
+        finally: srv.stop()
+    for x in rows: print(json.dumps(x, ensure_ascii=False))
+    print("端到端:%d 个场景,%d 个出现欠载/不完整" % (len(rows), bad)); sys.exit(1 if bad else 0)
+
+if __name__ == "__main__": main()
+'''
+
 for name, content in FILES.items():
     (APP / name).parent.mkdir(parents=True, exist_ok=True)
     (APP / name).write_text(content, encoding="utf-8")
@@ -30015,6 +31038,7 @@ except Exception:
 # ───────────────────────── 2. 依赖 ─────────────────────────
 banner("2/6  安装依赖(独立环境,不破坏 Kaggle 自带的 PyTorch;首次约 3~6 分钟)")
 PY = sys.executable
+VOX_READY, VOX_MSG = False, "未检查"
 if not TEST:
     ok_marker = VENV / ".ok_v4"
     venv_py = VENV / "bin" / "python"
@@ -30062,6 +31086,27 @@ if not TEST:
     if VENV.exists():
         ok_marker.write_text("ok")
     print("  ✅ 依赖就绪")
+    if TTS_ENGINE == "voxcpm2":                                           # v18:VoxCPM2 只装推理必需的最小依赖(--no-deps),不装 gradio/funasr/modelscope 等重依赖,避免与固定版本的 transformers 冲突
+        vox_smoke = ("import torch, voxcpm\nfrom voxcpm import VoxCPM\nfrom voxcpm.model.voxcpm2 import VoxCPM2Model\n"
+                     "assert hasattr(VoxCPM2Model, 'build_prompt_cache') and hasattr(VoxCPM2Model, 'generate_with_prompt_cache_streaming')\nprint('VOX_OK')")
+
+        def vox_ok():
+            try:
+                r_ = subprocess.run([PY, "-c", vox_smoke], capture_output=True, text=True, timeout=300)
+                return "VOX_OK" in r_.stdout, (r_.stderr or r_.stdout)[-300:]
+            except Exception as e_:
+                return False, str(e_)[:300]
+        VOX_READY, VOX_MSG = vox_ok()
+        if not VOX_READY:
+            print("  正在安装 VoxCPM2(%s,最小依赖)…" % VOXCPM_VERSION, flush=True)
+            for cmd_ in ([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5", "einops", "pydantic", "safetensors", "tqdm", "librosa", "soundfile", "scipy"],
+                         [PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5", "--no-deps", "voxcpm==" + VOXCPM_VERSION]):
+                try:
+                    subprocess.run(cmd_, capture_output=True, text=True, timeout=1200)
+                except Exception as e_:
+                    VOX_MSG = str(e_)[:200]
+            VOX_READY, VOX_MSG = vox_ok()
+        print("  " + ("✅ VoxCPM2 %s 就绪" % VOXCPM_VERSION if VOX_READY else "⚠ VoxCPM2 不可用,自动回退 Qwen3-TTS:" + VOX_MSG.strip().splitlines()[-1][:160] if VOX_MSG.strip() else "⚠ VoxCPM2 不可用,自动回退 Qwen3-TTS"))
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pyngrok"], capture_output=True)
     if V14 and V14_DIALOG and V14_ASR_BACKEND == "cpu":
         r_fw = subprocess.run([PY, "-m", "pip", "install", "-q", "faster-whisper"], capture_output=True, text=True)
@@ -30106,6 +31151,8 @@ if RUN_TESTS and not TEST:
     r8 = subprocess.run([PY, str(APP / "tests" / "test_v11_browser.py")] + ([] if RUN_TESTS == "full" else ["--unit"]), capture_output=True, text=True, timeout=600, cwd=str(APP), env=env_t)
     print("  [Python 测试 · v11 浏览器工作台:坐标映射/视觉校验/档位/DPR 重建确认/帧元数据]\n" + "\n".join("   " + l_ for l_ in (r8.stdout + r8.stderr).strip().splitlines()[-16:]))
     r10 = subprocess.run([PY, str(APP / "tests" / "test_v12.py")] + ([] if RUN_TESTS == "full" else ["--unit"]), capture_output=True, text=True, timeout=900, cwd=str(APP), env=env_t)
+    r18 = subprocess.run([PY, str(APP / "tests" / "test_vox.py"), "--unit"], capture_output=True, text=True, timeout=300, cwd=str(APP), env=env_t)
+    print("  v18 VoxCPM2 适配层单元测试(假模型,只证明逻辑/API 契约,不证明真实音质/速度):" + ("✅ 全部通过" if r18.returncode == 0 else "❌ 有失败(不影响启动,请把下面输出发给我)\n" + "\n".join("   " + l_ for l_ in (r18.stdout + r18.stderr).strip().splitlines()[-12:])))
     r14 = subprocess.run([PY, str(APP / "tests" / "test_v14.py")], capture_output=True, text=True, timeout=300, cwd=str(APP), env=env_t)
     print("  v14 单元测试(合成信号,只证明逻辑/流程):" + ("✅ 全部通过" if r14.returncode == 0 else "❌ 有失败(不影响启动,但请把下面输出发给我)\n" + (r14.stdout + r14.stderr)[-1500:]))
     if RUN_TESTS == "full":
@@ -30206,7 +31253,7 @@ if NET_PREFLIGHT and not TEST:
 banner("3/6  下载模型(首次约 6~8GB,之后秒开)")
 if not TEST:
     t0 = time.time()
-    need = [TTS_MODEL, "microsoft/wavlm-base-plus-sv", "openai/whisper-large-v3-turbo"] + (["Qwen/Qwen3-TTS-Tokenizer-12Hz"] if MODE != "serve" else [])
+    need = ([VOXCPM_MODEL] if (TTS_ENGINE == "voxcpm2" and VOX_READY) else []) + [TTS_MODEL, "microsoft/wavlm-base-plus-sv", "openai/whisper-large-v3-turbo"] + (["Qwen/Qwen3-TTS-Tokenizer-12Hz"] if MODE != "serve" else [])
     dl = ("from huggingface_hub import snapshot_download as s\n"
           "for m in %r:\n"
           "    try:\n"
@@ -30220,6 +31267,9 @@ if not TEST:
     fails = [l for l in last if l.startswith("PATH_FAIL")]
     if any(TTS_MODEL in l for l in fails):
         raise RuntimeError("下载 %s 失败:\n%s" % (TTS_MODEL, "\n".join(fails)))
+    if any(VOXCPM_MODEL in l for l in fails) and TTS_ENGINE == "voxcpm2":
+        VOX_READY = False
+        print("  ⚠ VoxCPM2 权重下载失败 → 自动回退 Qwen3-TTS:" + [l for l in fails if VOXCPM_MODEL in l][0][:160])
     for l in fails:
         print("  ⚠ 可选模型下载失败(用到时再重试):" + l[:160])
     print("  ✅ 模型已缓存 (%.0fs)" % (time.time() - t0))
@@ -30383,6 +31433,10 @@ else:
         print("  使用默认参考音频:", REFERENCE_AUDIO)
     elif REFERENCE_AUDIO:
         print("  ⚠ 找不到 REFERENCE_AUDIO:", REFERENCE_AUDIO, "(将在网页里录制/上传)")
+_eng = "voxcpm2" if (TTS_ENGINE == "voxcpm2" and (VOX_READY or (TEST and os.environ.get("VC_VOX_FAKE") == "1")) and not use_trained) else "qwen3"
+senv.update(VC_ENGINE=_eng, VC_VOX_MODEL=VOXCPM_MODEL, VC_VOX_STEPS=str(VOX_STEPS), VC_VOX_RTF_TARGET=str(VOX_RTF_TARGET), VC_VOX_AUTOSTEPS="1" if VOX_AUTOSTEPS else "0",
+            VC_VOX_CLONE_MODE=VOX_CLONE_MODE, VC_VOX_OPTIMIZE="1" if VOX_OPTIMIZE else "0", VC_VOX_FALLBACK="1")
+print("  🔊 TTS 引擎:%s" % ({"voxcpm2": "VoxCPM2(2B · 48kHz→24kHz · 冻结声纹 · 流式 · 扩散步数 %d 起,按实测 RTF 自适应)" % VOX_STEPS, "qwen3": "Qwen3-TTS-12Hz-1.7B-Base(v17 引擎)" + ("[微调模型只支持 qwen3]" if use_trained else "")}[_eng]))
 if TEST:
     senv.update(VC_MOCK="1", VC_MOCK_LLM="1")
 
