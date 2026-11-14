@@ -1,1 +1,526 @@
+# VoiceClone-Studio v19 · 去 Qwen3、VoxCPM2 为唯一冠军 · 复刻全球顶级语音克隆全流程 —— AI 开发任务提示词
 
+> 使用方法：把本文件完整粘贴到 GitHub 仓库（建议保存为 TASK_PROMPT.md，或作为 Issue / Copilot Agent 任务描述），交给具备 Bash / Terminal 工具调用能力的 AI 开发代理执行。
+> 目标仓库：https://github.com/bizuming1-ui/111 （参考代码为 Kaggle 单单元格 v17/v18 脚本，约 31,624 行）。
+> 工作模式：ReAct（推理 + 行动）+ TDD（测试驱动）+ 微步迭代，全程中文汇报。
+> 重要说明：本文件不包含任何实现代码，只规定「做什么、怎么验证、怎么择优、怎么回滚」。其中第 1 章的审计发现均已在沙盒中对参考代码做过真实核查；第 3 章门槛为待校准的初始假设；所有音质 / 相似度 / 速度类结论必须由你在真实模型上验证后才能成立。
+
+---
+
+## 第 0 章　角色、总指令与工作协议
+
+### 0.1 你的角色
+你同时是三种专家：（1）资深软件工程师（Python / FastAPI / WebSocket / 音频流协议 / 测试工程）；（2）声音克隆与语音合成研究工程师（TTS、说话人表征、扩散自回归、LoRA 微调、偏好对齐、语音质量评测）；（3）可靠性与安全工程师（回归基线、闸门、回滚、合规）。
+
+### 0.2 任务一句话
+在仓库 bizuming1-ui/111 的「参考代码」（Kaggle 单单元格 v17/v18 一体化脚本，约 31,624 行）基础上：【彻底移除 Qwen3-TTS-12Hz-1.7B】，以 OpenBMB VoxCPM2（2B，48 kHz，30 语言，Apache-2.0）作为唯一冠军引擎；系统性复刻全球顶级语音克隆公司的「全流程」（授权验证 → 参考音频治理 → 说话人条件化 → 可选微调 → 推理期对齐/择优 → 低损耗后处理 → 客观+主观评测 → 版本闸门 → 水印与合规），把克隆相似度与音质做到可被数据证明的最优，并且每一项结论都带验证等级标签。
+
+### 0.3 工作方式：ReAct（推理+行动）+ TDD（测试驱动）微步迭代
+- 严禁一次性大改。每一步只改一个「可独立回滚的最小单元」，并遵循固定循环：Thought（为什么这样做、预期会看到什么）→ Action（执行命令或编辑）→ Observation（原样记录输出）→ Test（先红后绿的断言）→ Report（向用户汇报）。
+- 每一步汇报只用【一到两句话】，固定格式：「【当前状态】……　【下一步动作】……」，全程使用中文。
+- 改动前必须先用 cp 备份目标文件（带时间戳后缀）；查看代码必须用 grep -n 与 sed -n '起,止p' 精准定位，不得整文件通读后凭印象修改。
+- 每改完一个模块，立刻用 python3 - <<'EOF' 的内联脚本跑单元测试（至少覆盖：语法可解析、公开函数契约、边界输入、与上一版的回归对比），测试不通过禁止进入下一步。
+- 所有新增行为必须有独立开关；开关全部关闭时，Mock 引擎下的 PCM 输出必须与基线逐样本一致（用 SHA-256 比对）。
+- 所有「真实音质 / 相似度 / 速度」类结论必须来自真实模型的真实运行；无法验证的一律标注「未验证」，并写明需要什么环境才能验证。
+
+### 0.4 自问自答纪律
+- 遇到任何不确定点：一次只问自己一个问题 → 给出你最满意的答案 → 立即追问答案中的薄弱环节 → 直到该点没有歧义。不得猜测；能用实验回答的问题，必须设计实验得到证据后再决策。
+- 本提示词第 2 章已经包含了需求层面的全部自问自答结论，不要再向用户重复提问；只有当真机实验推翻了某条结论时，才可以更新决策记录（ADR）并说明证据。
+
+### 0.5 验证等级标签（所有报告必须使用）
+- L0 Mock/Fake：只证明逻辑与链路，不证明音质。
+- L1 真模型（CPU 或小规模 GPU）：证明 API 契约、管线正确性、确定性行为。
+- L2 目标真机（Kaggle T4×2 或同级 GPU）：证明速度、显存、真实音质指标。
+- L3 人耳盲测（ABX / MUSHRA / CMOS）：证明「更像」「更自然」「沙沙声更少」。
+- 只有达到对应等级才能使用对应措辞；例如没有 L3 证据，禁止写「更像」。
+
+---
+
+## 第 1 章　项目背景与现状审计（均为真实核查证据）
+
+### 1.1 仓库事实
+- 仓库 https://github.com/bizuming1-ui/111 共 6 个文件：「参考代码」约 1.88 MB / 31,624 行（单个 Kaggle 代码单元格，内嵌约 40 个模块：app、infer_dual_gpu、protocol、audio_qc、libraries、artifacts、v13～v17 增量模块、v17_ingest、vox_audio、vox_fake 等）；「提示词1～提示词5」每个仅 1 字节，等同空文件，不可依赖其内容。
+- 基线体检（已在沙盒实际执行）：整文件可被 Python ast 正确解析；抽取内嵌 vox_audio.py（215 行，10 个函数）语法正确；StreamDecimator 分块抽取与整段抽取最大偏差约 1.5e-17（块边界无台阶，合格）。
+
+### 1.2 十三项审计发现（编号 F1～F13，后文引用）
+- F1　Qwen3 依赖面：84 行引用分布在 13 个内嵌模块（infer_dual_gpu 23、vox_fake 8、v17 8、v16 6、libctl 5、train 5、data_prep 9、evaluate 3、widgets 4、启动配置区 9 等），另有 UI 标题与页脚、模型下载清单、依赖安装清单。
+- F2　「名义已换、实际没换」：配置里 TTS_ENGINE 默认已是 voxcpm2，但存在四条隐性回退到 Qwen3 的路径——（a）infer_dual_gpu 中 VC_ENGINE 的环境默认值是 qwen3；（b）只要存在已训练模型目录（use_trained），启动器就强制使用 qwen3；（c）VoxCPM2 依赖自检失败时回退 qwen3；（d）引擎加载失败时 VC_VOX_FALLBACK 默认为 1，再回退 qwen3。再加上 v17 路由「冠军 = Qwen3」与整条训练链路（train / data_prep / evaluate / auto_train_loop）仍是 Qwen3，所以必须手术式摘除，而不是改一个默认值。
+- F3　输出采样率被硬编码为 24 kHz（SR = 24000 在内嵌模块中出现 23 处），VoxCPM2 原生输出是 48 kHz，被有状态 FIR 抽取到 24 kHz。实测：>12 kHz 的全部频段信息被永久丢弃（对「空气感 / 齿音 / 高频细节」直接有损）。
+- F4　扩散步数自适应（autosteps）：实测 RTF 高于 0.85 时扩散步数从 10 逐步降到最低 6。2B 模型在 T4 上 RTF 大概率超过 0.85，意味着实时通道的画质可能被系统自己降级（需 L2 实测确认）。
+- F5　流式生成里 retry_badcase 被硬编码为 False，而官方默认开启（最多重试 3 次，音文比阈值 6.0）。
+- F6　可复现性：PyPI 最新版 voxcpm 为 2.0.3，没有 seed 参数；上游 git 主干已有 seed（核查到的主干提交 300e426，2026-11）。固定在 2.0.3 导致「同文本同种子」无法保证复现。
+- F7　风格括号缺陷（已实测复现）：sanitize_text 对「(开心)你好」的结果是「开心你好」——只删括号、保留括号内文字，导致括号里的提示被朗读出来；同时也让用户无法合法使用 VoxCPM2 的「括号风格控制」能力。
+- F8　评分器偏弱：声纹评分用 microsoft/wavlm-base-plus-sv（出现 7 处，阈值 0.86 未校准），不可与论文中 WavLM-large + ECAPA-TDNN 的 SIM 指标比较；ASR 为 whisper-large-v3-turbo。
+- F9　缺失项：没有水印 / 来源标识（Perth、AudioSeal、watermark 命中 0 次）；没有 soxr 高质量重采样（0）；没有 pyloudnorm 响度标准（0，现用 RMS 近似 -19 dBFS）；没有 ZipEnhancer 相关集成（0）；UTMOS 与 DNSMOS 仅有名称级引用。
+- F10　参考音频管线：处理版 = 去直流 + 去首尾静音 + 峰值归一（0.7）+ 重采样；>30 秒在 20～30 秒内最安静处截断；V15 另有 50 Hz 高通与边缘淡化；默认不降噪；自动 ASR 转写需人工核对（代码已有字速异常告警）。
+- F11　训练链路与 VoxCPM2 不兼容：现有 LoRA 训练基于 Qwen3 并依赖 Qwen3-TTS-Tokenizer-12Hz 提取离散 audio_codes；VoxCPM2 是 tokenizer-free（连续潜变量），官方提供独立 LoRA/全量微调脚本与配置（conf/voxcpm_v2/voxcpm_finetune_lora.yaml：lora r=32、alpha=32、enable_lm 与 enable_dit 为 true、学习率 1e-4、预热 100 步、编码器输入 16 kHz、解码输出 48 kHz）。
+- F12　Studio 整句 Best-of-N 的真机通道未接入（接口返回 501），即「择优」只有框架没有实弹。
+- F13　安全：参考代码头注已提示——仓库是公开的，应改为私有；令牌只放 Kaggle Secrets；历史上出现过的令牌必须撤销重建。
+
+### 1.3 原脚本中值得保留的资产（不得破坏）
+双 GPU 并行与权重指纹一致性、帧序号 + 背压 + 断线续传协议、完整性检测、多语音库与版本谱系（晋升 / 回滚 / 金丝雀）、无时长限制入库（分块断点续传）、缺陷检测器与不降级闸门（纯函数）、声纹锁、artifacts 全程落盘与校验、鉴权与审计。这些是「顶级系统」的工程骨架，改造只在其上做增量。
+
+---
+
+## 第 2 章　需求澄清结论（已完成自问自答，直接执行）
+
+用户的真实目标，经过逐项追问后确定为：
+- 目标 1（最高优先）：克隆相似度——在相同参考与相同文本下，输出的音色、节奏、口音、情绪贴近本人，且可被客观指标与盲听同时支持。
+- 目标 2：音质——48 kHz 全链路无损传递，无沙沙声、无爆音、无段间咔嗒声、无电平忽大忽小，且「宁可重试，不可放行坏音频」。
+- 目标 3：实时性——Live（对话）通道保证连续播放不断流；Studio（成品）通道不受实时限制，用算力换质量。
+- 目标 4：彻底去除 Qwen3-TTS-1.7B（代码、依赖、权重下载、训练链路、文案、路由），唯一引擎为 VoxCPM2；引擎候选只进沙盒做对比，不进生产路径，除非通过闸门并经用户确认。
+- 目标 5：整个过程可审计、可回滚、可复现；所有结论带验证等级；不承诺不可证明的「100% / 99% 像」。
+
+关键决策（ADR 摘要，详见第 16 章）：
+- 双通道：Live 追求不断流，Studio 追求极致质量。
+- 克隆模式自动选择：有可信文本且参考不超过 20 秒用「Ultimate Cloning（参考 + 续写）」，否则用「Controllable Cloning（隔离参考）」，试合成后用 ASR 复核，不合格自动降级模式。
+- 默认保真：参考音频不做破坏性降噪；先体检，只在客观指标触发时才做处理，并且必须 A/B 门控。
+- 评分器升级并校准：WavLM-large + ECAPA-TDNN 为主，ERes2Net / CAM++ 为独立裁判。
+- 对齐用「推理期 Best-of-N + 三项奖励」复刻顶级公司的强化学习收益；训练期偏好优化为可选后续。
+- 所有更新必须通过「不降级闸门」才能晋升，并支持一键回滚。
+
+---
+
+## 第 3 章　验收指标（KPI）与闸门
+
+以下阈值是【初始假设】，必须先在真机上复现基线、校准后才可作为正式门槛；任何改动不得让指标劣于基线（非劣效），晋升还需显著提升。
+
+| 维度 | 指标与测法 | 初始门槛（待校准） |
+| --- | --- | --- |
+| 复现闸门 | 在 Seed-TTS-eval 协议下复现 VoxCPM2 官方公布值（zh CER 0.97 / SIM 79.5；en WER 1.84 / SIM 75.3；hard CER 8.13 / SIM 75.3） | 复现差距在可解释范围内，否则先查评测链路而不是改模型 |
+| 内容一致性 | CER（中文，Paraformer-zh 与 Whisper-large-v3 双 ASR 取严）/ WER（英文） | 不劣于基线；zh ≤ 1.5%、en ≤ 2.5% 作为目标 |
+| 说话人相似度 | SIM-o（WavLM-large + ECAPA-TDNN 余弦）+ ERes2Net / CAM++ 独立裁判；只显示原始余弦，不显示百分比 | 相对基线非劣效，晋升需配对 bootstrap 显著提升 |
+| 音质 | UTMOS、DNSMOS、NISQA 三个预测器 + 缺陷检测器 | 不劣于基线；缺陷率见下 |
+| 缺陷率 | NaN、削波、语音内数字零段、孤立 click、DC 偏置、相对参考底噪的沙沙声、块间台阶 | 每 100 句：NaN=0、削波=0、零段=0、click≤1 |
+| 带宽保真 | Studio 输出相对模型原生 48 kHz 张量是否「只做量化」 | 逐样本一致（除 16-bit 量化外无其它改动） |
+| Live 实时 | 首声延迟 TTFA、RTF、欠载、重缓冲 | 起播后欠载=0、重缓冲=0；TTFA 的 P95 以真机实测定目标 |
+| Studio 质量 | Best-of-N（N=4～8）后与单次生成的配对对比 | 综合奖励显著提升 |
+| 人耳终审 | ABX / CMOS / MUSHRA 盲测，每个被测对不少于 200 次有效判断 | 无显著劣化；声称「更像」需显著优于对照 |
+| 安全 | 授权验证通过率、水印提取率（MP3 / 重采样 / 变速后） | 水印在常见编码后可提取；未授权声音无法入库 |
+
+不降级闸门规则：预先注册非劣效边界（建议起点：SIM 下降不超过 0.005，CER 上升不超过 0.2 个百分点，UTMOS 下降不超过 0.05），使用配对 bootstrap 的 95% 置信区间；任何一项越界即拒绝晋升并保留证据。
+
+---
+
+## 第 4 章　全球顶级克隆语音技术「全过程」拆解（12 支柱）
+
+说明：闭源公司的内部模型细节无法直接核实，下表只引用公开文档、论文与技术报告中已公开的做法；「我们复刻方式」是工程落地方案。
+
+| # | 支柱 | 顶级公司 / 项目的公开做法 | 我们的复刻方式 | 验收证据 |
+| --- | --- | --- | --- | --- |
+| 1 | 授权与身份验证 | ElevenLabs 专业克隆要求「声音验证」（朗读屏幕提示，失败需等待 24 小时）；Microsoft Custom Neural Voice 需申请审批与同意文件；Google Instant Custom Voice 要求同意录音 | 授权勾选 + 随机句朗读验证 + 与上传样本的 SIM 阈值比对 + 审计日志 | 未验证声音无法入库的测试 |
+| 2 | 参考数据质量优先 | ElevenLabs：即时克隆 1～2 分钟干净音频，超过 3 分钟可能变差；专业克隆至少 30 分钟、建议 2～3 小时；强调「干净时长」而不是文件个数；无混响、无底噪、无背景音乐 | 参考体检（SNR / 混响 / 带宽 / 削波 / 多说话人 / 有损编码痕迹）+ MMR 选段 + 复合参考 ≤ 20 秒 | 体检召回与误报测试 |
+| 3 | 数据治理流水线 | Fish Audio S2：质量评估模型与富转写 ASR 模型既做预训练数据过滤，又做强化学习奖励，避免阶段间分布漂移 | 入库时用同一套评分器（ASR + 质量 + SIM）过滤片段，并复用于推理期择优 | 过滤前后指标对比 |
+| 4 | 说话人条件化 | MiniMax-Speech：可学习的说话人编码器，只需未转写的参考音频；VALL-E 系：提示续写；VoxCPM2：隔离参考 + 续写两种模式 | 自动模式选择 + 声纹条件冻结一次（prompt cache）复用 | 模式选择与降级单测 |
+| 5 | 基座模型架构 | VoxCPM2：tokenizer-free 扩散自回归（LocEnc → TSLM → RALM → LocDiT，AudioVAE V2，48 kHz）；Fish S2：Dual-AR（Qwen3-4B 作 Slow AR，4 层 Fast AR，10 层 RVQ）；MiniMax：AR + Flow-VAE；Cartesia Sonic-3：状态空间模型（SSM） | 冠军 = VoxCPM2；其余在沙盒对比 | bake-off 报告 |
+| 6 | 微调（专业克隆） | ElevenLabs PVC：对模型做微调，3～6 小时；GPT-SoVITS 的 few-shot 同理 | VoxCPM2 LoRA 微调（官方脚本），留出验证集，学习曲线实验 | 过拟合 / 遗忘检测 + 闸门 |
+| 7 | 偏好对齐 / 强化学习 | Fish S2 / OpenAudio S1：GRPO，奖励 = α·STT + β·偏好 + γ·SIM，抑制幻觉、跳字、音色漂移；CosyVoice3：强化学习后 CER 明显下降 | 推理期 Best-of-N，奖励同样三项；奖励数据落盘，后续可做 DPO / GRPO LoRA | BoN 配对提升的显著性 |
+| 8 | 推理工程 | Fish S2：前缀缓存命中率均值 86.4%，H200 上 RTF 0.195、首包约 100 ms；VoxCPM2：RTX 4090 上 RTF 约 0.30，Nano-vLLM 下约 0.13 | 冻结声纹缓存、CUDA graph / torch.compile、bake-off 加速引擎 | T4 实测 RTF / TTFA / 显存 |
+| 9 | 文本前端与风格控制 | Fish S2：自然语言指令内嵌（如 whisper、angry、laugh）；VoxCPM2：括号风格描述；Chatterbox：exaggeration 参数 | 文本规范化 + 括号语义拆分（Live 剥离、Studio 保留为风格控制） | F7 缺陷转绿 |
+| 10 | 后处理与交付 | 顶级系统追求「最少处理」：保持原生采样率、真峰值限制、抖动、响度标准 | 48 kHz Studio 通道，soxr VHQ 有状态重采样（仅 Live 需要时），pyloudnorm 响度，TPDF 抖动 | 逐样本一致 / 频谱保留 |
+| 11 | 评测体系 | Seed-TTS-eval（WER + SIM），MUSHRA / CMOS / ABX，Audio Turing Test，EmergentTTS-Eval | 双 ASR + 双声纹裁判 + 三个 MOS 预测器 + 盲测页，评测集与训练集严格隔离 | 评测报告 |
+| 12 | 安全与溯源 | Resemble Chatterbox 内置 PerTh 神经水印（可抵抗 MP3 压缩）；Meta AudioSeal；Azure / Google 的同意机制 | 水印 bake-off + manifest 记录 + 授权审计 | 水印鲁棒性测试 |
+
+核心结论：「顶级」不是某一个神奇模型，而是【模型 + 数据治理 + 微调 + 对齐 + 低损耗交付 + 客观评测 + 版本闸门 + 合规】的完整闭环。我们在开源可得范围内，用 VoxCPM2 作为底座，把其余 11 个环节补齐。
+
+---
+
+## 第 5 章　模型决策：去除 Qwen3，冠军 VoxCPM2，其余只做对比
+
+### 5.1 Seed-TTS-eval 公开数据对照（均来自官方 README / 论文；不同论文的 SIM 评分器不一定相同，不可直接横向当作同一把尺子）
+| 模型 | 参数 | zh CER / SIM | en WER / SIM | hard CER / SIM | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| Seed-TTS（闭源，字节） | 未公开 | 1.12 / 79.6 | 2.25 / 76.2 | 7.59 / 77.6 | 行业参照 |
+| VoxCPM2（OpenBMB） | 2B | 0.97 / 79.5 | 1.84 / 75.3 | 8.13 / 75.3 | 48 kHz，30 语言，Apache-2.0 |
+| Fun-CosyVoice3-0.5B（阿里） | 0.5B | 1.21 / 78.0 | 2.24 / 71.8 | 6.71 / 75.8 | 强化学习版 zh 0.81 |
+| CosyVoice3-1.5B | 1.5B | 1.12 / 78.1 | 2.22 / 72.0 | 5.83 / 75.8 | hard 集更强 |
+| IndexTTS2（B 站） | 1.5B | 1.03 / 76.5 | 2.23 / 70.6 | 7.12 / 75.5 | 情感 + 时长可控 |
+| Fish Audio S2 | 约 4.4B + 0.4B | 厂商另以 Audio Turing Test 与 EmergentTTS-Eval 报告 | 同左 | 同左 | 许可证必须核对 |
+
+读表结论：没有任何一个模型在所有维度全面领先；VoxCPM2 在中文 CER 与英文 WER 上处于第一梯队，且是唯一同时提供 48 kHz 原生输出、官方 LoRA、隔离参考克隆、括号风格控制、Apache-2.0 许可的选项，因此继续作为冠军；其余模型进入沙盒 bake-off，用同一评测集、同一评分器在真机上比较，数据说话。
+
+### 5.2 为什么必须去除 Qwen3
+Qwen3-TTS-12Hz-1.7B 基于离散码本（12 Hz 码帧），其 Base 版 generate_voice_clone 不支持指令；与 VoxCPM2 的连续潜变量 + 48 kHz 路线相比，在带宽与风格可控性上没有优势；保留它还会带来：双依赖冲突、训练链路分叉、隐性回退（F2）、评测口径混乱。因此要【删除而不是停用】，回退依赖 git 标签 v17-baseline，而不是保留死代码。
+
+### 5.3 摘除后的唯一回退链
+VoxCPM2 fp16（T4 优先）→ 试合成体检失败 → fp32 或 bf16 重载 → 仍失败 → CPU/GGUF 的 VoxCPM2（llama.cpp-omni 或 VoxCPM.cpp，仅用于功能保底，需标注音质与速度未验证）→ 仍失败 → 明确报错并展示原因。任何情况下都不得静默切换到其它模型。
+
+---
+
+## 第 6 章　多方案并行与「沙盒择优」协议
+
+### 6.1 四个候选方案
+- 方案 A「VoxCPM2 零训练满血版」：Controllable + Ultimate 双模式自动选择，48 kHz 全链路，修复 F3～F7，推理期 Best-of-N（Studio）。优点：风险最低、见效最快；缺点：个别音色相似度有上限。
+- 方案 B「A + 专业克隆（LoRA 微调）」：在 A 的基础上，对每个语音库在数据达标时做 VoxCPM2 LoRA 微调，晋升前必须过闸门。优点：相似度与稳定性上限最高；缺点：需要 5～60 分钟干净数据和训练时间，有过拟合与遗忘风险。
+- 方案 C「A + 挑战者引擎路由」：保留 VoxCPM2 为冠军，把 Fish Audio S2、IndexTTS2、Fun-CosyVoice3、Chatterbox Multilingual 作为 Studio 的可选引擎，经闸门后才允许某个语音库使用。优点：覆盖 VoxCPM2 的短板（如 hard 文本）；缺点：许可证与依赖复杂，显存大。
+- 方案 D「A + 偏好优化」：在 A 的 Best-of-N 之上，把每次择优产生的（赢家，输家，奖励）落盘，积累后训练 DPO / GRPO 风格的 LoRA 偏好适配器，复刻 Fish S2 的强化学习收益。优点：长期收益最大；缺点：训练复杂，必须防止奖励黑客（reward hacking）。
+
+### 6.2 我的推荐路线（可被实验推翻）
+A 为底座（必做）→ B 作为「每个语音库的升级项」（数据达标才触发）→ D 的推理期 Best-of-N 并入 Studio（必做）→ C 仅作为 bake-off 与可选路由（只对比，不默认启用）→ D 的训练期偏好优化列为后续里程碑。
+
+### 6.3 沙盒 / 模拟器自动选型（由你自动下载安装并择优）
+先探测硬件（有无 NVIDIA GPU、显存、CPU 核数、内存、磁盘、网络、是否可用 Docker），再按下表打分选型，权重：可复现 30、与目标环境一致性 25、成本与耗时 15、可观测性 15、隔离安全 15。
+| 沙盒 | 用途 | 说明 |
+| --- | --- | --- |
+| uv + 隔离虚拟环境 | 所有单测与单引擎实验的默认环境 | 每个候选引擎独立环境，避免 transformers 等依赖冲突 |
+| Docker（含 NVIDIA Container Toolkit，若有 GPU） | 可复现的 bake-off 容器 | VoxCPM 仓库自带 docker 目录可参考 |
+| Kaggle Notebook（T4×2） | 目标运行环境，L2 终审 | 通过 Kaggle CLI 或手动运行；令牌只放 Secrets |
+| Google Colab / 云 GPU | 无本地 GPU 时的 L2 替代 | 必须记录 GPU 型号，因为 RTF 不可跨卡比较 |
+| CPU 沙盒 + GGUF / ONNX | 无 GPU 时的 L1 | llama.cpp-omni、VoxCPM.cpp、VoxCPM-ONNX；音质可参考、速度不可外推 |
+| Mock / Fake 引擎 | L0 回归基线 | 参考代码已有 MockEngine 与 vox_fake，沿用 |
+| Playwright + Chromium | 浏览器端到端（UI、WebSocket、音频播放链路） | 无头模式捕获 PCM 做断言 |
+若没有 GPU，必须明确告知用户：L2 / L3 结论无法得出，只能交付 L0 / L1 证据，并给出在 Kaggle 上一键复验的脚本与验收表。
+
+### 6.4 择优规则
+综合分 = 0.35 × 相似度（归一）+ 0.25 × 内容一致性（1 − CER 归一）+ 0.25 × 音质（UTMOS 与缺陷率合成）+ 0.15 × 实时性（TTFA 与 RTF）；同时必须先通过不降级闸门，任何「一票否决项」（NaN、削波、水印缺失、授权缺失）直接淘汰。评测集：不少于 150 句，覆盖纯中文、纯英文、中英混合、数字 / 日期 / 金额 / 网址、长句、绕口令与 hard 文本、情绪句；每句 3 个固定种子；与训练文本零交集；输出完整报告（含置信区间）。
+
+---
+
+## 第 7 章　端到端系统架构（S0～S12 全流程）
+
+每个阶段都要有：输入、输出、关键技术、可观测指标、失败处理、单测断言。
+
+- S0 授权与验证：授权勾选；随机句朗读验证（类似 ElevenLabs 声音验证）；与上传样本做 SIM 比对；写入审计日志。失败即终止，不入库。
+- S1 无时长限制入库：沿用分块断点续传、录音分片、流式切分（约 8 秒，上限 14 秒）；不整段读入内存；只受磁盘剩余保护。
+- S2 参考体检（只测不改）：SNR、混响（估计 RT60）、削波、带宽与有损编码痕迹（高频截止）、多说话人检测（diarization）、底噪谱、音乐底噪；输出可读建议。
+- S3 参考预处理策略引擎：默认保真（去直流、边缘淡化、不降噪）；仅当体检触发阈值才启用「分离 / 降噪 / 去混响」候选，并且每个候选必须通过 A/B 闸门（用同一文本克隆，比较相似度、UTMOS 与缺陷率）才可采用；原件永不覆盖。
+- S4 参考选择与复合：对片段打分（质量 × 声纹多样性），用 MMR 选取；单条 3～15 秒；复合参考总长 ≤ 20 秒；同一录音条件聚类，避免混入不同麦克风。
+- S5 转写可信链：双 ASR（Whisper-large-v3 与 FunASR Paraformer-zh）互校，计算互相 CER；一致才标记「可信」，否则强制人工确认；字速与时长异常告警。
+- S6 声音档案构建：按模式选择器生成 prompt cache——有可信文本且 ≤ 20 秒用 Ultimate（把同一参考同时传给参考与提示，官方建议这样相似度最高）；否则 Controllable；试合成用 ASR 复核 CER，不合格自动降级；缓存带哈希与版本号并持久化；两张 GPU 的权重指纹与缓存指纹必须一致。
+- S7 可选专业克隆：达到数据门槛后排队做 LoRA 微调（第 11 章），产物进入版本谱系。
+- S8 文本前端：数字、日期、金额、单位、网址口语化；多音字与专名词表；括号语义拆分（Live 剥离整段括号，Studio 保留为 VoxCPM2 风格控制）。
+- S9 生成：Live 通道使用冻结缓存 + 流式 + 适度步数；Studio 通道使用固定高步数（不随 RTF 自动下调）、开启 retry_badcase、固定种子集、Best-of-N。
+- S10 缺陷检测与择优：对每个候选运行缺陷检测器（NaN、削波、零段、click、DC、沙沙声相对参考底噪、块间台阶）+ ASR CER + SIM + UTMOS；计算综合奖励；选赢家并生成「证书」（可复核的指标记录）。
+- S11 交付：Studio 输出 48 kHz；Live 若需 24 kHz，仅用 soxr VHQ 有状态重采样；响度按 pyloudnorm 目标；真峰值软限幅与 TPDF 抖动；水印；artifacts 全程落盘与 SHA-256 校验；帧头携带采样率。
+- S12 评测与谱系：每次生成与每次微调都进入评测；闸门通过才晋升；金丝雀自动回滚；ABX 盲测页收集人耳证据。
+
+关键工程原则：声纹条件只冻结一次；48 kHz 在 Studio 通道内不被改动；所有重处理只存在于「可 A/B 关闭」的分支；任何分支关闭后行为与基线逐样本一致。
+
+---
+
+## 第 8 章　Qwen3 精准摘除手术方案
+
+### 8.1 摘除完成的客观判据（先写成测试，起初是红灯）
+- 在所有源码、配置、依赖清单、下载清单、UI 文案、诊断项中检索「qwen」（忽略大小写），命中数为 0；唯一允许出现的位置是 CHANGELOG 与 NOTICE，用于说明历史与致谢。
+- 依赖安装清单中不再出现 faster-qwen3-tts、qwen-tts、Qwen3-TTS-Tokenizer。
+- 启动日志、状态接口、诊断页中引擎名只会是 VoxCPM2 或 Mock。
+- 强制注入「VoxCPM2 加载失败」后，系统按第 5.3 节回退链处理，且永不加载任何 Qwen 权重（通过禁止网络访问 Qwen 仓库的测试验证）。
+
+### 8.2 摘除顺序（每步一个微步，先测后改）
+1. 先打 git 标签 v17-baseline 并备份整文件；生成「Qwen 引用清单」（84 行 / 13 模块）与「SR 硬编码清单」（23 处）作为待办与进度条。
+2. 引擎抽象层：定义引擎接口契约（设置声音、流式合成、识别、打分、后端信息），只保留 VoxCPM2 与 Mock 两个实现；契约测试先行。
+3. 路由与回退：修正 F2 的四条隐性回退；路由「冠军」改为 VoxCPM2；挑战者列表去掉 Qwen；回退链改为 5.3 节。
+4. 配置与启动器：删除 TTS_MODEL、BEST_MODEL_DIR 对 Qwen 的含义；VC_ENGINE 默认值改为 voxcpm2；模型下载清单只保留 VoxCPM2 与评分 / 识别模型；依赖安装只保留 VoxCPM2 所需。
+5. 训练链路重写：data_prep 去掉 Qwen3-TTS-Tokenizer 与 audio_codes 提取，改为生成 VoxCPM 官方微调所需的清单文件（务必先阅读官方 train_voxcpm_finetune.py 以核对字段，不要凭记忆）；train 改为调用官方 LoRA 脚本与配置；evaluate 与 auto_train_loop 换成新评分器；libctl 与 widgets 中的文案同步。
+6. UI 与文档：标题、页脚、诊断验收项、谱系页中的引擎名；添加「引擎：VoxCPM2 · 48 kHz」徽标。
+7. 假模型：vox_fake 与 MockEngine 清理 Qwen 命名，但保持确定性输出，以保证回归基线的哈希比对仍可用（若哈希因重命名而变化，必须先单独提交「仅改名」的一步，并证明 PCM 不变）。
+8. 最终验收：检索命中数 = 0；全量单测通过；Mock 端到端通过；真机回归（L2）通过。
+
+### 8.3 风险控制
+- 每个微步独立提交，提交信息带「步号 + 测试名」；失败时用备份还原，禁止在失败状态上叠加修改。
+- 由于是单文件内嵌 FILES 字典，改动前先把内嵌模块还原成独立文件开发（便于 diff 与测试），发布前再由打包脚本重新生成单单元格版本，并验证两者行为一致。
+
+---
+
+## 第 9 章　音质极致化专项（含沙沙声 / 爆音归因实验）
+
+### 9.1 原则
+顶级系统的音质优势大部分来自「少做破坏性处理」与「严格择优」。所以规则是：保真第一、证据第二、处理第三；所有处理必须可 A/B，且默认关闭。
+
+### 9.2 必做改造清单
+- 48 kHz 全链路：建立单一来源的采样率上下文（取代 23 处硬编码）；协议帧头携带采样率；浏览器端 AudioContext 与 artifacts 同步；Studio 默认 48 kHz，Live 可配置 24 kHz 或 48 kHz。
+- 重采样：以 soxr 的 VHQ 档位做有状态流式重采样，分块与整段必须一致；非整数比也能工作；对比现有 FIR 抽取器的混叠抑制与群延迟。
+- 步数策略：Live 才允许自适应降步，且设置不可低于经实验确定的下限；Studio 固定步数（起点 10，实验 12 与 16 看是否有可测收益）；步数与 CFG（起点 2.0）做网格实验，取帕累托最优。
+- 重试与种子：开启 retry_badcase（Studio），升级 voxcpm 到锁定的 git 提交以获得 seed 参数（或通过 bake-off 验证补丁方案）；同一文本同一种子的输出相关性与逐样本一致性要记录（GPU 非确定性要说明）。
+- 精度：T4（sm75）无 bf16 张量核，fp16 优先；试合成体检失败自动切 fp32；记录各精度下的缺陷率，写入诊断页。
+- 响度：用 pyloudnorm 的集成响度，取代 RMS 近似；保留「恒定音量」控制器但不压缩动态。
+- 量化：TPDF 抖动、真峰值前视软限幅（上限约 -1.5 dBFS）保持；句间停顿用舒适噪声（已有）但需对 48 kHz 重新标定电平。
+
+### 9.3 沙沙声 / 爆音 归因实验（先复现，再修，禁止凭感觉）
+假设清单与对应消融：
+- H1 参考底噪被克隆 → 用同一说话人的「干净录音」与「加噪录音」各克隆，比较输出底噪谱。
+- H2 fp16 数值误差 → 同一缓存下 fp16 对 fp32 做配对，比较缺陷率与 UTMOS。
+- H3 扩散步数过低 → 步数 6 / 8 / 10 / 12 / 16 的配对对比。
+- H4 抽取 / 重采样引入混叠或台阶 → 对比 FIR 抽取、soxr VHQ、不重采样三条路径。
+- H5 舒适噪声电平不当 → 开关对比并测量句间底噪连续性。
+- H6 CFG 过高产生金属感 → CFG 1.5 / 2.0 / 2.5 的对比。
+- H7 参考中的有损编码（MP3 高频截断、低码率）→ 带宽检测与重录对比。
+- H8 ZipEnhancer 等 16 kHz 降噪损伤高频 → 只作为被测候选，默认不用。
+每个假设输出：证据（指标 + 频谱图 + ABX）、结论、是否改默认值。没有证据不改默认值。
+
+### 9.4 参考音频策略（对顶级公司最佳实践的落地）
+- 即时克隆：优先 1～2 分钟干净素材；经 MMR 选出最具代表性的 ≤ 20 秒送入 VoxCPM2；不盲目增加时长（ElevenLabs 明确提醒过长可能变差）。
+- 保留原始母带（尽量 ≥ 44.1 kHz 的无损格式）；送模型前的 16 kHz 编码器输入由模型内部处理，我们不要再额外有损压缩。
+- 录音建议：安静、无混响、固定麦克风与距离、自然语速、覆盖多种语调与音素；避免背景音乐与多人说话。
+
+---
+
+## 第 10 章　评测体系升级
+
+### 10.1 说话人相似度
+- 主评分器：WavLM-large 加 ECAPA-TDNN（与 Seed-TTS-eval 一致，便于和论文对齐）；独立裁判：3D-Speaker 的 ERes2Net 与 CAM++。两类评分器结论一致才可认为「相似度提升」，防止对单一评分器过拟合。
+- 校准：用真实的同人对（genuine）与异人对（impostor）在留出集上估计分布，求 EER 与阈值；在校准完成之前，只展示原始余弦，不展示百分比。
+
+### 10.2 内容一致性
+Whisper-large-v3 与 FunASR Paraformer-zh 双 ASR；规范化文本后算 CER / WER；两者取较差者作为保守值；对「吞字、重复、失控不停止」单独统计。
+
+### 10.3 音质
+UTMOS、DNSMOS、NISQA 三种无参考 MOS 预测器（只用于评估与择优，不进实时通路）；加上缺陷检测器（沿用并对 48 kHz 重新标定）。预测器与人耳可能不一致，因此人耳盲测是终审。
+
+### 10.4 人耳盲测
+ABX 页面沿用并扩展：随机顺序、隐藏来源、记录响应时间、剔除异常答题；每个被测对不少于 200 次有效判断；同时做 CMOS（对比平均意见分）；报告置信区间。
+
+### 10.5 防泄漏与统计
+- 评测文本与说话人必须与任何训练 / 微调数据严格隔离；按录音会话划分，而不是随机切片。
+- 固定 3 个种子；配对 bootstrap 报告 95% 置信区间；多重比较时说明校正方式。
+- 所有指标和阈值都写入 manifest，并带评测器版本号。
+
+---
+
+## 第 11 章　专业克隆（VoxCPM2 LoRA 微调）专项
+
+### 11.1 背景
+ElevenLabs 的专业克隆是对模型做微调，官方建议至少 30 分钟、最好 2～3 小时的干净音频，微调耗时通常 3～6 小时；即时克隆则不改权重，只在生成时用参考做条件。我们的方案 B 用 VoxCPM2 官方 LoRA 脚本复刻这条路径。
+
+### 11.2 必须先核对的事实（不要凭记忆）
+阅读官方仓库 OpenBMB/VoxCPM 的 scripts/train_voxcpm_finetune.py 与 conf/voxcpm_v2 下的两份配置，确认：清单文件字段、采样率约定、验证流程、断点保存、LoRA 合并方式、在 T4 上的显存需求。官方示例的参数（r=32、alpha=32、仅对语言模型与扩散部分启用、学习率 1e-4、1000 步、预热 100 步、有效批 16）只是起点，不是最优。
+
+### 11.3 实验设计
+- 学习曲线：用同一说话人的 5 / 15 / 30 / 60 分钟干净数据分别训练，评估拐点，得出「本系统」的数据门槛，而不是照搬公司数字。
+- 对照组：即时克隆（方案 A）。
+- 超参：r 取 16 / 32 / 64，学习率 5e-5 / 1e-4 / 2e-4，步数早停（按留出集的扩散损失与 SIM / CER）。
+- 防过拟合与记忆：检查模型是否「背诵」训练句（用训练句与新句的 CER / SIM 差异衡量）。
+- 防遗忘：用多语言与 hard 文本集验证微调后其它语言与风格能力没有明显下降。
+- 数据准备：按停顿与句界切分 3～15 秒；双 ASR 转写并人工抽检；剔除多说话人与带音乐片段；统一电平但不做破坏性降噪；保留母带。
+- 晋升：微调结果必须通过不降级闸门并显著优于方案 A 才可晋升；金丝雀期间任一指标越界自动回滚。
+
+### 11.4 训练任务编排
+沿用现有训练任务队列、数据集版本冻结、候选模型 / 升级 / 回滚的语音库机制；把训练命令换为 VoxCPM2 LoRA；训练期间网页作为监控页，不占显存；保证训练与推理不同时抢占同一块 GPU（双卡时分工，单卡时排队）。
+
+---
+
+## 第 12 章　实时通道与工程性能
+
+### 12.1 双通道定义
+- Live（对话）：目标是「连续播放不断流」。使用冻结声纹缓存、首块只等一个语言模型步、按成本模型合并帧；缺陷检测只做轻量版并最多重试一次；不做 Best-of-N。
+- Studio（成品）：目标是「质量最高」。固定高步数、retry_badcase 开启、固定种子集、Best-of-N、完整缺陷与评分、48 kHz 无改动输出、生成证书。
+
+### 12.2 引擎层优化（均以 T4 真机实测为准）
+- torch.compile 与 optimize：开启失败自动关闭并如实显示；记录首次预热时间。
+- 加速引擎 bake-off：VoxCPM 原生、Nano-vLLM-VoxCPM、vLLM-Omni、GGUF（llama.cpp-omni / VoxCPM.cpp）、ONNX。注意 T4 不支持 FlashAttention-2，需实测可用的注意力实现。官方公布的 RTF（RTX 4090：约 0.30，Nano-vLLM 约 0.13）不能外推到 T4。
+- 双 GPU：每卡一个引擎实例；权重指纹与声纹缓存指纹必须一致；单卡故障由另一卡接管并换种子降温重试一次（沿用 v14 的 XRETRY 思想）。
+- 缓存：声音档案缓存带内容哈希；换声音只重算缓存，不重载模型。
+
+### 12.3 连续播放保障
+沿用帧序号、背压、断线续传、起播水位规划与桥接音库；对 48 kHz 重新标定帧长与成本模型；Live 若输出 24 kHz，则协议帧头必须声明采样率，浏览器端不得再假设固定采样率。
+
+---
+
+## 第 13 章　安全、合规与数据治理
+
+- 授权：只允许克隆本人或已获书面授权的声音；授权记录与声音数据绑定；提供「一键彻底删除」且真正删除（含缓存、特征、版本谱系中的数据）。
+- 声音验证：随机句朗读验证；与已上传样本做 SIM 比对；多次失败要冷却；不可绕过。
+- 水印与溯源：对所有输出叠加不可闻水印（候选 PerTh 与 AudioSeal 做 bake-off：测 MP3 压缩、重采样、轻微变速、加噪后的提取率与对音质的影响）；manifest 写入水印版本与生成参数；明确告知用户水印不能防止所有滥用。
+- 许可证：逐一核对 VoxCPM2、候选引擎、评分器、降噪 / 分离模型的许可证与商用限制；写入 NOTICE 与 REPORT；不确定的标注「需用户确认」。
+- 隐私：声纹是生物特征；数据默认只存私有位置，权限最小化；日志脱敏；审计日志不含原始音频与文本全文。
+- 密钥：令牌只放 Kaggle Secrets 或环境变量，不写入脚本、不进入 URL、不出现在日志；历史上出现过的令牌必须撤销重建；建议把仓库 bizuming1-ui/111 改为私有。
+- 搜索与浏览器模块（原脚本内）：遵循原有「遇验证码 / 429 即停止、无绕过」的红线，不做任何改动。
+
+---
+
+## 第 14 章　TDD 微步迭代协议与里程碑清单（M0～M32）
+
+### 14.1 单个微步的固定模板
+1. 汇报开场（一到两句）：「【当前状态】…　【下一步动作】…」。
+2. Thought：本步目标、预期现象、可能的失败原因。
+3. 备份：cp 目标文件到带时间戳的备份名。
+4. 定位：grep -n 找到符号，sed -n '起,止p' 查看上下文，只看需要的范围。
+5. 先写失败测试（红）：用 python3 - <<'EOF' 内联脚本，断言新行为；确认它确实失败。
+6. 最小改动（绿）：只改让测试通过的最小代码；新行为挂独立开关。
+7. 运行：本步新测试 + 之前所有微步的测试 + Mock 基线哈希比对。
+8. 汇报结尾（一到两句）：结果与证据；若失败，用备份还原并写明原因。
+9. 提交：提交信息带步号与测试名。
+
+### 14.2 里程碑清单（每项给出：目标 / 关键断言 / 回退方式）
+- M0 环境探测与沙盒选型：探测 GPU、显存、CPU、内存、磁盘、网络、Docker；按第 6.3 节打分并安装选中的沙盒；断言：uv 环境可建、Mock 可跑、Playwright 可启动；回退：删除环境目录。
+- M1 备份与基线冻结：cp 备份整文件，打 git 标签 v17-baseline，记录 SHA-256，ast 解析整文件；断言：解析通过且哈希已记录。
+- M2 Mock 基线脚本：把内嵌模块还原为独立文件；以 Mock 引擎（VC_LAUNCH_TEST=1）跑通原版；对固定文本录制 PCM 的 SHA-256 作为 golden；断言：连续两次运行哈希一致。
+- M3 依赖面清单（先红灯）：生成 Qwen 引用清单与 SR 硬编码清单并写成「摘除完成判据」测试；断言：此刻测试为红，数字与第 1 章一致（84 / 13 / 23）。
+- M4 引擎抽象与契约测试：定义契约，只保留 VoxCPM2 与 Mock；断言：两个实现都满足契约；契约测试覆盖设置声音、流式合成、识别、打分、后端信息。
+- M5 采样率上下文：把 SR 硬编码收敛为单一来源，默认仍为 24 kHz；断言：golden 哈希不变；清单从 23 降到 0。
+- M6 流式重采样器：soxr VHQ 有状态实现；断言：分块与整段一致（最大偏差 1e-6 量级）、混叠抑制优于原 FIR、非整数比可用、总长度正确。
+- M7 Studio 48 kHz 通道：协议帧头携带采样率；浏览器 AudioContext 对齐；断言：协议往返无损、高于 12 kHz 的能量保留、artifacts 校验通过。
+- M8 括号语义拆分（修复 F7）：Live 剥离整段括号，Studio 保留；断言：「(开心)你好」在 Live 得到「你好」，在 Studio 保留风格指令；括号不成对时不崩溃。
+- M9 步数策略解耦（F4）：Live 可降步且有下限；Studio 固定步数；断言：任意 RTF 输入下 Studio 步数不变；Live 不低于下限。
+- M10 重试与种子（F5、F6）：升级并锁定上游提交以获得 seed，或验证补丁；Studio 开启 retry_badcase；断言：seed 参数被真实传入；同种子重复输出的一致性指标被记录。
+- M11 参考体检升级：加入 SNR、RT60 估计、带宽与有损痕迹、多说话人、底噪谱；用合成信号（加噪 / 混响 / 低通 / 双说话人）做召回与误报测试；断言：召回与误报达标，绝不改原件。
+- M12 预处理策略引擎：默认保真；触发条件才启用候选处理；断言：处理开关关闭时输出逐样本一致；开启时必须通过 A/B 闸门才被采用。
+- M13 参考选择与复合：MMR 选段，复合 ≤ 20 秒，同录音条件聚类；断言：固定种子可复现；不足两条自动退回单条。
+- M14 转写可信链：双 ASR 互校；断言：一致则标记可信；不一致强制人工确认；字速异常告警。
+- M15 声纹评分器升级与校准：WavLM-large + ECAPA 为主，ERes2Net / CAM++ 为裁判；断言：同人对分数高于异人对，EER 在留出集上被估计；未校准时不显示百分比。
+- M16 音质预测器接入：UTMOS、DNSMOS、NISQA（仅评估）；断言：对干净语音与加噪语音能区分；不进入实时通路。
+- M17 缺陷检测器 48 kHz 重标定：沿用并扩展；断言：对注入的 NaN、削波、零段、click、DC、底噪、台阶全部召回，对干净语音误报率低。
+- M18 Studio Best-of-N 接通真机通道（修复 F12）：奖励 = 内容一致性 + 音质 + 相似度 − 缺陷惩罚；断言：接口不再返回 501；Mock 下赢家选择正确；生成证书可复核。
+- M19 声音档案缓存与指纹：缓存持久化、哈希与版本；断言：两张卡缓存指纹一致；换声音不重载模型。
+- M20 Qwen 摘除 1：路由与回退链（F2）；断言：强制注入加载失败后只走第 5.3 节回退链，且不触网访问 Qwen。
+- M21 Qwen 摘除 2：配置、下载清单、依赖安装、UI 文案、诊断项；断言：检索命中数逐步下降到只剩训练链路。
+- M22 Qwen 摘除 3：训练链路重写（F11）；断言：数据清单生成符合官方字段；训练命令能在 CPU 假模型上跑通 1 步；检索命中数为 0。
+- M23 专业克隆实验：学习曲线（5 / 15 / 30 / 60 分钟）、过拟合与遗忘检测、晋升闸门；断言：闸门拒绝更差候选，接受显著更好候选。
+- M24 引擎 bake-off 沙盒：VoxCPM2 与挑战者在隔离环境、统一适配器、统一评测集下比较；断言：同一评测集与种子、同一评分器版本；报告含置信区间与许可证结论。
+- M25 加速 bake-off：torch.compile、Nano-vLLM-VoxCPM、vLLM-Omni、GGUF；断言：T4 真机的 RTF、TTFA、显存已记录；未测的明确标「未验证」。
+- M26 水印 bake-off：PerTh 与 AudioSeal 的鲁棒性与音质影响；断言：MP3 与重采样后可提取；音质预测器无显著下降。
+- M27 授权与声音验证流程；断言：未验证声音无法入库；随机句每次不同；失败冷却生效。
+- M28 UI：Live / Studio 切换、48 kHz 指示、闸门报告、盲测页；断言：Playwright 可完成一次完整流程。
+- M29 端到端 Mock 回归：全开关打开与全开关关闭两种配置；断言：关闭时与 golden 逐样本一致；打开时所有新增检查生效。
+- M30 端到端真机回归（L2）：评测集 150 句 × 3 种子；断言：指标表完整，缺陷率达标，复现闸门通过。
+- M31 最终闸门与晋升：不降级 + 显著提升；金丝雀自动回滚演练；断言：人为注入劣化时系统自动回滚。
+- M32 文档与交付：REPORT、CHANGELOG、NOTICE、已验证 / 未验证清单；断言：检索「qwen」命中数为 0（除 CHANGELOG 与 NOTICE），所有链接有效。
+
+### 14.3 失败处理规则
+任何一步失败：先用备份还原，再写明原因与证据，再提出两个以上修复假设并用实验区分；连续三次失败要停下来向用户汇报「已尝试的路径、证据、建议的替代路径」，不得用调低断言来「过关」。
+
+---
+
+## 第 15 章　端到端回归与验收矩阵
+
+### 15.1 回归层次
+- 单元层：各微步的内联脚本测试（纯函数、契约、边界）。
+- 集成层：Mock 引擎 + 真实 FastAPI + WebSocket 协议；检查帧序号、背压、断线续传、artifacts 校验、权限与库隔离。
+- 浏览器层：Playwright 驱动真实页面，完成「授权 → 录音或上传 → 体检 → 克隆 → 合成 → 播放 → 下载 → 盲测」，并断言播放 PCM 与 artifacts 逐样本一致。
+- 真模型层（L1 / L2）：VoxCPM2 真实权重；记录显存、RTF、TTFA、缺陷率、各项指标。
+- 人耳层（L3）：ABX 与 CMOS。
+
+### 15.2 验收矩阵（全部绿灯才算完成；做不到的必须明确标「未验证」并给出验证方法）
+| 编号 | 验收项 | 证据 | 等级 |
+| --- | --- | --- | --- |
+| V1 | Qwen 检索命中数为 0 | 检索输出 | L0 |
+| V2 | 强制失败注入后回退链正确且不触网访问 Qwen | 日志与网络拦截记录 | L0 |
+| V3 | 开关全关时 PCM 与基线逐样本一致 | SHA-256 | L0 |
+| V4 | 采样率硬编码清单为 0，协议帧头携带采样率 | 检索与协议测试 | L0 |
+| V5 | Studio 输出相对模型原生 48 kHz 仅有量化差异 | 逐样本比对 | L1 |
+| V6 | 流式重采样分块与整段一致 | 单测 | L0 |
+| V7 | 括号风格语义在 Live 与 Studio 的行为符合规范 | 单测 | L0 |
+| V8 | Studio 步数固定，Live 步数有下限 | 单测 | L0 |
+| V9 | seed 参数真实生效，复现性指标被记录 | 真机日志 | L1 / L2 |
+| V10 | 参考体检召回与误报达标且不改原件 | 合成信号测试 | L0 |
+| V11 | 双 ASR 互校与人工确认链生效 | 单测 + 集成 | L0 / L1 |
+| V12 | 声纹评分器已校准，EER 已记录 | 留出集报告 | L1 / L2 |
+| V13 | 缺陷检测器对注入缺陷全部召回 | 单测 | L0 |
+| V14 | Best-of-N 接口可用，赢家有证书 | 集成测试 | L0 / L2 |
+| V15 | 复现闸门：在 Seed-TTS-eval 协议下复现官方公布值 | 评测报告 | L2 |
+| V16 | 不降级闸门拒绝更差候选、接受显著更好候选 | 单测 + 报告 | L0 / L2 |
+| V17 | 专业克隆学习曲线与过拟合 / 遗忘报告 | 实验报告 | L2 |
+| V18 | 引擎与加速 bake-off 报告（含许可证） | 报告 | L2 |
+| V19 | 水印在 MP3 与重采样后可提取 | 鲁棒性测试 | L1 |
+| V20 | 授权与声音验证不可绕过 | 集成测试 | L0 / L1 |
+| V21 | 盲测结果：无劣化，相似度声明有统计支持 | ABX / CMOS 报告 | L3 |
+| V22 | 浏览器端到端流程通过 | Playwright 报告 | L0 / L1 |
+
+### 15.3 「完成」的诚实定义
+没有任何方法能在数学上保证「所有语音永远没有沙沙声或爆音」，也不存在「99% 人耳相似」这种可信指标。本项目对「成功」的可验证定义是：每条输出都经过客观缺陷检测；不达标自动重试或如实标注「未达标放行」；所有更新都过不降级闸门；人耳盲测给出统计结论；任何未能验证的内容都被如实列出。
+
+---
+
+## 第 16 章　决策记录（ADR，供你直接遵循）
+
+- ADR-01　引擎唯一冠军为 VoxCPM2；Qwen3 彻底删除；回退靠 git 标签。理由：F1、F2、带宽与可控性优势、Apache-2.0。
+- ADR-02　双通道：Live 保连续，Studio 保质量。理由：实时与高步数 / Best-of-N 天然冲突，必须解耦（F4）。
+- ADR-03　Studio 默认 48 kHz 无改动输出；Live 可选 24 kHz 但必须声明采样率。理由：F3 实测 >12 kHz 被丢弃。
+- ADR-04　克隆模式自动选择（Ultimate 或 Controllable），试合成 ASR 复核后降级。理由：官方两种模式各有优势，且转写不可信时续写会吞字。
+- ADR-05　默认保真，预处理需闸门；降噪与分离只是候选。理由：降噪伪影也会被克隆，16 kHz 降噪会损伤高频。
+- ADR-06　评分器：WavLM-large + ECAPA 为主，ERes2Net / CAM++ 为裁判，先校准后展示。理由：F8、与论文可比。
+- ADR-07　对齐用推理期 Best-of-N，奖励三项（内容、偏好、相似度），数据落盘供后续偏好训练。理由：复刻 Fish S2 的奖励设计，且无需训练即可获益。
+- ADR-08　专业克隆走 LoRA，门槛由学习曲线实验确定，不照搬公司数字。理由：公司数字对应其模型与数据管线。
+- ADR-09　所有更新必须过不降级闸门，支持回滚与金丝雀。理由：保护已有质量。
+- ADR-10　沙盒按硬件自动选型，结论带验证等级；无 GPU 只交付 L0 / L1 并提供 Kaggle 复验方案。理由：诚实。
+- ADR-11　升级并锁定上游提交以获得 seed；锁定到提交哈希而不是浮动分支。理由：F6、可复现。
+- ADR-12　水印必选，PerTh 与 AudioSeal 择优。理由：F9、顶级公司的溯源实践。
+- ADR-13　文本前端：括号语义拆分，数字口语化沿用并扩展。理由：F7。
+- ADR-14　开发形态：先把内嵌模块还原为独立文件开发与测试，发布时再打包回单单元格并验证等价。理由：单文件 3 万行不利于精准改动。
+- ADR-15　提示词与报告均不含代码块，只给可验证的断言与路径；代码由你按 TDD 自行实现。
+
+---
+
+## 第 17 章　交付物、汇报格式与红线
+
+### 17.1 交付物
+- 可运行的新版脚本（单单元格）及还原后的模块源码、测试集、评测集与脚本。
+- REPORT.md：基线、改动、实验、bake-off 表、闸门结果、缺陷归因结论、已验证与未验证清单、许可证结论、已知限制。
+- CHANGELOG.md 与 NOTICE.md。
+- 一页「真机复验清单」：在 Kaggle T4×2 上一键复验 V5、V9、V12、V15、V17、V18 的步骤与期望输出。
+
+### 17.2 汇报格式
+每个微步一到两句话：「【当前状态】…　【下一步动作】…」；每个里程碑结束再追加一行证据摘要（测试名、通过数、哈希或指标）；最终汇报附验收矩阵的红 / 黄 / 绿状态。
+
+### 17.3 红线（违反即视为失败）
+- 不得编造任何指标或实验结果；没有跑过的必须写「未验证」。
+- 不得静默回退到任何非 VoxCPM2 引擎；不得保留 Qwen 的死代码或隐藏开关。
+- 不得默认启用降噪、变速、压缩动态等破坏性处理。
+- 不得在没有授权记录的前提下克隆声音；不得绕过声音验证。
+- 不得把令牌、密钥、声纹数据写入仓库或日志。
+- 不得为了通过测试而放宽断言；放宽必须有证据并经 ADR 记录。
+- 不得一次性大改；不得在失败状态上叠加修改。
+
+---
+
+## 第 18 章　参考资源网址（使用前请逐一核对链接有效性与许可证）
+
+### A. 本任务的目标仓库与待移除项
+- bizuming1-ui/111（参考代码 v17/v18）：https://github.com/bizuming1-ui/111（目标仓库；参考代码约 31,624 行；提示词1～5 为空文件）
+- QwenLM/Qwen3-TTS（待彻底移除）：https://github.com/QwenLM/Qwen3-TTS（仅用于定位需要摘除的依赖与命名，不再接入）
+
+### B. VoxCPM2 生态（冠军引擎）
+- OpenBMB/VoxCPM（主仓库）：https://github.com/OpenBMB/VoxCPM（2B / 48 kHz / 30 语言 / Apache-2.0；含 LoRA 脚本与 docker）
+- openbmb/VoxCPM2（Hugging Face 权重）：https://huggingface.co/openbmb/VoxCPM2（Controllable 与 Ultimate Cloning 用法示例）
+- VoxCPM 官方文档：https://voxcpm.readthedocs.io（Quick Start / Usage Guide / Cookbook）
+- VoxCPM 论文（arXiv:2509.24650）：https://arxiv.org/abs/2509.24650（tokenizer-free 扩散自回归）
+- VoxCPM2 LoRA 配置目录：https://github.com/OpenBMB/VoxCPM/tree/main/conf/voxcpm_v2（voxcpm_finetune_lora.yaml / voxcpm_finetune_all.yaml）
+- VoxCPM 微调脚本：https://github.com/OpenBMB/VoxCPM/blob/main/scripts/train_voxcpm_finetune.py（核对清单字段与采样率约定）
+- llama.cpp-omni（GGUF 推理）：https://github.com/tc-mb/llama.cpp-omni（CPU / Metal / CUDA / Vulkan；功能保底与 L1 验证）
+- VoxCPM2-GGUF 权重：https://huggingface.co/DennisHuang648/VoxCPM2-GGUF（README 生态表给出的 GGUF 权重页）
+- 生态项目清单（vLLM-Omni / Nano-vLLM / VoxCPM.cpp / ONNX / ComfyUI 等）：https://github.com/OpenBMB/VoxCPM/blob/main/README.md（加速 bake-off 的来源，URL 以 README 生态表为准）
+
+### C. 顶级公司与挑战者引擎（只对比，不默认启用）
+- ElevenLabs：Voice cloning API（IVC / PVC 官方说明）：https://elevenlabs.io/blog/voice-cloning-api（即时 1～2 分钟；专业 ≥ 30 分钟、3～6 小时微调、声音验证）
+- Fish Audio S2 技术报告（arXiv:2603.08823）：https://arxiv.org/abs/2603.08823（Dual-AR + GRPO，奖励 = STT + 偏好 + SIM）
+- fishaudio/fish-speech：https://github.com/fishaudio/fish-speech（开源实现；许可证必须核对）
+- MiniMax-Speech（arXiv:2505.07916）：https://arxiv.org/abs/2505.07916（可学习说话人编码器 + Flow-VAE）
+- Cartesia Sonic：https://cartesia.ai（SSM 架构，低延迟路线（闭源））
+- resemble-ai/chatterbox：https://github.com/resemble-ai/chatterbox（MIT；exaggeration 控制；内置 PerTh 水印）
+- index-tts/index-tts（IndexTTS2）：https://github.com/index-tts/index-tts（情感与时长可控；Seed-TTS-eval 有公开数据）
+- IndexTTS 2.5 技术报告（arXiv:2601.03888）：https://arxiv.org/abs/2601.03888（含 CosyVoice 3 / IndexTTS 2 对比表）
+- FunAudioLLM/CosyVoice（Fun-CosyVoice3）：https://github.com/FunAudioLLM/CosyVoice（Apache-2.0；强化学习后 CER 显著下降）
+- FunAudioLLM/CosyVoice2-0.5B（含 Fun-CosyVoice3 对照表）：https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B（Seed-TTS-eval 数据来源之一）
+- SWivid/F5-TTS：https://github.com/SWivid/F5-TTS（流匹配零样本克隆，常被用作基线）
+- boson-ai/higgs-audio：https://github.com/boson-ai/higgs-audio（可作为 bake-off 额外候选）
+- RVC-Boss/GPT-SoVITS：https://github.com/RVC-Boss/GPT-SoVITS（few-shot 微调路线参考）
+- microsoft/VibeVoice：https://github.com/microsoft/VibeVoice（长文本多说话人路线参考）
+
+### D. 评测：说话人相似度 / 内容一致性 / 音质
+- BytedanceSpeech/seed-tts-eval：https://github.com/BytedanceSpeech/seed-tts-eval（WER + SIM 事实标准协议）
+- microsoft/UniSpeech（WavLM-large 说话人验证）：https://github.com/microsoft/UniSpeech（SIM-o 主评分器的来源）
+- speechbrain/speechbrain（ECAPA-TDNN）：https://github.com/speechbrain/speechbrain（ECAPA 说话人嵌入）
+- modelscope/3D-Speaker（ERes2Net / CAM++）：https://github.com/modelscope/3D-Speaker（独立裁判）
+- sarulab-speech/UTMOS22：https://github.com/sarulab-speech/UTMOS22（UTMOS 预测器）
+- microsoft/DNS-Challenge（DNSMOS）：https://github.com/microsoft/DNS-Challenge（DNSMOS 预测器）
+- gabrielmittag/NISQA：https://github.com/gabrielmittag/NISQA（NISQA 预测器）
+- openai/whisper-large-v3：https://huggingface.co/openai/whisper-large-v3（英文 / 多语 ASR）
+- modelscope/FunASR（Paraformer-zh）：https://github.com/modelscope/FunASR（中文 ASR 互校）
+- m-bain/whisperX：https://github.com/m-bain/whisperX（词级对齐 / 时间戳）
+
+### E. 音频前后处理与数据治理
+- snakers4/silero-vad：https://github.com/snakers4/silero-vad（语音活动检测、切分）
+- pyannote/pyannote-audio：https://github.com/pyannote/pyannote-audio（说话人分离，剔除多人片段）
+- facebookresearch/demucs：https://github.com/facebookresearch/demucs（人声 / 伴奏分离（仅在体检触发时作为候选））
+- Anjok07/ultimatevocalremovergui：https://github.com/Anjok07/ultimatevocalremovergui（UVR / MDX-Net 分离候选）
+- Rikorose/DeepFilterNet：https://github.com/Rikorose/DeepFilterNet（降噪候选（48 kHz））
+- resemble-ai/resemble-enhance：https://github.com/resemble-ai/resemble-enhance（降噪 + 增强候选）
+- csteinmetz1/pyloudnorm：https://github.com/csteinmetz1/pyloudnorm（ITU-R BS.1770 响度）
+- spatialaudio/python-soxr：https://github.com/spatialaudio/python-soxr（高质量流式重采样）
+
+### F. 水印、安全与基础设施
+- resemble-ai/Perth（PerTh 神经水印）：https://github.com/resemble-ai/Perth（可抵抗 MP3 压缩）
+- facebookresearch/audioseal：https://github.com/facebookresearch/audioseal（Meta 音频水印与检测）
+- astral-sh/uv：https://github.com/astral-sh/uv（隔离环境管理）
+- microsoft/playwright-python：https://github.com/microsoft/playwright-python（浏览器端到端测试）
+- Kaggle/kaggle-api：https://github.com/Kaggle/kaggle-api（目标真机（T4×2）运行与取回结果）
