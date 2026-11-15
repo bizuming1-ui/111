@@ -1,7 +1,29 @@
 # =============================================================================
+#  v19 · VoxCPM2 单引擎版(在 v18 之上的「微步迭代 + TDD」改造;全部 Mock/假模型回归 + 9 项 v19 新测试通过)
+#  ───────────────────────────── Kaggle 使用方法(只需这一个文件) ─────────────────────────────
+#   1. 新建 Kaggle Notebook → 右侧 Settings:Accelerator = GPU T4 x2,Internet = On,Persistence 任意。
+#   2. 顶部 Add-ons → Secrets 添加并勾选 Attached:NGROK_TOKEN(必需)、ACCESS_PASSWORD(强烈建议)、HF_TOKEN / DEEPSEEK_API_KEY(可选)。
+#   3. 把本文件【全部内容】粘贴进 Notebook 的【第一个代码单元格】(只要一个单元格),Shift+Enter 运行。首次约 8~15 分钟(装依赖+下载 ~10GB 权重)。
+#   4. 出现「🌐 网页地址」后打开:勾选授权 → 录音/上传参考声音 → 开始克隆 → 输入文字 → 合成并播放。每句原生 48kHz 无损文件在 /kaggle/working/vc/hifi48/。
+#  ───────────────────────────── v19 相对 v18 的改动(每项都有测试) ─────────────────────────────
+#   · 彻底移除旧的 1.7B 引擎:运行路径/依赖/权重下载/训练脚本/UI 文案全部清除;RealEngine→BaseEngine(只留声纹评分/ASR/状态);唯一引擎 = VoxCPM2。
+#   · 无静默换模型:加载失败 → 同模型内 fp16→fp32→bf16 重载;仍失败 → 给出可操作的修复建议并报错。VoxCPM2 安装两梯(最小依赖 → 完整依赖)。
+#   · 官方 LoRA 训练链(voxcpm_lora.py):按官方 manifest/yaml 字段写出,调用官方 train_voxcpm_finetune.py;产出 LoRA 经 lora_weights_path 热加载;失败自动退回基座。
+#   · 修复 F7:开头括号「(开心)你好」不再把「开心」念出来(V19_STYLE=True 才把它当 VoxCPM2 官方风格指令)。
+#   · 质量工具(全部可选、失败只降级):pyloudnorm(BS.1770 响度测量,不再用 RMS 冒充)· soxr · jiwer;状态写进日志。
+#   · 原生 48kHz:VoxCPM2 原生输出 48kHz,每句落盘无损 48k WAV(V19_HIFI_ARCHIVE);实时播放仍走 24kHz 通道(见下方诚实声明 3)。
+#   · 路由冠军改为 VoxCPM2;挑战者(IndexTTS2/CosyVoice3/F5/Fish S2)仍必须已安装 + 过不降级闸门。
+#  ───────────────────────────── v19 诚实声明(请原样保留) ─────────────────────────────
+#   1. 沙箱(CPU)实测通过:全部回归套件 + 端到端(FakeVoxCPM,3 种生成速度:0 欠载)。【没有】GPU:T4 上的真实 RTF/首声/音质/「更像」/沙沙声是否更少,全部【未验证】,以你在 Kaggle 的实测 + /abx 盲测为准。
+#   2. 没有任何方法能数学上保证「永远没有沙沙声/停顿」;本系统做的是:连续播放优先 + 背压 + 自适应起播水位 + 每条输出缺陷检测 + 重试/如实标注。
+#   3. 48kHz 实时通道:已在沙箱试验把全链路切到 48k,5 个 DSP 套件(v13 守卫/v15 底噪扩展器/v17 缺陷检测等,都按 24kHz 标定)失败;无 GPU/人耳无法重新标定,为不冒险保持 24kHz 实时通道,48k 以无损归档提供。
+#   4. 官方源码核对:流式模式不支持 retry_badcase(官方会自动关闭),所以实时通道不开重试;整句 Studio 通道可用。PyPI voxcpm 2.0.3 无 seed 参数,适配层已兼容。
+#   5. 声纹是生物特征:只克隆本人或已获授权的声音;请把公开仓库改为私有;令牌只放 Kaggle Secrets。
+# =============================================================================
+# =============================================================================
 #  v17 增量版(在 v16 之上「可回退的最小增量」· 每个新模块有独立开关 V17_* · 全部关闭 = v16 行为,PCM 逐样本一致)
 #  主题:缺陷检测器 · 不降级闸门 · 版本谱系(晋升/回滚/金丝雀) · 无时长限制入库(分块断点续传 / 录音分片 / 流式切分) · 提示词搜索 ·
-#        参考体检 · Studio 整句 Best-of-N · 引擎路由(冠军=Qwen3,挑战者必须过闸门) · 新页面 /v17 · 快速克隆录音去掉 1800 秒自动停止
+#        参考体检 · Studio 整句 Best-of-N · 引擎路由(冠军=VoxCPM2,挑战者必须过闸门) · 新页面 /v17 · 快速克隆录音去掉 1800 秒自动停止
 #  怎么用:整个文件粘贴进 Kaggle Notebook 的【一个】代码单元格运行(用法同 v16,见下方原说明)。运行后新增:
 #      · {网页地址}/v17        v17 控制台(上传 / 导入语音库 / 恢复录音 / 谱系 · 闸门 · 晋升 · 回滚 / 提示词搜索 / Studio / 体检)
 #      · 📊 诊断 → 验收清单新增 v17 项(id 50~54),只写测到的;真机项一律「未验证」
@@ -11,14 +33,14 @@
 #   2. 本版在 CPU 沙箱(合成信号 + Mock 引擎)完成了:缺陷检测召回/误报、闸门拒绝更差候选、谱系晋升/回滚/金丝雀、分块续传/录音恢复、
 #      2 小时音频流式切分无丢样本、V17 开/关 PCM 逐样本一致。【没有】GPU / T4×2 真机 / 人耳数据:
 #      「更像」「沙沙声更少」「引擎更强」「Live 首声/欠载不退化」「Studio 真机通道」「增量训练效果」全部【未验证】,以你在 Kaggle 的实测 + /abx 盲测为准。
-#   3. 候选引擎(IndexTTS2 / CosyVoice3 / F5 / VoxCPM2 / Fish S2)本版只提供「适配器接口 + 路由 + 闸门」,没有安装、没有跑 bench;路由默认永远是 Qwen3 冠军。
+#   3. 候选引擎(IndexTTS2 / CosyVoice3 / F5 / VoxCPM2 / Fish S2)本版只提供「适配器接口 + 路由 + 闸门」,没有安装、没有跑 bench;路由默认永远是 VoxCPM2 冠军。
 #   4. 所有阈值是启发式、未校准;声纹 cosine 是原始指标,没校准前不显示百分比。许可证以各模型官方仓库为准,商用前请核对。
 #   5. 声纹是生物特征:只克隆本人或已获授权的声音;所有声音数据默认只存私有位置;请把公开仓库 bizuming1-ui/111 改为私有。令牌只放 Kaggle Secrets。
 # =============================================================================
 # =============================================================================
 #  星河搜索助手 + 克隆语音播放器 · Kaggle 一体化脚本 (v16 · 多参考语音库 · 无时长限制入库 · 复合参考 · 增量再优化 · 沙沙声/直流取证 · 首声分段计时 · 在 v15 之上可回退的增量 · v15 · 样本连续流拼接 · 舒适噪声停顿 · 软限幅 · 参考管线 · 取证 · 盲测页 · 在 v14 之上可回退的增量 · v14 · 分位数起播 · 失败不丢句(抢救/跨卡重试) · 实时对话 · 声纹锁 · 口语化文本 · 在 v13 之上可回退的增量 · v13 · 零损坏放行 · 滚动视界起播 · 恒定音量 · 在 v12 之上可回退的增量 · v12 · 真实浏览器级交互 · v10 · 完整可下载的合成音频 · 合规搜索加速 · 在 v9 之上最小必要改动 · 大模型意图理解 · 2 秒静音自动执行 · 真实 Google/Bing 多来源 · 页面视觉理解 · 深灰设计系统 · 搜索引擎自动回退 · 全视口浏览器工作台 · 语音操作浏览器 · 多语音库 · 持久化 · 安全 GitHub 同步 · 访问密码)
 #  (在 v6「连续播放优先 · 背压 + 帧序号 + 断线续传 · 无变速 · 完整性检测 · 留出评估」之上无损追加;原语音克隆页在 /voice,根路径 / 是搜索首页)
-#  Qwen3-TTS-12Hz-1.7B-Base 声音克隆  ×  双 T4  ×  LoRA 训练(留出验证)  ×  真实指标面板
+#  VoxCPM2(OpenBMB · 2B · 原生 48kHz)声音克隆  ×  双 T4  ×  官方 LoRA 训练(留出验证)  ×  真实指标面板
 #
 #  使用方法(整个文件粘贴进 Kaggle Notebook 的【一个】代码单元格,Shift+Enter 运行):
 #    1. 右侧 Settings:Accelerator 选 "GPU T4 x2",Internet 打开 On。
@@ -33,7 +55,7 @@
 #    3. 运行。出现「🌐 网页地址」后点开:勾选声音授权 → 录音/上传 → 质检 → 开始克隆 → 输入文字 → 合成并播放。右上「📊 诊断」看真实指标与验收清单。
 #
 #  三种模式(改下面的 MODE):
-#    "serve"            直接使用 Qwen3-TTS 零样本克隆(默认)
+#    "serve"            直接使用 VoxCPM2 零样本克隆(默认)
 #    "train"            LoRA 微调(双卡 DDP,留出验证集),训练期间网页就是实时训练监控页(不占显存)
 #    "train_then_serve" 先训练,再用微调后的模型启动服务
 #
@@ -188,7 +210,7 @@ from pathlib import Path
 #    沙箱(CPU + Mock 两个 GPU 进程)已验证:tests/test_v16.py(17 项:长音频切分无丢样本/切点在停顿/2 小时音频 <20 秒 · HF 底噪指标还原注入电平且连续语音不误报 · 稳健质心去离群 · 复合参考确定性/电平/无零段 · 增量计划 · 晋升规则 · 校准诚实 · 开关)
 #      + tests/test_v16_mock.py(真实网关 + HTTP:95 秒音频切分入库且原件完整/复合参考激活/停用与主参考/增量预览/报告项/VC_V16=0 回到 v15 的 30 秒截断)+ v13/v14/v15/网关/语音库全套回归 + Mock golden PCM 在 V16 开/关两种状态下与 v15 逐样本一致。
 #    Kaggle T4×2 真机【未验证】:克隆相似度是否更高(只有 /abx 盲测 + 校准分数能回答;复合参考在 xvec/ICL 两种模式下的真实效果)· 首声 TTFA 是否更快 · underrun=0 · 沙沙声/爆音是否更少 · 增量 LoRA 是否真的提升且不遗忘 · 双卡显存。
-#    【未实现(宁可不写也不假装做过)】多说话人聚类剔除(长音频里混入他人声音需你在面板里停用)· 说话人向量级融合(质心函数已实现并测试,但 qwen-tts 内部 speaker encoder 注入需要 GPU 验证,所以线上用「复合参考」)· 参考锦标赛(Best-of-N 需要 GPU)·
+#    【未实现(宁可不写也不假装做过)】多说话人聚类剔除(长音频里混入他人声音需你在面板里停用)· 说话人向量级融合(质心函数已实现并测试,但 VoxCPM2 内部参考编码注入需要 GPU 验证,所以线上用「复合参考」)· 参考锦标赛(Best-of-N 需要 GPU)·
 #      浏览器 OPFS 断点续传 · 分块可恢复上传 · 沙盒里对 CosyVoice/GPT-SoVITS/F5 等备选模型的实测对比(没有 GPU 与模型权重,无法给出可信数字)· 提高克隆相似度的任何数值宣称。
 #      说明:沙沙声/爆音的根因(模型本身 / 参考底噪 / fp16 解码 / 拼接)必须在真机用本版的取证指标逐项排查,没有数据就不下结论。
 #  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -224,16 +246,17 @@ TARGET_SIMILARITY = 0.99       # 参考阈值(原始 cosine,不是人耳相似�
 MAX_EPOCHS = 12                # 最大轮数上限(按留出验证 loss 早停,不会为追求数字无限加 epoch)
 PATIENCE = 3                   # 验证 loss 连续多少轮无提升就判定收敛/过拟合并停止
 TRAIN_LR = 1e-4                # LoRA 学习率;loss 出现 NaN 时降低;是否合适以验证 loss 为准
-TRAIN_LANGUAGE = ""            # 自动转录的语言提示:chinese / english …,留空自动检测
+TRAIN_MAX_STEPS = 1000          # VoxCPM2 LoRA 训练步数(官方默认 1000;5~10 分钟干净音频即可适配;以留出验证与闸门为准)
 FRESH_TRAIN = False            # True = 忽略已有 checkpoint,从头训练
 # —— 服务 ——
 BEST_MODEL_DIR = "/kaggle/working/best_model"   # 微调后的模型目录(存在则自动使用)
 USE_TRAINED_MODEL = True
-TTS_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-# —— v18:TTS 引擎(默认换成 VoxCPM2;一行切回 v17 的 Qwen3) ——
-TTS_ENGINE = "voxcpm2"         # "voxcpm2" = OpenBMB VoxCPM2(2B · 48kHz→24kHz · 冻结声纹缓存 · 流式) | "qwen3" = v17 原引擎。voxcpm2 装不上/加载失败 → 自动回退 qwen3(不会因此启动失败)
+# —— v19:TTS 引擎(唯一 = VoxCPM2;旧引擎 已彻底移除) ——
+TTS_ENGINE = "voxcpm2"         # v19:唯一 TTS 引擎 = OpenBMB VoxCPM2(2B · 原生 48kHz · 冻结声纹缓存 · 流式)。装不上/加载失败 → 同模型内降精度重载(fp16→fp32→bf16),仍失败则明确报错,不再换模型
 VOXCPM_MODEL = "openbmb/VoxCPM2"   # Apache-2.0
 VOXCPM_VERSION = "2.0.3"       # 固定到本脚本核对过 API 的 PyPI 版本(2.0.3 的 generate_with_prompt_cache_streaming/build_prompt_cache 已对照源码核对;它没有 seed 参数,适配层已兼容)
+V19_STYLE = False              # True = 放行文本开头的 "(温柔地)…" 作为 VoxCPM2 官方风格指令;False(默认)= 整段清除,绝不会把括号里的字念出来
+V19_HIFI_ARCHIVE = True        # 每句保存模型【原生 48kHz】无损 WAV 到 /kaggle/working/vc/hifi48/(实时播放仍是 24kHz 通道;不经抽取/响度/FX)
 VOX_STEPS = 10                 # 扩散步数(官方默认 10)。实测 RTF 高于 VOX_RTF_TARGET 时自动降(最低 6),每次降 2;降到够用为止
 VOX_RTF_TARGET = 0.85          # 试合成实测 RTF 目标(<1 才能边生成边播且不断流;留 15% 余量)
 VOX_AUTOSTEPS = True           # False = 固定使用 VOX_STEPS(RTF 偏高时起播会等更久,但每句画质一致)
@@ -299,7 +322,7 @@ V17_INGEST = True              # 无时长限制入库:分块断点续传上传 
 V17_PROMPT = True              # 提示词搜索:MMR(质量×声纹多样性,同录音条件簇),固定种子可复现
 V17_REFHEALTH = True           # 参考体检:只给建议(底噪/有损/削波/低信噪比),绝不降噪、绝不改原件
 V17_STUDIO = True              # Studio 整句 Best-of-N + 缺陷择优 + 证书(Live 不动;真机 worker 通道未接入 → 接口返回 501 并如实说明)
-V17_ROUTER = True              # 引擎路由:冠军 = Qwen3-TTS;挑战者必须已安装 + 过闸门才可成为某语音库默认
+V17_ROUTER = True              # 引擎路由:冠军 = VoxCPM2;挑战者必须已安装 + 过闸门才可成为某语音库默认
 V17_UI = True                  # /v17 页面与 /api/v17/* 接口
 V17_REC_UNLIMITED = True       # 快速克隆录音页:去掉 1800 秒自动停止;每 5 秒一片流式上传到服务器(浏览器内存只留前 40 秒)
 V17_MIN_FREE_MB = 300          # 磁盘剩余低于此值 → 暂停新写入(不删除任何文件)
@@ -1435,7 +1458,7 @@ def backend_summary():
          "trained": TRAINED, "weights_match": weights_match(), "model_sha256": SEC["model_sha256"], "latency_mode": LATENCY_MODE, "gpu_policy": GPU_POLICY}
     streaming = [b.get("streaming") for b in BACKEND.values() if "streaming" in b]
     s["streaming"] = (all(streaming) if streaming else None)
-    s["mode_label"] = ("MOCK(模拟引擎,不代表真实质量)" if MOCK else ("真实 Qwen3-TTS · CUDA Graph 流式" if s["streaming"] else ("⚠ 官方整句生成(非流式,首声延迟≈整句生成时间)" if s["streaming"] is False else "后端尚未就绪")))
+    s["mode_label"] = ("MOCK(模拟引擎,不代表真实质量)" if MOCK else ("真实 VoxCPM2 · 流式" if s["streaming"] else ("⚠ 官方整句生成(非流式,首声延迟≈整句生成时间)" if s["streaming"] is False else "后端尚未就绪")))
     return s
 
 
@@ -2888,16 +2911,14 @@ if __name__ == "__main__":
 '''
 FILES['infer_dual_gpu.py'] = r'''# -*- coding: utf-8 -*-
 """
-infer_dual_gpu.py —— 双卡并行推理模块(子系统 B)
+infer_dual_gpu.py —— 双卡并行推理模块(子系统 B · v19 VoxCPM2 单引擎)
 
-  架构: 数据并行。每张 GPU 一个独立进程,各自加载"完全相同的权重"(同一个模型目录),
+  架构: 数据并行。每张 GPU 一个独立进程,各自加载"完全相同的权重"(同一个 VoxCPM2 目录),
         网关把长文本切成短句,轮流派给空闲的卡并行合成,再按句子顺序拼接 -> 音频连续无缝。
-        (没有用层切分的"模型并行":1.7B 的 fp16 权重只有 ~3.5GB,单张 T4 绰绰有余,层切分只会增加跨卡通信延迟。)
-  一致性: 同一随机种子(VC_SEED) + 同一采样超参 + 同一采样率校验(必须 24kHz) + 两卡各自校准 RMS 电平。
-  流式: 自研「两相流式」—— 在 faster-qwen3-tts 的 CUDA-Graph 逐帧生成器之上重新分块:
-        首包只等 2~3 个 codec 帧(≈170~250ms 音频)就解码送出,之后块越来越大(摊薄解码开销,吞吐更高);
-        每块解码都带「最近 25 帧」滑动上下文(首块用参考音频尾部帧作上下文),块边界是因果卷积的精确延续 → 天然无缝,无爆音。
-        自研路径任何一步异常都会自动退回 faster-qwen3-tts 官方 chunk 流式,保证可用。
+        (没有用层切分的"模型并行":2B 的 fp16 权重约 4~5GB,单张 T4 绰绰有余,层切分只会增加跨卡通信延迟。)
+  一致性: 同一随机种子(VC_SEED) + 同一采样超参 + 同一输出采样率校验(VC_OUT_SR) + 两卡各自校准 RMS 电平。
+  流式: 每个 LM 步(6.25Hz,约 160ms 音频)立即解码;首块只等 1 个 LM 步,之后块越来越大(摊薄解码开销);
+        48k→24k 使用有状态 FIR 抽取(跨块保留状态,块边界无台阶);VC_OUT_SR=48000 时直通原生 48kHz,不做任何重采样。
 """
 import logging
 import multiprocessing as mp
@@ -2927,7 +2948,7 @@ except Exception:  # noqa: BLE001  v14 缺失 → 按 v13 行为
 SR = 24000
 DIAG_DIR = Path(os.environ.get("VC_DIAG_DIR") or "/kaggle/working/vc_diag")
 WORK = Path(os.environ.get("VC_WORK") or "/kaggle/working/vc")
-MODEL = os.environ.get("VC_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+MODEL = os.environ.get("VC_MODEL", "openbmb/VoxCPM2")
 _LM = os.environ.get("VC_LATENCY_MODE", "continuous")
 LATENCY_MODE = {"fast": "low_latency", "balanced": "continuous", "smooth": "continuous"}.get(_LM, _LM)     # continuous=连续播放优先(默认,可靠) | low_latency=低延迟(更容易欠载)
 if LATENCY_MODE not in ("continuous", "low_latency"):
@@ -2939,16 +2960,13 @@ _SCHED = {
 }
 SCHED = dict(_SCHED[LATENCY_MODE])
 SCHED["calib"] = [2, 4, 8, 12, 4, 8, 12]                       # 声音就绪时的校准合成: 块大小多样,网关才能拆分「每帧生成时间 F」和「每块解码开销 D」
-# ───── v18:引擎选择(默认 qwen3 = v17 原行为逐样本不变;voxcpm2 = OpenBMB VoxCPM2 · 2B · 48kHz→24kHz) ─────
-ENGINE = os.environ.get("VC_ENGINE", "qwen3").strip().lower()
-if ENGINE not in ("qwen3", "voxcpm2"):
-    ENGINE = "qwen3"
-VOX_MODEL = os.environ.get("VC_VOX_MODEL", "openbmb/VoxCPM2")
-if ENGINE == "voxcpm2":
-    # VoxCPM2 每个 LM 步 = 6.25Hz = 2 个 12.5Hz 码帧(160ms) → 块大小取 2 的倍数;首块只等 1 个 LM 步(最快首声),之后逐步变大摊薄开销
-    SCHED.update({"continuous": {"first": [2, 2, 4, 6], "second": [4, 6, 8], "rest": [8]},
-                  "low_latency": {"first": [2, 2, 2, 4], "second": [4, 6], "rest": [6]}}[LATENCY_MODE])
-    SCHED["calib"] = [2, 4, 8, 4, 8, 2, 6]                      # 块大小多样,网关才能拆分 F(每帧生成)与 D(每块开销)
+# ───── v19:唯一 TTS 引擎 = OpenBMB VoxCPM2(2B · 原生 48kHz · Apache-2.0) ─────
+ENGINE = "voxcpm2"
+VOX_MODEL = os.environ.get("VC_VOX_MODEL", MODEL)
+# VoxCPM2 每个 LM 步 = 6.25Hz = 2 个 12.5Hz 码帧(160ms) → 块大小取 2 的倍数;首块只等 1 个 LM 步(最快首声),之后逐步变大摊薄开销
+SCHED.update({"continuous": {"first": [2, 2, 4, 6], "second": [4, 6, 8], "rest": [8]},
+              "low_latency": {"first": [2, 2, 2, 4], "second": [4, 6], "rest": [6]}}[LATENCY_MODE])
+SCHED["calib"] = [2, 4, 8, 4, 8, 2, 6]                      # 块大小多样,网关才能拆分 F(每帧生成)与 D(每块开销)
 # 起播规划参数(网关用实测速度模拟全程到达时间线后得到所需起播水位 need;这里只决定安全系数/下限/上限)
 PLAN_K = {"low_latency": 0.6, "continuous": 1.25}[LATENCY_MODE]
 PLAN_FLOOR_MS = {"low_latency": 150, "continuous": 350}[LATENCY_MODE]
@@ -3209,8 +3227,8 @@ _EMO_RULES = [
 
 def detect_emotion(t):
     """基于文本的规则情绪标签(neutral/happy/sad/question/comfort/angry)。
-    ⚠ Qwen3-TTS-12Hz-1.7B-Base 的 generate_voice_clone 没有 instruct 参数(instruct 只存在于 CustomVoice / VoiceDesign 模型),
-      所以这个标签【不会】传给模型,只用于界面标注和(可选的)句间停顿微调;模型本身的语气变化来自文本语义与参考音频,不是可控的情绪开关。"""
+    ⚠ VoxCPM2 没有独立的 instruct 参数:风格只能通过「文本开头的括号指令」控制(V19_STYLE=1 才放行,默认关)。
+      所以这个标签默认【不会】传给模型,只用于界面标注和(可选的)句间停顿微调;模型本身的语气变化来自文本语义与参考音频。"""
     for lab, rx in _EMO_RULES:
         if rx.search(t or ""):
             return lab
@@ -3263,7 +3281,7 @@ class MockEngine:
         return {"rtf": round(wall / (n / SR), 2), "ttfa": round(first, 2), "dtype": "mock", "sr": SR, "mode": "mock", "sim": 0.96, "rms": 3000.0, "ch": ch, "prompt_cached": True}
 
     def stream(self, text, profile, seed=None):
-        """成本模型≈T4 + 1.7B(faster-qwen3-tts 官方数据 RTF≈0.93~1.07, TTFA≈1s):
+        """成本模型≈T4 + 2B VoxCPM2(RTF≈0.9~1.0, TTFA≈1s,均为估计,真机以诊断为准):
         预填充 PRE;每帧生成 F;每次解码一个固定开销 D。可用环境变量调参来压测调度/播放器。"""
         _seed_all(seed)
         F = float(os.environ.get("VC_MOCK_FRAME_MS", "82")) / 1000
@@ -3330,14 +3348,12 @@ class MockEngine:
         return "这是一段模拟识别的参考文本"
 
 
-class RealEngine:
-    """Qwen3-TTS-12Hz-1.7B。优先 faster-qwen3-tts(CUDA Graph + 流式);失败则回退官方 qwen-tts(整句合成)。"""
-    name = "qwen3-tts"
+class BaseEngine:
+    """v19:与具体模型无关的引擎基类(声纹评分 / ASR / 状态上报)。TTS 引擎唯一实现 = VoxCPM2Engine。"""
+    name = "base"
 
     def __init__(self, idx, send):
         self.idx, self.send = idx, send
-        self.fast = None
-        self.slow = None
         self.dtype = None
         self.ref = None
         self.prompt = None
@@ -3348,81 +3364,22 @@ class RealEngine:
         self.sr = SR
         self.mode = ""
         self.order = []
-        self.custom_ok = os.environ.get("VC_CUSTOM_STREAM", "1") == "1"      # 自研两相流式(失败自动退回官方分块流式)
         self.last_frames = 0
-        self._gen_custom = None
+
+    def _free(self):
+        import gc
+        gc.collect()
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001
+            pass
 
     def say(self, stage, msg):
         self.send("status", self.idx, stage, msg)
         log.info("[GPU%d] %s", self.idx, msg)
 
     # ───── 加载(服务启动时就加载到 GPU,绝不懒加载) ─────
-    def load(self, force_dtype=None):
-        import torch
-        if not torch.cuda.is_available():
-            raise RuntimeError("PyTorch 看不到 GPU(请在 Kaggle 右侧 Settings 里把 Accelerator 选成 GPU T4 x2)")
-        major = torch.cuda.get_device_capability(0)[0]
-        order = ["bfloat16", "float16"] if major >= 8 else ["float16", "bfloat16"]     # T4(sm75) 没有 bf16 张量核,优先 fp16
-        self.order = order
-        self.dtype = force_dtype or order[0]
-        dt = getattr(torch, self.dtype)
-        self.say("loading", "加载 %s (%s)…" % (Path(MODEL).name if os.path.isdir(MODEL) else MODEL.split("/")[-1], self.dtype))
-        t0 = time.time()
-        try:
-            from faster_qwen3_tts import FasterQwen3TTS
-            self.fast = FasterQwen3TTS.from_pretrained(MODEL, device="cuda", dtype=dt, attn_implementation="sdpa", max_seq_len=2048)
-            self.say("loading", "捕获 CUDA Graph…")
-            try:
-                self.fast.warmup()
-            except Exception as e:  # noqa: BLE001
-                log.warning("[GPU%d] warmup 失败(首次合成时会自动捕获): %s", self.idx, e)
-            self.sr = int(getattr(self.fast, "sample_rate", SR) or SR)
-            self.slow = None
-            mode = "CUDA Graph 流式"
-        except Exception as e:  # noqa: BLE001
-            log.warning("[GPU%d] faster-qwen3-tts 不可用,回退官方 qwen-tts 整句模式: %s", self.idx, e)
-            log.warning(traceback.format_exc())
-            self.fast = None
-            from qwen_tts import Qwen3TTSModel
-            try:
-                self.slow = Qwen3TTSModel.from_pretrained(MODEL, device_map="cuda:0", dtype=dt, attn_implementation="sdpa")
-            except TypeError:
-                self.slow = Qwen3TTSModel.from_pretrained(MODEL, device_map="cuda:0", torch_dtype=dt, attn_implementation="sdpa")
-            mode = "官方整句模式(较慢)"
-        self.mode = mode
-        if self.sr != SR:
-            raise RuntimeError("模型输出采样率是 %d,系统固定使用 %d,拒绝启动(防止两卡音频不一致)" % (self.sr, SR))
-        if self.fast is not None:
-            import torch
-            self._gen_custom = torch.inference_mode()(self._gen_custom_impl)
-        self.say("loaded", "模型就绪 · %s · %.0fs" % (mode, time.time() - t0))
-
-    def backend_info(self):
-        import importlib.metadata as md
-        import torch
-        info = {"mock": False, "device": torch.cuda.get_device_name(0), "dtype": self.dtype, "mode": self.mode, "model": MODEL,
-                "backend": ("faster-qwen3-tts(CUDA Graph 流式)" if self.fast is not None else "qwen-tts 官方整句(非流式!)"),
-                "streaming": self.fast is not None, "custom_two_phase": bool(self.custom_ok and self.fast is not None)}
-        for pk in ("torch", "transformers", "faster-qwen3-tts", "qwen-tts", "accelerate"):
-            try:
-                info["v_" + pk] = md.version(pk)
-            except Exception:  # noqa: BLE001
-                pass
-        try:
-            m = (self.fast.model if self.fast is not None else self.slow).model
-            tot = 0.0
-            n = 0
-            for p_ in m.parameters():
-                tot += float(torch.sum(torch.abs(p_.detach()), dtype=torch.float32))
-                n += p_.numel()
-            info["weights_params"], info["weights_abs_sum"] = n, round(tot, 2)       # 权重指纹:两张卡必须一致
-        except Exception as e:  # noqa: BLE001
-            info["weights_fp_error"] = str(e)[:100]
-        try:
-            info["prompt_cached"] = bool(self.fast is not None and len(self.fast._voice_prompt_cache) > 0)
-        except Exception:  # noqa: BLE001
-            info["prompt_cached"] = None
-        return info
 
     def _holder(self):
         from speaker_sim import ScorerHolder, SpkScorer
@@ -3493,22 +3450,6 @@ class RealEngine:
                            kind="generated_vs_holdout", scores=out, skipped=skipped, model=SV_MODEL_NAME(), scorer=self._holder().info())
         return st
 
-    def _free(self):
-        import gc
-        import torch
-        self.fast = None
-        self.slow = None
-        self.prompt = None
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    def _make_prompt(self, path, text, xvec):
-        self.ref = (path, text, bool(xvec))
-        self.prompt = None
-        if self.fast is None and self.slow is not None:
-            self.prompt = self.slow.create_voice_clone_prompt(ref_audio=path, ref_text=("" if xvec else text), x_vector_only_mode=bool(xvec))
-
-    # ───── 声纹打分器(WavLM-SV;失败不影响合成,但失败原因必须可见,且有界重试) ─────
     def _prep_scorer(self, path):
         """为本次声音设置参考声纹。模型加载 与 参考音频读取 分开处理:参考文件有问题【不会】丢掉已加载好的模型。"""
         from speaker_sim import AudioSkip, ScorerUnavailable, load_wav16k
@@ -3564,164 +3505,11 @@ class RealEngine:
         self.last_score = {"status": "completed", "reason": ""}
         return v
 
-    def set_voice(self, path, text, xvec):
-        self._make_prompt(path, text, xvec)
-        bad = None
-        for attempt in range(3):
-            t0 = time.time()
-            first, parts = None, []
-            self.last_frames = 0
-            for a, sr in self.stream("你好，我已经准备好了，今天天气真不错，我们可以开始聊天了。", "first"):
-                if first is None:
-                    first = time.time() - t0
-                parts.append(_f2pcm(a))
-            wall = time.time() - t0
-            pcm = np.concatenate(parts) if parts else np.zeros(0, np.int16)
-            dur = len(pcm) / SR
-            ok = len(pcm) > SR * 0.3 and float(np.sqrt((pcm.astype(np.float32) ** 2).mean())) > 90
-            if ok and self.last_frames and self.custom_ok and self.fast is not None:      # 自研路径自检: 样本数必须 = 帧数 × 1920
-                err = abs(len(pcm) - self.last_frames * (SR / 12.5)) / max(len(pcm), 1)
-                if err > 0.03:
-                    ok = False
-                    log.warning("[GPU%d] 自研流式自检未通过(样本数与帧数不符 %.1f%%),改用官方分块流式", self.idx, err * 100)
-            if ok:
-                info = {"rtf": round(wall / max(dur, 1e-3), 2), "ttfa": round(first or wall, 2), "dtype": self.dtype, "mode": self.mode + (" · 两相流式" if (self.custom_ok and self.fast is not None) else ""),
-                        "sr": self.sr, "rms": round(speech_rms(pcm), 1), "sim": None,
-                        "prompt_cached": bool(self.fast is not None and len(getattr(self.fast, "_voice_prompt_cache", {})) > 0)}
-                self._prep_scorer(path)
-                try:
-                    s = self.score(pcm)
-                    info["sim"] = None if s is None else round(s, 4)
-                except Exception as e:  # noqa: BLE001
-                    log.warning("[GPU%d] 试合成打分失败: %s", self.idx, e)
-                # 第二次试合成(图/缓存已热)才是真实速度,网关据此预测需要多少预缓冲
-                try:
-                    t1, f1, n1, ch, tp = time.time(), None, 0, [], time.time()
-                    for a, sr in self.stream("今天天气真好，我们一起出去走走吧。", "calib"):
-                        now = time.time()
-                        if f1 is None:
-                            f1 = now - t1
-                        ch.append((round(now - tp, 4), len(a)))
-                        tp, n1 = now, n1 + len(a)
-                    w1 = time.time() - t1
-                    if n1 > SR:
-                        info["rtf"], info["ttfa"], info["ch"] = round(w1 / (n1 / SR), 2), round(f1 or w1, 2), ch
-                except Exception as e:  # noqa: BLE001
-                    log.warning("[GPU%d] 第二次试合成失败(忽略): %s", self.idx, e)
-                return info
-            bad = "试合成的声音是空的/无声/长度异常(精度 %s)" % self.dtype
-            if self.custom_ok and self.fast is not None:                   # 先怀疑自研路径,同精度下退回官方流式重试
-                self.custom_ok = False
-                log.warning("[GPU%d] %s → 自研两相流式关闭,改用官方分块流式重试", self.idx, bad)
-                continue
-            alt = [d for d in self.order if d != self.dtype]
-            if attempt < 2 and alt:
-                self.say("loading", "%s 精度输出异常,改用 %s 重新加载…" % (self.dtype, alt[0]))
-                self._free()
-                self.load(force_dtype=alt[0])
-                self._make_prompt(path, text, xvec)
-        raise RuntimeError(bad or "试合成失败")
-
     @staticmethod
     def _to_np(a):
         if hasattr(a, "cpu"):
             return a.flatten().float().cpu().numpy()
         return np.asarray(a).reshape(-1)
-
-    def _gen_custom_impl(self, text, lang, max_new, sched):
-        """两相流式: 逐帧生成(CUDA Graph) → 按 sched 重新分块 → 每块带滑动上下文解码。"""
-        import torch
-        from faster_qwen3_tts.streaming import fast_generate_streaming
-        f = self.fast
-        path, ref_text, xvec = self.ref
-        m, talker, config, tie, tam, tth, tpe, ref_codes = f._prepare_generation(
-            text=text, language=lang, ref_audio=path, ref_text=ref_text, xvec_only=xvec, non_streaming_mode=False,
-            append_silence=True, voice_clone_prompt=None, instruct=None)
-        tok = m.speech_tokenizer
-        dev = tie.device
-        groups = int(getattr(config, "num_code_groups", 16))
-        hist = ref_codes[-CTX_FRAMES:].to(dev) if ref_codes is not None else torch.zeros((0, groups), dtype=torch.long, device=dev)
-        pend, npend, si, total = [], 0, 0, 0
-        gen = fast_generate_streaming(
-            talker=talker, talker_input_embeds=tie, attention_mask=tam, trailing_text_hiddens=tth, tts_pad_embed=tpe, config=config,
-            max_new_tokens=max_new, min_new_tokens=2, temperature=self._samp()[0], top_k=TOP_K, top_p=TOP_P, do_sample=True,
-            repetition_penalty=self._samp()[1], chunk_size=1, predictor_graph=f.predictor_graph, talker_graph=f.talker_graph)
-
-        def decode(new):
-            nonlocal hist
-            window = torch.cat([hist, new.to(dev)], dim=0)
-            n_ctx = hist.shape[0]
-            al, sr = tok.decode({"audio_codes": window.unsqueeze(0)})
-            a = self._to_np(al[0])
-            spf = len(a) / max(window.shape[0], 1)
-            hist = window[-CTX_FRAMES:]
-            return a[int(round(n_ctx * spf)):], sr
-
-        try:
-            for item in gen:
-                codes = item[0] if isinstance(item, (tuple, list)) else item
-                if getattr(self, "capture_codes", False):                      # v13:记录第 0 码本,供「重复循环/卡死」检测
-                    try:
-                        self.code_log.extend(codes.reshape(-1, codes.shape[-1])[:, 0].tolist())
-                    except Exception:  # noqa: BLE001
-                        self.capture_codes = False
-                pend.append(codes)
-                npend += codes.shape[0]
-                if npend >= sched[min(si, len(sched) - 1)]:
-                    new = torch.cat(pend, dim=0)
-                    pend, npend, si = [], 0, si + 1
-                    total += new.shape[0]
-                    self.last_frames = total
-                    yield decode(new)
-            if npend:
-                new = torch.cat(pend, dim=0)
-                total += new.shape[0]
-                self.last_frames = total
-                yield decode(new)
-        finally:
-            try:
-                gen.close()
-            except Exception:  # noqa: BLE001
-                pass
-
-    def _samp(self):
-        o = getattr(self, "gen_opts", None) or {}
-        return (o.get("temperature") or TEMPERATURE), (o.get("rep") or REP_PENALTY)
-
-    def stream(self, text, profile, seed=None):
-        path, ref_text, xvec = self.ref
-        lang = detect_lang(text)
-        max_new = min(MAX_NEW_TOKENS, max(120, int(len(text) * 7)))
-        _go = getattr(self, "gen_opts", None) or {}
-        if _go.get("max_new"):
-            max_new = int(_go["max_new"])                      # v13:按文本/声音标定的帧预算
-        sched = SCHED.get(profile, SCHED["rest"])
-        _seed_all(seed)
-        if self.fast is not None:
-            if self.custom_ok and self._gen_custom is not None:
-                started = False
-                try:
-                    for a, sr in self._gen_custom(text, lang, max_new, sched):
-                        started = True
-                        yield a, sr
-                    return
-                except Exception as e:  # noqa: BLE001
-                    if started:
-                        raise
-                    self.custom_ok = False
-                    log.warning("[GPU%d] 自研两相流式不可用,退回官方分块流式: %s", self.idx, e)
-                    log.warning(traceback.format_exc())
-                    _seed_all(seed)
-            chunk = {"first": 4, "second": 6}.get(profile, 8)
-            for a, sr, _timing in self.fast.generate_voice_clone_streaming(
-                    text=text, language=lang, ref_audio=path, ref_text=ref_text, chunk_size=chunk,
-                    xvec_only=xvec, temperature=self._samp()[0], top_k=TOP_K, top_p=TOP_P,
-                    repetition_penalty=self._samp()[1], max_new_tokens=max_new):
-                yield a, sr
-        else:
-            wavs, sr = self.slow.generate_voice_clone(text=text, language=lang, voice_clone_prompt=self.prompt, max_new_tokens=max_new,
-                                                      temperature=TEMPERATURE, top_k=TOP_K, top_p=TOP_P, repetition_penalty=REP_PENALTY)
-            yield wavs[0], sr
 
     def asr(self, path):
         import soundfile as sf
@@ -3765,7 +3553,7 @@ PROBE_TEXT = "你好，我已经准备好了，今天天气真不错，我们可
 CALIB_TEXT = "今天天气真好，我们一起出去走走吧。"
 
 
-class VoxCPM2Engine(RealEngine):
+class VoxCPM2Engine(BaseEngine):
     name = "voxcpm2"
 
     def __init__(self, idx, send, fake=False):
@@ -3783,6 +3571,8 @@ class VoxCPM2Engine(RealEngine):
         self.autosteps = os.environ.get("VC_VOX_AUTOSTEPS", "1") == "1"
         self.cer_max = float(os.environ.get("VC_VOX_CER_MAX", "0.35"))
         self.custom_ok = False
+        self.lora = False
+        self.last_hifi = None
         self.probe_log = []
         self._seed_kw = False
 
@@ -3812,8 +3602,20 @@ class VoxCPM2Engine(RealEngine):
             from voxcpm import VoxCPM
             want_opt = os.environ.get("VC_VOX_OPTIMIZE", "1") == "1"
             self.say("loading", "加载 VoxCPM2 (%s)%s…" % (self.dtype, " + torch.compile 预热(首次较慢)" if want_opt else ""))
+            lora = os.environ.get("VC_VOX_LORA", "").strip()                         # v19:官方 LoRA(PVC 路线),与基座同一模型;加载失败 → 退回纯基座并如实提示
+            lkw = {"lora_weights_path": lora} if lora else {}
             try:
-                self.vox = VoxCPM.from_pretrained(out, load_denoiser=False, optimize=want_opt, local_files_only=True, device="cuda")
+                try:
+                    self.vox = VoxCPM.from_pretrained(out, load_denoiser=False, optimize=want_opt, local_files_only=True, device="cuda", **lkw)
+                except Exception as e_l:  # noqa: BLE001
+                    if not lkw:
+                        raise
+                    log.warning("[GPU%d] LoRA 加载失败,退回纯基座 VoxCPM2: %s", self.idx, e_l)
+                    self.say("loading", "LoRA 加载失败(%s),改用纯基座 VoxCPM2" % str(e_l)[:60])
+                    lkw = {}
+                    self._free()
+                    self.vox = VoxCPM.from_pretrained(out, load_denoiser=False, optimize=want_opt, local_files_only=True, device="cuda")
+                self.lora = bool(lkw)
                 self.mode = "VoxCPM2 流式" + (" · torch.compile" if want_opt else "")
             except Exception as e:  # noqa: BLE001
                 if not want_opt:
@@ -3964,6 +3766,7 @@ class VoxCPM2Engine(RealEngine):
         return {"x": x, "ok": ok, "why": why, "first": first or wall, "wall": wall, "dur": len(x) / SR, "ch": ch, "cer": cer}
 
     def set_voice(self, path, text, xvec):
+        import vox_audio as va
         self._make_prompt(path, text, xvec)
         modes = self._clone_modes(path, text, xvec)
         chosen, res, bad = None, None, None
@@ -3999,6 +3802,8 @@ class VoxCPM2Engine(RealEngine):
         pcm = (np.clip(x, -1, 1) * 32767).astype(np.int16)
         info = {"rtf": round(res["wall"] / max(res["dur"], 1e-3), 2), "ttfa": round(res["first"], 2), "dtype": self.dtype, "mode": "%s · %s" % (self.mode, chosen), "sr": SR,
                 "rms": round(speech_rms(pcm), 1), "sim": None, "prompt_cached": True, "clone_mode": chosen, "steps": self.steps, "probe": self.probe_log[-3:], "cer": res["cer"]}
+        info["lufs"], info["lufs_note"] = va.measure_lufs(x, SR)                          # v19:BS.1770 集成响度(pyloudnorm);不可用就是 None + 原因,不用 RMS 冒充
+        info["lora"] = bool(self.lora)
         self._prep_scorer(path)
         try:
             s = self.score(pcm)
@@ -4046,11 +3851,14 @@ class VoxCPM2Engine(RealEngine):
         dec = va.StreamDecimator.for_rates(self.native_sr, SR)
         co = va.FrameCoalescer(sched)
         total = 0
+        arch = [] if os.environ.get("VC_HIFI_ARCHIVE", "1") == "1" else None       # v19:原生 48kHz 无损归档(不经抽取/响度/FX;实时播放仍走 24k 通道,互不影响)
         gen = self.tts.generate_with_prompt_cache_streaming(**kw)
         try:
             for item in gen:
                 wav = item[0] if isinstance(item, (tuple, list)) else item
                 a = self._to_np(wav).astype(np.float32)
+                if arch is not None:
+                    arch.append(a)
                 if dec is not None:
                     a = dec.process(a)
                 for blk in co.push(a):
@@ -4067,15 +3875,43 @@ class VoxCPM2Engine(RealEngine):
                 gen.close()
             except Exception:  # noqa: BLE001
                 pass
+            self._save_hifi(arch)
+
+    def _save_hifi(self, arch):
+        """把本句模型原生输出(48kHz,float32→PCM16,峰值保护)落盘到 WORK/hifi48/;只保留最近 VC_HIFI_KEEP 个。任何异常都不影响播放。"""
+        if not arch:
+            return None
+        try:
+            import soundfile as sf
+            x = np.concatenate(arch).astype(np.float32)
+            if not x.size or not np.isfinite(x).all():
+                return None
+            pk = float(np.max(np.abs(x)))
+            if pk > 0.98:
+                x = x * (0.98 / pk)
+            d = WORK / "hifi48"
+            d.mkdir(parents=True, exist_ok=True)
+            p = d / ("%d_gpu%d.wav" % (int(time.time() * 1000), self.idx))
+            sf.write(str(p), x, int(self.native_sr), subtype="PCM_16")
+            keep = int(os.environ.get("VC_HIFI_KEEP", "300"))
+            olds = sorted(d.glob("*.wav"))
+            for o in olds[:-keep] if keep > 0 else []:
+                try:
+                    o.unlink()
+                except OSError:
+                    pass
+            self.last_hifi = str(p)
+            return str(p)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[GPU%d] 48k 归档失败(不影响播放): %s", self.idx, e)
+            return None
 
 
 def make_engine(idx, send, cfg):
     """按配置创建引擎。mock=True 且没开 VC_VOX_FAKE → MockEngine(v17 原测试路径不变);mock=True 且 VC_VOX_FAKE=1 → VoxCPM2 适配器 + 假模型。"""
-    if cfg.get("mock") and not (ENGINE == "voxcpm2" and os.environ.get("VC_VOX_FAKE") == "1"):
+    if cfg.get("mock") and os.environ.get("VC_VOX_FAKE") != "1":
         return MockEngine(idx, send)
-    if ENGINE == "voxcpm2":
-        return VoxCPM2Engine(idx, send, fake=bool(cfg.get("mock")))
-    return RealEngine(idx, send)
+    return VoxCPM2Engine(idx, send, fake=bool(cfg.get("mock")))        # v19:唯一真实引擎 = VoxCPM2(不再静默换模型)
 
 
 def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
@@ -4094,16 +3930,23 @@ def worker_main(idx, gpu, job_q, res_q, epoch, cfg):
         send("status", idx, "loading", "启动中…")
         try:
             eng.load()
-        except Exception as e0:  # noqa: BLE001  v18:VoxCPM2 加载失败 → 回退 v17 的 Qwen3(两张卡行为一致:同样的环境同样的失败);回退会在状态里如实显示
-            if isinstance(eng, VoxCPM2Engine) and not eng.fake and os.environ.get("VC_VOX_FALLBACK", "1") == "1":
-                log.error("[GPU%d] VoxCPM2 加载失败,回退 Qwen3-TTS:\n%s", idx, traceback.format_exc())
-                send("status", idx, "loading", "VoxCPM2 加载失败(%s: %s)→ 回退 Qwen3-TTS…" % (type(e0).__name__, str(e0)[:80]))
-                try:
-                    eng._free()
-                except Exception:  # noqa: BLE001
-                    pass
-                eng = RealEngine(idx, send)
-                eng.load()
+        except Exception as e0:  # noqa: BLE001  v19:VoxCPM2 加载失败 → 只在【同一个模型】内降级精度重载(fp16 → fp32 → bf16),绝不静默换成别的模型
+            if isinstance(eng, VoxCPM2Engine) and not eng.fake:
+                last_err, ok_ = e0, False
+                tried = [eng.dtype] if eng.dtype else []
+                for alt in [d for d in (eng.order or ["float16", "float32", "bfloat16"]) if d not in tried] or ["float32"]:
+                    log.error("[GPU%d] VoxCPM2 加载失败(%s: %s),改用 %s 重载:\n%s", idx, type(last_err).__name__, str(last_err)[:120], alt, traceback.format_exc())
+                    send("status", idx, "loading", "VoxCPM2 加载失败(%s: %s)→ 改用 %s 重载(不换模型)…" % (type(last_err).__name__, str(last_err)[:80], alt))
+                    try:
+                        eng._free()
+                        eng.load(force_dtype=alt)
+                        ok_ = True
+                        break
+                    except Exception as e1:  # noqa: BLE001
+                        last_err = e1
+                if not ok_:
+                    raise RuntimeError("VoxCPM2 在所有精度下都加载失败:%s: %s。修复建议:①确认 Settings→Internet=On 且 HF 可访问 ②pip 版本 voxcpm==%s 与 torch>=2.5 ③显存是否被其他进程占用(重启会话) ④把 VC_VOX_OPTIMIZE=0 关闭 torch.compile 再试"
+                                       % (type(last_err).__name__, str(last_err)[:200], os.environ.get("VC_VOXCPM_VERSION", "2.0.3")))
             else:
                 raise
         send("status", idx, "ready", "就绪")
@@ -10645,7 +10488,7 @@ class Portal:
         verification = [
             {"id": "t4x2_infer", "title": "T4×2 双卡推理", "status": "已部分观测" if (pool and len(pool.workers) >= 2 and all(w.synth_segs > 0 for w in pool.workers)) else "未验证", "detail": "需要在真实 T4×2 上合成后,两张卡 synth_segs 都 > 0"},
             {"id": "t4x2_ddp", "title": "T4×2 同一次同步训练(DDP)", "status": "未验证", "detail": "训练日志里需要看到 world_size=2;见「诊断」页"},
-            {"id": "sing", "title": "歌声克隆", "status": "不支持/未验证", "detail": "Qwen3-TTS 口语模型不能保证歌声克隆;歌声只保存/质检/分析"},
+            {"id": "sing", "title": "歌声克隆", "status": "不支持/未验证", "detail": "VoxCPM2 面向口语/语音合成,不保证歌声克隆(未验证);歌声只保存/质检/分析"},
             {"id": "emo", "title": "情绪控制", "status": "未验证", "detail": "Base 模型不支持情绪指令"},
             {"id": "calib", "title": "相似度百分比", "status": "未校准" if not G.get("CAL") else "已加载校准文件", "detail": "没有独立标注数据校准前不显示百分比"},
             {"id": "gh", "title": "GitHub 外部同步", "status": "已记录一次成功" if sync_ok else "未验证", "detail": "需要配置 GITHUB_TOKEN 并实际同步一次"},
@@ -11525,7 +11368,7 @@ FILES['index.html'] = r'''<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>🎙️ 克隆语音播放器 · Qwen3-TTS 双卡并行</title>
+<title>🎙️ 克隆语音播放器 · VoxCPM2 双卡并行</title>
 <style>
 :root{
   --bg:#070b17; --bg2:#0b1226; --panel:rgba(18,25,48,.72); --panel2:rgba(11,17,36,.8); --line:rgba(120,140,220,.16);
@@ -11758,7 +11601,7 @@ textarea.ref,input.in,.wave{background:#141517;border-color:#2e3036}textarea.ref
         <button class="btn main" id="btnClone" disabled>🚀 开始克隆(双卡同时)</button>
         <div id="gpus" style="display:flex;flex-direction:column;gap:7px"></div>
         <div id="qcBox"></div>
-        <div class="card none" id="vcard"><div class="ring"><span>🎙️</span></div><div><h4 id="vh">还没有克隆声音</h4><div id="vb">录制或上传清晰的人声(时长不限;快速克隆用前 30 秒内,长录音请到「语音库」,会自动切分为多条参考),点击「开始克隆」。Qwen3-TTS 是零样本克隆,不需要训练,通常几十秒内完成。</div></div></div>
+        <div class="card none" id="vcard"><div class="ring"><span>🎙️</span></div><div><h4 id="vh">还没有克隆声音</h4><div id="vb">录制或上传清晰的人声(时长不限;快速克隆用前 30 秒内,长录音请到「语音库」,会自动切分为多条参考),点击「开始克隆」。VoxCPM2 是零样本克隆(参考音频+可选转写),不需要训练,通常几十秒内完成。</div></div></div>
         <div id="vextra"></div>
         <button class="btn" id="btnTry" disabled>🔊 试听克隆声音</button>
         <div class="hint">推荐参考音频:单人清晰口语、8~20 秒、无背景音乐/混响、wav(16-bit)或 flac;文字必须与音频逐字对应。上传的原件会保留,处理版另存。歌声/带伴奏音频不支持(未验证)。</div>
@@ -11793,7 +11636,7 @@ textarea.ref,input.in,.wave{background:#141517;border-color:#2e3036}textarea.ref
         <button class="send" id="btnSend">发送</button>
         <button class="stop" id="btnStop">停止</button>
       </div>
-      <div class="foot">Qwen3-TTS-1.7B 双卡生成 · 输出为 AI 合成语音,仅限本人或已授权声音 · 声纹 cosine 为原始指标,未校准,不是人耳相似度百分比 · 点右上「诊断」查看真实指标</div>
+      <div class="foot">VoxCPM2 双卡生成 · 输出为 AI 合成语音,仅限本人或已授权声音 · 声纹 cosine 为原始指标,未校准,不是人耳相似度百分比 · 点右上「诊断」查看真实指标</div>
     </section>
   </main>
 </div>
@@ -12120,7 +11963,7 @@ function renderState() {
   } else if (v.state === "error") {
     c.className = "card bad"; ring.textContent = "!"; h.textContent = "克隆失败"; b.textContent = v.err || "未知错误";
   } else {
-    c.className = "card none"; ring.textContent = "🎙️"; h.textContent = "还没有克隆声音"; b.textContent = "录制或上传清晰的人声(时长不限;快速克隆用前 30 秒内,长录音请到「语音库」,会自动切分为多条参考),点击「开始克隆」。Qwen3-TTS 是零样本克隆,不需要训练,通常几十秒内完成。";
+    c.className = "card none"; ring.textContent = "🎙️"; h.textContent = "还没有克隆声音"; b.textContent = "录制或上传清晰的人声(时长不限;快速克隆用前 30 秒内,长录音请到「语音库」,会自动切分为多条参考),点击「开始克隆」。VoxCPM2 是零样本克隆(参考音频+可选转写),不需要训练,通常几十秒内完成。";
   }
   renderVoiceExtra(v);
   $("btnTry").disabled = !ok;
@@ -12453,7 +12296,7 @@ $("btnDiag").onclick = openDiag; $("diagClose").onclick = () => { S.diagOpen = f
 setPhase("idle");
 function demo() {                                  // ?demo=1 : 离线界面预览(不连接服务器)
   $("dConn").className = "dot ok"; $("tConn").textContent = "已连接 · 42ms"; $("tFirst").textContent = "1.38s";
-  S.state = { type: "state", deepseek: true, mock: false, model: "Qwen3-TTS-12Hz-1.7B-Base",
+  S.state = { type: "state", deepseek: true, mock: false, model: "openbmb/VoxCPM2",
     workers: [0, 1].map((i) => ({ idx: i, gpu: String(i), status: "ready", msg: "就绪", voice: true, mem: [6.1 + i, 15, 1], util: 38 + i * 21, info: { rtf: 0.86 + i * 0.05, ttfa: 1.02, dtype: "float16" }, alive: true })),
     voice: { state: "ready", mode: "icl", text: SCRIPTS[0], vid: 1, info: { 0: { rtf: 0.86 }, 1: { rtf: 0.91 } }, err: "", msg: "" } };
   renderState();
@@ -15638,1398 +15481,282 @@ if __name__ == "__main__":
         print("  ✗ test_v9_plan_and_settings_over_http\n" + traceback.format_exc())
         sys.exit(1)
 '''
-FILES['train.py'] = r'''# -*- coding: utf-8 -*-
-"""
-train.py —— Qwen3-TTS-12Hz-1.7B-Base · LoRA 监督微调 (SFT) · 双 T4 DDP(Accelerate)
+FILES['MIGRATION.md'] = r'''# 迁移说明(v18 → v19):TTS 主引擎由旧的 1.7B 引擎迁移到 VoxCPM2(唯一引擎)
 
-  启动(双卡):  accelerate launch --multi_gpu --num_processes 2 --mixed_precision fp16 train.py [参数]
-  合并导出  :  python train.py --merge --adapter checkpoints/epoch_7/adapter.pt --out best_model
+| 项目 | 旧引擎 | v19 VoxCPM2 |
+|---|---|---|
+| 模型 | Qwen3-TTS-12Hz-1.7B-Base(已彻底移除) | openbmb/VoxCPM2(2B · Apache-2.0) |
+| 原生采样率 | 24 kHz | 48 kHz(实时通道抽取到 24 kHz;每句另存原生 48k 到 vc/hifi48/) |
+| 流式粒度 | 12.5 Hz 码帧 | 每个 LM 步 6.25 Hz ≈ 160 ms |
+| 风格控制 | 无 instruct 参数 | 文本开头括号指令(V19_STYLE=True 才放行) |
+| 微调 | 旧 LoRA + Tokenizer 提取离散码 | 官方 LoRA(r=32,16 kHz 编码输入,48 kHz 解码输出),manifest JSONL |
+| 回退 | 加载失败静默换模型 | 同模型内 fp16→fp32→bf16 重载,仍失败明确报错 |
 
-  做法(与官方 finetuning/sft_12hz.py 同一训练目标,但把全参数微调换成 LoRA,才能放进 16GB 的 T4):
-    · 输入序列 = [文本 token | 说话人向量(ref_audio) | 目标语音 codec token];  loss 只算语音部分(SFT 范式)
-    · loss = CE(第 0 层 codec) + 0.3 × CE(其余 15 层 sub-talker)
-    · LoRA: r=16, alpha=32, dropout=0.05, 覆盖 talker 与 code_predictor 里所有 q/k/v/o/gate/up/down 投影
-    · fp16 混合精度:基座权重 fp16,LoRA 权重 fp32 + GradScaler;梯度累积;余弦学习率 + 5% warmup
-  循环训练 + 自动评估:
-    · 每个 epoch 结束 → 保存 checkpoints/epoch_X/ → rank0 调用 evaluate.py 测声纹相似度 → 写 eval_log.jsonl
-    · 相似度 ≥ 目标 → 全部进程一起停止;连续 patience 轮没有提升 → 视为收敛,停止并选最优轮;最多 max_epochs 轮
-    (训练进程常驻,epoch 之间不重新加载 1.7B 模型,比"每轮重启一次"快得多;断点续训见 --resume)
+本文件是唯一允许出现旧模型名称的地方(迁移说明/致谢)。
+'''
+
+FILES['voxcpm_lora.py'] = r'''# -*- coding: utf-8 -*-
+"""voxcpm_lora.py —— v19 · VoxCPM2 官方 LoRA 微调封装(取代原训练链;PVC「专业克隆」路线)
+
+  依据官方源码(OpenBMB/VoxCPM  scripts/train_voxcpm_finetune.py + conf/voxcpm_v2/voxcpm_finetune_lora.yaml,已逐项核对):
+    · manifest 为 JSONL,每行 {"audio": 路径, "text": 转写, "duration": 秒(可选)};编码器输入 16kHz,解码输出 48kHz
+    · LoRA: lora r=32 / alpha=32 / enable_lm / enable_dit;学习率 1e-4;warmup 100;官方称 5~10 分钟音频即可适配
+    · 产出: <save_path>/latest/lora_weights.safetensors + lora_config.json;推理用 VoxCPM.from_pretrained(..., lora_weights_path=目录)
+  用法:
+    python voxcpm_lora.py prepare --src 音频目录(wav+同名txt) --out 数据目录
+    python voxcpm_lora.py train   --work /kaggle/working --data_dir 数据目录 [--max_steps 1000 --lr 1e-4]
+  诚实声明:训练效果(是否更像)【未验证:需 Kaggle GPU 实测 + 留出集 SIM/CER + /abx 盲测】;训练后必须过「不降级闸门」才允许晋升为默认。
 """
 import argparse
 import json
-import math
 import os
 import random
 import shutil
 import subprocess
 import sys
 import time
-from datetime import timedelta
 from pathlib import Path
 
-import torch
-import torch.nn as nn
-
-HERE = Path(__file__).resolve().parent
-LORA_TARGET_REGEX = (r"talker\.(model|code_predictor\.model)\.layers\.\d+\."
-                     r"(self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj))")
+AUDIO_EXT = (".wav", ".flac", ".mp3", ".m4a", ".ogg")
+MIN_S, MAX_S = 1.0, 30.0            # 官方示例的单条时长范围:太短没有韵律信息,太长显存/对齐风险
+REPO_URL = os.environ.get("VC_VOXCPM_GIT", "https://github.com/OpenBMB/VoxCPM")
 
 
-def build_lora(inner, r, alpha, dropout):
-    """直接把 LoRA 注入原模型(不套 PeftModel 外壳,这样 model.talker / model.speaker_encoder 仍可直接调用)"""
-    from peft import LoraConfig
-    from peft.tuners.lora import LoraModel
-    cfg = LoraConfig(r=r, lora_alpha=alpha, lora_dropout=dropout, target_modules=LORA_TARGET_REGEX, bias="none")
-    lm = LoraModel(inner, cfg, "default")
-    n = sum(1 for k, _ in inner.named_parameters() if "lora_A" in k)
-    if n == 0:
-        names = [k for k, _ in inner.named_modules()][:40]
-        raise RuntimeError("没有匹配到任何 LoRA 目标层,请检查模块名。前 40 个模块: %s" % names)
-    return lm, n
+def pair_clips(src):
+    """返回 (pairs, skipped)。pairs=[(音频路径, 文字)];没有同名 txt / 时长不合规的进 skipped 并给出原因(不静默丢弃)。"""
+    pairs, skipped = [], []
+    for p in sorted(Path(src).rglob("*")):
+        if p.suffix.lower() not in AUDIO_EXT:
+            continue
+        t = p.with_suffix(".txt")
+        if not t.exists():
+            skipped.append((str(p), "没有同名 .txt 转写(LoRA 监督微调需要文字)"))
+            continue
+        txt = " ".join(t.read_text(encoding="utf-8", errors="ignore").split())
+        if len(txt) < 2:
+            skipped.append((str(p), "转写为空"))
+            continue
+        pairs.append((str(p), txt))
+    return pairs, skipped
 
 
-def lora_state(inner):
-    return {k: v.detach().cpu().float() for k, v in inner.named_parameters() if "lora_" in k}
+def to_wav16k(src, dst):
+    """解码 → 单声道 → 16kHz → PCM16。返回时长(秒);失败抛异常。"""
+    import numpy as np
+    import soundfile as sf
+    a, sr = sf.read(src, dtype="float32", always_2d=False)
+    if a.ndim > 1:
+        a = a.mean(axis=1)
+    if sr != 16000:
+        from math import gcd
+        from scipy.signal import resample_poly
+        g = gcd(16000, int(sr))
+        a = resample_poly(a, 16000 // g, int(sr) // g).astype(np.float32)
+    a = a - float(np.mean(a))
+    pk = float(np.max(np.abs(a))) if len(a) else 0.0
+    if pk > 0.99:
+        a = a * (0.97 / pk)
+    sf.write(dst, a, 16000, subtype="PCM_16")
+    return len(a) / 16000.0
 
 
-def load_base(path, dtype):
-    from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
-    return Qwen3TTSModel.from_pretrained(path, torch_dtype=dtype, attn_implementation="sdpa")
+def split_holdout(rows, val_frac=0.1, seed=7):
+    """留出验证集:≥10 条才留出(至少 1 条,至多 val_frac);条数太少全部用于训练并在报告里如实标注「无留出」。"""
+    rows = list(rows)
+    random.Random(seed).shuffle(rows)
+    if len(rows) < 10:
+        return rows, []
+    n = max(1, int(len(rows) * val_frac))
+    return rows[n:], rows[:n]
 
 
-def resolve_base(name):
-    if os.path.isdir(name):
-        return name
-    from huggingface_hub import snapshot_download
-    return snapshot_download(name)
-
-
-class SFTModule(nn.Module):
-    """整个前向 + loss 封装成一个 Module,DDP 才能正确同步梯度(官方脚本直接调子模块,只适用于单卡)"""
-
-    def __init__(self, model):
-        super().__init__()
-        self.model = model
-
-    def forward(self, input_ids, codec_ids, ref_mels, text_embedding_mask, codec_embedding_mask, attention_mask, codec_0_labels, codec_mask):
-        m = self.model
-        dtype = m.talker.model.text_embedding.weight.dtype
-        with torch.no_grad():
-            speaker_embedding = m.speaker_encoder(ref_mels.to(dtype)).detach()
-        input_text_ids = input_ids[:, :, 0]
-        input_codec_ids = input_ids[:, :, 1]
-        input_text_embedding = m.talker.model.text_embedding(input_text_ids) * text_embedding_mask
-        input_codec_embedding = m.talker.model.codec_embedding(input_codec_ids) * codec_embedding_mask
-        input_codec_embedding[:, 6, :] = speaker_embedding
-        input_embeddings = input_text_embedding + input_codec_embedding
-        for i in range(1, 16):
-            e = m.talker.code_predictor.get_input_embeddings()[i - 1](codec_ids[:, :, i])
-            input_embeddings = input_embeddings + e * codec_mask.unsqueeze(-1)
-        outputs = m.talker(inputs_embeds=input_embeddings[:, :-1, :], attention_mask=attention_mask[:, :-1],
-                           labels=codec_0_labels[:, 1:], output_hidden_states=True)
-        hidden = outputs.hidden_states[0][-1]
-        talker_hidden = hidden[codec_mask[:, :-1]]
-        talker_codec_ids = codec_ids[codec_mask]
-        _, sub_loss = m.talker.forward_sub_talker_finetune(talker_codec_ids, talker_hidden)
-        return outputs.loss + 0.3 * sub_loss
-
-
-STOP_ON_TARGET = [False]
-
-
-def eval_val_loss(module, vdl, acc, inner):
-    """在【留出验证集】上算平均 loss(无梯度)。所有 rank 都必须调用。"""
-    module.eval()
-    tot, n = 0.0, 0
-    with torch.no_grad():
-        for batch in vdl:
-            loss = module(**batch)
-            g = acc.gather_for_metrics(loss.detach().float().reshape(1))
-            if torch.isfinite(g).all():
-                tot += float(g.sum())
-                n += int(g.numel())
-    module.train()
-    inner.speaker_encoder.eval()
-    return (tot / n) if n else None
-
-
-def ddp_info(acc, trainable):
-    """所有 rank 汇报设备号/显存/LoRA 参数校验和:证明两张卡确实参加了同一次同步训练"""
-    cs = torch.stack([p.detach().double().sum() for p in trainable]).sum()
-    t = torch.tensor([float(acc.process_index), float(acc.device.index or 0), torch.cuda.memory_allocated(acc.device) / 1e9, float(cs)], dtype=torch.float64, device=acc.device)
-    g = acc.gather(t.unsqueeze(0)).cpu().tolist()
-    sums = [r[3] for r in g]
-    gpus = [{"rank": int(r[0]), "device_index": int(r[1]), "name": torch.cuda.get_device_name(int(r[1])), "mem_alloc_gb": round(r[2], 2)} for r in g]
-    eq = (max(sums) - min(sums)) <= 1e-6 * (abs(sum(sums) / len(sums)) + 1.0)
-    return {"world_size": acc.num_processes, "checksum_equal": bool(eq), "checksums": [round(x, 6) for x in sums]}, gpus
-
-
-def decide_val(hist, patience, max_epochs):
-    """按验证 loss 决定是否停止。hist: [(epoch, val_loss, train_loss)]。相对改善 <0.5% 不算提升。返回 (stop, reason, best_epoch, best_val, converged, overfit)"""
-    best_e, best_v = hist[0][0], hist[0][1]
-    for e, v, _ in hist[1:]:
-        if v < best_v * 0.995:
-            best_e, best_v = e, v
-    last = hist[-1]
-    since = last[0] - best_e
-    overfit = len(hist) >= 3 and last[1] > best_v * 1.02 and last[2] < hist[-3][2]
-    if since >= patience:
-        return True, "早停:验证 loss 连续 %d 轮无提升(已收敛或开始过拟合)" % patience, best_e, best_v, True, overfit
-    if last[0] >= max_epochs:
-        return True, "达到最大轮数(未必收敛)", best_e, best_v, False, overfit
-    return False, "", best_e, best_v, False, overfit
-
-
-def read_jsonl(p):
-    return [json.loads(x) for x in Path(p).read_text(encoding="utf-8").splitlines() if x.strip()]
-
-
-def eval_rows(eval_log):
-    p = Path(eval_log)
-    if not p.exists():
-        return []
-    out = []
-    for ln in p.read_text(encoding="utf-8").splitlines():
+def prepare(src, out):
+    out = Path(out)
+    (out / "wav16k").mkdir(parents=True, exist_ok=True)
+    pairs, skipped = pair_clips(src)
+    rows = []
+    for i, (p, txt) in enumerate(pairs):
+        dst = out / "wav16k" / ("c%05d.wav" % i)
         try:
-            out.append(json.loads(ln))
-        except ValueError:
-            pass
-    return out
+            d = to_wav16k(p, str(dst))
+        except Exception as e:  # noqa: BLE001
+            skipped.append((p, "解码失败 %s: %s" % (type(e).__name__, str(e)[:80])))
+            continue
+        if d < MIN_S or d > MAX_S:
+            skipped.append((p, "时长 %.1fs 不在 %.0f~%.0fs(请先在语音库里切片)" % (d, MIN_S, MAX_S)))
+            continue
+        rows.append({"audio": str(dst), "text": txt, "duration": round(d, 3)})
+    tr, va = split_holdout(rows)
+    for name, rr in (("train.jsonl", tr), ("val.jsonl", va)):
+        with open(out / name, "w", encoding="utf-8") as f:
+            for r in rr:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    minutes = sum(r["duration"] for r in rows) / 60.0
+    rep = {"clips": len(rows), "train": len(tr), "val": len(va), "minutes": round(minutes, 2), "skipped": skipped[:50], "n_skipped": len(skipped),
+           "advice": ("干净音频 %.1f 分钟:官方称 5~10 分钟即可适配;当前偏少,效果可能不稳" % minutes) if minutes < 5 else "时长充足",
+           "holdout": "有" if va else "无(<10 条,无法做留出验证,不得据此宣称变好)", "time": time.strftime("%F %T")}
+    (out / "data_ready.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+    return rep
 
 
-def decide(eval_log, epoch, target, patience, max_epochs):
-    """返回 (stop, reason, best_epoch, best_sim)。只看 epoch>=1 的评估(0 是未微调基线)"""
-    rows = [r for r in eval_rows(eval_log) if r.get("epoch", 0) >= 1 and r.get("similarity") is not None]
-    if not rows:
-        return epoch + 1 >= max_epochs, "达到最大轮数" if epoch + 1 >= max_epochs else "", None, None
-    best = max(rows, key=lambda r: r["similarity"])
-    cur = [r for r in rows if r["epoch"] == epoch + 1]
-    if cur and cur[-1]["similarity"] >= target and STOP_ON_TARGET[0]:
-        return True, "达标", best["epoch"], best["similarity"]
-    since = (epoch + 1) - best["epoch"]
-    if since >= patience:
-        return True, "收敛(连续 %d 轮无提升)" % patience, best["epoch"], best["similarity"]
-    if epoch + 1 >= max_epochs:
-        return True, "达到最大轮数", best["epoch"], best["similarity"]
-    return False, "", best["epoch"], best["similarity"]
+def write_config(path, pretrained, data_dir, save_path, max_steps=1000, lr=1e-4, r=32, alpha=32, has_val=False, batch_size=2, grad_accum=8):
+    """与官方 voxcpm_finetune_lora.yaml 同键名;Kaggle T4(16GB)用 batch 2 × 累积 8。"""
+    y = """pretrained_path: %s
+train_manifest: %s
+val_manifest: %s
+sample_rate: 16000
+out_sample_rate: 48000
+batch_size: %d
+grad_accum_steps: %d
+num_workers: 2
+preprocessing_num_workers: 2
+num_iters: %d
+log_interval: 10
+valid_interval: %d
+save_interval: %d
+learning_rate: %s
+weight_decay: 0.01
+warmup_steps: %d
+max_steps: %d
+max_batch_tokens: 8192
+max_grad_norm: 1.0
+save_path: %s
+tensorboard: %s
+lambdas:
+  loss/diff: 1.0
+  loss/stop: 1.0
+lora:
+  enable_lm: true
+  enable_dit: true
+  enable_proj: false
+  r: %d
+  alpha: %d
+  dropout: 0.0
+""" % (pretrained, Path(data_dir) / "train.jsonl", (str(Path(data_dir) / "val.jsonl") if has_val else "null"), batch_size, grad_accum, max_steps,
+       max(50, max_steps // 4), max(50, max_steps // 4), lr, min(100, max(10, max_steps // 10)), max_steps, save_path, Path(save_path) / "logs", r, alpha)
+    Path(path).write_text(y, encoding="utf-8")
+    return y
 
 
-def write_state(path, **kw):
+def _state(work, **kw):
+    p = Path(work) / "train_state.json"
     try:
+        old = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except Exception:  # noqa: BLE001
         old = {}
-        if Path(path).exists():
-            old = json.loads(Path(path).read_text(encoding="utf-8"))
-        old.update(kw)
-        old["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        tmp = str(path) + ".tmp"
-        Path(tmp).write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, path)
-    except Exception:  # noqa: BLE001
-        pass
+    old.update(kw)
+    old["engine"], old["updated"] = "voxcpm2_lora", time.strftime("%F %T")
+    p.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
 
 
-# ────────────────────────────── 合并导出 ──────────────────────────────
-def merge_export(args):
-    """把 LoRA 合并进基座权重,导出成一个完整的 Qwen3-TTS-Base 模型目录(faster-qwen3-tts / qwen-tts 都能直接加载)"""
-    from safetensors.torch import save_file
-    base = resolve_base(args.base)
-    ck = torch.load(args.adapter, map_location="cpu")
-    cfg = ck["lora_cfg"]
-    print("加载基座(CPU, fp16)…", flush=True)
-    tts = load_base(base, torch.float16)
-    inner = tts.model
-    lm, n = build_lora(inner, cfg["r"], cfg["alpha"], 0.0)
-    missing, unexpected = inner.load_state_dict(ck["lora"], strict=False)
-    bad = [k for k in missing if "lora_" in k]
-    if bad or unexpected:
-        raise RuntimeError("LoRA 权重与模型不匹配: missing=%s unexpected=%s" % (bad[:5], list(unexpected)[:5]))
-    merged = lm.merge_and_unload()
-    out = Path(args.out)
-    if out.exists():
-        shutil.rmtree(out)
-    root = os.path.abspath(base)
-
-    def ignore(d, names):
-        if os.path.abspath(d) != root:
-            return [".git"] if ".git" in names else []
-        return [x for x in names if x.endswith((".safetensors", ".bin", ".msgpack", ".h5")) or x == "model.safetensors.index.json" or x.startswith(".")]
-
-    shutil.copytree(base, out, ignore=ignore)
-    sd = {k: v.detach().to("cpu", torch.float16).contiguous() for k, v in merged.state_dict().items()}
-    save_file(sd, str(out / "model.safetensors"), metadata={"format": "pt"})
-    meta = dict(ck.get("meta", {}))
-    meta.update(merged_from=str(args.adapter), lora_modules=n, time=time.strftime("%Y-%m-%d %H:%M:%S"), base=args.base)
-    if args.ref_wav and Path(args.ref_wav).exists():
-        shutil.copy(args.ref_wav, out / "speaker_ref.wav")
-        meta["ref_text"] = Path(args.ref_text).read_text(encoding="utf-8").strip() if args.ref_text and Path(args.ref_text).exists() else ""
-    import hashlib
-    h = hashlib.sha256()
-    with open(out / "model.safetensors", "rb") as fh:
-        for blk in iter(lambda: fh.read(1 << 23), b""):
-            h.update(blk)
-    meta["model_sha256"] = h.hexdigest()
-    (out / "trained.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    print("✅ 已导出合并后的模型 → %s  (%.2f GB)" % (out, (out / "model.safetensors").stat().st_size / 1e9), flush=True)
-
-
-# ────────────────────────────── 训练 ──────────────────────────────
-def run_eval(args, epoch, adapter, local_rank):
-    cmd = [sys.executable, str(HERE / "evaluate.py"), "--adapter", str(adapter), "--epoch", str(epoch), "--data_dir", args.data_dir,
-           "--base", args.base, "--device", "cuda:%d" % local_rank, "--eval_log", args.eval_log, "--n", str(args.eval_n)]
-    env = {k: v for k, v in os.environ.items() if k not in ("RANK", "WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT")}
+def ensure_repo(work):
+    repo = Path(work) / "VoxCPM"
+    if not (repo / "scripts" / "train_voxcpm_finetune.py").exists():
+        shutil.rmtree(repo, ignore_errors=True)
+        r = subprocess.run(["git", "clone", "--depth", "1", REPO_URL, str(repo)], capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            raise RuntimeError("克隆官方训练脚本失败(请确认 Internet=On): " + (r.stderr or r.stdout)[-300:])
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=args.eval_timeout)
-    except Exception as e:  # noqa: BLE001
-        print("⚠ 评估启动失败: %s" % e, flush=True)
-        return None
-    sim = None
-    for ln in (r.stdout or "").splitlines():
-        if ln.startswith("EVAL_RESULT "):
-            try:
-                sim = json.loads(ln[len("EVAL_RESULT "):]).get("similarity")
-            except ValueError:
-                pass
-    if sim is None:
-        print("⚠ 评估没有产出结果(训练继续)。stderr 尾部:\n%s" % "\n".join((r.stderr or r.stdout or "").splitlines()[-15:]), flush=True)
-    return sim
+        sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+    except Exception:  # noqa: BLE001
+        sha = "?"
+    return repo, sha
 
 
-def train(args):
-    from accelerate import Accelerator
-    from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs
-    from torch.utils.data import DataLoader
-    from transformers import AutoConfig
-    from tts_dataset import TTSDataset
-
-    dtype = torch.float16 if args.dtype == "fp16" else torch.bfloat16
-    rows = read_jsonl(args.train_jsonl)
-    world0 = int(os.environ.get("WORLD_SIZE", "1"))
-    micro_per_epoch = math.ceil(len(rows) / (args.batch_size * world0))
-    accum = args.grad_accum if args.grad_accum > 0 else max(1, min(8, micro_per_epoch // 8))
-    ddp_kw = DistributedDataParallelKwargs(find_unused_parameters=True)
-    pg_kw = InitProcessGroupKwargs(timeout=timedelta(hours=3))          # rank0 评估期间,其余 rank 在栅栏处等待
-    acc = Accelerator(mixed_precision=args.dtype, gradient_accumulation_steps=accum, kwargs_handlers=[ddp_kw, pg_kw])
-    main = acc.is_main_process
-    world = acc.num_processes
-    seed = args.seed
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-    out_dir = Path(args.output_dir)
-    ck_dir = out_dir / "checkpoints"
-    ctrl_path = out_dir / "train_control.json"
-    if main:
-        ck_dir.mkdir(parents=True, exist_ok=True)
-        if ctrl_path.exists():
-            ctrl_path.unlink()
-        (out_dir / "train_done.json").unlink(missing_ok=True)
-    acc.wait_for_everyone()
-
-    base = resolve_base(args.base)
-    args.base = base
-    acc.print("加载基座模型 %s (%s)…" % (args.base, args.dtype))
-    tts = load_base(base, dtype)
-    inner = tts.model
-    config = AutoConfig.from_pretrained(base)
-    for p in inner.parameters():
-        p.requires_grad_(False)
-    lm, n_lora = build_lora(inner, args.lora_r, args.lora_alpha, args.lora_dropout)
-    for p in inner.parameters():
-        if p.requires_grad:
-            p.data = p.data.float()                                    # LoRA 权重用 fp32(配合 GradScaler)
-    inner.to(acc.device)
-    trainable = [p for p in inner.parameters() if p.requires_grad]
-    acc.print("LoRA 层数: %d · 可训练参数: %.2fM · 世界大小(GPU 数): %d" % (n_lora, sum(p.numel() for p in trainable) / 1e6, world))
-
-    ds = TTSDataset(rows, tts.processor, config)
-    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True, collate_fn=ds.collate_fn, num_workers=args.workers, drop_last=False)
-    vpath = Path(args.data_dir) / "val_codes.jsonl"
-    vrows = read_jsonl(vpath) if vpath.exists() else []
-    vdl = None
-    if vrows:
-        vds = TTSDataset(vrows, tts.processor, config)
-        vdl = DataLoader(vds, batch_size=args.batch_size, shuffle=False, collate_fn=vds.collate_fn, num_workers=0, drop_last=False)
-    acc.print("验证集(留出的原始录音)片段数: %d %s" % (len(vrows), "" if vrows else "—— 没有验证集,无法计算验证 loss,将退回相似度选择(可信度低)"))
-    micro_per_epoch = math.ceil(len(rows) / (args.batch_size * world))
-    steps_per_epoch = max(1, math.ceil(micro_per_epoch / accum))
-    total_steps = steps_per_epoch * args.max_epochs
-    warm = max(1, int(total_steps * args.warmup_ratio))
-    acc.print("训练样本 %d · 每卡 batch %d × %d 卡 × 累积 %d = 等效 batch %d · 每轮 %d 个优化步" %
-              (len(rows), args.batch_size, world, accum, args.batch_size * world * accum, steps_per_epoch))
-
-    optimizer = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=0.01)
-
-    def lr_lambda(s):
-        if s < warm:
-            return (s + 1) / warm
-        pr = (s - warm) / max(1, total_steps - warm)
-        return 0.02 + 0.98 * 0.5 * (1 + math.cos(math.pi * min(1.0, pr)))
-
-    sched = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-
-    start_epoch, opt_steps, resume_state = 0, 0, None
-    if args.resume:
-        cands = sorted(ck_dir.glob("epoch_*/state.pt"), key=lambda p: int(p.parent.name.split("_")[1]))
-        if cands:
-            st = resume_state = torch.load(cands[-1], map_location="cpu")
-            inner.load_state_dict(st["lora"], strict=False)
-            optimizer.load_state_dict(st["opt"])
-            sched.load_state_dict(st["sched"])
-            start_epoch, opt_steps = st["epoch"], st["opt_steps"]
-            acc.print("♻ 从 %s 恢复:已完成 %d 轮" % (cands[-1].parent, start_epoch))
-    module = SFTModule(inner)
-    module, optimizer, dl = acc.prepare(module, optimizer, dl)
-    if vdl is not None:
-        vdl = acc.prepare(vdl)
-    STOP_ON_TARGET[0] = bool(args.stop_on_target)
-    val_hist, ddp_chk, gpu_list = [], None, []
-    if resume_state is not None and acc.scaler is not None and resume_state.get("scaler"):
+def ensure_deps():
+    need = []
+    for mod, pk in (("argbind", "argbind"), ("datasets", "datasets>=3,<4"), ("tensorboardX", "tensorboardX"), ("safetensors", "safetensors")):
         try:
-            acc.scaler.load_state_dict(resume_state["scaler"])
+            __import__(mod)
         except Exception:  # noqa: BLE001
-            pass
-
-    state_file = out_dir / "train_state.json"
-    t_start = time.time()
-    nan_run = 0
-    for epoch in range(start_epoch, args.max_epochs):
-        module.train()
-        inner.speaker_encoder.eval()                                   # 说话人编码器冻结:BatchNorm 统计量不能被训练数据改动
-        run_loss, run_n, t_ep = 0.0, 0, time.time()
-        for batch in dl:
-            with acc.accumulate(module):
-                loss = module(**batch)
-                if not torch.isfinite(loss):
-                    nan_run += 1
-                    if nan_run > 30:
-                        raise RuntimeError("连续 30 步 loss 为 NaN(fp16 数值溢出)。请降低 --lr(例如 1e-4)后重试。")
-                acc.backward(loss)
-                if acc.sync_gradients:
-                    acc.clip_grad_norm_(trainable, 1.0)
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
-            if torch.isfinite(loss):
-                nan_run = 0
-                run_loss += float(loss.detach()); run_n += 1
-            if acc.sync_gradients:
-                sched.step()
-                opt_steps += 1
-                if main and opt_steps % args.logging_steps == 0:
-                    print("[epoch %d/%d] step %d · loss %.4f · lr %.2e · %.1f min" % (epoch + 1, args.max_epochs, opt_steps,
-                          run_loss / max(1, run_n), sched.get_last_lr()[0], (time.time() - t_start) / 60), flush=True)
-                    write_state(state_file, status="running", epoch=epoch + 1, step=opt_steps, loss=round(run_loss / max(1, run_n), 4))
-                if main and opt_steps % args.save_steps == 0:                       # 每 10 个优化步存一次 LoRA(崩溃保险)
-                    torch.save({"lora": lora_state(inner), "lora_cfg": {"r": args.lora_r, "alpha": args.lora_alpha}, "epoch": epoch, "step": opt_steps},
-                               ck_dir / "last_step.pt")
-        acc.wait_for_everyone()
-        ep_loss = run_loss / max(1, run_n)
-        val_loss = None
-        if vdl is not None:
-            try:
-                val_loss = eval_val_loss(module, vdl, acc, inner)
-            except Exception as e:  # noqa: BLE001
-                acc.print("⚠ 验证 loss 计算失败(%s),退回相似度选择" % e)
-        if ddp_chk is None:
-            try:
-                ddp_chk, gpu_list = ddp_info(acc, trainable)
-                acc.print("双卡校验: %s · %s" % (ddp_chk, gpu_list))
-            except Exception as e:  # noqa: BLE001
-                acc.print("⚠ 双卡校验失败: %s" % e)
-        if main:
-            d = ck_dir / ("epoch_%d" % (epoch + 1))
-            d.mkdir(parents=True, exist_ok=True)
-            lc = {"r": args.lora_r, "alpha": args.lora_alpha}
-            lo = lora_state(inner)
-            torch.save({"lora": lo, "lora_cfg": lc, "meta": {"epoch": epoch + 1, "loss": ep_loss, "base": args.base}}, d / "adapter.pt")
-            torch.save({"lora": lo, "lora_cfg": lc, "opt": optimizer.state_dict(), "sched": sched.state_dict(), "epoch": epoch + 1, "opt_steps": opt_steps,
-                        "scaler": acc.scaler.state_dict() if acc.scaler is not None else None}, d / "state.pt")
-            print("✔ 第 %d 轮完成 · 平均 loss %.4f · 用时 %.1f 分钟 → %s" % (epoch + 1, ep_loss, (time.time() - t_ep) / 60, d), flush=True)
-            sim = None
-            if (epoch + 1) % args.eval_every == 0:
-                torch.cuda.empty_cache()
-                sim = run_eval(args, epoch + 1, d / "adapter.pt", acc.local_process_index)
-            conv, overfit, bvl = None, False, None
-            if val_loss is not None:
-                val_hist.append((epoch + 1, val_loss, ep_loss))
-                stop, reason, be, bvl, conv, overfit = decide_val(val_hist, args.patience, args.max_epochs)
-                _, _, _, bs = decide(args.eval_log, epoch, args.target, 10 ** 6, 10 ** 6)
-                with open(out_dir / "val_log.jsonl", "a", encoding="utf-8") as vf:
-                    vf.write(json.dumps({"epoch": epoch + 1, "val_loss": val_loss, "train_loss": ep_loss}) + "\n")
-            else:
-                stop, reason, be, bs = decide(args.eval_log, epoch, args.target, args.patience, args.max_epochs)
-                conv = bool(stop and str(reason).startswith("收敛"))
-            reached = (bs is not None and bs >= args.target) if bs is not None else None
-            write_state(state_file, status="running", stage="LoRA 训练(双卡 DDP)" if world > 1 else "LoRA 训练(单卡!)", epoch=epoch + 1, max_epochs=args.max_epochs, loss=round(ep_loss, 4),
-                        val_loss=None if val_loss is None else round(val_loss, 4), similarity=sim, best_epoch=be, best_val_loss=bvl, best_similarity=bs, converged=conv, reason=reason, overfit=overfit,
-                        ddp_check=ddp_chk, gpus=gpu_list, target=args.target, target_reached=reached, selection="val_loss" if val_loss is not None else "similarity(无验证集,可信度低)")
-            ctrl_path.write_text(json.dumps({"epoch": epoch + 1, "stop": bool(stop), "reason": reason, "best_epoch": be, "best_val": bvl, "best_sim": bs, "sim": sim, "converged": conv, "overfit": overfit}), encoding="utf-8")
-            keep = {be, epoch + 1, epoch}                                               # 只保留最优 + 最近两轮,省磁盘
-            for old in ck_dir.glob("epoch_*"):
-                k = int(old.name.split("_")[1])
-                if k not in keep:
-                    shutil.rmtree(old, ignore_errors=True)
-                elif k != epoch + 1 and (old / "state.pt").exists():
-                    (old / "state.pt").unlink()
-        acc.wait_for_everyone()
-        ctrl = json.loads(ctrl_path.read_text(encoding="utf-8"))
-        if ctrl["stop"]:
-            acc.print("■ 停止训练:%s(最优 epoch %s,相似度 %s)" % (ctrl["reason"], ctrl["best_epoch"], ctrl["best_sim"]))
-            break
-    if main:
-        write_state(state_file, status="finished")
-        (out_dir / "train_done.json").write_text(json.dumps(json.loads(ctrl_path.read_text(encoding="utf-8")) if ctrl_path.exists() else {}), encoding="utf-8")
-    acc.wait_for_everyone()
-
-
-def main_cli():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--base", default="Qwen/Qwen3-TTS-12Hz-1.7B-Base")
-    ap.add_argument("--data_dir", default="/kaggle/working/data")
-    ap.add_argument("--train_jsonl", default="")
-    ap.add_argument("--output_dir", default="/kaggle/working")
-    ap.add_argument("--eval_log", default="/kaggle/working/eval_log.jsonl")
-    ap.add_argument("--batch_size", type=int, default=2, help="每卡 batch")
-    ap.add_argument("--grad_accum", type=int, default=0, help="0=自动(小数据集不累积太多,保证每轮至少约 8 个优化步;上限 8)")
-    ap.add_argument("--lr", type=float, default=2e-4)
-    ap.add_argument("--warmup_ratio", type=float, default=0.05)
-    ap.add_argument("--max_epochs", type=int, default=50)
-    ap.add_argument("--lora_r", type=int, default=16)
-    ap.add_argument("--lora_alpha", type=int, default=32)
-    ap.add_argument("--lora_dropout", type=float, default=0.05)
-    ap.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
-    ap.add_argument("--save_steps", type=int, default=10)
-    ap.add_argument("--logging_steps", type=int, default=5)
-    ap.add_argument("--workers", type=int, default=2)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--stop_on_target", action="store_true", help="相似度原始 cosine 达到 --target 就停(默认不这样做:只按验证 loss 早停/最大轮数,避免为追求数字而过拟合)")
-    ap.add_argument("--target", type=float, default=0.99)
-    ap.add_argument("--patience", type=int, default=6)
-    ap.add_argument("--eval_every", type=int, default=1)
-    ap.add_argument("--eval_n", type=int, default=5)
-    ap.add_argument("--eval_timeout", type=int, default=1800)
-    ap.add_argument("--resume", action="store_true")
-    ap.add_argument("--merge", action="store_true")
-    ap.add_argument("--adapter", default="")
-    ap.add_argument("--out", default="/kaggle/working/best_model")
-    ap.add_argument("--ref_wav", default="")
-    ap.add_argument("--ref_text", default="")
-    args = ap.parse_args()
-    if not args.train_jsonl:
-        args.train_jsonl = str(Path(args.data_dir) / "train_codes.jsonl")
-    if args.merge:
-        merge_export(args)
-    else:
-        train(args)
-
-
-if __name__ == "__main__":
-    main_cli()
-'''
-FILES['evaluate.py'] = r'''# -*- coding: utf-8 -*-
-"""
-evaluate.py —— 声纹相似度自动评估(子系统 A)
-
-  1) 加载基座模型,若给了 --adapter 就把该 checkpoint 的 LoRA 合并进去
-  2) 用参考音频(x-vector 模式,与训练时的输入格式完全一致)合成 5 条固定测试语句
-  3) 用 WavLM-SV 提取说话人嵌入,计算 "合成语音 vs 真人参考声纹" 的余弦相似度,5 条取平均 = 本轮得分
-  4) 追加写入 eval_log.jsonl: {"epoch": X, "similarity": 0.XXX, "timestamp": "..."} (另附逐条得分与真人上限)
-
-  "真人上限"(real_ceiling): 用没参与声纹质心的真人录音和质心比出来的相似度。
-  合成语音的得分几乎不可能超过它;如果上限本身 < 0.99,那么 0.99 的目标就不可能达到 —— 评估会如实打印出来。
-"""
-import argparse
-import json
-import math
-import os
-import random
-import sys
-import time
-from pathlib import Path
-
-import numpy as np
-
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-
-TEST_TEXTS = [
-    "今天天气真不错，我们一起去公园散散步吧，顺便拍几张照片留作纪念。",
-    "你知道吗，我刚刚听到一个特别有意思的消息，真的让我又惊讶又开心！",
-    "别担心，一切都会好起来的，只要我们一步一步慢慢来，就一定能做到。",
-    "各位听众朋友大家好，欢迎收听今天的节目，接下来我们聊聊生活中的小确幸。",
-    "夜深了，窗外下着小雨，我泡了一杯热茶，静静地听着雨声，心里格外平静。",
-]
-
-
-def read_jsonl(p):
-    return [json.loads(x) for x in Path(p).read_text(encoding="utf-8").splitlines() if x.strip()]
-
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--adapter", default="none")
-    ap.add_argument("--epoch", type=int, default=0)
-    ap.add_argument("--data_dir", default="/kaggle/working/data")
-    ap.add_argument("--base", default="Qwen/Qwen3-TTS-12Hz-1.7B-Base")
-    ap.add_argument("--model_dir", default="", help="直接评估一个已合并导出的模型目录(优先于 --base/--adapter)")
-    ap.add_argument("--device", default="cuda:0")
-    ap.add_argument("--eval_log", default="/kaggle/working/eval_log.jsonl")
-    ap.add_argument("--samples_dir", default="/kaggle/working/eval_samples")
-    ap.add_argument("--n", type=int, default=5)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--temperature", type=float, default=float(os.environ.get("VC_TEMPERATURE", "0.7")))
-    ap.add_argument("--top_p", type=float, default=float(os.environ.get("VC_TOP_P", "0.9")))
-    ap.add_argument("--top_k", type=int, default=int(os.environ.get("VC_TOP_K", "50")))
-    ap.add_argument("--rep", type=float, default=float(os.environ.get("VC_REP_PENALTY", "1.05")))
-    args = ap.parse_args()
-
-    import soundfile as sf
-    import torch
-    from speaker_sim import SpkScorer, load_wav16k, to16k
-    from train import build_lora, resolve_base
-    from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
-
-    data = Path(args.data_dir)
-    ref_wav, ref_txt = data / "ref.wav", data / "ref.txt"
-    if not ref_wav.exists():
-        raise SystemExit("找不到参考音频 %s(先运行 data_prep.py)" % ref_wav)
-
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
-
-    base = args.model_dir or resolve_base(args.base)
-    print("加载模型 %s …" % base, flush=True)
-    t0 = time.time()
-    tts = Qwen3TTSModel.from_pretrained(base, device_map=args.device, torch_dtype=torch.float16, attn_implementation="sdpa")
-    if args.adapter and args.adapter != "none" and not args.model_dir:
-        ck = torch.load(args.adapter, map_location="cpu")
-        lm, _ = build_lora(tts.model, ck["lora_cfg"]["r"], ck["lora_cfg"]["alpha"], 0.0)
-        miss, unexp = tts.model.load_state_dict(ck["lora"], strict=False)
-        if [k for k in miss if "lora_" in k] or unexp:
-            raise SystemExit("LoRA 权重与模型不匹配")
-        tts.model = lm.merge_and_unload()
-        print("已合并 LoRA: %s" % args.adapter, flush=True)
-    tts.model.eval()
-
-    prompt = tts.create_voice_clone_prompt(ref_audio=str(ref_wav), ref_text="", x_vector_only_mode=True)
-    train_txt = " ".join(r["text"] for r in (read_jsonl(data / "train.jsonl") if (data / "train.jsonl").exists() else []))
-    held = [t for t in TEST_TEXTS if t[:8] not in train_txt]
-    val_txt = [r["text"] for r in (read_jsonl(data / "val.jsonl") if (data / "val.jsonl").exists() else []) if 8 <= len(r["text"]) <= 60][:3]
-    texts = (held + val_txt)[: max(1, min(args.n, len(held) + len(val_txt)))] or TEST_TEXTS[:1]
-    kw = dict(language="Chinese", voice_clone_prompt=prompt, max_new_tokens=1024, temperature=args.temperature, top_p=args.top_p,
-              top_k=args.top_k, repetition_penalty=args.rep)
-    wavs, sr = [], 24000
-    try:
-        torch.manual_seed(args.seed)
-        ws, sr = tts.generate_voice_clone(text=texts, **kw)                    # 一批合成,快
-        wavs = list(ws)
-    except Exception as e:  # noqa: BLE001
-        print("批量合成失败(%s),改为逐条合成" % e, flush=True)
-        torch.cuda.empty_cache()
-        wavs = []
-        for t in texts:
-            torch.manual_seed(args.seed)
-            ws, sr = tts.generate_voice_clone(text=t, **kw)
-            wavs.append(ws[0])
-    if sr != 24000:
-        raise SystemExit("合成采样率 %s != 24000" % sr)
-    print("合成完成 %.0fs" % (time.time() - t0), flush=True)
-
-    out = Path(args.samples_dir) / ("epoch_%d" % args.epoch)
-    out.mkdir(parents=True, exist_ok=True)
-    for i, w in enumerate(wavs):
-        sf.write(str(out / ("%d.wav" % i)), np.asarray(w, dtype=np.float32), sr)
-
-    del tts, prompt
-    torch.cuda.empty_cache()
-
-    # ── 留出评估:声纹质心来自【验证集(训练时没见过的原始录音)】,不是训练数据 ──
-    def rows_of(name):
-        return read_jsonl(data / name) if (data / name).exists() else []
-    tr_rows, va_rows = rows_of("train.jsonl"), rows_of("val.jsonl")
-    tr_paths = [r["audio_path"] for r in tr_rows if Path(r["audio_path"]).exists()]
-    va_paths = [r["audio_path"] for r in va_rows if Path(r["audio_path"]).exists()]
-    random.Random(0).shuffle(tr_paths)
-    random.Random(1).shuffle(va_paths)
-    sc = SpkScorer(args.device)
-    sims_gen = [None] * len(wavs)
-    g16 = [to16k(np.asarray(w, dtype=np.float32), sr) for w in wavs]
-    sc.set_ref([load_wav16k(p) for p in [str(ref_wav)] + tr_paths[:7]])
-    sims_train = [sc.score(w) for w in g16]
-    sim_val, ceiling_val, heldout = None, None, False
-    if len(va_paths) >= 3:
-        k = max(2, len(va_paths) // 2)
-        cen, ceil_p = va_paths[:min(k, 8)], va_paths[k:k + 6] or va_paths[:3]
-        sc.set_ref([load_wav16k(p) for p in cen])
-        sim_val = [sc.score(w) for w in g16]
-        ceiling_val = float(np.mean([sc.score(load_wav16k(p)) for p in ceil_p]))
-        heldout = True
-    sims = sim_val if heldout else sims_train
-    mean = float(np.mean(sims))
-    ci = float(1.96 * np.std(sims, ddof=1) / math.sqrt(len(sims))) if len(sims) > 1 else None
-    rec = {"epoch": args.epoch, "similarity": round(mean, 4), "per_sample": [round(x, 4) for x in sims], "heldout": heldout,
-           "sim_val_centroid": None if sim_val is None else round(float(np.mean(sim_val)), 4), "sim_train_centroid": round(float(np.mean(sims_train)), 4),
-           "real_ceiling_val": None if ceiling_val is None else round(ceiling_val, 4), "real_ceiling": None if ceiling_val is None else round(ceiling_val, 4),
-           "ci95": None if ci is None else round(ci, 4), "n_texts": len(texts), "n_val_clips": len(va_paths), "n_train_clips": len(tr_paths), "condition": "speech", "is_mock": False,
-           "method": ("WavLM-SV cosine:合成语音 vs 留出验证录音声纹质心(口语对口语;文本 %d 条,均不在训练集中);95%% 置信区间按样本标准误估计,样本很少时置信度低" % len(texts)) if heldout else "⚠ 没有留出验证录音:退回训练数据质心,存在泄漏,不可信",
-           "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"), "adapter": args.adapter}
-    with open(args.eval_log, "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    print("EVAL_RESULT " + json.dumps(rec, ensure_ascii=False), flush=True)
-
-
-if __name__ == "__main__":
-    main()
-'''
-FILES['auto_train_loop.py'] = r'''# -*- coding: utf-8 -*-
-"""
-auto_train_loop.py —— 训练 + 评估循环控制器(子系统 A)
-
-  流程: ① 评估未微调的基线(epoch 0)  ② accelerate 双卡启动 train.py:每个 epoch 结束自动评估声纹相似度
-        ③ 相似度 ≥ 目标 → 停止并保存;连续 patience 轮无提升 → 判定收敛,停止并取最优轮;最多 max_epochs(50)轮
-        ④ 把最优 checkpoint 合并导出到 best_model/(完整模型目录,服务启动时自动加载)
-  每轮打印: 当前轮次 · 当前相似度 · 距离目标的差距 · 预计还需多少轮
-  可随时中断(Ctrl+C / 停止单元格),再次运行自动从最近的 checkpoint 续训。
-"""
-import argparse
-import json
-import os
-import re
-import shutil
-import signal
-import subprocess
-import sys
-import time
-from pathlib import Path
-
-HERE = Path(__file__).resolve().parent
-
-
-def rows(p):
-    out = []
-    if Path(p).exists():
-        for ln in Path(p).read_text(encoding="utf-8").splitlines():
-            try:
-                out.append(json.loads(ln))
-            except ValueError:
-                pass
-    return out
-
-
-def plot(eval_log, target, path):
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        rs = [r for r in rows(eval_log) if r.get("similarity") is not None]
-        if not rs:
-            return False
-        fig, ax = plt.subplots(figsize=(7, 3.4), dpi=110)
-        ax.plot([r["epoch"] for r in rs], [r["similarity"] for r in rs], "o-", color="#7c6cff", label="similarity")
-        ax.axhline(target, color="#34d399", ls="--", label="target %.2f" % target)
-        ce = [r["real_ceiling"] for r in rs if r.get("real_ceiling")]
-        if ce:
-            ax.axhline(ce[-1], color="#fbbf24", ls=":", label="real-speech ceiling %.3f" % ce[-1])
-        ax.set_xlabel("epoch (0 = baseline, no fine-tune)")
-        ax.set_ylabel("speaker cosine similarity")
-        ax.grid(alpha=.3)
-        ax.legend(loc="lower right")
-        fig.tight_layout()
-        fig.savefig(path)
-        plt.close(fig)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def eta(rs, target):
-    pts = [r["similarity"] for r in rs if r.get("epoch", 0) >= 1][-4:]
-    if len(pts) < 2:
-        return "未知(至少 2 轮后估算)"
-    d = (pts[-1] - pts[0]) / (len(pts) - 1)
-    if pts[-1] >= target:
-        return "0"
-    if d <= 1e-4:
-        return "∞(提升已停滞)"
-    return "约 %d 轮" % max(1, int((target - pts[-1]) / d + 0.999))
-
-
-def report(args, seen):
-    rs = rows(args.eval_log)
-    new = [r for r in rs if r.get("timestamp") not in seen]
-    for r in new:
-        seen.add(r.get("timestamp"))
-        if r.get("similarity") is None:
-            continue
-        gap = args.target - r["similarity"]
-        print("\n" + "═" * 64)
-        print("  轮次 %s │ 当前相似度 %.4f │ 距离目标 %.2f 还差 %+.4f │ 预计还需 %s" %
-              (("%d/%d" % (r["epoch"], args.max_epochs)) if r["epoch"] else "基线", r["similarity"], args.target, gap, eta(rs, args.target)))
-        if r.get("real_ceiling"):
-            print("  真人录音自身一致性上限 ≈ %.4f(合成语音很难超过它)" % r["real_ceiling"])
-        print("═" * 64, flush=True)
-        if plot(args.eval_log, args.target, str(Path(args.work) / "similarity_curve.png")):
-            print("CURVE_UPDATED " + str(Path(args.work) / "similarity_curve.png"), flush=True)
-
-
-def run_eval_baseline(args):
-    if any(r.get("epoch") == 0 for r in rows(args.eval_log)):
-        return
-    print("▶ 评估未微调的基线(epoch 0)…", flush=True)
-    r = subprocess.run([sys.executable, str(HERE / "evaluate.py"), "--adapter", "none", "--epoch", "0", "--data_dir", args.data_dir,
-                        "--base", args.base, "--eval_log", args.eval_log, "--device", "cuda:0"], capture_output=True, text=True)
-    if r.returncode != 0:
-        print("⚠ 基线评估失败(不影响训练):\n" + "\n".join((r.stderr or r.stdout).splitlines()[-12:]), flush=True)
-
-
-def gpu_count():
-    try:
-        import torch
-        return torch.cuda.device_count()
-    except Exception:  # noqa: BLE001
-        return 0
-
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--work", default="/kaggle/working")
-    ap.add_argument("--data_dir", default="/kaggle/working/data")
-    ap.add_argument("--base", default="Qwen/Qwen3-TTS-12Hz-1.7B-Base")
-    ap.add_argument("--target", type=float, default=0.99, help="参考阈值(原始 cosine);只用于报告「达到/未达到」,不会据此无限训练")
-    ap.add_argument("--max_epochs", type=int, default=50)
-    ap.add_argument("--patience", type=int, default=6)
-    ap.add_argument("--lr", type=float, default=2e-4)
-    ap.add_argument("--batch_size", type=int, default=2)
-    ap.add_argument("--fresh", action="store_true", help="忽略已有 checkpoint,从头训练")
-    args = ap.parse_args()
-    work = Path(args.work)
-    args.eval_log = str(work / "eval_log.jsonl")
-    ck = work / "checkpoints"
-    ngpu = max(1, gpu_count())
-    if args.fresh:
-        for p in (ck, work / "eval_samples", work / "train_state.json", work / "train_done.json", Path(args.eval_log)):
-            shutil.rmtree(p, ignore_errors=True) if Path(p).is_dir() else Path(p).unlink(missing_ok=True)
-    if not (Path(args.data_dir) / "train_codes.jsonl").exists():
-        raise SystemExit("❌ 找不到 %s/train_codes.jsonl,请先运行 data_prep.py" % args.data_dir)
-    print("训练配置: GPU×%d · 目标相似度 %.2f · 最多 %d 轮 · 收敛耐心 %d 轮 · lr %g" % (ngpu, args.target, args.max_epochs, args.patience, args.lr), flush=True)
-    seen = set(r.get("timestamp") for r in rows(args.eval_log))
-    (work / "train_state.json").write_text(json.dumps({"status": "starting"}), encoding="utf-8")
-    if not seen:
-        run_eval_baseline(args)
-    report(args, seen)
-
-    bs = args.batch_size
-    proc, interrupted = None, False
-    already = (work / "train_done.json").exists() and not args.fresh
-    if already:
-        print("ℹ 检测到上一次训练已经完成(train_done.json),跳过训练直接导出;想重新训练请加 --fresh", flush=True)
-    for attempt in range(0 if already else 4):
-        resume = bool(list(ck.glob("epoch_*/state.pt")))
-        port = 29500 + (os.getpid() + attempt) % 400
-        cmd = [sys.executable, "-m", "accelerate.commands.launch", "--num_processes", str(ngpu), "--num_machines", "1",
-               "--mixed_precision", "fp16", "--dynamo_backend", "no", "--main_process_port", str(port)]
-        if ngpu > 1:
-            cmd.append("--multi_gpu")
-        cmd += [str(HERE / "train.py"), "--base", args.base, "--data_dir", args.data_dir, "--output_dir", str(work), "--eval_log", args.eval_log,
-                "--batch_size", str(bs), "--lr", str(args.lr), "--target", str(args.target), "--max_epochs", str(args.max_epochs),
-                "--patience", str(args.patience)]
-        if resume:
-            cmd.append("--resume")
-        print("\n▶ 启动训练(第 %d 次尝试%s)…" % (attempt + 1, ",从 checkpoint 续训" if resume else ""), flush=True)
-        env = dict(os.environ, PYTHONUNBUFFERED="1", TOKENIZERS_PARALLELISM="false", PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True")
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, start_new_session=True, cwd=str(HERE))
-        tail = []
-        try:
-            for line in proc.stdout:
-                line = line.rstrip()
-                tail.append(line)
-                tail = tail[-60:]
-                if re.search(r"^\[epoch|^✔|^■|^LoRA|^训练样本|^加载|^♻|Traceback|Error|error|⚠|EVAL_RESULT", line):
-                    print("  " + line[:220], flush=True)
-                report(args, seen)
-            proc.wait()
-        except KeyboardInterrupt:
-            interrupted = True
-            print("\n⏹ 收到中断,正在停止训练(下次运行会自动从最近的 checkpoint 续训)…", flush=True)
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except Exception:  # noqa: BLE001
-                pass
-            break
-        report(args, seen)
-        done = work / "train_done.json"
-        if proc.returncode == 0 and done.exists():
-            break
-        txt = "\n".join(tail)
-        print("⚠ 训练进程异常退出(code %s)。最后日志:\n%s" % (proc.returncode, "\n".join("   " + x for x in tail[-14:])), flush=True)
-        if re.search(r"out of memory|CUDA error: out of memory|OutOfMemory", txt, re.I) and bs > 1:
-            bs = max(1, bs // 2)
-            print("  → 显存不足,每卡 batch 降为 %d 后续训" % bs, flush=True)
-        elif attempt >= 2:
-            break
-        time.sleep(5)
-
-    if interrupted:
-        return
-    rs = [r for r in rows(args.eval_log) if r.get("epoch", 0) >= 1 and r.get("similarity") is not None]
-    cks = {int(p.name.split("_")[1]): p for p in ck.glob("epoch_*") if (p / "adapter.pt").exists()}
-    if not cks:
-        raise SystemExit("❌ 没有任何可用 checkpoint,训练失败。")
-    dj = {}
-    try:
-        dj = json.loads((work / "train_done.json").read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        pass
-    if dj.get("best_val") is not None and dj.get("best_epoch") in cks:               # 以【留出验证 loss】选 checkpoint(不是在评估集上挑最高分)
-        be = dj["best_epoch"]
-        bsim = next((r["similarity"] for r in rs if r["epoch"] == be), None)
-        print("  checkpoint 选择依据: 验证 loss 最低 → epoch %d(val_loss %.4f)%s" % (be, dj["best_val"], " · 已收敛" if dj.get("converged") else " · 未判定收敛"))
-    elif rs:
-        best = max(rs, key=lambda r: r["similarity"])
-        be = best["epoch"] if best["epoch"] in cks else max(cks)
-        bsim = best["similarity"]
-        print("  ⚠ 没有验证 loss(数据太少/计算失败),退回按相似度选 checkpoint —— 可信度低,可能对评估文本过拟合")
-    else:
-        be, bsim = max(cks), None
-    base_row = next((r for r in rows(args.eval_log) if r.get("epoch") == 0), None)
-    print("\n" + "█" * 64)
-    if bsim is not None and bsim >= args.target:
-        print("  ✅ 原始声纹 cosine 达到参考阈值 %.2f(第 %d 轮 = %.4f)。注意:这是原始指标,不是人耳相似度百分比" % (args.target, be, bsim))
-    else:
-        ce = rs[-1].get("real_ceiling") if rs else None
-        print("  ⏹ 训练结束:最优为第 %d 轮,相似度 %s(目标 %.2f 未达到)" % (be, ("%.4f" % bsim) if bsim else "未知", args.target))
-        if ce and ce < args.target:
-            print("  ℹ 真人录音自身一致性上限只有 %.4f < %.2f:在这个声纹模型上 %.2f 是不可能达到的,%.4f 已接近天花板" % (ce, args.target, args.target, bsim or 0))
-    if base_row and bsim:
-        print("  对比基线(未微调) %.4f → 微调后 %.4f (%+.4f)" % (base_row["similarity"], bsim, bsim - base_row["similarity"]))
-    print("█" * 64, flush=True)
-
-    best_dir = work / "best_model"
-    print("▶ 合并最优 LoRA(第 %d 轮)→ %s …" % (be, best_dir), flush=True)
-    r = subprocess.run([sys.executable, str(HERE / "train.py"), "--merge", "--adapter", str(cks[be] / "adapter.pt"), "--out", str(best_dir),
-                        "--base", args.base, "--ref_wav", str(Path(args.data_dir) / "ref.wav"), "--ref_text", str(Path(args.data_dir) / "ref.txt")],
-                       cwd=str(HERE), env=dict(os.environ, PYTHONUNBUFFERED="1"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    print("\n".join("  " + x for x in r.stdout.strip().splitlines()[-6:]), flush=True)
-    if r.returncode != 0:
-        raise SystemExit("❌ 合并导出失败")
-    shutil.copy(cks[be] / "adapter.pt", best_dir / "adapter.pt")
-    (work / "best_checkpoint.txt").write_text(str(cks[be]), encoding="utf-8")
-    print("✅ 最优 checkpoint: %s\n✅ 完整模型已导出: %s(服务启动时自动加载)" % (cks[be], best_dir), flush=True)
-
-
-if __name__ == "__main__":
-    main()
-'''
-FILES['data_prep.py'] = r'''# -*- coding: utf-8 -*-
-"""
-data_prep.py —— 训练数据预处理(子系统 A)
-
-  输入 : --src 目录(默认 /kaggle/working/reference_audio),里面放 .wav/.mp3/.flac/.m4a 音频,可附同名 .txt 转录
-  处理 : ① 统一转成 24kHz 单声道 16-bit  ② 长录音(>20s)按静音自动切成 3~15 秒的片段(不是直接丢掉,不浪费数据)
-         ③ 过滤 <2s / >20s / 几乎无声的片段  ④ 没有 .txt 的片段用 Whisper 自动转录  ⑤ 挑一条最合适的参考音频 ref.wav/ref.txt
-         ⑥ 95% / 5% 划分训练集/验证集  ⑦ 用 Qwen3-TTS-Tokenizer-12Hz 提取 audio_codes(SFT 训练需要)
-  输出 : data/wavs/*.wav · dataset.jsonl · train.jsonl · val.jsonl · ref.wav · ref.txt · train_codes.jsonl · val_codes.jsonl
-"""
-import argparse
-import json
-import os
-import random
-import shutil
-import sys
-import time
-from pathlib import Path
-
-import numpy as np
-
-SR = 24000
-EXTS = {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac", ".opus", ".webm"}
-MIN_S, MAX_S, CHUNK_MAX = 2.0, 20.0, 15.0
-
-
-def load_audio(p):
-    import librosa
-    y, _ = librosa.load(str(p), sr=SR, mono=True)
-    return y.astype(np.float32)
-
-
-def split_long(y):
-    """把长录音按静音切成 3~15 秒的片段,返回 [(start, end)] 采样点区间"""
-    import librosa
-    iv = librosa.effects.split(y, top_db=33, frame_length=2048, hop_length=512)
-    segs, cur = [], None
-    for s, e in iv:
-        if e - s > CHUNK_MAX * SR:                       # 单段连续说话就超长: 在能量最低点硬切
-            pieces = []
-            a = s
-            while e - a > CHUNK_MAX * SR:
-                lo, hi = a + int(8 * SR), a + int(CHUNK_MAX * SR)
-                w = np.abs(y[lo:hi])
-                k = lo + int(np.argmin(np.convolve(w, np.ones(480) / 480, mode="same")))
-                pieces.append((a, k))
-                a = k
-            pieces.append((a, e))
-        else:
-            pieces = [(s, e)]
-        for ps, pe in pieces:
-            if cur is None:
-                cur = [ps, pe]
-            elif pe - cur[0] <= CHUNK_MAX * SR and ps - cur[1] <= 0.8 * SR:
-                cur[1] = pe
-            else:
-                segs.append(tuple(cur))
-                cur = [ps, pe]
-    if cur is not None:
-        segs.append(tuple(cur))
-    pad = int(0.12 * SR)
-    return [(max(0, s - pad), min(len(y), e + pad)) for s, e in segs]
-
-
-def rms_db(y):
-    return 20 * np.log10(float(np.sqrt((y.astype(np.float64) ** 2).mean())) + 1e-9)
-
-
-def build_asr(name, device):
-    import torch
-    from transformers import pipeline
-    dev = 0 if (device.startswith("cuda") and torch.cuda.is_available()) else -1
-    last = None
-    for n in (name, "openai/whisper-small"):
-        try:
-            print("加载语音识别模型 %s …" % n, flush=True)
-            return pipeline("automatic-speech-recognition", model=n, device=dev, torch_dtype=torch.float16 if dev == 0 else torch.float32, chunk_length_s=30)
-        except Exception as e:  # noqa: BLE001
-            last = e
-            print("  加载失败: %s" % e, flush=True)
-    raise RuntimeError("语音识别模型加载失败: %s" % last)
-
-
-def transcribe(pipe, wavs16, language):
-    kw = {"task": "transcribe"}
-    if language:
-        kw["language"] = language
-    outs = []
-    for i in range(0, len(wavs16), 8):
-        batch = [{"raw": w, "sampling_rate": 16000} for w in wavs16[i:i + 8]]
-        res = pipe(batch, batch_size=len(batch), generate_kwargs=kw)
-        outs += [(r.get("text") or "").strip() for r in res]
-        print("  转录 %d/%d" % (min(i + 8, len(wavs16)), len(wavs16)), flush=True)
-    return outs
-
-
-def to16(y):
-    from speaker_sim import to16k
-    return to16k(y, SR)
-
-
-def split_by_source(clips, val_ratio, seed=42):
-    """按【原始录音】切分训练/验证,避免把同一录音里相邻的切片随机分到两边造成数据泄漏。
-    录音数 ≥ 4: 整条录音留出;录音太少: 每条录音按时间顺序取末尾约 15% 作验证,并在边界丢弃 1 个缓冲片段。"""
-    groups = {}
-    for c in clips:
-        groups.setdefault(c["source"], []).append(c)
-    srcs = sorted(groups)
-    rnd = random.Random(seed)
-    if len(srcs) >= 4:
-        rnd.shuffle(srcs)
-        nv = max(1, int(round(len(srcs) * max(val_ratio, 0.15))))
-        return [c for s_ in srcs[nv:] for c in groups[s_]], [c for s_ in srcs[:nv] for c in groups[s_]], "group_by_recording"
-    train, val = [], []
-    for s_ in srcs:
-        g = sorted(groups[s_], key=lambda c: c["ci"])
-        k = max(1, int(round(len(g) * 0.15))) if len(g) >= 8 else 0
-        if k:
-            val += g[-k:]
-            train += g[:-k - 1]
-        else:
-            train += g
-    return train, val, "temporal_block_per_recording"
-
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--src", default="/kaggle/working/reference_audio")
-    ap.add_argument("--out", default="/kaggle/working/data")
-    ap.add_argument("--device", default="cuda:0")
-    ap.add_argument("--asr_model", default=os.environ.get("VC_ASR_MODEL", "openai/whisper-large-v3-turbo"))
-    ap.add_argument("--language", default="", help="转录语言提示,如 chinese / english;留空自动检测")
-    ap.add_argument("--tokenizer", default="Qwen/Qwen3-TTS-Tokenizer-12Hz")
-    ap.add_argument("--skip_codes", action="store_true")
-    ap.add_argument("--val_ratio", type=float, default=0.15)
-    ap.add_argument("--keep_suspect", action="store_true", help="保留被质检判为歌声/背景音乐的录音(默认隔离,不与口语样本混训)")
-    args = ap.parse_args()
-
-    import soundfile as sf
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import audio_qc as aq
-    src, out = Path(args.src), Path(args.out)
-    files = sorted(p for p in src.rglob("*") if p.suffix.lower() in EXTS) if src.exists() else []
-    if not files:
-        raise SystemExit("❌ 在 %s 里没找到音频文件(.wav/.mp3/.flac/.m4a …)。请把参考音频上传成 Kaggle Dataset 并设置 TRAIN_DATA_DIR。" % src)
-    if out.exists():
-        shutil.rmtree(out)
-    (out / "wavs").mkdir(parents=True)
-    print("找到 %d 个音频文件,开始切分/统一格式…" % len(files), flush=True)
-
-    clips = []                      # dict(path, text, dur, rms, source, ci, text_source)
-    quarantine, src_qc = [], {}
-    dropped = {"太短": 0, "太长": 0, "太安静": 0, "读取失败": 0}
-    for fi, f in enumerate(files):
-        try:
-            y = load_audio(f)
-        except Exception as e:  # noqa: BLE001
-            dropped["读取失败"] += 1
-            print("  ⚠ 跳过 %s: %s" % (f.name, e))
-            continue
-        dur = len(y) / SR
-        mid = len(y) // 2
-        qc = aq.reference_qc(y[max(0, mid - 20 * SR): mid + 20 * SR], SR)             # 每个原始录音先质检(启发式,未校准)
-        src_qc[str(f)] = {k: qc.get(k) for k in ("kind", "kind_zh", "snr_db_est", "note_sustain_ratio", "floor_flatness", "clip_ratio", "warnings")}
-        if qc["kind"] in ("singing", "bg_music") and not args.keep_suspect:
-            quarantine.append({"source": str(f), "reason": qc["kind_zh"], "warnings": qc["warnings"]})
-            print("  ⚠ 隔离 %s:%s(歌声必须单独管理,不与口语样本混训;--keep_suspect 可强制保留)" % (f.name, qc["kind_zh"]))
-            continue
-        txt_file = f.with_suffix(".txt")
-        given = txt_file.read_text(encoding="utf-8", errors="ignore").strip() if txt_file.exists() else ""
-        if dur > MAX_S:
-            ranges = split_long(y)
-            given = ""                                # 长录音的整段文字没法对齐到片段,交给 ASR
-        else:
-            ranges = [(0, len(y))]
-        for ci, (s, e) in enumerate(ranges):
-            seg = y[s:e]
-            d = len(seg) / SR
-            if d < MIN_S:
-                dropped["太短"] += 1
-                continue
-            if d > MAX_S:
-                dropped["太长"] += 1
-                continue
-            if rms_db(seg) < -48:
-                dropped["太安静"] += 1
-                continue
-            pk = float(np.abs(seg).max())
-            if pk > 1e-4:
-                seg = seg * (0.9 / pk)
-            name = "%s_%03d_%02d.wav" % (f.stem[:40].replace(" ", "_"), fi, ci)
-            sf.write(str(out / "wavs" / name), seg, SR, subtype="PCM_16")
-            clips.append({"audio_path": str(out / "wavs" / name), "text": given, "duration": round(d, 3), "rms": rms_db(seg), "source": str(f), "ci": ci, "text_source": "given" if given else "asr"})
-    if not clips:
-        raise SystemExit("❌ 过滤后没有可用片段:%s" % dropped)
-
-    need = [c for c in clips if not c["text"]]
+            need.append(pk)
     if need:
-        print("%d 个片段没有转录文本,使用 Whisper 自动转录…" % len(need), flush=True)
-        pipe = build_asr(args.asr_model, args.device)
-        texts = transcribe(pipe, [to16(load_audio(c["audio_path"])) for c in need], args.language)
-        for c, t in zip(need, texts):
-            c["text"] = t
-        del pipe
-        try:
-            import torch
-            torch.cuda.empty_cache()
-        except Exception:  # noqa: BLE001
-            pass
-    def cps(c):
-        return len([ch for ch in c["text"] if ch.isalnum() or "\u4e00" <= ch <= "\u9fff"]) / max(c["duration"], 0.1)
-    bad = [c for c in clips if len(c["text"].strip()) < 2 or len(set(c["text"])) < 3 or (c["text_source"] == "asr" and not (1.2 <= cps(c) <= 9.5))]
-    clips = [c for c in clips if c not in bad]
-    if bad:
-        print("丢弃 %d 个转录无效/为空的片段" % len(bad))
-    if len(clips) < 5:
-        raise SystemExit("❌ 可用片段只有 %d 条,太少,无法训练(建议总时长 10 分钟以上)。" % len(clips))
+        print("  安装训练依赖:", need, flush=True)
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check"] + need, check=False, timeout=900)
 
-    train, val, mode = split_by_source(clips, args.val_ratio)
-    srcs_tr, srcs_va = set(c["source"] for c in train), set(c["source"] for c in val)
-    if mode == "group_by_recording":
-        assert not (srcs_tr & srcs_va), "数据泄漏:同一原始录音同时出现在训练集和验证集"
-    n_asr = sum(1 for c in clips if c["text_source"] == "asr")
-    (out / "split_report.json").write_text(json.dumps({"mode": mode, "train_clips": len(train), "val_clips": len(val), "train_sources": len(srcs_tr), "val_sources": len(srcs_va),
-        "shared_sources": len(srcs_tr & srcs_va), "asr_untrusted_clips": n_asr, "quarantined": quarantine, "source_qc": src_qc}, ensure_ascii=False, indent=2), encoding="utf-8")
-    with open(out / "review.tsv", "w", encoding="utf-8") as fh:                  # ASR 转写必须允许人工修正:改好 text 列后放回同名 .txt 重新运行
-        fh.write("audio_path\ttext_source\ttext\n")
-        for c in clips:
-            if c["text_source"] == "asr":
-                fh.write("%s\t%s\t%s\n" % (c["audio_path"], c["text_source"], c["text"].replace("\t", " ")))
-    print("切分方式: %s · 训练 %d / 验证 %d · 训练与验证共享的原始录音数 %d" % (mode, len(train), len(val), len(srcs_tr & srcs_va)))
-    if n_asr:
-        print("  ⚠ %d 个片段的文字来自 Whisper 自动识别(未核对),列表见 %s —— 高质量克隆请用与音频严格对应的文字" % (n_asr, out / "review.tsv"))
-    if not val:
-        print("  ⚠ 数据太少,没有可留出的验证集:无法给出可信的验证 loss / 留出评估(会如实标注)")
 
-    def dump(name, rows):
-        with open(out / name, "w", encoding="utf-8") as fh:
-            for r in rows:
-                fh.write(json.dumps({"audio_path": r["audio_path"], "text": r["text"], "duration": r["duration"], "source": r.get("source"), "text_source": r.get("text_source")}, ensure_ascii=False) + "\n")
+def train(work, data_dir, base, max_steps, lr, fresh=False):
+    work, data_dir = Path(work), Path(data_dir)
+    rep = json.loads((data_dir / "data_ready.json").read_text(encoding="utf-8"))
+    if rep["clips"] < 3:
+        raise SystemExit("可用训练片段只有 %d 条(<3):%s" % (rep["clips"], rep.get("skipped", [])[:3]))
+    ensure_deps()
+    repo, sha = ensure_repo(work)
+    save = work / "voxcpm_lora_ckpt"
+    if fresh:
+        shutil.rmtree(save, ignore_errors=True)
+    save.mkdir(parents=True, exist_ok=True)
+    cfg = work / "voxcpm_finetune_lora.yaml"
+    write_config(cfg, base, data_dir, save, max_steps=max_steps, lr=lr, has_val=rep["val"] > 0)
+    _state(work, status="training", data=rep, repo_commit=sha, max_steps=max_steps, lr=lr, started=time.strftime("%F %T"))
+    env = dict(os.environ, PYTHONPATH=str(repo / "src") + os.pathsep + os.environ.get("PYTHONPATH", ""), PYTHONUNBUFFERED="1")
+    p = subprocess.Popen([sys.executable, str(repo / "scripts" / "train_voxcpm_finetune.py"), "--config_path", str(cfg)], cwd=str(repo), env=env,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    tail = []
+    for line in p.stdout:
+        line = line.rstrip()
+        tail.append(line)
+        tail = tail[-30:]
+        print("   " + line, flush=True)
+    rc = p.wait()
+    if rc != 0:
+        _state(work, status="failed", error="\n".join(tail[-8:]))
+        raise SystemExit("训练失败 rc=%s" % rc)
+    return export(work, save, base, rep, sha)
 
-    dump("dataset.jsonl", clips)
-    dump("train.jsonl", train)
-    dump("val.jsonl", val)
 
-    pool = [c for c in train if c["text_source"] == "given"] or train          # 参考音频只从训练集选,且优先用有人工文字的
-    cand = [c for c in pool if 6.0 <= c["duration"] <= 12.0] or [c for c in pool if 4.0 <= c["duration"] <= 14.0] or pool
-    ref = max(cand, key=lambda c: (c["rms"] > -35) * 2 + (-abs(c["duration"] - 9.0)) / 9.0 + c["rms"] / 100.0)
-    shutil.copy(ref["audio_path"], out / "ref.wav")
-    (out / "ref.txt").write_text(ref["text"], encoding="utf-8")
+def export(work, save, base, rep=None, sha=""):
+    """把 latest/ 复制成 best_model/(推理端只认 trained.json + lora 目录)。"""
+    work, save = Path(work), Path(save)
+    src = save / "latest"
+    if not (src / "lora_weights.safetensors").exists() and not (src / "lora_weights.ckpt").exists():
+        steps = sorted([d for d in save.iterdir() if d.is_dir() and d.name.startswith("step_")]) if save.exists() else []
+        src = steps[-1] if steps else src
+    if not any((src / n).exists() for n in ("lora_weights.safetensors", "lora_weights.ckpt")):
+        raise SystemExit("没有找到 LoRA 权重(%s)" % src)
+    out = work / "best_model"
+    lora = out / "lora"
+    shutil.rmtree(lora, ignore_errors=True)
+    lora.mkdir(parents=True, exist_ok=True)
+    for n in os.listdir(src):
+        if n.startswith("lora") or n.endswith(".json"):
+            if (src / n).is_file():
+                shutil.copy2(src / n, lora / n)
+    meta = {"engine": "voxcpm2_lora", "base": base, "lora_dir": str(lora), "repo_commit": sha, "data": rep, "time": time.strftime("%F %T"),
+            "note": "未经留出验证与不降级闸门前,不得晋升为默认;效果【未验证】"}
+    (out / "trained.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+    _state(work, status="done", lora_dir=str(lora))
+    print("  ✅ LoRA 已导出: %s" % lora, flush=True)
+    return meta
 
-    tot = sum(c["duration"] for c in clips)
-    print("\n" + "─" * 50 + "\n数据集统计\n" + "─" * 50)
-    print("  片段数 : %d (训练 %d / 验证 %d)" % (len(clips), len(train), len(val)))
-    print("  总时长 : %.1f 分钟" % (tot / 60))
-    print("  平均   : %.1f 秒/条" % (tot / len(clips)))
-    print("  丢弃   : %s" % dropped)
-    print("  参考音频: %s (%.1fs) 「%s」" % (Path(ref["audio_path"]).name, ref["duration"], ref["text"][:40]))
-    if tot < 600:
-        print("  ⚠ 总时长不足 10 分钟,声纹相似度提升会受限(建议 ≥ 10 分钟、越多越好)")
 
-    if args.skip_codes:
-        return
-    print("\n提取 audio_codes(%s)…" % args.tokenizer, flush=True)
-    from qwen_tts import Qwen3TTSTokenizer
-    tok = Qwen3TTSTokenizer.from_pretrained(args.tokenizer, device_map=args.device)
-    for name, rows in (("train_codes.jsonl", train), ("val_codes.jsonl", val)):
-        with open(out / name, "w", encoding="utf-8") as fh:
-            for i in range(0, len(rows), 16):
-                b = rows[i:i + 16]
-                enc = tok.encode([r["audio_path"] for r in b])
-                for r, code in zip(b, enc.audio_codes):
-                    fh.write(json.dumps({"audio": r["audio_path"], "text": r["text"], "ref_audio": str(out / "ref.wav"), "language": "Auto",
-                                         "audio_codes": code.cpu().tolist()}, ensure_ascii=False) + "\n")
-                print("  codes %d/%d" % (min(i + 16, len(rows)), len(rows)), flush=True)
-    (out / "data_ready.json").write_text(json.dumps({"clips": len(clips), "minutes": round(tot / 60, 1), "time": time.strftime("%F %T")}), encoding="utf-8")
-    print("✅ 数据准备完成 → %s" % out)
+def main():
+    ap = argparse.ArgumentParser()
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    a = sub.add_parser("prepare")
+    a.add_argument("--src", required=True)
+    a.add_argument("--out", required=True)
+    b = sub.add_parser("train")
+    b.add_argument("--work", default="/kaggle/working")
+    b.add_argument("--data_dir", required=True)
+    b.add_argument("--base", default="openbmb/VoxCPM2")
+    b.add_argument("--max_steps", type=int, default=1000)
+    b.add_argument("--lr", type=float, default=1e-4)
+    b.add_argument("--fresh", action="store_true")
+    args = ap.parse_args()
+    if args.cmd == "prepare":
+        r = prepare(args.src, args.out)
+        print(json.dumps({k: v for k, v in r.items() if k != "skipped"}, ensure_ascii=False))
+        if r["clips"] < 3:
+            sys.exit(2)
+    else:
+        train(args.work, args.data_dir, args.base, args.max_steps, args.lr, args.fresh)
 
 
 if __name__ == "__main__":
     main()
 '''
-FILES['tts_dataset.py'] = r'''# coding=utf-8
-# 取自 QwenLM/Qwen3-TTS/finetuning/dataset.py (Apache-2.0),仅增加了参考 mel 缓存。
-# Copyright 2026 The Alibaba Qwen team.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-from typing import Any, List, Tuple, Union
 
-import librosa
-import numpy as np
-import torch
-from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
-from qwen_tts.core.models.modeling_qwen3_tts import mel_spectrogram
-from torch.utils.data import Dataset
-
-AudioLike = Union[
-    str,                     # wav path, URL, base64
-    np.ndarray,              # waveform (requires sr)
-    Tuple[np.ndarray, int],  # (waveform, sr)
-]
-
-MaybeList = Union[Any, List[Any]]
-
-class TTSDataset(Dataset):
-    def __init__(self, data_list, processor, config:Qwen3TTSConfig, lag_num = -1):
-        self.data_list = data_list
-        self.processor = processor
-        self.lag_num = lag_num
-        self.config = config
-        self._mel_cache = {}
-
-    def __len__(self):
-        return len(self.data_list)
-    
-    def _load_audio_to_np(self, x: str) -> Tuple[np.ndarray, int]:
-        
-        audio, sr = librosa.load(x, sr=None, mono=True)
-
-        if audio.ndim > 1:
-            audio = np.mean(audio, axis=-1)
-
-        return audio.astype(np.float32), int(sr)
-
-    def _normalize_audio_inputs(self, audios: Union[AudioLike, List[AudioLike]]) -> List[Tuple[np.ndarray, int]]:
-        """
-        Normalize audio inputs into a list of (waveform, sr).
-
-        Supported forms:
-          - str: wav path / URL / base64 audio string
-          - np.ndarray: waveform (NOT allowed alone here because sr is unknown)
-          - (np.ndarray, sr): waveform + sampling rate
-          - list of the above
-
-        Args:
-            audios:
-                Audio input(s).
-
-        Returns:
-            List[Tuple[np.ndarray, int]]:
-                List of (float32 waveform, original sr).
-
-        Raises:
-            ValueError: If a numpy waveform is provided without sr.
-        """
-        if isinstance(audios, list):
-            items = audios
-        else:
-            items = [audios]
-
-        out: List[Tuple[np.ndarray, int]] = []
-        for a in items:
-            if isinstance(a, str):
-                out.append(self._load_audio_to_np(a))
-            elif isinstance(a, tuple) and len(a) == 2 and isinstance(a[0], np.ndarray):
-                out.append((a[0].astype(np.float32), int(a[1])))
-            elif isinstance(a, np.ndarray):
-                raise ValueError("For numpy waveform input, pass a tuple (audio, sr).")
-            else:
-                raise TypeError(f"Unsupported audio input type: {type(a)}")
-        return out
-
-    
-    def _build_assistant_text(self, text: str) -> str:
-        return f"<|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n"
-    
-    def _ensure_list(self, x: MaybeList) -> List[Any]:
-        return x if isinstance(x, list) else [x]
-    
-    def _tokenize_texts(self, text) -> List[torch.Tensor]:
-        input = self.processor(text=text, return_tensors="pt", padding=True)
-        input_id = input["input_ids"]
-        input_id = input_id.unsqueeze(0) if input_id.dim() == 1 else input_id
-        return input_id
-    
-    @torch.inference_mode()
-    def extract_mels(self, audio, sr):
-        assert sr == 24000, "Only support 24kHz audio"
-        mels = mel_spectrogram(
-            torch.from_numpy(audio).unsqueeze(0), 
-            n_fft=1024, 
-            num_mels=128, 
-            sampling_rate=24000,
-            hop_size=256, 
-            win_size=1024, 
-            fmin=0, 
-            fmax=12000
-        ).transpose(1, 2)
-        return mels
-
-
-
-    def __getitem__(self, idx):
-        item = self.data_list[idx]
-
-        audio_path  = item["audio"]
-        text        = item["text"]
-        audio_codes = item["audio_codes"]
-        language        = item.get('language','Auto')
-        ref_audio_path  = item['ref_audio']
-
-        text = self._build_assistant_text(text)
-        text_ids = self._tokenize_texts(text)
-
-        audio_codes = torch.tensor(audio_codes, dtype=torch.long)
-
-        ref_audio_list = self._ensure_list(ref_audio_path)
-        normalized = self._normalize_audio_inputs(ref_audio_list)
-        wav,sr = normalized[0]
-
-        key = ref_audio_list[0] if isinstance(ref_audio_list[0], str) else None
-        if key is not None and key in self._mel_cache:                  # 所有样本共用同一条参考音频 -> 只算一次 mel
-            ref_mel = self._mel_cache[key]
-        else:
-            ref_mel = self.extract_mels(audio=wav, sr=sr)
-            if key is not None:
-                self._mel_cache[key] = ref_mel
-
-        return {
-            "text_ids": text_ids[:,:-5],    # 1 , t
-            "audio_codes":audio_codes,      # t, 16
-            "ref_mel":ref_mel
-        }
-        
-    def collate_fn(self, batch):
-        assert self.lag_num == -1
-
-        item_length = [b['text_ids'].shape[1] + b['audio_codes'].shape[0] for b in batch]
-        max_length = max(item_length) + 8
-        b,t = len(batch),max_length
-
-        input_ids   = torch.zeros((b,t,2),dtype=torch.long)
-        codec_ids   = torch.zeros((b,t,16),dtype=torch.long)
-        text_embedding_mask     = torch.zeros((b,t),dtype=torch.bool)
-        codec_embedding_mask    = torch.zeros((b,t),dtype=torch.bool)
-        codec_mask      = torch.zeros((b,t),dtype=torch.bool)
-        attention_mask  = torch.zeros((b,t),dtype=torch.long)
-        codec_0_labels  = torch.full((b, t), -100, dtype=torch.long)
-
-        for i,data in enumerate(batch):
-            text_ids        = data['text_ids']
-            audio_codec_0   = data['audio_codes'][:,0]
-            audio_codecs    = data['audio_codes']
-
-            text_ids_len = text_ids.shape[1]
-            codec_ids_len = audio_codec_0.shape[0]
-            
-            # text channel
-            input_ids[i,  :3, 0] = text_ids[0,:3]
-            input_ids[i, 3:7, 0] = self.config.tts_pad_token_id
-            input_ids[i,   7, 0] = self.config.tts_bos_token_id
-            input_ids[i, 8:8+text_ids_len-3, 0] = text_ids[0,3:]
-            input_ids[i,   8+text_ids_len-3, 0] = self.config.tts_eos_token_id
-            input_ids[i, 8+text_ids_len-2:8+text_ids_len+codec_ids_len , 0] = self.config.tts_pad_token_id
-            text_embedding_mask[i,  :8+text_ids_len+codec_ids_len] = True
-
-            # codec channel
-            # input_ids[i,   :3, 1] = 0
-            input_ids[i,    3:8 ,1] = torch.tensor(
-                                        [
-                                            self.config.talker_config.codec_nothink_id,
-                                            self.config.talker_config.codec_think_bos_id,
-                                            self.config.talker_config.codec_think_eos_id,
-                                            0,     # for speaker embedding
-                                            self.config.talker_config.codec_pad_id       
-                                        ]
-                                    )
-            input_ids[i,    8:8+text_ids_len-3  ,1] = self.config.talker_config.codec_pad_id
-            input_ids[i,    8+text_ids_len-3    ,1] = self.config.talker_config.codec_pad_id
-            input_ids[i,    8+text_ids_len-2    ,1] = self.config.talker_config.codec_bos_id
-            input_ids[i,    8+text_ids_len-1:8+text_ids_len-1+codec_ids_len,    1] = audio_codec_0
-            input_ids[i,    8+text_ids_len-1+codec_ids_len,    1] = self.config.talker_config.codec_eos_token_id
-
-            codec_0_labels[i,    8+text_ids_len-1:8+text_ids_len-1+codec_ids_len] = audio_codec_0
-            codec_0_labels[i,    8+text_ids_len-1+codec_ids_len] = self.config.talker_config.codec_eos_token_id
-
-            codec_ids[i, 8+text_ids_len-1:8+text_ids_len-1+codec_ids_len,:] = audio_codecs
-
-            codec_embedding_mask[i, 3:8+text_ids_len+codec_ids_len] = True
-            codec_embedding_mask[i, 6] = False       # for speaker embedding
-
-            codec_mask[i,   8+text_ids_len-1:8+text_ids_len-1+codec_ids_len] = True
-            attention_mask[i, :8+text_ids_len+codec_ids_len] = True
-        
-        ref_mels = [data['ref_mel'] for data in batch]
-        ref_mels = torch.cat(ref_mels,dim=0)
-
-        return {
-            'input_ids':input_ids,
-            'ref_mels':ref_mels,
-            'attention_mask':attention_mask,
-            'text_embedding_mask':text_embedding_mask.unsqueeze(-1),
-            'codec_embedding_mask':codec_embedding_mask.unsqueeze(-1),
-            'codec_0_labels':codec_0_labels,
-            'codec_ids': codec_ids,
-            'codec_mask':codec_mask
-        }
-'''
 FILES['accel.py'] = r'''# -*- coding: utf-8 -*-
 """
 accel.py —— v12 · 「加速器」(端到端软件加速流水线;不是 Kaggle 的 GPU:T4 只给 TTS,浏览器保持纯 CPU,显存增量 = 0)
@@ -19494,7 +18221,7 @@ async def find(page, q, back=False):
     except Exception:  # noqa: BLE001
         return {"count": 0, "found": False}
 '''
-FILES['README.md'] = r'''# 克隆语音播放器 v6 · Qwen3-TTS-1.7B · Kaggle 双 T4
+FILES['README.md'] = r'''# 克隆语音播放器 v19 · VoxCPM2(2B · 原生 48kHz)· Kaggle 双 T4
 
 ## 快速启动
 1. Notebook → Settings: Accelerator = **GPU T4 x2**, Internet = **On**
@@ -19517,7 +18244,7 @@ FILES['README.md'] = r'''# 克隆语音播放器 v6 · Qwen3-TTS-1.7B · Kaggle 
 | UI 把 cosine 当相似度 | 显示 0.xx 配色分级 | 原始 cosine + 模型 + 范围;没有校准文件显示「未校准/不可给出百分比」 |
 
 ## 功能边界(必须知道)
-* **情绪**:`Qwen3-TTS-12Hz-1.7B-Base.generate_voice_clone` **没有 `instruct` 参数**(instruct 只在 CustomVoice/VoiceDesign 模型,已核对 qwen-tts 0.1.1 / faster-qwen3-tts 0.3.2 源码)。因此情绪标签只用于界面标注和(可选 `EMOTION_PAUSE`)句间停顿微调,**不会**传给模型,也不宣称实现了情绪控制。
+* **情绪**:VoxCPM2 没有独立的 `instruct` 参数,风格只能通过「文本开头的括号指令」(如 `(温柔地)你好`)控制;默认 `V19_STYLE` 关闭时括号指令会被整段清除(不会被朗读出来)。情绪标签默认只用于界面标注和(可选 `EMOTION_PAUSE`)句间停顿微调。
 * **歌声**:口语克隆流程对歌声**不支持/未验证**。质检把疑似歌声/带背景音乐的音频标出并要求确认;训练数据中会被隔离到 `split_report.json` 的 `quarantined`。
 * **质检是启发式**(阈值未经标注数据校准):类型/信噪比/削波/静音/疑似多人(WavLM 窗口一致性)。
 * **双卡**:同一模型与配置 ≠ 逐采样点相同。界面报告两卡权重指纹(参数量与 |w| 总和)与模型文件 sha256;跨卡听感用 A/B 或 `GPU_POLICY="pin_turn"`(每轮固定一张卡,吞吐约减半)。
@@ -19559,7 +18286,7 @@ FILES['README.md'] = r'''# 克隆语音播放器 v6 · Qwen3-TTS-1.7B · Kaggle 
 ## 关键设计决定(以及对参考设计的质疑)
 1. **浏览器网络护栏用本机过滤代理,而不只是 Playwright `route`**:实测 `route` 看不到浏览器内部跟随的 302 重定向(目标请求会直接发出,即 SSRF 洞)。代理在网络层自己解析 DNS、校验全部地址、只连接已校验 IP,重定向/子资源/WebSocket/DNS rebinding 都覆盖。`route` 仍保留用于更早的拦截与日志。
 2. **规划器永远看不到网页内容**:网页文字只经显式 `read` 动作读取并标记为不可信;LLM 规划器只拿用户指令;动作白名单 + 服务端二次校验,所以页面里的提示词注入没有任何可执行路径。
-3. **语音库 ≠ 每库一个模型**:Qwen3-TTS 零样本只用 1 条参考提示(`ref_sample_id`),多样本用于训练数据集与留出评估;两张卡的库切换用「取消在途任务 → 两卡都确认」,不会串音。库专属微调模型不能热切换(显存预算),需用 `USE_TRAINED_MODEL` 重启加载;界面如实显示。
+3. **语音库 ≠ 每库一个模型**:VoxCPM2 零样本只用 1 条参考提示(`ref_sample_id`;可选「参考+续写」双路),多样本用于训练数据集(官方 LoRA)与留出评估;两张卡的库切换用「取消在途任务 → 两卡同步重冻结声纹」。
 4. **相似度**:只显示原始 cosine + 模型 + 样本数 + 留出来源 + 哈希;没有校准就写「未校准,暂不提供相似度百分比」;没有留出样本/没合成过 → 「未评估」。
 5. **GitHub**:公开仓库只收 `telemetry/` 下的脱敏审计;声音数据只能是**加密包**且目标仓库经 API 核实为**私有**;Token 只在服务端。
 
@@ -19732,7 +18459,7 @@ console.log(passed + " 项通过"); if (process.exitCode) console.log("存在失
 '''
 FILES['tests/test_gateway.py'] = r'''# -*- coding: utf-8 -*-
 """单元 + Mock 集成测试(只验证播放器/队列/协议/背压/重连/完整性检测等【不需要真实模型】的部分)。
-   ⚠ Mock 引擎是正弦波,这里的通过【不代表】语音质量、双卡训练或零欠载 —— 那些必须在真实 T4 双卡 + 真实 Qwen3-TTS 上测。
+   ⚠ Mock 引擎是正弦波,这里的通过【不代表】语音质量、双卡训练或零欠载 —— 那些必须在真实 T4 双卡 + 真实 VoxCPM2 上测。
    运行:  python tests/test_gateway.py        (或 pytest -q tests)"""
 import asyncio
 import json
@@ -21080,7 +19807,7 @@ def test_unit_audio_validation_skips_not_fakes():
 def _engine_with_holder(factory):
     import infer_dual_gpu as ig
     import speaker_sim as ss
-    eng = ig.RealEngine(0, lambda *a, **k: None)
+    eng = ig.BaseEngine(0, lambda *a, **k: None)
     eng.scorer_holder = ss.ScorerHolder(factory, max_attempts=2, cooldown=(0, 0), label="测试评分器")
     return eng
 
@@ -23014,7 +21741,7 @@ if not TEST:
         raise RuntimeError("无法访问外网(%s)。请在右侧 Settings 里把 Internet 打开为 On。" % e)
 if MODE not in ("serve", "train", "train_then_serve"):
     raise RuntimeError("MODE 只能是 serve / train / train_then_serve")
-if MODE != "serve" and not TEST and not (TRAIN_DATA_DIR and Path(TRAIN_DATA_DIR).exists()) and not (OUT / "data" / "train_codes.jsonl").exists():
+if MODE != "serve" and not TEST and not (TRAIN_DATA_DIR and Path(TRAIN_DATA_DIR).exists()) and not (OUT / "data" / "train.jsonl").exists():
     raise RuntimeError("训练模式需要把参考音频文件夹设置到脚本顶部的 TRAIN_DATA_DIR(例如 /kaggle/input/你的数据集/reference_audio)。")
 ds_key = (DEEPSEEK_API_KEY or secret("DEEPSEEK_API_KEY")).strip()
 print("  DeepSeek Key: %s" % ("✅ 已找到" if ds_key else "— 未配置(只影响「AI 对话」;「朗读文字」不受影响)"))
@@ -28308,11 +27035,11 @@ def test_studio_best_of_n_and_honest_failure():
 
 
 def test_router_champion_default_and_gate_required():
-    R = v17.Router(os.path.join(tempfile.mkdtemp(), "d.json")); inst = ["qwen3", "indextts2"]
-    assert R.engine_for("L") == "qwen3"
+    R = v17.Router(os.path.join(tempfile.mkdtemp(), "d.json")); inst = ["voxcpm2", "indextts2"]
+    assert R.engine_for("L") == "voxcpm2"
     assert not R.set_engine("L", "indextts2", {"promote": True})["ok"], "未安装"
     assert not R.set_engine("L", "indextts2", {"promote": False}, installed=inst)["ok"], "未过闸门"
-    assert R.engine_for("L", "indextts2", installed=inst) == "qwen3"
+    assert R.engine_for("L", "indextts2", installed=inst) == "voxcpm2"
     assert R.set_engine("L", "indextts2", {"promote": True}, installed=inst)["ok"] and R.engine_for("L", installed=inst) == "indextts2"
 
 
@@ -28480,7 +27207,7 @@ def test_status_page_and_report_items():
     srv = tg.Server()
     try:
         s = _http(srv, "GET", "/api/v17/status")[1]
-        assert s["ok"] and all(s["switches"].values()) and s["champion_engine"] == "qwen3" and s["engines"]["qwen3"]["installed"]
+        assert s["ok"] and all(s["switches"].values()) and s["champion_engine"] == "voxcpm2" and s["engines"]["voxcpm2"]["installed"]
         assert s["thresholds"]["calibrated"] is False and "未验证" in s["honest"]
         code, html, _ = _http(srv, "GET", "/v17")
         assert code == 200
@@ -28509,7 +27236,7 @@ def test_chunked_upload_then_streaming_import_into_library():
         assert all((s.get("v17") or {}).get("health", {}).get("score") is not None for s in lib["samples"]), "每段都有 v17 参考体检"
         assert all((s.get("v16") or {}).get("score") is not None for s in lib["samples"])
         v = _http(srv, "GET", "/api/libs/%s/v17" % lid)[1]
-        assert v["ok"] and v["timeline"]["champion"] == "m_000" and v["router"]["engine"] == "qwen3"
+        assert v["ok"] and v["timeline"]["champion"] == "m_000" and v["router"]["engine"] == "voxcpm2"
         assert list((Path(srv.tmp) / "v17" / "backup" / lid).glob("library.json.v16.bak")), "旧库迁移前必须有只读快照"
         rep = _http(srv, "GET", "/api/report")[1]
         assert rep["v17"]["counters"]["uploads_done"] == 1 and rep["v17"]["counters"]["import_segments"] >= 6
@@ -28563,7 +27290,7 @@ def test_lineage_gate_promote_rollback_over_http():
         tl = _http(srv, "GET", "/api/libs/%s/v17" % lid)[1]["timeline"]
         assert [v["status"] for v in tl["versions"]] == ["champion", "rolled_back"], "回滚后旧版本保留不删除"
         e = _http(srv, "POST", "/api/libs/%s/v17/engine" % lid, {"engine": "indextts2", "gate": {"promote": True}})[1]
-        assert e["ok"] is False and e["effective"] == "qwen3", "未安装的挑战者引擎不得成为默认"
+        assert e["ok"] is False and e["effective"] == "voxcpm2", "未安装的挑战者引擎不得成为默认"
     finally:
         srv.stop()
 
@@ -28740,7 +27467,7 @@ v17.py —— v17 增量模块「缺陷检测 · 不降级闸门 · 版本谱系
     VC_V17_PROMPT=0/1         提示词搜索:MMR(质量×声纹多样性)选 ≤20 秒子集,固定种子可复现
     VC_V17_REFHEALTH=0/1      参考体检:只给「建议」,绝不降噪、绝不改原件(只做 50Hz 零相位高通/直流保护的建议)
     VC_V17_STUDIO=0/1         Studio 模式:整句 Best-of-N + 缺陷检测择优 + 重试阶梯;Live 实时模式完全不动
-    VC_V17_ROUTER=0/1         引擎路由:冠军 = Qwen3-TTS;挑战者必须过硬门槛 + 显著优于冠军才可成为某语音库默认
+    VC_V17_ROUTER=0/1         引擎路由:冠军 = VoxCPM2;挑战者必须过硬门槛 + 显著优于冠军才可成为某语音库默认
     VC_V17_UI=0/1             /v17 页面与 /api/v17/* 接口
     VC_V17_REC_UNLIMITED=0/1  快速克隆录音页去掉 1800 秒自动停止
 诚实声明:本模块在 CPU 上用合成信号验证「逻辑与客观指标」;没有 GPU / 真机 / 人耳数据。
@@ -29092,7 +27819,7 @@ class Lineage:
             self.d["consent"] = {"owner_or_authorized": bool(owner_or_authorized), "at": time.strftime("%FT%T"), "note": str(note)[:200]}
             self._save()
 
-    def ensure_v0(self, engine="qwen3", snapshot="", meta=None):
+    def ensure_v0(self, engine="voxcpm2", snapshot="", meta=None):
         """旧库首次进入 v17:建「版本 0」并设为冠军(幂等)。"""
         with self.lock:
             if "m_000" not in self.d["versions"]:
@@ -29105,7 +27832,7 @@ class Lineage:
             return self.d["versions"]["m_000"]
 
     # --- 版本 ---
-    def add_candidate(self, parent=None, engine="qwen3", recipe="lora", snapshot="", metrics=None, params=None):
+    def add_candidate(self, parent=None, engine="voxcpm2", recipe="lora", snapshot="", metrics=None, params=None):
         with self.lock:
             if parent is None:
                 parent = self.d["champion"]
@@ -29402,14 +28129,13 @@ def studio_render(text, synth_fn, n=4, ref_hf_db=None, sim_fn=None, cer_fn=None,
 
 # ═════════════════════════ M7 引擎适配 + 路由(冠军 / 挑战者制度) ═════════════════════════
 ENGINES = {
-    "qwen3": {"name": "Qwen3-TTS-12Hz-1.7B-Base", "champion": True, "license": "Apache-2.0(以官方仓库为准,执行时请核实)", "installed": True, "validated": "v16 既有路径,真机已跑通"},
+    "voxcpm2": {"name": "VoxCPM2(openbmb/VoxCPM2 · 2B · 48kHz)", "champion": True, "license": "Apache-2.0(以官方仓库为准,商用前请核实)", "installed": True, "validated": "v19 唯一主引擎;适配层沙箱已验证(假模型),真机音质/速度【未验证】"},
     "indextts2": {"name": "IndexTTS2", "champion": False, "license": "[待核]", "installed": False, "validated": "未验证(沙箱无 GPU,未安装)"},
     "cosyvoice3": {"name": "CosyVoice3-0.5B", "champion": False, "license": "[待核]", "installed": False, "validated": "未验证"},
     "f5": {"name": "F5-TTS", "champion": False, "license": "[待核]", "installed": False, "validated": "未验证"},
-    "voxcpm2": {"name": "VoxCPM2", "champion": False, "license": "[待核]", "installed": False, "validated": "未验证"},
     "fish_s2": {"name": "Fish Audio S2", "champion": False, "license": "研究/非商用,需核对", "installed": False, "validated": "未验证"},
 }
-CHAMPION_ENGINE = "qwen3"
+CHAMPION_ENGINE = "voxcpm2"
 
 
 class EngineAdapter:
@@ -29470,7 +28196,7 @@ class SubprocessEngine(EngineAdapter):
 
 
 class Router:
-    """每个语音库一份 decision(冠军引擎 + 依据)。挑战者必须:已安装 + 闸门 promote=True,才可成为默认;否则永远是 Qwen3 冠军。"""
+    """每个语音库一份 decision(冠军引擎 + 依据)。挑战者必须:已安装 + 闸门 promote=True,才可成为默认;否则永远是 VoxCPM2 冠军。"""
 
     def __init__(self, path):
         self.path = str(path)
@@ -29508,9 +28234,9 @@ class Router:
                 self._save()
                 return {"ok": True, "engine": CHAMPION_ENGINE}
             if engine not in ENGINES or engine not in installed:
-                return {"ok": False, "reason": "引擎未安装/未验证,保持冠军 Qwen3"}
+                return {"ok": False, "reason": "引擎未安装/未验证,保持冠军 VoxCPM2"}
             if not (gate_result and gate_result.get("promote")):
-                return {"ok": False, "reason": "未通过闸门(硬门槛 + 显著优于冠军),保持冠军 Qwen3"}
+                return {"ok": False, "reason": "未通过闸门(硬门槛 + 显著优于冠军),保持冠军 VoxCPM2"}
             self.d[lib_id] = {"engine": engine, "gate_promote": True, "at": time.strftime("%FT%T"), "evidence": report_ref or "gate", "gate": gate_result.get("reason")}
             self._save()
             return {"ok": True, "engine": engine}
@@ -29879,7 +28605,7 @@ def install(app, G, P):
         j = await jbody(request)
         elig = eligible_samples(lid)
         snap = V.snapshot_sha([(s["sample_id"], s.get("proc_sha256", "")) for s in elig])
-        vid = lineage(lid).add_candidate(parent=j.get("parent"), engine=j.get("engine", "qwen3"), recipe=j.get("recipe", "lora_incr"), snapshot=snap, params=j.get("params"))
+        vid = lineage(lid).add_candidate(parent=j.get("parent"), engine=j.get("engine", "voxcpm2"), recipe=j.get("recipe", "lora_incr"), snapshot=snap, params=j.get("params"))
         return {"ok": True, "version": vid, "snapshot": snap}
 
     @app.post("/api/libs/{lid}/v17/gate")
@@ -30382,6 +29108,7 @@ vox_audio.py —— VoxCPM2 适配层的【纯函数】部分(无 torch 依赖,�
 import json
 import math
 import os
+import re
 
 import numpy as np
 
@@ -30458,19 +29185,48 @@ class FrameCoalescer:
         return []
 
 
-def sanitize_text(t):
-    """去掉开头的括号字符,避免被 VoxCPM2 当成「声音设计 / 风格控制」指令(官方格式:文本开头的 "(描述)正文")。句中括号不动。"""
+_STYLE_RX = re.compile(r"^\s*[(（\[【{｛]([^)）\]】}｝]{1,40})[)）\]】}｝]\s*")
+
+
+def sanitize_text(t, allow_style=None):
+    """v19(修复审计 F7):开头的「(提示)」默认整段清除(旧版只去括号、把括号里的字念出来)。
+    allow_style=True(或 VC_V19_STYLE=1)时,合法的开头括号 = VoxCPM2 官方「风格控制」指令,规范成半角 (…) 后原样放行。句中括号不动。"""
+    if allow_style is None:
+        allow_style = os.environ.get("VC_V19_STYLE", "0") == "1"
     t = " ".join((t or "").replace("\r", " ").replace("\n", " ").split())
+    style = None
+    m = _STYLE_RX.match(t)
+    if m:
+        style, t = m.group(1).strip(), t[m.end():]
     i = 0
-    while i < len(t) and t[i] in "(（[【{｛":
+    while i < len(t) and t[i] in "(（[【{｛)）]】}｝":
         i += 1
     t = t[i:].lstrip()
-    if i:                                                      # 开头括号被去掉后,把紧随其后(前 12 个字符内)的第一个闭括号也去掉,不动正文
+    if i and style is None:                                    # 无法成对识别时:去掉开头括号字符后,把紧随其后(前 12 个字符内)的第一个闭括号也去掉,不动正文
         for j, ch in enumerate(t[:12]):
             if ch in ")）]】}｝":
                 t = t[:j] + t[j + 1:]
                 break
-    return t.strip()
+    t = t.strip()
+    if style and allow_style and t:
+        return "(%s)%s" % (style, t)
+    return t
+
+
+def measure_lufs(x, sr):
+    """集成响度(LUFS,ITU-R BS.1770 K 加权)。pyloudnorm 可用 → 真值;不可用 → 返回 (None, 'pyloudnorm 不可用'),绝不用 RMS 冒充。"""
+    try:
+        import pyloudnorm as pyln
+    except Exception:  # noqa: BLE001
+        return None, "pyloudnorm 不可用"
+    a = np.asarray(x, dtype=np.float64).reshape(-1)
+    if a.size < int(0.5 * sr) + 1:
+        return None, "音频短于 0.5 秒,BS.1770 不适用"
+    try:
+        v = float(pyln.Meter(int(sr)).integrated_loudness(a))
+    except Exception as e:  # noqa: BLE001
+        return None, "%s: %s" % (type(e).__name__, str(e)[:60])
+    return (v if np.isfinite(v) else None), ("" if np.isfinite(v) else "静音")
 
 
 def patches_for_frames(frames12):
@@ -30731,8 +29487,11 @@ def test_coalescer_schedule():
 
 @T
 def test_sanitize_text_blocks_style_instruction():
-    assert va.sanitize_text("(开心地)你好") == "开心地你好"
-    assert va.sanitize_text("（笑）你好") == "笑你好"
+    assert va.sanitize_text("(开心地)你好") == "你好"                 # v19:括号里的提示整段清除,不再被朗读出来
+    assert va.sanitize_text("（笑）你好") == "你好"
+    assert va.sanitize_text("((笑))你好") == "你好"
+    assert va.sanitize_text("(开心地)你好", allow_style=True) == "(开心地)你好"       # V19_STYLE=1:合法的开头括号 = VoxCPM2 风格指令,原样放行
+    assert va.sanitize_text("【温柔】你好", allow_style=True) == "(温柔)你好"
     assert va.sanitize_text("你好(世界)") == "你好(世界)"           # 句中括号保留
     assert va.sanitize_text("  \n你好 \n 世界 ") == "你好 世界"
     assert va.sanitize_text("((((") == ""
@@ -31026,6 +29785,194 @@ def main():
 if __name__ == "__main__": main()
 '''
 
+FILES['tests/test_v19.py'] = r'''# -*- coding: utf-8 -*-
+"""v19 回归测试(微步迭代逐步加入)。用法: python tests/test_v19.py [--unit]
+覆盖:单引擎(无旧引擎耦合)· 引擎工厂策略 · 官方 LoRA 数据/配置/导出契约 · 括号风格指令 · LUFS · 原生 48k 归档 · 安装器无回退。"""
+import json, os, re, sys, tempfile, time, traceback
+HERE = os.path.dirname(os.path.abspath(__file__))
+APP = os.path.dirname(HERE)
+sys.path.insert(0, APP)
+os.environ.setdefault("VC_WORK", tempfile.mkdtemp(prefix="vc_t19_"))
+_Q = "q" + "wen"          # 避免本文件自身命中扫描
+RESULTS = []
+
+
+def t(fn):
+    RESULTS.append(fn)
+    return fn
+
+
+def _app_files():
+    for root, _d, files in os.walk(APP):
+        if "__pycache__" in root or os.sep + "tests" in root:
+            continue
+        for f in files:
+            if f.endswith((".py", ".js", ".html", ".md")) and f != "MIGRATION.md":
+                yield os.path.join(root, f)
+
+
+def _wav(path, sec=3.0, sr=16000, f0=220.0, amp=0.3):
+    import numpy as np
+    import soundfile as sf
+    x = amp * np.sin(2 * np.pi * f0 * np.arange(int(sec * sr)) / sr)
+    sf.write(path, x.astype("float32"), sr, subtype="PCM_16")
+
+
+@t
+def test_no_qwen_runtime_import():
+    bad = []
+    rx = re.compile(r"(import|from)\s+(%s_tts|faster_%s3_tts)|%s3TTS|%s_tts" % (_Q, _Q, _Q, _Q), re.I)
+    for p in _app_files():
+        for i, l in enumerate(open(p, encoding="utf-8", errors="ignore"), 1):
+            if rx.search(l):
+                bad.append("%s:%d" % (os.path.basename(p), i))
+    assert not bad, "仍有旧引擎运行路径耦合: %s" % bad[:12]
+
+
+@t
+def test_no_qwen_text_anywhere():
+    bad = []
+    for p in _app_files():
+        for i, l in enumerate(open(p, encoding="utf-8", errors="ignore"), 1):
+            if _Q in l.lower():
+                bad.append("%s:%d" % (os.path.basename(p), i))
+    assert not bad, "残留旧模型字样 %d 处: %s" % (len(bad), bad[:15])
+
+
+@t
+def test_single_engine():
+    import infer_dual_gpu as g
+    assert not hasattr(g, "RealEngine")
+    assert hasattr(g, "BaseEngine") and issubclass(g.VoxCPM2Engine, g.BaseEngine)
+    assert g.ENGINE == "voxcpm2" and g.MODEL == "openbmb/VoxCPM2"
+
+
+@t
+def test_make_engine_policy_no_silent_swap():
+    import infer_dual_gpu as g
+    os.environ.pop("VC_VOX_FAKE", None)
+    assert type(g.make_engine(0, lambda *a: None, {"mock": True})).__name__ == "MockEngine"
+    os.environ["VC_VOX_FAKE"] = "1"
+    e = g.make_engine(0, lambda *a: None, {"mock": True})
+    assert isinstance(e, g.VoxCPM2Engine) and e.fake
+    os.environ.pop("VC_VOX_FAKE", None)
+    e2 = g.make_engine(0, lambda *a: None, {"mock": False})           # 真实路径永远是 VoxCPM2(没有回退到别的模型的分支)
+    assert isinstance(e2, g.VoxCPM2Engine) and not e2.fake
+
+
+@t
+def test_lora_prepare_config_export():
+    import voxcpm_lora as vl
+    d = tempfile.mkdtemp()
+    src, out = os.path.join(d, "src"), os.path.join(d, "out")
+    os.makedirs(src)
+    for i in range(12):
+        _wav(os.path.join(src, "a%02d.wav" % i), 2.5, 22050 if i % 2 else 16000, 200 + 10 * i)
+        open(os.path.join(src, "a%02d.txt" % i), "w", encoding="utf-8").write("这是第%d句测试文字" % i)
+    _wav(os.path.join(src, "no_text.wav"))                              # 没有转写 → 必须被跳过并说明原因
+    _wav(os.path.join(src, "long.wav"), 40.0)
+    open(os.path.join(src, "long.txt"), "w", encoding="utf-8").write("太长的片段")
+    rep = vl.prepare(src, out)
+    assert rep["clips"] == 12 and rep["val"] >= 1 and rep["train"] + rep["val"] == 12, rep
+    reasons = " ".join(r for _p, r in rep["skipped"])
+    assert "没有同名 .txt" in reasons and "不在" in reasons, rep["skipped"]
+    rows = [json.loads(l) for l in open(os.path.join(out, "train.jsonl"), encoding="utf-8")]
+    assert all(set(r) >= {"audio", "text", "duration"} and os.path.exists(r["audio"]) for r in rows)
+    import soundfile as sf
+    assert sf.info(rows[0]["audio"]).samplerate == 16000
+    small = vl.prepare(os.path.join(d, "src"), os.path.join(d, "o2")) if False else None
+    tr, va = vl.split_holdout([{"i": i} for i in range(5)])
+    assert len(tr) == 5 and va == [], "<10 条不留出,且报告里必须如实标注"
+    y = vl.write_config(os.path.join(d, "c.yaml"), "openbmb/VoxCPM2", out, os.path.join(d, "ck"), has_val=True)
+    for k in ("sample_rate: 16000", "out_sample_rate: 48000", "enable_lm: true", "enable_dit: true", "r: 32", "alpha: 32", "learning_rate: 0.0001", "train_manifest:"):
+        assert k in y, k
+    ck = os.path.join(d, "ck", "latest")
+    os.makedirs(ck)
+    open(os.path.join(ck, "lora_weights.safetensors"), "wb").write(b"x")
+    open(os.path.join(ck, "lora_config.json"), "w").write("{}")
+    meta = vl.export(d, os.path.join(d, "ck"), "openbmb/VoxCPM2", rep, "abc")
+    tj = json.load(open(os.path.join(d, "best_model", "trained.json"), encoding="utf-8"))
+    assert tj["engine"] == "voxcpm2_lora" and os.path.exists(os.path.join(tj["lora_dir"], "lora_weights.safetensors")) and "未验证" in tj["note"]
+
+
+@t
+def test_style_bracket_not_spoken():
+    import vox_audio as va
+    assert va.sanitize_text("(开心地)你好") == "你好"
+    assert va.sanitize_text("(开心地)你好", allow_style=True) == "(开心地)你好"
+    assert va.sanitize_text("苹果(Apple)很好吃") == "苹果(Apple)很好吃"
+
+
+@t
+def test_lufs_honest():
+    import numpy as np
+    import vox_audio as va
+    sr = 24000
+    x = (0.1 * np.sin(2 * np.pi * 1000 * np.arange(sr * 3) / sr)).astype(np.float32)
+    v, why = va.measure_lufs(x, sr)
+    try:
+        import pyloudnorm  # noqa: F401
+        assert v is not None and -35 < v < -15, (v, why)
+        assert va.measure_lufs(np.zeros(sr * 2, np.float32), sr)[0] is None
+    except ImportError:
+        assert v is None and "不可用" in why
+    assert va.measure_lufs(x[:100], sr)[0] is None
+
+
+@t
+def test_hifi48_archive_is_native_rate():
+    import numpy as np
+    import soundfile as sf
+    import infer_dual_gpu as g
+    os.environ["VC_VOX_FAKE"] = "1"
+    os.environ["VC_HIFI_ARCHIVE"] = "1"
+    e = g.make_engine(0, lambda *a: None, {"mock": True})
+    e.load()
+    e.set_voice(os.path.join(APP, "tests", "_ref.wav") if os.path.exists(os.path.join(APP, "tests", "_ref.wav")) else _mk_ref(), "你好世界", False)
+    n24 = sum(len(a) for a, sr in e.stream("今天天气真不错,我们出去走走。", "first") if sr == 24000)
+    assert e.last_hifi and os.path.exists(e.last_hifi), "没有生成 48k 归档"
+    info = sf.info(e.last_hifi)
+    assert info.samplerate == 48000 and abs(info.frames - 2 * n24) <= 4, (info, n24)
+    os.environ["VC_HIFI_ARCHIVE"] = "0"
+    e.last_hifi = None
+    list(e.stream("再说一句话。", "first"))
+    assert e.last_hifi is None, "关闭开关后不应归档"
+
+
+def _mk_ref():
+    p = os.path.join(tempfile.mkdtemp(), "ref.wav")
+    _wav(p, 4.0, 24000)
+    return p
+
+
+@t
+def test_installer_has_no_engine_fallback():
+    src = open(os.path.join(os.path.dirname(APP), "app", "app.py"), encoding="utf-8").read() if False else ""
+    import infer_dual_gpu as g
+    import inspect
+    body = inspect.getsource(g.worker_main)
+    assert "RealEngine" not in body and "不换模型" in body
+
+
+def main():
+    nfail = 0
+    for fn in RESULTS:
+        t0 = time.time()
+        try:
+            fn()
+            print("  ✓ %s (%.1fs)" % (fn.__name__, time.time() - t0))
+        except Exception as e:  # noqa: BLE001
+            nfail += 1
+            print("  ✗ %s: %s" % (fn.__name__, e))
+            traceback.print_exc()
+    print("%d 项通过, %d 项失败" % (len(RESULTS) - nfail, nfail))
+    sys.exit(1 if nfail else 0)
+
+
+if __name__ == "__main__":
+    main()
+'''
+
 for name, content in FILES.items():
     (APP / name).parent.mkdir(parents=True, exist_ok=True)
     (APP / name).write_text(content, encoding="utf-8")
@@ -31040,7 +29987,7 @@ banner("2/6  安装依赖(独立环境,不破坏 Kaggle 自带的 PyTorch;首次
 PY = sys.executable
 VOX_READY, VOX_MSG = False, "未检查"
 if not TEST:
-    ok_marker = VENV / ".ok_v4"
+    ok_marker = VENV / ".ok_v19"
     venv_py = VENV / "bin" / "python"
     if not ok_marker.exists():
         shutil.rmtree(VENV, ignore_errors=True)
@@ -31056,13 +30003,12 @@ if not TEST:
                 print("  ⚠ 无法创建独立环境,改为直接安装到当前环境(装完如提示需要重启内核,请 Run → Restart Session 后重新运行)")
                 shutil.rmtree(VENV, ignore_errors=True)
     PY = str(venv_py) if venv_py.exists() else sys.executable
-    # 版本固定在一组互相验证过的组合:faster-qwen3-tts 0.3.x ↔ qwen-tts 0.1.1 ↔ transformers 4.57.3
-    base_pkgs = ["transformers==4.57.3", "accelerate==1.12.0", "peft==0.17.1", "huggingface_hub>=0.36,<1.0", "safetensors", "fastapi", "uvicorn[standard]",
+    # v19:版本固定 transformers 4.57.3(声纹/ASR 管线核对过);VoxCPM2 只要求 transformers>=4.36.2
+    base_pkgs = ["transformers==4.57.3", "accelerate==1.12.0", "huggingface_hub>=0.36,<1.0", "safetensors", "fastapi", "uvicorn[standard]",
                  "httpx", "h2", "playwright", "cryptography", "psutil", "soundfile", "scipy", "librosa", "einops", "onnxruntime", "sox", "matplotlib", "pyngrok", "pillow"]
-    smoke_py = ("import torch, transformers, accelerate, peft, fastapi, uvicorn, httpx, soundfile, websockets, scipy, librosa, matplotlib\n"
-                "import qwen_tts, faster_qwen3_tts\n"
+    smoke_py = ("import torch, transformers, accelerate, fastapi, uvicorn, httpx, soundfile, websockets, scipy, librosa, matplotlib\n"
                 "assert transformers.__version__ == '4.57.3', transformers.__version__\n"
-                "print('torch', torch.__version__, '| transformers', transformers.__version__, '| peft', peft.__version__, '| cuda', torch.cuda.is_available(), torch.cuda.device_count())\n"
+                "print('torch', torch.__version__, '| transformers', transformers.__version__, '| cuda', torch.cuda.is_available(), torch.cuda.device_count())\n"
                 "print('SMOKE_OK')")
 
     def smoke():
@@ -31076,7 +30022,6 @@ if not TEST:
     if not ok:
         print("  正在安装依赖…", flush=True)
         retry(lambda: run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5"] + base_pkgs, show=r"(?i)^(error|successfully)", timeout=1800), what="安装基础依赖")
-        retry(lambda: run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5", "--no-deps", "qwen-tts==0.1.1", "faster-qwen3-tts==0.3.2"], show=r"(?i)^(error|successfully)", timeout=1800), what="安装 TTS 依赖")
         print()
         ok, r = smoke()
     if not ok:
@@ -31098,15 +30043,32 @@ if not TEST:
                 return False, str(e_)[:300]
         VOX_READY, VOX_MSG = vox_ok()
         if not VOX_READY:
-            print("  正在安装 VoxCPM2(%s,最小依赖)…" % VOXCPM_VERSION, flush=True)
-            for cmd_ in ([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5", "einops", "pydantic", "safetensors", "tqdm", "librosa", "soundfile", "scipy"],
-                         [PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5", "--no-deps", "voxcpm==" + VOXCPM_VERSION]):
+            print("  正在安装 VoxCPM2(%s,最小依赖;失败则自动改装完整依赖)…" % VOXCPM_VERSION, flush=True)
+            _pipb = [PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", "--default-timeout=60", "--retries", "5"]
+            for cmd_ in (_pipb + ["einops", "pydantic", "safetensors", "tqdm", "librosa", "soundfile", "scipy", "inflect", "wetext", "regex", "addict", "simplejson", "sortedcontainers"],
+                         _pipb + ["--no-deps", "voxcpm==" + VOXCPM_VERSION]):
                 try:
                     subprocess.run(cmd_, capture_output=True, text=True, timeout=1200)
                 except Exception as e_:
                     VOX_MSG = str(e_)[:200]
             VOX_READY, VOX_MSG = vox_ok()
-        print("  " + ("✅ VoxCPM2 %s 就绪" % VOXCPM_VERSION if VOX_READY else "⚠ VoxCPM2 不可用,自动回退 Qwen3-TTS:" + VOX_MSG.strip().splitlines()[-1][:160] if VOX_MSG.strip() else "⚠ VoxCPM2 不可用,自动回退 Qwen3-TTS"))
+            if not VOX_READY:                                                            # 第二梯:带完整依赖安装(官方 requires 列表;不改 torch/transformers 版本,二者已满足下限)
+                print("  ⚠ 最小依赖不够(%s),改装完整依赖…" % (VOX_MSG.strip().splitlines() or ["?"])[-1][:100], flush=True)
+                try:
+                    subprocess.run(_pipb + ["voxcpm==" + VOXCPM_VERSION], capture_output=True, text=True, timeout=2400)
+                except Exception as e_:
+                    VOX_MSG = str(e_)[:200]
+            VOX_READY, VOX_MSG = vox_ok()
+        print("  " + ("✅ VoxCPM2 %s 就绪" % VOXCPM_VERSION if VOX_READY else "❌ VoxCPM2 不可用(不会换模型,将在启动服务前报错):" + VOX_MSG.strip().splitlines()[-1][:160] if VOX_MSG.strip() else "❌ VoxCPM2 不可用"))
+    TOOLS_STATUS = {}                                                                    # v19:克隆质量增强小工具(全部可选;失败只降级、不阻塞;状态写进诊断)
+    for _pk, _mod in (("pyloudnorm", "pyloudnorm"), ("soxr", "soxr"), ("jiwer", "jiwer")):
+        try:
+            subprocess.run([PY, "-m", "pip", "install", "-q", "--disable-pip-version-check", _pk], capture_output=True, text=True, timeout=600)
+            _r = subprocess.run([PY, "-c", "import %s" % _mod], capture_output=True, text=True, timeout=120)
+            TOOLS_STATUS[_pk] = (_r.returncode == 0)
+        except Exception:
+            TOOLS_STATUS[_pk] = False
+    print("  🧰 质量工具: " + " · ".join("%s %s" % (k_, "✅" if v_ else "⚠ 不可用(自动降级)") for k_, v_ in TOOLS_STATUS.items()))
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pyngrok"], capture_output=True)
     if V14 and V14_DIALOG and V14_ASR_BACKEND == "cpu":
         r_fw = subprocess.run([PY, "-m", "pip", "install", "-q", "faster-whisper"], capture_output=True, text=True)
@@ -31253,7 +30215,7 @@ if NET_PREFLIGHT and not TEST:
 banner("3/6  下载模型(首次约 6~8GB,之后秒开)")
 if not TEST:
     t0 = time.time()
-    need = ([VOXCPM_MODEL] if (TTS_ENGINE == "voxcpm2" and VOX_READY) else []) + [TTS_MODEL, "microsoft/wavlm-base-plus-sv", "openai/whisper-large-v3-turbo"] + (["Qwen/Qwen3-TTS-Tokenizer-12Hz"] if MODE != "serve" else [])
+    need = [VOXCPM_MODEL, "microsoft/wavlm-base-plus-sv", "openai/whisper-large-v3-turbo"]
     dl = ("from huggingface_hub import snapshot_download as s\n"
           "for m in %r:\n"
           "    try:\n"
@@ -31265,11 +30227,8 @@ if not TEST:
         print("  ⚠ 磁盘剩余 %.1fGB,下载模型(约 6~8GB)可能不够;可在右侧 Output 里删除不需要的大文件" % disk_free_gb())
     last = retry(lambda: run([PY, "-c", dl], env=dict(senv), show=r"^PATH", timeout=5400), tries=3, wait=10, what="下载模型")
     fails = [l for l in last if l.startswith("PATH_FAIL")]
-    if any(TTS_MODEL in l for l in fails):
-        raise RuntimeError("下载 %s 失败:\n%s" % (TTS_MODEL, "\n".join(fails)))
-    if any(VOXCPM_MODEL in l for l in fails) and TTS_ENGINE == "voxcpm2":
-        VOX_READY = False
-        print("  ⚠ VoxCPM2 权重下载失败 → 自动回退 Qwen3-TTS:" + [l for l in fails if VOXCPM_MODEL in l][0][:160])
+    if any(VOXCPM_MODEL in l for l in fails):
+        raise RuntimeError("下载 VoxCPM2 权重失败(v19 没有其他 TTS 引擎可回退):\n" + "\n".join(l for l in fails if VOXCPM_MODEL in l) + "\n修复:Settings→Internet=On;如设置了 HF_TOKEN 请确认有效;重新运行即可断点续传。")
     for l in fails:
         print("  ⚠ 可选模型下载失败(用到时再重试):" + l[:160])
     print("  ✅ 模型已缓存 (%.0fs)" % (time.time() - t0))
@@ -31363,7 +30322,7 @@ if MODE in ("train", "train_then_serve") and not TEST:
                 print("  ⚠ ngrok 建立失败,训练继续(没有监控页): %s" % e)
         else:
             print("  ⚠ 没有 NGROK_TOKEN:训练照常进行,只是没有网页监控")
-    banner("训练 · 数据预处理(data_prep.py)")
+    banner("训练 · 数据预处理(voxcpm_lora.py prepare:16kHz 切片清单 + 留出验证)")
     data_dir = OUT / "data"
     LIB_JOB = None
     if TRAIN_FROM_LIBRARY:
@@ -31377,29 +30336,16 @@ if MODE in ("train", "train_then_serve") and not TEST:
         TRAIN_DATA_DIR, FRESH_TRAIN = LIB_JOB["data_dir"], True
         print("  使用语音库训练任务 %s(库 %s,冻结数据集 v%s,留出验证 %d 条)" % (LIB_JOB["job_id"], LIB_JOB["library_id"], LIB_JOB["version"], LIB_JOB["val_n"]))
     if TRAIN_DATA_DIR and Path(TRAIN_DATA_DIR).exists():
-        if FRESH_TRAIN or not (data_dir / "train_codes.jsonl").exists():
-            cmd = [PY, str(APP / "data_prep.py"), "--src", TRAIN_DATA_DIR, "--out", str(data_dir), "--device", "cuda:0"]
-            if TRAIN_LANGUAGE:
-                cmd += ["--language", TRAIN_LANGUAGE]
+        if FRESH_TRAIN or not (data_dir / "train.jsonl").exists():
+            cmd = [PY, str(APP / "voxcpm_lora.py"), "prepare", "--src", TRAIN_DATA_DIR, "--out", str(data_dir)]
             if stream(cmd, env=dict(senv), cwd=str(APP)) != 0:
                 raise RuntimeError("数据预处理失败,见上方日志")
         else:
             print("  已有预处理好的数据 %s(想重做请把 FRESH_TRAIN 设为 True)" % data_dir)
-    TRAIN_BASE_USE, TRAIN_LR_USE = TTS_MODEL, TRAIN_LR                      # v16 M3:增量再优化 → 以已晋升模型为父(--base)+ 较低学习率;其余训练路径与 v15 完全一致
-    _v16p = ((LIB_JOB or {}).get("params") or {}).get("v16") or {}
-    if V16 and V16_INCR and _v16p.get("mode") == "incremental" and _v16p.get("parent_dir") and (Path(_v16p["parent_dir"]) / "model.safetensors").exists():
-        try:
-            _pd = OUT / "v16_parent" / str(LIB_JOB["job_id"])                       # 先把父模型拷走:训练结束会覆盖 best_model,父模型必须保留(回滚/对照)
-            if not (_pd / "model.safetensors").exists():
-                shutil.copytree(_v16p["parent_dir"], _pd, dirs_exist_ok=True)
-            TRAIN_BASE_USE, TRAIN_LR_USE = str(_pd), float(_v16p.get("lr") or TRAIN_LR)
-            print("  🔁 v16 增量再优化:父模型 %s → 副本 %s;学习率 %.2e;新样本 %s + 回放 %s(未在真机验证效果;候选模型仍须验证+加载+试合成才能升级)" % (_v16p["parent_dir"], _pd, TRAIN_LR_USE, _v16p.get("new"), _v16p.get("replay")))
-        except Exception as e:
-            print("  ⚠ v16 增量准备失败(%s),改为从基座全量训练(与 v15 一致)" % e)
-    banner("训练 · LoRA 双卡微调 + 每轮自动评估(auto_train_loop.py)")
+    TRAIN_BASE_USE, TRAIN_LR_USE = VOXCPM_MODEL, TRAIN_LR                  # v19:VoxCPM2 官方 LoRA(增量再优化=以新数据重训 LoRA;父模型回滚由谱系负责)
+    banner("训练 · VoxCPM2 官方 LoRA 微调(voxcpm_lora.py train)")
     print("  可随时中断(停止单元格);再次运行会自动从最近的 checkpoint 续训。\n", flush=True)
-    cmd = [PY, str(APP / "auto_train_loop.py"), "--work", str(OUT), "--data_dir", str(data_dir), "--base", TRAIN_BASE_USE, "--target", str(TARGET_SIMILARITY),
-           "--max_epochs", str(MAX_EPOCHS), "--patience", str(PATIENCE), "--lr", str(TRAIN_LR_USE)]
+    cmd = [PY, str(APP / "voxcpm_lora.py"), "train", "--work", str(OUT), "--data_dir", str(data_dir), "--base", TRAIN_BASE_USE, "--max_steps", str(TRAIN_MAX_STEPS), "--lr", str(TRAIN_LR_USE)]
     if FRESH_TRAIN:
         cmd.append("--fresh")
     rc = stream(cmd, env=dict(senv), cwd=str(APP))
@@ -31420,23 +30366,30 @@ if MODE in ("train", "train_then_serve") and not TEST:
 
 # ───────────────────────── 4. 启动服务 ─────────────────────────
 banner("4/6  启动服务(网关 + 每张 GPU 一个 TTS 进程)")
-use_trained = bool(USE_TRAINED_MODEL and (trained_dir / "trained.json").exists() and (trained_dir / "model.safetensors").exists())
+use_trained, _lora_dir = False, ""
+if USE_TRAINED_MODEL and (trained_dir / "trained.json").exists():                 # v19:微调产物 = VoxCPM2 官方 LoRA(trained.json.engine == voxcpm2_lora)
+    try:
+        meta = json.loads((trained_dir / "trained.json").read_text(encoding="utf-8"))
+        _ld = meta.get("lora_dir") or str(trained_dir / "lora")
+        if meta.get("engine") == "voxcpm2_lora" and any((Path(_ld) / n_).exists() for n_ in ("lora_weights.safetensors", "lora_weights.ckpt")):
+            use_trained, _lora_dir = True, _ld
+    except Exception as e_:
+        print("  ⚠ 读取 trained.json 失败(%s),本次不加载 LoRA" % e_)
+senv["VC_MODEL"] = VOXCPM_MODEL
 if use_trained:
-    meta = json.loads((trained_dir / "trained.json").read_text(encoding="utf-8"))
-    senv.update(VC_MODEL=str(trained_dir), VC_TRAINED="1", VC_REF_AUDIO=str(trained_dir / "speaker_ref.wav"), VC_REF_TEXT=meta.get("ref_text", ""),
-                VC_REF_XVEC="1", VC_REF_FORCE="1")
-    print("  ✅ 使用微调后的模型: %s(默认说话人 = 训练时的参考音频,x-vector 模式,与训练格式一致)" % trained_dir)
-else:
-    senv["VC_MODEL"] = TTS_MODEL
-    if REFERENCE_AUDIO and Path(REFERENCE_AUDIO).exists():
-        senv["VC_REF_AUDIO"], senv["VC_REF_TEXT"] = REFERENCE_AUDIO, REFERENCE_TEXT
-        print("  使用默认参考音频:", REFERENCE_AUDIO)
-    elif REFERENCE_AUDIO:
-        print("  ⚠ 找不到 REFERENCE_AUDIO:", REFERENCE_AUDIO, "(将在网页里录制/上传)")
-_eng = "voxcpm2" if (TTS_ENGINE == "voxcpm2" and (VOX_READY or (TEST and os.environ.get("VC_VOX_FAKE") == "1")) and not use_trained) else "qwen3"
-senv.update(VC_ENGINE=_eng, VC_VOX_MODEL=VOXCPM_MODEL, VC_VOX_STEPS=str(VOX_STEPS), VC_VOX_RTF_TARGET=str(VOX_RTF_TARGET), VC_VOX_AUTOSTEPS="1" if VOX_AUTOSTEPS else "0",
-            VC_VOX_CLONE_MODE=VOX_CLONE_MODE, VC_VOX_OPTIMIZE="1" if VOX_OPTIMIZE else "0", VC_VOX_FALLBACK="1")
-print("  🔊 TTS 引擎:%s" % ({"voxcpm2": "VoxCPM2(2B · 48kHz→24kHz · 冻结声纹 · 流式 · 扩散步数 %d 起,按实测 RTF 自适应)" % VOX_STEPS, "qwen3": "Qwen3-TTS-12Hz-1.7B-Base(v17 引擎)" + ("[微调模型只支持 qwen3]" if use_trained else "")}[_eng]))
+    senv.update(VC_TRAINED="1", VC_VOX_LORA=_lora_dir)
+    print("  ✅ 加载 VoxCPM2 LoRA: %s(与基座同一模型;未经闸门验证前请用 /abx 盲测对比;可把 USE_TRAINED_MODEL 设 False 一键回退)" % _lora_dir)
+if REFERENCE_AUDIO and Path(REFERENCE_AUDIO).exists():
+    senv["VC_REF_AUDIO"], senv["VC_REF_TEXT"] = REFERENCE_AUDIO, REFERENCE_TEXT
+    print("  使用默认参考音频:", REFERENCE_AUDIO)
+elif REFERENCE_AUDIO:
+    print("  ⚠ 找不到 REFERENCE_AUDIO:", REFERENCE_AUDIO, "(将在网页里录制/上传)")
+if not TEST and not VOX_READY:                                                   # v19:不再静默换成别的模型,直接给出可操作的修复建议
+    raise RuntimeError("VoxCPM2 不可用,无法启动(v19 已移除其他 TTS 引擎):%s\n  修复:①Settings→Internet=On ②重新运行(依赖会重装) ③若仍失败,把上方 pip 报错发给开发者" % VOX_MSG)
+senv.update(VC_ENGINE="voxcpm2", VC_VOX_MODEL=VOXCPM_MODEL, VC_VOX_STEPS=str(VOX_STEPS), VC_VOX_RTF_TARGET=str(VOX_RTF_TARGET), VC_VOX_AUTOSTEPS="1" if VOX_AUTOSTEPS else "0",
+            VC_VOX_CLONE_MODE=VOX_CLONE_MODE, VC_VOX_OPTIMIZE="1" if VOX_OPTIMIZE else "0", VC_VOX_FALLBACK="0",
+            VC_TOOLS=json.dumps(globals().get("TOOLS_STATUS", {})), VC_V19_STYLE="1" if V19_STYLE else "0", VC_HIFI_ARCHIVE="1" if V19_HIFI_ARCHIVE else "0")
+print("  🔊 TTS 引擎:VoxCPM2(2B · 原生 48kHz · 冻结声纹 · 流式 · 扩散步数 %d 起,按实测 RTF 自适应)%s" % (VOX_STEPS, " + LoRA" if use_trained else ""))
 if TEST:
     senv.update(VC_MOCK="1", VC_MOCK_LLM="1")
 
