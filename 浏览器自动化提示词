@@ -1,0 +1,1623 @@
+# QTTS v4.4.0 → v5.0
+# 顶级 Chromium 浏览器自动化与实时交互系统：端到端架构升级实施规范
+
+你是一支由 Chromium 内核工程师、浏览器自动化协议工程师、Rust 高性能系统工程师、C++/CUDA 多媒体工程师、TypeScript 前端工程师、Python AI Agent 工程师和性能测试工程师组成的资深工程团队。
+
+你的任务不是重新开发一个浏览器，也不是简单地给现有页面增加截图刷新功能，而是将现有项目升级为一套具有真实浏览器交互体验、低延迟画面反馈、高可靠自动化执行、AI 与人工协同控制能力的生产级远程浏览器系统。
+
+项目仓库：
+
+https://github.com/bizuming1-ui/111
+
+当前项目版本基线：
+
+- 当前版本：QTTS v4.4.0 Studio Direct。
+- 当前主要代码入口：仓库中的 `参考代码1`。
+- 当前代码采用压缩模块嵌入、Base64、zlib、SHA256 校验和运行时解包机制。
+- 当前浏览器技术基础：Chromium + Chrome DevTools Protocol（CDP）+ WebSocket + CDP Screencast。
+- 当前 AI 自动化基础：DeepSeek 观察—思考—行动循环。
+- 当前语音功能：VoxCPM2 语音克隆和播放。
+- 当前项目已有 Go、Rust、C++、Python、JavaScript/TypeScript 等组件或技术基础，必须通过实际源码审计确认每个组件的用途。
+- 现有版本包含独立浏览器 Studio CPU 进程及资源调度设计。
+- 当前版本说明中记录过软件渲染条件下的 P50 38ms、P95 77ms 和滚轮约 23.6 FPS。这些数字仅作为历史基线，必须重新测量，不能当作已经验证的生产性能。
+
+---
+
+# 一、最高优先级工程原则
+
+## 1. 保护已有功能
+
+必须保留并回归验证：
+
+- Chromium 浏览器内核。
+- 当前浏览器启动和会话机制。
+- CDP 控制能力。
+- WebSocket 通信能力。
+- 浏览器画面显示。
+- 鼠标移动、悬停、按下、抬起、拖拽、双击、三击、右键和滚轮。
+- 键盘输入、组合键、文本输入、复制粘贴。
+- 地址栏、导航、刷新、前进、后退。
+- 多标签页、弹窗、JavaScript 对话框。
+- 下拉框、日期控件和常用页面交互。
+- DeepSeek AI 自动化。
+- VoxCPM2 语音克隆和播放。
+- 当前 Go、Rust、C++、Python 和前端模块。
+- 当前压缩包解包、SHA256 校验和启动流程。
+- 当前 Kaggle 部署和网络隧道方案。
+
+不得以“架构升级”为理由删除已经工作的功能。
+
+## 2. 禁止没有证据的重写
+
+执行顺序必须是：
+
+源码审计 → 架构绘制 → 性能基线 → 瓶颈定位 → 最小改造 → 自动化测试 → 性能对比 → 打包 → Kaggle 验证。
+
+不得先重写，再寻找理由证明重写正确。
+
+## 3. 真实浏览器与视觉模拟必须严格区分
+
+本项目必须使用真正的 Chromium 页面执行网页。
+
+不允许使用 HTML 模拟浏览器内核，不允许用截图模拟网页交互，不允许使用前端伪造页面代替真实标签页。
+
+需要区分：
+
+- Chromium 页面视口。
+- Chromium 浏览器窗口。
+- Studio 自定义浏览器外壳。
+- 操作系统桌面。
+
+如果用户要求显示地址栏、标签栏、浏览器菜单和页面区域，必须先明确实际捕获的是 Chromium 浏览器窗口，还是自定义 Studio UI。
+
+CDP 页面视口 Screencast 不能自动等同于完整浏览器窗口捕获。完整窗口捕获必须通过经过能力检测的浏览器窗口录制接口或操作系统窗口捕获实现。
+
+## 4. 所有优化必须有量化证据
+
+每次优化必须记录：
+
+- 修改前数据。
+- 修改后的数据。
+- 测试环境。
+- 浏览器版本。
+- 分辨率。
+- 网络条件。
+- CPU/GPU 使用率。
+- 内存使用率。
+- 延迟分布。
+- 帧率。
+- 丢帧率。
+- 功能回归结果。
+
+禁止只说“更流畅”“明显更快”“性能大幅提升”。
+
+---
+
+# 二、目标总体架构
+
+设计为独立的控制平面、媒体数据平面、浏览器执行平面、AI 决策平面和观测运维平面。
+
+```text
+                    USER / WEB CLIENT
+                           |
+                 TypeScript Studio UI
+                           |
+             +-------------+-------------+
+             |                           |
+        CONTROL PLANE               MEDIA PLANE
+             |                           |
+       Input/Event API             WebRTC Video
+       Session API                 WebTransport
+       Browser API                 WebSocket Binary
+             |                           |
+             +-------------+-------------+
+                           |
+                    Rust Runtime Core
+                    Tokio / Async Runtime
+                           |
+             +-------------+-------------+
+             |             |             |
+         Session       Event Bus      Scheduler
+         Manager       / Watchdog     / Backpressure
+             |             |             |
+             +-------------+-------------+
+                           |
+                  Browser Protocol Layer
+                           |
+              +------------+------------+
+              |            |            |
+             CDP       WebDriver BiDi  High-level
+          Chromium      Cross-engine   Adapter
+              |            |            |
+              +------------+------------+
+                           |
+                    Chromium Browser
+                           |
+          +----------------+----------------+
+          |                |                |
+       Browser          Renderer         Network
+       Process          Processes        Service
+          |                |                |
+          +----------------+----------------+
+                           |
+                    DOM / AX Tree
+                    Layout / Paint
+                    Compositor
+                    GPU Process
+                           |
+                    Frame Capture
+                           |
+             Native Media / Encoder Pipeline
+                           |
+                  WebRTC / QUIC / WSS
+                           |
+                  Browser Client Decode
+                           |
+                  Canvas / Video Render
+```
+
+AI 决策平面：
+
+```text
+Browser Event
+     |
+State Collector
+     |
+DOM Snapshot + Accessibility Tree + Screenshot
+     |
+Element Grounding / Visual Grounding
+     |
+DeepSeek Planner
+     |
+Action Validator
+     |
+Action Executor
+     |
+Post-condition Verifier
+     |
+State Update / Retry / Recovery
+```
+
+人工控制和 AI 控制必须共享同一个 Browser Session，不得分别创建两个不同的浏览器状态来伪装同步。
+
+---
+
+# 三、语言和技术栈分工
+
+必须根据实际性能瓶颈分配语言，不允许为了使用更多语言而人为拆分系统。
+
+## 1. Chromium
+
+负责：
+
+- 网页执行。
+- JavaScript Runtime。
+- HTML/CSS 解析。
+- DOM 生命周期。
+- Layout。
+- Paint。
+- Compositor。
+- Network Stack。
+- Service Worker。
+- Browser Context。
+- Page / Target。
+- Cookie、Storage 和下载。
+- 浏览器多进程和站点隔离。
+
+尽量保留 Chromium 原生行为，不自行实现网页渲染引擎。
+
+## 2. Rust：核心运行时
+
+建议使用：
+
+- Rust stable。
+- Tokio。
+- tokio-tungstenite 或等价 WebSocket 库。
+- tonic / gRPC（只有确实需要跨进程 RPC 时使用）。
+- serde。
+- tracing。
+- metrics。
+- bytes。
+- dashmap 或其他经过评估的并发状态容器。
+
+Rust 负责：
+
+- Browser Session Manager。
+- Target / Page 生命周期管理。
+- 统一事件总线。
+- CDP / BiDi 会话管理。
+- 输入事件队列。
+- 帧队列。
+- 背压控制。
+- 超时和取消。
+- Watchdog。
+- 进程监督。
+- 崩溃恢复。
+- 资源释放。
+- 指标采集。
+- 连接状态管理。
+
+必须采用有界队列和明确的资源上限。
+
+禁止无限队列、无限缓存和无界任务派发。
+
+## 3. TypeScript / JavaScript：浏览器协议与前端
+
+负责：
+
+- Studio UI。
+- Browser Control Adapter。
+- Playwright / Puppeteer 高层能力适配。
+- CDP / BiDi 客户端适配。
+- WebRTC Client。
+- WebTransport Client。
+- WebSocket Binary Client。
+- WebCodecs 解码。
+- Canvas 渲染。
+- Input Event Capture。
+- 浏览器标签栏和地址栏 UI。
+- Performance HUD。
+
+前端采用事件驱动架构。
+
+避免高频状态更新触发整个 React/Vue 页面重渲染。
+
+## 4. Python：AI Agent 和任务规划
+
+负责：
+
+- DeepSeek API。
+- AI Agent Planner。
+- 页面语义分析。
+- 任务规划。
+- DOM / Accessibility Tree 处理。
+- 视觉模型调用。
+- 任务状态持久化。
+- AI 自动化策略。
+- 失败分析和恢复策略。
+
+AI 推理不得阻塞浏览器输入线程、视频线程或 Rust 运行时。
+
+## 5. C++：高性能原生模块
+
+只有通过 Profiling 证明 Python 或 JavaScript 存在明显热点时，才实现 C++ 扩展。
+
+可选用途：
+
+- SIMD 图像处理。
+- 图像缩放。
+- Pixel Format Conversion。
+- NV12 / I420 / RGB 转换。
+- 高效二进制数据处理。
+- 图像裁剪。
+- 视频帧预处理。
+- 高性能输入事件处理。
+
+优先使用成熟的 Chromium、FFmpeg、libyuv 或平台原生能力。
+
+不要重复实现已有成熟库。
+
+## 6. CUDA：可选 GPU 加速
+
+CUDA 只用于有明确 GPU 计算收益的工作：
+
+- 批量图像处理。
+- 高分辨率帧缩放。
+- 特定视觉模型推理。
+- 多帧分析。
+- 需要 GPU 的预处理和后处理。
+
+不得默认让 CUDA 介入每一帧的传输。
+
+必须测量：
+
+- CPU → GPU Copy。
+- GPU Kernel。
+- GPU → CPU Copy。
+- GPU Memory。
+- Synchronization。
+- End-to-End Latency。
+
+如果 GPU 数据复制和同步成本超过计算收益，必须回退到 CPU SIMD。
+
+## 7. Go：现有网关
+
+如果当前 Go 模块承担外部 API、隧道、反向代理或服务入口，原则上保留。
+
+Rust Runtime 和 Go Gateway 之间通过明确的 RPC / HTTP / WebSocket 契约通信。
+
+不得同时保留多个职责重叠的网关。
+
+---
+
+# 四、浏览器协议层：CDP + WebDriver BiDi
+
+建立 Browser Protocol Adapter，不允许业务逻辑直接散布 CDP 方法调用。
+
+统一接口至少包括：
+
+- connect()
+- disconnect()
+- createBrowserContext()
+- closeBrowserContext()
+- createPage()
+- closePage()
+- navigate()
+- reload()
+- goBack()
+- goForward()
+- getPageTree()
+- getAccessibilityTree()
+- getDOMSnapshot()
+- evaluate()
+- locateElement()
+- click()
+- type()
+- keyDown()
+- keyUp()
+- mouseMove()
+- mouseDown()
+- mouseUp()
+- scroll()
+- captureScreenshot()
+- startScreencast()
+- stopScreencast()
+- getNetworkEvents()
+- getConsoleEvents()
+- getPageLifecycle()
+- getTargetInfo()
+- getPerformanceMetrics()
+
+## 1. CDP Adapter
+
+负责 Chromium 专有和深层控制能力：
+
+- Target。
+- Browser。
+- Page。
+- Runtime。
+- DOM。
+- Accessibility。
+- Input。
+- Network。
+- Fetch。
+- Performance。
+- Log。
+- Emulation。
+- Tracing。
+- IO。
+
+CDP 存在版本兼容风险。
+
+必须：
+
+- 绑定并记录 Chromium 版本。
+- 获取当前浏览器支持的 Protocol Schema。
+- 建立 Capability Registry。
+- 对不存在的方法进行能力降级。
+- 对错误响应进行结构化处理。
+- 不允许因某个 CDP 命令不存在而导致整个浏览器进程退出。
+- 对协议变化建立回归测试。
+
+CDP 是 Chromium 深层控制的主要能力来源，但不能假设它是稳定的第三方公共 API。
+
+## 2. WebDriver BiDi Adapter
+
+负责标准化的双向浏览器控制能力。
+
+优先评估：
+
+- Browsing Context。
+- Session。
+- Script。
+- Network。
+- Input。
+- Storage。
+- Log。
+- Events。
+- User Context。
+- Screenshot / Screencast 能力。
+
+WebDriver BiDi 仍然处于持续演进阶段，必须按浏览器版本建立能力矩阵，不能假设每个浏览器都实现相同功能。
+
+## 3. 协议选择策略
+
+建立 Capability-Based Routing：
+
+- Chromium 特有的高性能控制：使用 CDP。
+- 跨浏览器标准能力：优先评估 BiDi。
+- 高层测试和兼容性回归：使用 Playwright / Puppeteer。
+- 缺少标准能力时：使用经过封装的 CDP 专有扩展。
+- 不允许同一条业务操作无意义地经过多层 RPC 转发。
+
+不要将 Playwright、Puppeteer、CDP 和 BiDi 全部叠加成多层代理。
+
+协议调用必须有统一 Trace ID、Session ID、Target ID 和 Timeout。
+
+---
+
+# 五、真实浏览器生命周期与多标签页架构
+
+建立严格的 Browser Session / Browser Context / Target / Page / Frame 层级模型。
+
+每个用户会话必须有明确的：
+
+- session_id
+- browser_id
+- browser_context_id
+- target_id
+- page_id
+- frame_id
+- protocol_session_id
+
+每个标签页必须对应真实 Chromium Page / Target。
+
+实现：
+
+1. 新建标签页。
+2. 关闭标签页。
+3. 标签切换。
+4. 页面导航。
+5. 页面标题更新。
+6. URL 更新。
+7. favicon 更新。
+8. 加载状态。
+9. 页面崩溃。
+10. 页面恢复。
+11. Popup。
+12. Target Created。
+13. Target Destroyed。
+14. 页面下载。
+15. JavaScript Dialog。
+16. 浏览器上下文清理。
+
+使用事件订阅，不允许依靠固定时间间隔轮询全部页面状态。
+
+必须处理：
+
+- targetcreated。
+- targetdestroyed。
+- page。
+- popup。
+- close。
+- crash。
+- domcontentloaded。
+- load。
+- frameattached。
+- framedetached。
+- navigated。
+- download。
+- dialog。
+
+标签页 UI 与实际 Chromium Target 必须保持一致。
+
+浏览器崩溃后，必须能够识别失效 Target，清理旧状态，并按照恢复策略重新建立会话。
+
+---
+
+# 六、浏览器画面捕获与视频传输：最高性能重点
+
+必须把视频传输与浏览器控制彻底分离。
+
+不能让每次鼠标移动都触发完整截图。
+
+不能通过固定 setInterval 调用 page.screenshot() 实现视频。
+
+不能将高频视频帧转换成 Base64 字符串再经过多层 JSON 传输。
+
+## 1. 捕获方式分级
+
+根据实际浏览器版本和运行环境，评估：
+
+A. Chromium 原生浏览器窗口录制能力。
+
+B. Chromium 页面视口 Screencast。
+
+C. X11 / Xvfb / PipeWire / OS Window Capture。
+
+D. FFmpeg / GStreamer 原生媒体采集。
+
+如果需要显示完整浏览器 UI，优先验证浏览器窗口捕获能力。
+
+如果只需要网页视口，使用页面视口捕获。
+
+所有捕获方式必须做 Capability Detection。
+
+不要把 `Page.startScreencast` 的页面视口画面误认为完整 Chrome 浏览器窗口。
+
+## 2. CDP Screencast
+
+如果当前 Chromium 版本支持：
+
+- Page.startScreencast。
+- Page.screencastFrame。
+- Page.screencastFrameAck。
+- maxFramesInFlight。
+- everyNthFrame。
+- maxWidth。
+- maxHeight。
+- quality。
+- sendLastFrame。
+
+必须实现正确 ACK 和背压。
+
+建议初始实验参数：
+
+- JPEG。
+- Quality 70–85。
+- 最大画面 1280×720。
+- 目标 30 FPS。
+- maxFramesInFlight 从 1 或 2 开始测试。
+- 每帧携带 sequence_id。
+- 每帧携带 capture_timestamp。
+- 每帧携带 viewport_width / viewport_height。
+- 每帧携带实际缩放比例。
+- 只保留最新待显示帧。
+
+这些只是实验起点，最终值由真实测试确定。
+
+## 3. 原生视频编码
+
+优先验证：
+
+- Chromium 原生 MediaRecorder / Screen Recording。
+- VP8。
+- VP9。
+- H.264。
+- WebRTC Media Track。
+- 硬件编码能力。
+- FFmpeg 编码。
+
+如果采用 WebRTC：
+
+- 建立独立 Signaling。
+- 建立 ICE。
+- 支持 STUN。
+- 在需要时部署 TURN。
+- 支持 TCP/TLS 回退。
+- 验证 Kaggle、Cloudflare Tunnel、ngrok 或其他隧道的实际 UDP 能力。
+- 记录连接建立时间。
+- 记录 RTT。
+- 记录 Packet Loss。
+- 记录 Jitter。
+- 记录实际码率。
+- 记录解码帧率。
+- 记录端到端画面延迟。
+
+不能假设 Kaggle 网络环境一定支持直连 UDP。
+
+## 4. WebTransport
+
+将 WebTransport 作为独立实验分支。
+
+评估：
+
+- HTTP/3。
+- QUIC。
+- Bidirectional Streams。
+- Unidirectional Streams。
+- Datagram。
+- 多流隔离。
+- 连接恢复。
+- 网络代理兼容性。
+
+建议：
+
+- 可靠控制消息走可靠 Stream。
+- 可丢弃的实时状态消息可以评估 Datagram。
+- 视频帧是否采用 Datagram，必须根据帧分片、MTU、丢包恢复和编码格式实际测试。
+- 不允许为了使用 WebTransport 而牺牲可用性。
+
+## 5. WebSocket Binary Fallback
+
+必须保留当前 WebSocket 通道作为可靠回退方案。
+
+推荐拆分：
+
+- Control WebSocket。
+- Browser Event WebSocket。
+- Media WebSocket Binary。
+
+媒体数据必须使用二进制帧。
+
+必须禁止控制消息与大视频帧共用一个无差别阻塞队列。
+
+## 6. 视频帧队列
+
+采用 Latest-Frame-Wins。
+
+如果消费者落后：
+
+- 丢弃过期的未显示帧。
+- 不允许帧顺序倒退。
+- 不允许积累数秒旧画面。
+- 不允许为了显示全部历史帧而牺牲实时性。
+
+必须有：
+
+- Frame Sequence。
+- Capture Timestamp。
+- Encode Timestamp。
+- Send Timestamp。
+- Receive Timestamp。
+- Decode Timestamp。
+- Render Timestamp。
+- Dropped Frame Counter。
+- Queue Depth。
+
+---
+
+# 七、前端实时渲染架构
+
+使用 TypeScript + Canvas / WebGL / WebCodecs，依据实际视频格式选型。
+
+优先避免 React 高频全树更新。
+
+## 1. WebCodecs
+
+如果服务端发送编码视频：
+
+- 使用 VideoDecoder。
+- 使用 EncodedVideoChunk。
+- 根据 codec capability 动态选择。
+- 使用 Web Worker 承担解码与媒体处理。
+- 使用 VideoFrame。
+- 使用 timestamp。
+- 使用 decoder queue 管理。
+- 处理 decoder flush。
+- 处理异常和重建。
+
+如果传输 JPEG：
+
+- 使用 createImageBitmap。
+- 使用 requestAnimationFrame。
+- 只显示最新帧。
+- 正确释放 ImageBitmap。
+- 不允许无界积累待绘制图片。
+
+## 2. Canvas / WebGL
+
+实现独立画面渲染层。
+
+要求：
+
+- 页面画面更新不影响鼠标指针流畅度。
+- 鼠标指针使用独立 Overlay。
+- 地址栏和标签栏不得因视频帧更新而重渲染。
+- 避免频繁 DOM 创建和删除。
+- 避免大规模 Base64 字符串复制。
+- 避免同步图像解码。
+- 避免频繁 Canvas 尺寸变化。
+- 避免不必要的 GPU / CPU 来回复制。
+
+## 3. 自适应画面质量
+
+根据以下指标动态调整：
+
+- RTT。
+- Packet Loss。
+- Jitter。
+- Decode Time。
+- Render Time。
+- Client FPS。
+- Server FPS。
+- CPU Usage。
+- Network Throughput。
+
+动态调整：
+
+- 分辨率。
+- 码率。
+- 帧率。
+- 编码质量。
+- 关键帧间隔。
+- 发送节奏。
+
+必须防止画面质量频繁振荡。
+
+采用带滞回的自适应控制策略，而不是每次指标轻微变化就切换分辨率。
+
+---
+
+# 八、输入系统：必须达到真实浏览器交互逻辑
+
+输入系统必须独立于媒体传输。
+
+建立统一 Input Event Model：
+
+- PointerMove。
+- PointerDown。
+- PointerUp。
+- PointerCancel。
+- Wheel。
+- KeyDown。
+- KeyUp。
+- TextInput。
+- CompositionStart。
+- CompositionUpdate。
+- CompositionEnd。
+- Paste。
+- Clipboard。
+
+## 1. 输入优先级
+
+最高优先级：
+
+- MouseDown。
+- MouseUp。
+- KeyDown。
+- KeyUp。
+- TextInput。
+- Composition。
+- Paste。
+
+中优先级：
+
+- Wheel。
+- PointerDown。
+- PointerUp。
+
+低优先级：
+
+- 高频 PointerMove。
+
+PointerMove 可以采用合并策略，只保留最新位置。
+
+任何情况下都不得随意丢弃按下、抬起和文本输入事件。
+
+## 2. 坐标转换
+
+必须准确处理：
+
+- CSS Pixel。
+- Device Pixel。
+- DevicePixelRatio。
+- Browser Viewport。
+- Screenshot Resolution。
+- Canvas Resolution。
+- Browser Zoom。
+- 页面缩放。
+- Letterbox。
+- 黑边。
+- 页面滚动。
+- 浏览器窗口偏移。
+
+统一坐标变换函数。
+
+所有输入事件使用同一套坐标变换矩阵。
+
+必须进行坐标映射单元测试。
+
+## 3. 输入执行
+
+优先使用浏览器原生输入协议。
+
+鼠标、键盘事件必须有完整生命周期。
+
+必须处理：
+
+- 按下后连接断开。
+- 鼠标离开画面。
+- Pointer Capture。
+- 页面切换。
+- 页面焦点丢失。
+- 快速连续输入。
+- 输入事件超时。
+- 重复 KeyDown。
+- 缺失 KeyUp。
+- IME 输入法组合事件。
+
+不得默认用 `element.click()` 代替真实鼠标交互。
+
+DOM 语义操作可以作为 AI 自动化的高层能力，但必须和真实用户输入路径区分。
+
+---
+
+# 九、AI 浏览器 Agent：DOM + Accessibility + Vision Hybrid
+
+建立 Hybrid Grounding Engine。
+
+不允许只依赖截图坐标。
+
+不允许只依赖 CSS Selector。
+
+不允许只依赖 DOM 文本。
+
+每次 AI 决策应根据任务复杂度获取必要信息：
+
+1. Accessibility Tree。
+2. DOM Snapshot。
+3. Element Role。
+4. Accessible Name。
+5. Label。
+6. Placeholder。
+7. Bounding Box。
+8. Visibility。
+9. Enabled。
+10. Editable。
+11. Stability。
+12. Hit Testing。
+13. Screenshot。
+14. 局部截图 Crop。
+
+## 1. 定位策略
+
+优先级：
+
+第一层：Role / Accessible Name。
+
+第二层：Label / Placeholder / Text。
+
+第三层：稳定的 Element ID / Ref。
+
+第四层：DOM 结构和属性组合。
+
+第五层：视觉定位和坐标操作。
+
+第六层：经过验证的备用策略。
+
+不得使用容易随页面布局变化的长 CSS 路径作为首选定位方式。
+
+## 2. 操作前验证
+
+点击之前检查：
+
+- 唯一性。
+- 可见性。
+- 稳定性。
+- 可点击性。
+- 是否被遮挡。
+- 是否启用。
+- 是否处于正确 Frame。
+- 元素是否发生移动。
+
+对动画、异步加载、虚拟列表、懒加载和 SPA 页面采用事件驱动等待。
+
+禁止到处使用固定 sleep。
+
+## 3. Reason → Probe → Act → Verify
+
+建立四阶段 Agent Loop：
+
+Observe：
+
+收集当前页面状态。
+
+Reason：
+
+分析任务和候选操作。
+
+Probe：
+
+当元素不确定时，进行局部截图、DOM 查询、Bounding Box 检查、视觉验证。
+
+Act：
+
+执行已验证的操作。
+
+Verify：
+
+验证操作后置条件。
+
+如果操作失败：
+
+- 识别失败类型。
+- 更新页面状态。
+- 重新定位元素。
+- 选择备用操作。
+- 限制重试次数。
+- 记录失败证据。
+
+不得在同一页面状态下盲目重复点击。
+
+## 4. 事件驱动 Agent
+
+订阅：
+
+- Navigation。
+- DOM Mutation。
+- Network Request。
+- Network Response。
+- Download。
+- Popup。
+- Dialog。
+- Console Error。
+- Page Crash。
+- Target Change。
+- Frame Change。
+
+Agent 必须识别页面自主变化，而不只是用户点击造成的变化。
+
+## 5. AI 上下文压缩
+
+不允许每一步都把完整 DOM、所有历史截图和全部网络日志发送给 LLM。
+
+建立 Evidence Memory：
+
+- 当前任务目标。
+- 当前页面。
+- 关键元素。
+- 已验证事实。
+- 已执行操作。
+- 操作后置条件。
+- 失败记录。
+- 必要的视觉证据。
+
+只保留对当前决策有价值的状态。
+
+---
+
+# 十、人工与 AI 共享浏览器会话
+
+实现明确控制状态机：
+
+- HUMAN_CONTROL。
+- AI_CONTROL。
+- HUMAN_TAKEOVER。
+- AI_PAUSED。
+- BROWSER_RECOVERING。
+- SESSION_CLOSED。
+
+人工接管时：
+
+1. 暂停 AI 新操作。
+2. 等待正在执行的关键操作进入安全边界。
+3. 将当前 Browser State 同步给 AI。
+4. 记录人工操作事件。
+5. 更新 DOM 和视觉状态。
+6. 用户交还控制权后再恢复 AI。
+
+AI 控制时：
+
+1. 锁定当前任务操作上下文。
+2. 执行操作。
+3. 监听页面变化。
+4. 验证后置条件。
+5. 将操作结果同步给 Studio UI。
+
+不能让 AI 和人工同时向同一页面发送互相冲突的按键或鼠标事件。
+
+---
+
+# 十一、浏览器进程、安全隔离和故障恢复
+
+保留 Chromium 自己的多进程模型。
+
+不要为了降低内存而盲目启用单进程模式。
+
+优先使用：
+
+- Browser Process。
+- Renderer Process。
+- GPU Process。
+- Network Service。
+- Utility Process。
+- Site Isolation。
+- Chromium Sandbox。
+
+每个用户会话必须具备清晰的资源边界。
+
+需要评估：
+
+- BrowserContext 隔离。
+- Cookie 隔离。
+- Storage 隔离。
+- Session 隔离。
+- 下载目录隔离。
+- 临时目录隔离。
+- 用户数据目录隔离。
+
+CDP 是高权限控制通道。
+
+必须：
+
+- 不向公网直接暴露 CDP Port。
+- 不允许未授权访问 Browser WebSocket Endpoint。
+- 对控制端进行身份验证。
+- 对每个会话进行授权。
+- 对下载和文件访问进行限制。
+- 对用户凭证进行保护。
+- 对敏感操作建立审计日志。
+- 对不同用户的浏览器数据进行隔离。
+- 不允许恶意网页获得浏览器控制权限。
+
+故障恢复必须包含：
+
+- Browser Process Crash。
+- Renderer Crash。
+- WebSocket Disconnect。
+- WebRTC Disconnect。
+- Target Lost。
+- Navigation Timeout。
+- Dialog Timeout。
+- AI API Timeout。
+- Runtime Panic。
+- Memory Pressure。
+- Queue Overflow。
+
+任何一个页面崩溃不得无条件导致整个服务退出。
+
+---
+
+# 十二、CPU / GPU / 语音链路调度
+
+浏览器交互和 VoxCPM2 语音链路必须相互隔离。
+
+不得直接删除现有进程优先级设置。
+
+必须先测量：
+
+- Browser CPU。
+- Renderer CPU。
+- GPU CPU。
+- Encoder CPU。
+- Decoder CPU。
+- Rust Runtime CPU。
+- Python AI CPU。
+- VoxCPM2 CPU。
+- GPU Memory。
+- System Memory。
+
+采用动态资源调度：
+
+- 视频捕获线程。
+- 输入事件线程。
+- 浏览器事件线程。
+- AI 推理线程。
+- 语音生成线程。
+- 媒体编码线程。
+
+优先级根据实际延迟和负载动态调整。
+
+禁止让 AI 推理或语音生成阻塞输入事件。
+
+禁止在没有数据的情况下提高所有进程优先级。
+
+CUDA 只在确认有可用 GPU 加速收益时启用。
+
+---
+
+# 十三、性能监控与可观测性
+
+必须开发实时 Performance HUD。
+
+至少显示：
+
+Browser：
+
+- Browser PID。
+- Renderer PID。
+- Active Tab。
+- Page URL。
+- Browser Version。
+- Browser State。
+
+Video：
+
+- Capture FPS。
+- Encode FPS。
+- Send FPS。
+- Receive FPS。
+- Decode FPS。
+- Render FPS。
+- Dropped Frames。
+- Frame Size。
+- Bitrate。
+- Queue Depth。
+
+Network：
+
+- RTT。
+- Jitter。
+- Packet Loss。
+- WebSocket RTT。
+- WebRTC Connection State。
+- Reconnect Count。
+
+Input：
+
+- Input Event Rate。
+- Input Queue Depth。
+- Input Dispatch Latency。
+- Input-to-Visible-Feedback Latency。
+- Dropped PointerMove Count。
+- Critical Input Loss Count。
+
+AI：
+
+- Observe Time。
+- LLM Latency。
+- Planning Time。
+- Action Execution Time。
+- Verification Time。
+- Retry Count。
+- Task Success Rate。
+
+System：
+
+- CPU。
+- RAM。
+- GPU。
+- GPU Memory。
+- Process Count。
+- Thread Count。
+- File Descriptor Count。
+
+所有指标使用统一 Trace ID。
+
+所有延迟采用 monotonic clock。
+
+必须能够导出 JSON / CSV / Trace。
+
+---
+
+# 十四、性能验收指标
+
+以下是目标，不是预先承诺的结果。
+
+必须通过真实环境测试后才能判定达标。
+
+## 1. 交互性能
+
+目标：
+
+- 鼠标指针本地反馈：60 FPS 级别。
+- 浏览器画面：稳定 30 FPS 目标。
+- 常规输入到画面反馈 P50：≤80ms。
+- 常规输入到画面反馈 P95：≤150ms。
+- 不允许出现持续数秒的旧画面。
+- 不允许鼠标按下/抬起事件丢失。
+- 不允许键盘按下/抬起事件丢失。
+- 不允许画面帧乱序回退。
+
+必须分别报告：
+
+- 本机低延迟网络。
+- 普通互联网网络。
+- Kaggle + 隧道网络。
+
+不能将本机结果冒充 Kaggle 结果。
+
+## 2. 视觉质量
+
+- 720p 稳定显示。
+- 支持高分辨率自适应。
+- 地址栏和标签栏不闪烁。
+- 页面缩放准确。
+- 鼠标坐标准确。
+- 滚动连续。
+- 页面动画正常。
+- 视频和页面内容同步。
+- 窗口尺寸变化正确。
+
+## 3. 稳定性
+
+- 连续运行 30 分钟。
+- 连续运行 2 小时。
+- 连续运行 8 小时。
+- 多标签页压力测试。
+- 高频鼠标操作。
+- 高频滚轮操作。
+- 连续输入。
+- 页面崩溃恢复。
+- 网络断开恢复。
+- AI 超时恢复。
+
+不能出现：
+
+- 内存持续无界增长。
+- WebSocket 缓冲持续积累。
+- 视频帧队列持续增长。
+- 事件监听器泄漏。
+- ImageBitmap / VideoFrame 未释放。
+- Browser Target 状态漂移。
+- 输入事件卡死。
+- TTS 链路退化。
+
+---
+
+# 十五、完整测试矩阵
+
+必须建立自动化测试，不得只人工打开几个网页测试。
+
+网页测试：
+
+- Google。
+- Wikipedia。
+- GitHub。
+- YouTube。
+- 大型 SPA。
+- Canvas 页面。
+- iframe 页面。
+- 跨域 iframe。
+- 文件下载页面。
+- 多弹窗页面。
+- 长列表页面。
+- 虚拟滚动页面。
+- 动画页面。
+- 高分辨率页面。
+
+输入测试：
+
+- 鼠标移动。
+- 拖拽。
+- 双击。
+- 三击。
+- 右键。
+- 滚轮。
+- 快速滚轮。
+- 键盘组合键。
+- 中文输入法。
+- 复制粘贴。
+- 日期控件。
+- 下拉菜单。
+
+浏览器测试：
+
+- 多标签页。
+- 新窗口。
+- Popup。
+- 页面关闭。
+- 页面崩溃。
+- 浏览器重启。
+- BrowserContext 隔离。
+- Cookie 隔离。
+- 下载。
+- JavaScript Dialog。
+
+网络测试：
+
+- 低带宽。
+- 高延迟。
+- 网络抖动。
+- 丢包。
+- 短暂断网。
+- 长时间断网。
+- WebRTC 无法建立。
+- WebTransport 不可用。
+- WebSocket 重连。
+
+AI 测试：
+
+- 正确定位。
+- 多个同名按钮。
+- 遮挡元素。
+- 动画元素。
+- 页面变化。
+- 异步加载。
+- 错误操作恢复。
+- 人工接管。
+- AI 恢复控制。
+
+---
+
+# 十六、端到端开发实施阶段
+
+每个阶段必须独立提交、独立测试、独立记录 QA。
+
+## PHASE 0：代码和架构完整审计
+
+在修改代码前完成：
+
+1. Clone 仓库。
+2. 记录当前 commit SHA。
+3. 备份当前版本。
+4. 检查 `参考代码1`。
+5. 检查 FILES 字典。
+6. 检查 `_unpack()`。
+7. 解压所有嵌入式模块。
+8. 验证每个模块 SHA256。
+9. 生成完整目录树。
+10. 建立模块依赖图。
+11. 找出浏览器启动入口。
+12. 找出 CDP WebSocket 入口。
+13. 找出 Screencast 入口。
+14. 找出前端画面渲染入口。
+15. 找出鼠标输入链路。
+16. 找出键盘输入链路。
+17. 找出标签页管理入口。
+18. 找出 AI Agent 主循环。
+19. 找出 Go Gateway。
+20. 找出 Rust Runtime。
+21. 找出 C++ / CUDA 模块。
+22. 找出 VoxCPM2 语音链路。
+23. 找出进程优先级和资源调度逻辑。
+24. 找出 Kaggle 启动脚本。
+25. 找出压缩、打包和 SHA 更新流程。
+
+输出：
+
+- `ARCHITECTURE_AUDIT.md`
+- `MODULE_DEPENDENCY_GRAPH.md`
+- `BROWSER_DATAFLOW.md`
+- `INPUT_DATAFLOW.md`
+- `VIDEO_DATAFLOW.md`
+- `AI_AGENT_DATAFLOW.md`
+- `PERFORMANCE_BASELINE.json`
+
+此阶段禁止进行大规模代码修改。
+
+## PHASE 1：性能基线和瓶颈定位
+
+逐段记录：
+
+- 输入采集。
+- 输入传输。
+- CDP Dispatch。
+- Chromium 执行。
+- Compositor。
+- Frame Capture。
+- Encode。
+- Network Send。
+- Network Receive。
+- Decode。
+- Canvas Render。
+
+使用 Chrome DevTools Performance Trace、Tracing、Playwright Trace、系统 Profiling 和自定义时间戳。
+
+定位主要延迟来源。
+
+必须明确：
+
+- CPU 瓶颈。
+- GPU 瓶颈。
+- 网络瓶颈。
+- 编码瓶颈。
+- 解码瓶颈。
+- 前端渲染瓶颈。
+- CDP 调用瓶颈。
+- 多层 RPC 瓶颈。
+
+输出性能瓶颈报告。
+
+## PHASE 2：统一浏览器协议层
+
+建立 Protocol Adapter。
+
+优先整理当前 CDP 调用。
+
+将业务代码和 CDP 方法分离。
+
+建立：
+
+- CDP Adapter。
+- BiDi Adapter。
+- Capability Registry。
+- Protocol Version Registry。
+- Session Manager。
+- Target Manager。
+- Event Router。
+
+保留当前所有浏览器功能。
+
+通过回归测试后再进入下一阶段。
+
+## PHASE 3：真实浏览器生命周期和多标签页
+
+完成：
+
+- Target 事件订阅。
+- Page 生命周期。
+- Popup。
+- 多标签页。
+- 页面关闭。
+- 崩溃检测。
+- 状态恢复。
+- 浏览器上下文隔离。
+
+所有标签页必须与真实 Chromium Target 对应。
+
+## PHASE 4：媒体捕获与传输重构
+
+按顺序实施：
+
+1. 评估浏览器窗口捕获能力。
+2. 评估页面视口 Screencast。
+3. 修复 ACK / Backpressure。
+4. 建立二进制帧协议。
+5. 建立 Latest-Frame-Wins。
+6. 建立 Frame Timestamp。
+7. 建立独立 Media Channel。
+8. 建立 WebSocket Binary 回退。
+9. 实验 WebRTC。
+10. 实验 WebTransport。
+11. 根据实测结果选择生产默认通道。
+
+不得同时上线多个未经验证的媒体传输方案。
+
+## PHASE 5：前端实时渲染和输入系统
+
+完成：
+
+- Web Worker。
+- WebCodecs 或 createImageBitmap。
+- Canvas Renderer。
+- requestAnimationFrame。
+- 独立鼠标指针层。
+- 坐标映射。
+- 输入优先级。
+- PointerMove 合并。
+- Critical Input 保证。
+- 输入事件恢复。
+
+通过输入压力测试和画面压力测试。
+
+## PHASE 6：AI Agent 升级
+
+完成：
+
+- DOM Snapshot。
+- Accessibility Tree。
+- Hybrid Grounding。
+- Actionability Checks。
+- Reason-Probe-Act-Verify。
+- Event Watchdog。
+- Evidence Memory。
+- 失败恢复。
+- 人工接管。
+- AI 控制恢复。
+
+保留当前 DeepSeek 工作链路，禁止无必要更换模型。
+
+## PHASE 7：Rust Runtime 和原生性能模块
+
+在已经确认热点后实施：
+
+- Rust Tokio Runtime。
+- 有界事件队列。
+- 背压控制。
+- 资源调度。
+- 进程监督。
+- C++ SIMD 热点优化。
+- CUDA 可选加速。
+
+不得提前进行无依据的 C++ / CUDA 重写。
+
+## PHASE 8：安全、可靠性和资源管理
+
+完成：
+
+- 会话隔离。
+- BrowserContext 隔离。
+- 文件隔离。
+- CDP 访问控制。
+- 进程监督。
+- 断线重连。
+- 崩溃恢复。
+- 内存泄漏检测。
+- 长时间运行测试。
+
+## PHASE 9：完整 QA 和压力测试
+
+运行完整测试矩阵。
+
+生成：
+
+- `QA/QA-001.md`
+- `QA/QA-002.md`
+- `QA/QA-003.md`
+
+每个 QA 独立文件，禁止覆盖旧文件。
+
+每个文件记录：
+
+- Commit SHA。
+- 修改文件。
+- 修改原因。
+- 测试环境。
+- 测试命令。
+- 测试结果。
+- 性能数据。
+- 已知问题。
+- 回滚方式。
+
+## PHASE 10：最终打包和 Kaggle 部署
+
+由于当前仓库采用压缩模块嵌入，必须建立可靠的自动化打包链路：
+
+源码模块
+→ 单元测试
+→ 集成测试
+→ SHA256 计算
+→ zlib 压缩
+→ Base64 编码
+→ FILES 更新
+→ 主文件生成
+→ 解包验证
+→ SHA256 验证
+→ Kaggle 启动脚本生成
+→ Kaggle 实际部署
+→ 端到端验证。
+
+严禁只修改临时解包目录中的文件，却不更新正式嵌入包。
+
+严禁手动编辑 Base64 压缩内容。
+
+严禁跳过 SHA256 验证。
+
+---
+
+# 十七、开发管理规则
+
+必须严格遵守：
+
+1. 每次只实施一个明确阶段。
+2. 每次修改前先说明定位到的具体问题。
+3. 每次修改尽量控制文件数量。
+4. 每次修改必须说明是否影响现有功能。
+5. 每次修改必须有测试。
+6. 测试失败时先分析，不得继续叠加修改。
+7. 不允许用模拟测试冒充真实浏览器测试。
+8. 不允许用本地网络结果冒充 Kaggle 网络结果。
+9. 不允许用单次测试冒充稳定性测试。
+10. 不允许在未测量前承诺 FPS 或延迟。
+11. 不允许为了技术炫技而引入 CUDA。
+12. 不允许未经测量改变 CPU 优先级。
+13. 不允许破坏 VoxCPM2 语音链路。
+14. 不允许删除当前有效的浏览器功能。
+15. 每个阶段完成后提供独立 QA 报告。
+16. 每个阶段必须能够回滚。
+17. 所有关键修改必须有 Git Commit。
+18. 任何新依赖必须解释引入原因、体积、运行成本和维护成本。
+
+---
+
+# 十八、最终交付物
+
+最终必须交付：
+
+1. 完整架构设计文档。
+2. 浏览器协议适配层。
+3. Rust Runtime。
+4. Browser Session Manager。
+5. Target / Page Manager。
+6. Event Bus。
+7. Media Capture Adapter。
+8. WebRTC 传输实现或明确的测试结论。
+9. WebTransport 实验结果或明确的不可用结论。
+10. WebSocket Binary 回退实现。
+11. 前端实时渲染模块。
+12. 高可靠输入事件系统。
+13. Hybrid AI Grounding Engine。
+14. Human / AI Shared Control。
+15. Performance HUD。
+16. 自动化测试套件。
+17. 压力测试套件。
+18. 安全审计报告。
+19. 性能对比报告。
+20. Kaggle 部署包。
+21. 完整 QA 记录。
+22. 一键回滚方案。
+
+---
+
+# 十九、第一条执行指令
+
+现在不要直接修改代码。
+
+请先完成 PHASE 0。
+
+先审计仓库 `https://github.com/bizuming1-ui/111` 的当前真实代码，尤其是 `参考代码1` 的压缩模块和解包逻辑。
+
+如果当前环境无法完整读取 GitHub 文件，必须明确报告无法读取的部分，不得编造源码结构。
+
+完成 PHASE 0 后，只输出：
+
+1. 当前 Commit SHA。
+2. 当前文件结构。
+3. 当前模块数量和模块名称。
+4. 浏览器启动调用链。
+5. CDP 控制调用链。
+6. 视频捕获和传输调用链。
+7. 鼠标和键盘输入调用链。
+8. 多标签页管理调用链。
+9. AI Agent 调用链。
+10. Go / Rust / C++ / Python / TypeScript 的实际职责。
+11. 当前性能瓶颈证据。
+12. 最小风险升级方案。
+13. PHASE 1 的具体执行计划。
+14. 目前无法确认的技术事实。
+
+等待我确认后再进入 PHASE 1。
+
+**最终目标：让现有项目成为真正的 Chromium 远程浏览器自动化系统，具有接近本地浏览器的连续视觉反馈、低延迟输入、准确的页面交互、可靠的多标签页管理、稳定的 AI 自动化以及可恢复的生产级运行能力。**
