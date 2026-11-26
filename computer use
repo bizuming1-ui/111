@@ -1,9 +1,24 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v4.1 —— 在 v4 已验证可用的「虚拟鼠标 + 分层精确执行」之上，只修复运行日志中暴露的真实问题，并让模型「看得更准、做得更稳」。
+  DeepSeek Computer Use v4.2 —— 在 v4.1 已验证可用的基础上，针对「删除前 10 个邮件却删了 50 封」的根因，做「看得全、认得准、点得准、数得对、删前核验」。
 .DESCRIPTION
   DeepSeek 官方 API 是纯文本模型，所以仍用 Windows UI Automation 把前台窗口读成文本，模型返回 JSON 动作。
+  v4.2 相对 v4.1 的改动（全部来自运行日志任务5「删除前面10个邮件」的根因分析；参数、命令、急停方式、C# 原生层 DsNative4 不变）：
+    1. 【观察截断】v4.1 在 UIA 文档顺序里截断到 100 个控件，Gmail 左侧栏/工具栏先占满名额，模型只看到 6 行邮件。
+       现在全部取回、按屏幕位置排序后再截断（默认上限 150），列表行单独成区、不占名额。
+    2. 【列表行模型】复选框按几何包含关系归到所属行，编号 R1..Rn（含视口外的行），每行附摘要（发件人/主题等）；
+       不属于任何行的复选框标注「⚠全选复选框」。
+    3. 【幂等勾选】新增 check / uncheck / select_rows：设定目标状态而不是切换，已勾选的不会被反选；读回最多等 1.5 秒，
+       仍不对才用「落点已核验」的物理点击；select_rows 结束后重新扫描、按冻结的行身份闭环核验，不符自动纠正，
+       通过后隔 0.8 秒复扫确认稳定；同一任务内再次选择时沿用首次冻结的行身份（中途到达的新邮件不会被算进「前 N 个」）。
+    4. 【安全联锁】从任务文本识别数量 N（前面10个 / 前十封 / first 10）：已勾选行数 ≠ N 时拒绝删除/归档类按钮与 Delete 键，
+       禁止「全选」与全选复选框；行内的单行删除按钮在 N≠1 时也拒绝。-NoSafety 可关闭。
+    5. 【认错控件】同名控件的重新定位 / 漂移核对容差从固定 80/40 像素改为半个控件尺寸（8~40 像素）。
+    6. 【界面对比】同名控件加序号参与对比（v4.1 会把「多勾了 1 个」误报成「控件列表完全相同」）。
+    7. 【精确落点】物理点击前用 TryGetClickablePoint + 多点严格命中测试挑选确实落在目标上的点，而不是盲点矩形中心。
+    8. 【读回】UIA Toggle 后轮询状态最多 1.2 秒，不再 50 毫秒读一次就报 off。
+    9. 【自检】-SelfTest 新增 7 项：数量解析、行号解析、行归属、去重键、联锁重放日志任务5、容差、真实 Win32 复选框的幂等勾选。
   v4.1 相对 v4 的改动（全部来自运行日志的实证；v4 的参数、命令、急停方式、C# 原生层全部保留）：
     1. 【JSON 解析】日志里任务1第1、2步失败：模型一次输出了两个 JSON 对象，旧解析器取「第一个{到最后一个}」导致整段非法。
        现改为「字符串感知的括号配对」，只取第一个完整对象；括号出现在字符串里也不会误判。
@@ -54,7 +69,7 @@ param(
     [string]$Model = 'deepseek-chat',
     [int]$MaxSteps = 60,
     [int]$StepDelayMs = 300,
-    [int]$MaxElements = 100,
+    [int]$MaxElements = 150,
     [int]$HistoryLimit = 14,
     [int]$MaxBatch = 6,
     [int]$MemoryLimit = 6,
@@ -85,6 +100,9 @@ if (-not $IsWindows) { throw '本脚本只能在 Windows 上运行。' }
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $script:Started = Get-Date
 $script:Mode = $InputMode
+$script:ScanCap = 1500
+$script:TaskQty = 0
+$script:SelectMemo = $null
 if ($CursorSpeed -le 0.1) { $CursorSpeed = 0.1 }
 #region ---------- 管理员提权 ----------
 function Test-IsAdmin {
@@ -811,11 +829,11 @@ function Get-ObservationDiff($prevKeys, $curKeys, [string]$prevTitle, [string]$c
     }
     else {
         if ($added.Count -gt 0) {
-            $ex = ($added | Select-Object -First 5 | ForEach-Object { Limit-Text ($_ -replace '\|', ' ') 45 }) -join ' ； '
+            $ex = ($added | Select-Object -First 5 | ForEach-Object { Limit-Text (($_ -replace '#\d+$', '') -replace '\|', ' ') 45 }) -join ' ； '
             $parts.Add("新增 $($added.Count) 个: $ex")
         }
         if ($removed.Count -gt 0) {
-            $ex = ($removed | Select-Object -First 5 | ForEach-Object { Limit-Text ($_ -replace '\|', ' ') 45 }) -join ' ； '
+            $ex = ($removed | Select-Object -First 5 | ForEach-Object { Limit-Text (($_ -replace '#\d+$', '') -replace '\|', ' ') 45 }) -join ' ； '
             $parts.Add("消失 $($removed.Count) 个: $ex")
         }
     }
@@ -1010,15 +1028,13 @@ function Get-UiElements([IntPtr]$hwnd) {
     $textCount = 0
     $liveReads = 0
     foreach ($el in $col) {
-        if ($interCount -ge $MaxElements -and $textCount -ge 40) { break }
+        if (($interCount + $textCount) -ge $script:ScanCap) { break }   # v4.2：只设扫描上限，预算在按位置排序之后再截断
         try {
             $c = if ($useCache) { $el.Cached } else { $el.Current }
             $r = $c.BoundingRectangle
             if ($r.IsEmpty -or $r.Width -lt 2 -or $r.Height -lt 2) { continue }
             $type = ($c.ControlType.ProgrammaticName -replace '^ControlType\.', '')
             $isText = ($type -eq 'Text')
-            if ($isText) { if ($textCount -ge 40) { continue } }
-            elseif ($interCount -ge $MaxElements) { continue }
             $name = $c.Name
             if ([string]::IsNullOrWhiteSpace($name) -and -not $isText) { $name = $c.AutomationId }
             if ($isText -and [string]::IsNullOrWhiteSpace($name)) { continue }
@@ -1096,6 +1112,9 @@ function Get-UiElements([IntPtr]$hwnd) {
                     Hwnd = [int]$c.NativeWindowHandle
                     Pat = $pats
                     El = $el
+                    IsMaster = $false
+                    RowIdx = 0
+                    RowText = ''
                     cx = [int]($r.Left + $r.Width / 2)
                     cy = [int]($r.Top + $r.Height / 2)
                     L = [int]$r.Left
@@ -1120,25 +1139,79 @@ function Get-Observation {
     $sw = [DsNative4]::PrimaryW(); $sh = [DsNative4]::PrimaryH()
     $cursor = [DsNative4]::CursorPos()
     $windows = @(Get-TopWindowList 15 | ForEach-Object { "  - $($_.Process): $(Limit-Text $_.Title 60)" })
-    $items = @(Get-UiElements $fg.Handle | Sort-Object cy, cx)
-    Set-Elements $items
+    $all = @(Get-UiElements $fg.Handle | Sort-Object cy, cx)
+    # v4.2：屏幕上有 ≥2 个复选框时建立「列表行模型」（含视口外的行）
+    $model = $null
+    if (@($all | Where-Object { $_.Type -eq 'CheckBox' }).Count -ge 2) { try { $model = Get-RowModel $fg.Handle } catch { $model = $null } }
+    $rowParts = [System.Collections.Generic.HashSet[string]]::new()
+    $masterKeys = [System.Collections.Generic.HashSet[string]]::new()
+    $rowRects = New-Object System.Collections.Generic.List[object]
+    if ($model) {
+        foreach ($row in $model.Rows) {
+            [void]$rowParts.Add((Get-GeoKey $row.Cb)); [void]$rowParts.Add((Get-GeoKey $row.Row))
+            if (-not $row.Row.Off) { $rowRects.Add($row.Row) }
+        }
+        foreach ($mc in $model.Master) { [void]$masterKeys.Add((Get-GeoKey $mc)) }
+    }
+    # v4.2：先按屏幕位置排序、再按预算截断（v4.1 在 UIA 文档顺序里截断：Gmail 左侧栏/工具栏占满 100 个名额，模型只看到 6 行邮件）
+    $general = New-Object System.Collections.Generic.List[object]
+    $inter = 0; $txt = 0
+    foreach ($it in $all) {
+        $gk = Get-GeoKey $it
+        if ($rowParts.Contains($gk)) { continue }                                              # 行与行复选框在「列表行」区单独列出
+        if ($it.Type -eq 'Text' -and $rowRects.Count -gt 0 -and (Test-InAnyRect $it $rowRects)) { continue }   # 行内文字已并入行摘要
+        if ($masterKeys.Contains($gk)) { $it.IsMaster = $true }
+        if ($it.Type -eq 'Text') { if ($txt -ge 40) { continue }; $txt++ }
+        else { if ($inter -ge $MaxElements) { continue }; $inter++ }
+        $general.Add($it)
+    }
+    $script:Elements = @{}
     $lines = New-Object System.Collections.Generic.List[string]
-    $keys = New-Object System.Collections.Generic.List[string]
+    $baseKeys = New-Object System.Collections.Generic.List[string]
     $id = 0
     $cbTotal = 0
     $cbOnIds = New-Object System.Collections.Generic.List[int]
-    foreach ($it in $items) {
+    foreach ($it in $general) {
         $id++
+        $script:Elements[$id] = $it
         $line = "[$id] $($it.Type) `"$($it.Name)`""
         if ($it.Value) { $line += " value=`"$($it.Value)`"" }
         if ($it.State) { $line += " state=$($it.State)" }
         if (-not $it.Enabled) { $line += ' (disabled)' }
         if ($it.Focus) { $line += ' ★焦点' }
+        if ($it.IsMaster) { $line += ' ⚠全选复选框' }
         if ($it.Pat.Count -gt 0) { $line += ' {' + ($it.Pat -join ',') + '}' }
         $line += " @($($it.cx),$($it.cy))"
         $lines.Add($line)
-        $keys.Add("$($it.Type)|$($it.Name)|$($it.State)")
+        $baseKeys.Add("$($it.Type)|$($it.Name)|$($it.State)")
         if ($it.Type -eq 'CheckBox') { $cbTotal++; if ($it.State -eq 'on') { $cbOnIds.Add($id) } }
+    }
+    $rowBlock = ''
+    if ($model -and @($model.Rows).Count -gt 0) {
+        $rl = New-Object System.Collections.Generic.List[string]
+        $onIdx = New-Object System.Collections.Generic.List[int]
+        $shown = 0
+        foreach ($row in $model.Rows) {
+            $id++; $cbId = $id; $script:Elements[$id] = (ConvertTo-RowCbItem $row)
+            $id++; $rowId = $id; $script:Elements[$id] = (ConvertTo-RowItem $row)
+            $isOn = ($row.Cb.State -eq 'on')
+            if ($isOn) { $onIdx.Add([int]$row.Index) }
+            $baseKeys.Add("Row|$($row.Text)|$($row.Cb.State)")
+            if ($shown -lt 60) {
+                $mark = if ($isOn) { '☑' } else { '☐' }
+                $vis = if ($row.Row.Off) { ' (视口外)' } else { '' }
+                $rl.Add("  R$($row.Index) $mark 复选框[$cbId] 行[$rowId] `"$(Limit-Text $row.Text 70)`"$vis")
+                $shown++
+            }
+        }
+        $cnt = @($model.Rows).Count
+        if ($cnt -gt $shown) { $rl.Add("  …其余 $($cnt - $shown) 行省略（select_rows 仍可按 R 编号操作）") }
+        $vis2 = @($model.Rows | Where-Object { -not $_.Row.Off })
+        $vr = if ($vis2.Count -gt 0) { "R$($vis2[0].Index)-R$($vis2[$vis2.Count - 1].Index)" } else { '无' }
+        $head = "列表行（带复选框；共 $cnt 行，视口内 $vr；R 编号按从上到下，包含视口外的行。勾选用 select_rows / check，打开某一行请 click 它的行编号）:"
+        $sum = "行勾选汇总: 共 $cnt 行，已勾选 $($onIdx.Count) 行" + $(if ($onIdx.Count -gt 0) { "（$(Format-RowRanges $onIdx)）" } else { '' })
+        if (@($model.Master).Count -gt 0) { $sum += "；另有 $(@($model.Master).Count) 个不属于任何行的复选框（通常是「全选」，已标注 ⚠）" }
+        $rowBlock = (@($head) + @($rl) + @($sum)) -join "`n"
     }
     $focusLine = ''
     try {
@@ -1151,7 +1224,7 @@ function Get-Observation {
     catch { }
     $cbLine = ''
     if ($cbTotal -gt 0) {
-        $cbLine = "复选框汇总: 可见共 $cbTotal 个，已勾选 $($cbOnIds.Count) 个" + $(if ($cbOnIds.Count -gt 0) { "（编号 $($cbOnIds -join ',')）" } else { '' })
+        $cbLine = "复选框汇总（不含列表行）: 可见共 $cbTotal 个，已勾选 $($cbOnIds.Count) 个" + $(if ($cbOnIds.Count -gt 0) { "（编号 $($cbOnIds -join ',')）" } else { '' })
     }
     $consoleHint = ''
     $isConsole = (Test-IsConsoleWindow $fg.Handle) -or ($fg.Process -in @('pwsh', 'powershell', 'WindowsTerminal', 'conhost', 'OpenConsole'))
@@ -1162,14 +1235,15 @@ function Get-Observation {
         $focusLine
         '已打开的窗口:'
         ($windows -join "`n")
-        "前台窗口控件（共 $($items.Count) 个，按从上到下、从左到右排序；{...} 为可用的无障碍模式 inv=可调用 val=可写值 tog=开关 sel=可选中 exp=可展开 scr=可滚动）:"
+        "前台窗口控件（共 $($general.Count) 个，按从上到下、从左到右排序；{...} 为可用的无障碍模式 inv=可调用 val=可写值 tog=开关 sel=可选中 exp=可展开 scr=可滚动）:"
         ($lines -join "`n")
         $cbLine
+        $rowBlock
     ) | Where-Object { $_ -ne '' } | ForEach-Object { $_ }
     $text = $text -join "`n"
-    $curSet = New-KeySet $keys
+    $curSet = New-KeySet (Add-OrdinalKeys $baseKeys.ToArray())
     $changes = Get-ObservationDiff $script:BaseKeys $curSet $script:BaseTitle $fg.Title
-    return [pscustomobject]@{ Text = $text; Foreground = $fg; Keys = $curSet; Changes = $changes }
+    return [pscustomobject]@{ Text = $text; Foreground = $fg; Keys = $curSet; Changes = $changes; Rows = $model }
 }
 #endregion
 #region ---------- 安全检查（仅拦截灾难性命令，-NoSafety 可关闭） ----------
@@ -1264,8 +1338,579 @@ function Confirm-Action([string]$desc) {
     return $ans
 }
 #endregion
+#region ---------- v4.2：列表行模型 / 幂等勾选 / 精确落点 / 安全联锁 ----------
+$script:DestructivePattern = '(?i)(删除|刪除|delete|trash|垃圾|移除|remove|discard|丢弃|丟棄|archive|封存|归档|歸檔|永久)'
+$script:SelectAllPattern = '(?i)^\s*(全选|全選|全部|所有|全部选择|选择全部|選取全部|select\s*all|all)\s*$'
+function Get-DriftTolerance($item) {
+    # 漂移 / 重新定位的容差随控件尺寸收紧：半个控件尺寸，8~40 像素。
+    # v4.1 用固定 40/80 像素：Gmail 每行约 40 像素、所有复选框同名，旧容差会把相邻一行的复选框当成原来那个。
+    $m = [Math]::Min([double]$item.W, [double]$item.H) * 0.5
+    return [int][Math]::Max(8.0, [Math]::Min(40.0, $m))
+}
+function Get-GeoKey($o) { return "$($o.Type)|$([int]$o.L)|$([int]$o.T)|$([int]$o.W)|$([int]$o.H)" }
+function Test-InAnyRect($o, $rects) {
+    $cx = [double]$o.L + [double]$o.W / 2.0; $cy = [double]$o.T + [double]$o.H / 2.0
+    foreach ($q in $rects) {
+        if ($cx -ge $q.L -and $cx -le ($q.L + $q.W) -and $cy -ge $q.T -and $cy -le ($q.T + $q.H)) { return $true }
+    }
+    return $false
+}
+function Add-OrdinalKeys([string[]]$base) {
+    # 同名控件加序号：v4.1 用 HashSet 去重，10 个同名复选框会塌成 1~2 个键，「多勾了 1 个」会被误判为「完全相同」
+    $seen = @{}
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($b in $base) { $seen[$b] = 1 + [int]$seen[$b]; $out.Add("$b#$($seen[$b])") }
+    return , $out.ToArray()
+}
+function ConvertFrom-ChineseNumber([string]$s) {
+    if ($s -match '^\d+$') { return [int]$s }
+    $d = @{ '零' = 0; '一' = 1; '二' = 2; '两' = 2; '三' = 3; '四' = 4; '五' = 5; '六' = 6; '七' = 7; '八' = 8; '九' = 9 }
+    $total = 0; $cur = 0
+    foreach ($ch in $s.ToCharArray()) {
+        $c = [string]$ch
+        if ($d.ContainsKey($c)) { $cur = $d[$c] }
+        elseif ($c -eq '十') { if ($cur -eq 0) { $cur = 1 }; $total += $cur * 10; $cur = 0 }
+        elseif ($c -eq '百') { if ($cur -eq 0) { $cur = 1 }; $total += $cur * 100; $cur = 0 }
+        else { return 0 }
+    }
+    return ($total + $cur)
+}
+function Get-TaskQuantity([string]$t) {
+    # 从任务文本里识别「要处理几个」：前10个 / 前面10个 / 前十封 / 10 封邮件 / first 10 / top 5。「第3个」不算数量。
+    if ([string]::IsNullOrWhiteSpace($t)) { return 0 }
+    # 只对「选择 / 删除 / 归档 / 标记 / 移动」类任务生效，避免「打开一个记事本」被当成 N=1
+    if ($t -notmatch '(?i)(删|刪|delete|remove|勾|选中|選取|选择|選擇|select|archive|归档|歸檔|封存|垃圾|trash|标记|標記|mark|移动|移至|移到|move)') { return 0 }
+    $num = '(\d{1,3}|[零一二两三四五六七八九十百]{1,4})'
+    $pats = @(
+        "(?:最?前面?|头|first|top)\s*$num",
+        "(?<![第\d零一二两三四五六七八九十百])$num\s*(?:个|個|封|条|條|项|項|则|則|份|篇)",
+        "(?<![第\d])$num\s+(?:emails?|mails?|messages?|items?|conversations?|rows?)"
+    )
+    foreach ($p in $pats) {
+        if ($t -match "(?i)$p") {
+            $v = ConvertFrom-ChineseNumber $Matches[1]
+            if ($v -gt 0) { return [int]$v }
+        }
+    }
+    return 0
+}
+function ConvertTo-RowList([string]$spec, [int]$max) {
+    # "1-10" / "1,3,5-7" / "1到10" → 升序去重的行号数组；超出列表行数直接报错（不猜）
+    $s = (("$spec" -replace '[，、；;]', ',') -replace '[～~—–至到]', '-') -replace '\s+', ''
+    if ($s -notmatch '^\d+(-\d+)?(,\d+(-\d+)?)*$') { throw "rows 格式不对：'$spec'（示例：`"1-10`" 或 `"1,3,5-7`"）" }
+    $set = [System.Collections.Generic.SortedSet[int]]::new()
+    foreach ($part in $s.Split(',')) {
+        if ($part -match '^(\d+)-(\d+)$') {
+            $lo = [int]$Matches[1]; $hi = [int]$Matches[2]
+            if ($lo -gt $hi) { throw "rows 区间写反了：'$part'" }
+            for ($i = $lo; $i -le $hi; $i++) { [void]$set.Add($i) }
+        }
+        else { [void]$set.Add([int]$part) }
+    }
+    if ($set.Count -gt 200) { throw 'rows 一次最多 200 行' }
+    foreach ($i in $set) {
+        if ($i -lt 1) { throw 'rows 从 1 开始编号' }
+        if ($max -gt 0 -and $i -gt $max) { throw "列表只识别到 $max 行（含视口外），没有第 $i 行；请先翻页/滚动后重新观察，或缩小范围" }
+    }
+    return , ([int[]]@($set))
+}
+function Format-RowRanges($idx) {
+    $arr = @($idx | ForEach-Object { [int]$_ } | Sort-Object -Unique)
+    if ($arr.Count -eq 0) { return '无' }
+    $out = New-Object System.Collections.Generic.List[string]
+    $s0 = $arr[0]; $p0 = $arr[0]
+    for ($i = 1; $i -le $arr.Count; $i++) {
+        if ($i -lt $arr.Count -and $arr[$i] -eq ($p0 + 1)) { $p0 = $arr[$i]; continue }
+        if ($s0 -eq $p0) { $out.Add("R$s0") } else { $out.Add("R$s0-R$p0") }
+        if ($i -lt $arr.Count) { $s0 = $arr[$i]; $p0 = $arr[$i] }
+    }
+    return ($out -join ',')
+}
+function Join-RowCheckboxes($rows, $cbs) {
+    # 纯几何：每个复选框归入包含其中心点的候选行（宽度至少是复选框的 3 倍）。Chrome 把表格的「行」和「单元格」都报成 DataItem，
+    # 所以在「高度像一行」的候选里取最宽的（= 整行而不是单元格）；都不像一行时取面积最小的。同一行取最左边的复选框。
+    # 然后做表格一致性过滤：宽度 / 左边界偏离中位数的「行」（例如工具栏里的项）剔除，其复选框归入 Master（通常是「全选」框）。
+    $map = @{}
+    $master = New-Object System.Collections.Generic.List[object]
+    foreach ($cb in $cbs) {
+        $cx = [double]$cb.L + [double]$cb.W / 2.0; $cy = [double]$cb.T + [double]$cb.H / 2.0
+        $hMax = [Math]::Max(4.0 * [double]$cb.H, 120.0)
+        $best = -1; $bestW = -1.0; $alt = -1; $altA = [double]::MaxValue
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+            $rw = $rows[$i]
+            if ([double]$rw.W -lt (3.0 * [double]$cb.W)) { continue }
+            if ($cx -ge $rw.L -and $cx -le ($rw.L + $rw.W) -and $cy -ge $rw.T -and $cy -le ($rw.T + $rw.H)) {
+                if ([double]$rw.H -le $hMax) { if ([double]$rw.W -gt $bestW) { $bestW = [double]$rw.W; $best = $i } }
+                else { $ar = [double]$rw.W * [double]$rw.H; if ($ar -lt $altA) { $altA = $ar; $alt = $i } }
+            }
+        }
+        if ($best -lt 0) { $best = $alt }
+        if ($best -lt 0) { $master.Add($cb); continue }
+        if (-not $map.ContainsKey($best) -or [double]$cb.L -lt [double]$map[$best].L) {
+            if ($map.ContainsKey($best)) { $master.Add($map[$best]) }
+            $map[$best] = $cb
+        }
+        else { $master.Add($cb) }
+    }
+    $list = New-Object System.Collections.Generic.List[object]
+    foreach ($key in @($map.Keys)) { $list.Add([pscustomobject]@{ Row = $rows[[int]$key]; Cb = $map[$key]; Text = ''; Index = 0; Key = '' }) }
+    if ($list.Count -ge 3) {
+        $ws = @($list | ForEach-Object { [double]$_.Row.W } | Sort-Object); $ls = @($list | ForEach-Object { [double]$_.Row.L } | Sort-Object)
+        $mw = $ws[[int][Math]::Floor($ws.Count / 2)]; $ml = $ls[[int][Math]::Floor($ls.Count / 2)]
+        $keep = New-Object System.Collections.Generic.List[object]
+        foreach ($e in $list) {
+            if ([Math]::Abs([double]$e.Row.W - $mw) -le (0.15 * $mw) -and [Math]::Abs([double]$e.Row.L - $ml) -le 24) { $keep.Add($e) } else { $master.Add($e.Cb) }
+        }
+        $list = $keep
+    }
+    $sorted = @($list | Sort-Object -Property @{ Expression = { [double]$_.Row.T } }, @{ Expression = { [double]$_.Row.L } })
+    $n = 0
+    foreach ($r in $sorted) { $n++; $r.Index = $n }
+    return [pscustomobject]@{ Rows = $sorted; Master = $master.ToArray() }
+}
+function Set-RowKeys($rows) {
+    # 行身份 = 行摘要文字 + 同文字序号；没有文字时退化为行号
+    $seen = @{}
+    foreach ($r in $rows) {
+        $b = if ($r.Text) { "$($r.Text)" } else { "#$($r.Index)" }
+        $seen[$b] = 1 + [int]$seen[$b]
+        $r.Key = "$b#$($seen[$b])"
+    }
+}
+function Get-RuntimeKey($el) { try { return ((@($el.GetRuntimeId())) -join '.') } catch { return '' } }
+function Get-RowTexts($rows) {
+    # 行本身没有名称时（Gmail 的行就是这样），取「首行与末行的最近公共祖先」下的全部 Text，按几何归入各行
+    $AE = [System.Windows.Automation.AutomationElement]
+    $w = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $cnt = @($rows).Count
+    if ($cnt -eq 0) { return @() }
+    $firstEl = $rows[0].Row.El; $lastEl = $rows[$cnt - 1].Row.El
+    $anc = @{}; $cont = $null
+    try {
+        $cur = $w.GetParent($firstEl)
+        for ($i = 0; $i -lt 8 -and $null -ne $cur; $i++) { $rk = Get-RuntimeKey $cur; if ($rk) { $anc[$rk] = $true }; $cur = $w.GetParent($cur) }
+        $cur = $w.GetParent($lastEl)
+        for ($i = 0; $i -lt 8 -and $null -ne $cur; $i++) { $rk = Get-RuntimeKey $cur; if ($rk -and $anc.ContainsKey($rk)) { $cont = $cur; break }; $cur = $w.GetParent($cur) }
+    }
+    catch { $cont = $null }
+    if ($null -eq $cont) { return @() }
+    $col = $null; $act = $null
+    try {
+        $cr = [System.Windows.Automation.CacheRequest]::new()
+        $cr.Add($AE::NameProperty); $cr.Add($AE::BoundingRectangleProperty)
+        $act = $cr.Activate()
+        $tc = [System.Windows.Automation.PropertyCondition]::new($AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
+        $col = $cont.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tc)
+    }
+    catch { $col = $null }
+    finally { if ($act) { $act.Dispose() } }
+    if ($null -eq $col) { return @() }
+    $out = New-Object System.Collections.Generic.List[object]
+    $k = 0
+    foreach ($el in $col) {
+        $k++; if ($k -gt 4000) { break }
+        try {
+            $c = $el.Cached
+            $nm = "$($c.Name)".Trim()
+            if ($nm -eq '') { continue }
+            $rc = $c.BoundingRectangle
+            if ($rc.IsEmpty) { continue }
+            $out.Add([pscustomobject]@{ Name = (Limit-Text $nm 40); cx = $rc.Left + $rc.Width / 2.0; cy = $rc.Top + $rc.Height / 2.0; L = $rc.Left })
+        }
+        catch { continue }
+    }
+    return $out.ToArray()
+}
+function Get-RowModel([IntPtr]$hwnd) {
+    # 列表行模型：CheckBox + DataItem/ListItem/TreeItem 一次缓存取回（不加 IsOffscreen 过滤，所以视口外的行也在），
+    # 复选框按几何归行；行摘要来自行名称或行内文字。返回 Rows（R1..Rn）与 Master（不属于任何行的复选框）。
+    $empty = [pscustomobject]@{ Rows = @(); Master = @() }
+    if ($hwnd -eq [IntPtr]::Zero) { return $empty }
+    $AE = [System.Windows.Automation.AutomationElement]
+    try { $root = $AE::FromHandle($hwnd) } catch { return $empty }
+    $CT = [System.Windows.Automation.ControlType]
+    $conds = @(foreach ($tn in @('CheckBox', 'DataItem', 'ListItem', 'TreeItem')) { [System.Windows.Automation.PropertyCondition]::new($AE::ControlTypeProperty, $CT::$tn) })
+    $cond = [System.Windows.Automation.OrCondition]::new([System.Windows.Automation.Condition[]]$conds)
+    $TogP = [System.Windows.Automation.TogglePattern]::ToggleStateProperty
+    $col = $null; $act = $null
+    try {
+        $cr = [System.Windows.Automation.CacheRequest]::new()
+        foreach ($p in @($AE::NameProperty, $AE::AutomationIdProperty, $AE::ControlTypeProperty, $AE::BoundingRectangleProperty,
+                $AE::IsOffscreenProperty, $AE::IsEnabledProperty, $AE::IsTogglePatternAvailableProperty,
+                $AE::IsInvokePatternAvailableProperty, $AE::IsSelectionItemPatternAvailableProperty, $TogP)) { $cr.Add($p) }
+        $act = $cr.Activate()
+        $col = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
+    }
+    catch { $col = $null }
+    finally { if ($act) { $act.Dispose() } }
+    if ($null -eq $col) { return $empty }
+    $wr = [DsNative4]::WinRect($hwnd)
+    $rows = New-Object System.Collections.Generic.List[object]
+    $cbs = New-Object System.Collections.Generic.List[object]
+    $k = 0
+    foreach ($el in $col) {
+        $k++; if ($k -gt $script:ScanCap) { break }
+        try {
+            $c = $el.Cached
+            $rc = $c.BoundingRectangle
+            if ($rc.IsEmpty -or $rc.Width -lt 4 -or $rc.Height -lt 4) { continue }
+            if (($rc.Left + $rc.Width) -lt $wr[0] -or $rc.Left -gt $wr[2]) { continue }   # 与前台窗口水平方向不相交（隐藏面板等）
+            $type = ($c.ControlType.ProgrammaticName -replace '^ControlType\.', '')
+            $o = [pscustomobject]@{
+                El = $el; Type = $type; Name = "$($c.Name)"; AutoId = "$($c.AutomationId)"
+                L = [double]$rc.Left; T = [double]$rc.Top; W = [double]$rc.Width; H = [double]$rc.Height
+                Off = [bool]$c.IsOffscreen; Enabled = [bool]$c.IsEnabled; State = ''; Tog = $false; Pats = @()
+            }
+            if ($type -eq 'CheckBox') {
+                try {
+                    if ($el.GetCachedPropertyValue($AE::IsTogglePatternAvailableProperty) -eq $true) {
+                        $o.Tog = $true
+                        $tv = $el.GetCachedPropertyValue($TogP)
+                        if ($tv -is [System.Windows.Automation.ToggleState]) { $o.State = "$tv".ToLower() }
+                    }
+                }
+                catch { }
+                $cbs.Add($o)
+            }
+            else {
+                $pp = @()
+                try { if ($el.GetCachedPropertyValue($AE::IsSelectionItemPatternAvailableProperty) -eq $true) { $pp += 'sel' } } catch { }
+                try { if ($el.GetCachedPropertyValue($AE::IsInvokePatternAvailableProperty) -eq $true) { $pp += 'inv' } } catch { }
+                $o.Pats = $pp
+                $rows.Add($o)
+            }
+        }
+        catch { continue }
+    }
+    if ($cbs.Count -eq 0) { return $empty }
+    if ($rows.Count -eq 0) { return [pscustomobject]@{ Rows = @(); Master = $cbs.ToArray() } }
+    $j = Join-RowCheckboxes $rows $cbs
+    if (@($j.Rows).Count -gt 0) {
+        $need = @($j.Rows | Where-Object { [string]::IsNullOrWhiteSpace($_.Row.Name) }).Count
+        $texts = @()
+        if ($need -gt 0) { $texts = @(Get-RowTexts $j.Rows) }
+        $buckets = @{}
+        foreach ($tx in $texts) {
+            foreach ($rw in $j.Rows) {
+                $rr = $rw.Row
+                if ($tx.cx -ge $rr.L -and $tx.cx -le ($rr.L + $rr.W) -and $tx.cy -ge $rr.T -and $tx.cy -le ($rr.T + $rr.H)) {
+                    if (-not $buckets.ContainsKey($rw.Index)) { $buckets[$rw.Index] = New-Object System.Collections.Generic.List[object] }
+                    $buckets[$rw.Index].Add($tx)
+                    break
+                }
+            }
+        }
+        foreach ($rw in $j.Rows) {
+            if (-not [string]::IsNullOrWhiteSpace($rw.Row.Name)) { $rw.Text = Limit-Text $rw.Row.Name 120; continue }
+            $names = New-Object System.Collections.Generic.List[string]
+            if ($buckets.ContainsKey($rw.Index)) {
+                foreach ($tx in @($buckets[$rw.Index] | Sort-Object -Property L)) { if (-not $names.Contains($tx.Name)) { $names.Add($tx.Name) } }
+            }
+            $rw.Text = Limit-Text ($names -join ' · ') 120
+        }
+        Set-RowKeys $j.Rows
+    }
+    return $j
+}
+function ConvertTo-RowCbItem($row) {
+    $cb = $row.Cb
+    $nm = "$($cb.Name)"; if ([string]::IsNullOrWhiteSpace($nm)) { $nm = "$($cb.AutoId)" }
+    $pats = @(); if ($cb.Tog) { $pats += 'tog' }
+    return [pscustomobject]@{
+        Type = 'CheckBox'; Name = (Limit-Text $nm 80); FullName = "$($cb.Name)"; Value = ''; State = $cb.State
+        Enabled = [bool]$cb.Enabled; Focus = $false; Hwnd = 0; Pat = $pats; El = $cb.El
+        cx = [int]($cb.L + $cb.W / 2); cy = [int]($cb.T + $cb.H / 2); L = [int]$cb.L; T = [int]$cb.T; W = [int]$cb.W; H = [int]$cb.H
+        IsMaster = $false; RowIdx = [int]$row.Index; RowText = "$($row.Text)"; Off = [bool]$row.Row.Off
+    }
+}
+function ConvertTo-RowItem($row) {
+    $rw = $row.Row
+    $nm = "$($rw.Name)"; if ([string]::IsNullOrWhiteSpace($nm)) { $nm = "$($rw.AutoId)" }
+    return [pscustomobject]@{
+        Type = $rw.Type; Name = (Limit-Text $nm 80); FullName = "$($rw.Name)"; Value = ''; State = ''
+        Enabled = [bool]$rw.Enabled; Focus = $false; Hwnd = 0; Pat = @($rw.Pats); El = $rw.El
+        cx = [int]($rw.L + $rw.W / 2); cy = [int]($rw.T + $rw.H / 2); L = [int]$rw.L; T = [int]$rw.T; W = [int]$rw.W; H = [int]$rw.H
+        IsMaster = $false; RowIdx = [int]$row.Index; RowText = "$($row.Text)"; Off = [bool]$rw.Off
+    }
+}
+function Get-PrecisePoint($item, $r) {
+    # 物理点击的落点：TryGetClickablePoint + 矩形内若干候选点，逐个做「严格命中测试」（实时命中的必须是目标本身或其后代）
+    $cands = New-Object System.Collections.Generic.List[object]
+    try {
+        $pt = [System.Windows.Point]::new(0, 0)
+        if ($item.El.TryGetClickablePoint([ref]$pt)) { $cands.Add(@([int][Math]::Round($pt.X), [int][Math]::Round($pt.Y))) }
+    }
+    catch { }
+    foreach ($f in @(@(0.5, 0.5), @(0.35, 0.5), @(0.65, 0.5), @(0.5, 0.3), @(0.5, 0.7))) {
+        $cands.Add(@([int][Math]::Round($r.Left + $r.Width * $f[0]), [int][Math]::Round($r.Top + $r.Height * $f[1])))
+    }
+    $tried = 0
+    foreach ($c in $cands) {
+        if ($c[0] -lt $r.Left -or $c[0] -gt ($r.Left + $r.Width) -or $c[1] -lt $r.Top -or $c[1] -gt ($r.Top + $r.Height)) { continue }
+        $tried++
+        if (Test-HitTarget $item $c[0] $c[1] -Strict) { return @{ x = $c[0]; y = $c[1]; verified = $true } }
+        if ($tried -ge 4) { break }
+    }
+    return @{ x = [int]($r.Left + $r.Width / 2); y = [int]($r.Top + $r.Height / 2); verified = $false }
+}
+function Invoke-ScrollIntoView($el) {
+    try {
+        $sp = $el.GetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern)
+        $sp.ScrollIntoView()
+        Start-Sleep -Milliseconds 250
+        return $true
+    }
+    catch { return $false }
+}
+function Get-LiveToggle($item) {
+    try { return "$($item.El.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState)".ToLower() }
+    catch { return '' }
+}
+function Wait-ToggleState($item, [string]$want, [int]$timeoutMs) {
+    # 网页复选框是异步更新的（Gmail 常见 100~500 ms）：轮询到目标状态或超时，返回最后读到的状态
+    $end = (Get-Date).AddMilliseconds($timeoutMs)
+    $st = Get-LiveToggle $item
+    while ($st -ne $want -and (Get-Date) -lt $end) {
+        Start-Sleep -Milliseconds 60
+        $st = Get-LiveToggle $item
+    }
+    return $st
+}
+function Assert-ItemFresh($item, [int]$n) {
+    # 和 Resolve-Target 相同的身份核对（名称 + 收紧后的漂移容差），但允许控件在视口外（UIA 不需要可见）
+    $cur = $null
+    try { $cur = $item.El.Current; $rc = $cur.BoundingRectangle }
+    catch {
+        if (-not (Update-ItemElement $item)) { throw "控件 [$n] 已不存在（界面已变化），请重新观察后再操作" }
+        try { $cur = $item.El.Current; $rc = $cur.BoundingRectangle } catch { throw "控件 [$n] 已不存在（界面已变化），请重新观察后再操作" }
+    }
+    if ($rc.IsEmpty) { throw "控件 [$n] 已不可用（无位置信息），请重新观察" }
+    $live = $cur.Name
+    if ([string]::IsNullOrWhiteSpace($live) -and $item.Type -ne 'Text') { $live = $cur.AutomationId }
+    if ($item.Name -and (Limit-Text $live 80) -ne $item.Name) { throw "控件 [$n] 的名称已变化，界面已变化，请重新观察" }
+    $drift = [Math]::Sqrt([Math]::Pow(($rc.Left + $rc.Width / 2) - $item.cx, 2) + [Math]::Pow(($rc.Top + $rc.Height / 2) - $item.cy, 2))
+    $tol = Get-DriftTolerance $item
+    if ($drift -gt $tol) { throw "控件 [$n] 位置已偏移 $([int]$drift) 像素（容差 $tol），界面已变化，请重新观察" }
+}
+function Invoke-PhysicalOnItem($item, [string]$label) {
+    $cur = $item.El.Current
+    $rc = $cur.BoundingRectangle
+    if ($rc.IsEmpty -or [bool]$cur.IsOffscreen) {
+        if (-not (Invoke-ScrollIntoView $item.El)) { throw "$label 在视口外，且无法自动滚动到可见区域" }
+        $cur = $item.El.Current; $rc = $cur.BoundingRectangle
+        if ($rc.IsEmpty -or [bool]$cur.IsOffscreen) { throw "$label 滚动后仍不可见" }
+    }
+    $pp = Get-PrecisePoint $item $rc
+    $t = @{ x = $pp.x; y = $pp.y; label = $label; item = $item }
+    Move-VirtualCursor $t.x $t.y
+    Assert-PhysicalReady $t
+    Set-CursorPulse 0
+    [DsNative4]::PhysicalClick($t.x, $t.y, 0, 1, $true)
+    return [bool]$pp.verified
+}
+function Set-CheckState($item, [bool]$on, [string]$label) {
+    # 幂等设定复选框状态（不是切换）：已是目标状态就不动；UIA Toggle → 轮询读回 → 仍不对再用命中核验过的物理点击 → 再读回。
+    $want = if ($on) { 'on' } else { 'off' }
+    $s0 = Get-LiveToggle $item
+    if ($s0 -eq $want) {
+        return [pscustomobject]@{ Ok = $true; Changed = $false; State = $s0; Via = '已是目标状态，未操作' }
+    }
+    $via = New-Object System.Collections.Generic.List[string]
+    try {
+        $lc = $item.El.Current
+        if (-not [bool]$lc.IsOffscreen) { $lr = $lc.BoundingRectangle; if (-not $lr.IsEmpty) { Move-VirtualCursor ([int]($lr.Left + $lr.Width / 2)) ([int]($lr.Top + $lr.Height / 2)) } }
+    }
+    catch { }
+    $st = $s0
+    if ($script:Mode -in 'Auto', 'Uia' -and ($item.Pat -contains 'tog' -or $item.Type -eq 'CheckBox')) {
+        for ($k = 0; $k -lt 2 -and $st -ne $want; $k++) {
+            $before = $st
+            try { $item.El.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle(); $via.Add('UIA Toggle') } catch { break }
+            Set-CursorPulse 0
+            $st = Wait-ToggleState $item $want 1500
+            if ($st -eq $before) { break }   # 没有任何变化：不再盲目切换，交给下一层
+        }
+    }
+    if ($st -ne $want -and $script:Mode -ne 'Uia') {
+        Start-Sleep -Milliseconds 400
+        $st = Get-LiveToggle $item   # 再读一次：防止迟到的异步生效被下一层「再切一次」抵消
+        if ($st -ne $want) {
+            if ($script:Mode -eq 'Message') {
+                if ($item.Hwnd -eq 0 -or -not (Test-MessageFriendly $item.Hwnd)) { throw "$label 无法用窗口消息操作（请改用 mode auto）" }
+                $mr = $item.El.Current.BoundingRectangle
+                [void][DsNative4]::PostClick([IntPtr]$item.Hwnd, [int]($mr.Left + $mr.Width / 2), [int]($mr.Top + $mr.Height / 2), 0, 1)
+                $via.Add('窗口消息')
+            }
+            else {
+                $ver = Invoke-PhysicalOnItem $item $label
+                $via.Add($(if ($ver) { '物理点击(落点已核验)' } else { '物理点击(落点未核验)' }))
+            }
+            $st = Wait-ToggleState $item $want 1500
+        }
+    }
+    return [pscustomobject]@{ Ok = ($st -eq $want); Changed = $true; State = $st; Via = ($via -join '→') }
+}
+function Invoke-CheckAction($a, [bool]$on) {
+    $ids = @()
+    if ($null -ne $a.ids) { $ids = @($a.ids) } elseif (Test-IdValue $a.id) { $ids = @($a.id) }
+    $want = if ($on) { 'on' } else { 'off' }
+    $parts = New-Object System.Collections.Generic.List[string]
+    $bad = 0
+    foreach ($i in $ids) {
+        Test-Abort
+        $n = [int]"$i"
+        $item = $script:Elements[$n]
+        Assert-ItemFresh $item $n
+        $res = Set-CheckState $item $on "[$n]"
+        if (-not $res.Ok) { $bad++ }
+        $tag = if (-not $res.Changed) { "已是$want" } elseif ($res.Ok) { "→$($res.State)✓" } else { "→$($res.State)✗($($res.Via))" }
+        $parts.Add("[$n]$tag")
+        Start-Sleep -Milliseconds 40
+    }
+    $verb = if ($on) { 'check' } else { 'uncheck' }
+    $verdict = if ($bad -eq 0) { "全部读回为 $want ✓" } else { "$bad 个未达成 ✗，请重新观察后处理" }
+    return "$verb $($ids.Count) 个：$($parts -join ' ')；$verdict"
+}
+function Invoke-SelectRows($a) {
+    # 按「列表行」R 编号精确勾选：幂等设定、默认独占（其他行取消）、闭环核验（重新扫描，按冻结的行身份核对，不符纠正），
+    # 通过后再隔 0.8 秒复扫一次确认稳定（防止迟到的异步切换在「✓」之后又把状态改掉）。
+    $spec = "$($a.rows)"
+    $exclusive = $true
+    if ($null -ne $a.exclusive -and "$($a.exclusive)" -ne '') { $exclusive = Test-True $a.exclusive }
+    $m = Get-RowModel $script:ObsHwnd
+    $total = @($m.Rows).Count
+    if ($total -eq 0) { throw '当前前台窗口没有识别到「带复选框的列表行」，无法 select_rows（请重新观察，或改用 check）' }
+    $want = ConvertTo-RowList $spec $total
+    $useKeys = (@($m.Rows | Where-Object { $_.Text }).Count -eq $total)
+    # 任务内指代一致性：同一任务里再次 select_rows 同一范围时，沿用首次冻结的行身份（中途到达的新邮件不会被算进「前 N 个」）
+    $memoNote = ''
+    if ($useKeys -and $script:SelectMemo -and $script:SelectMemo.Spec -eq $spec) {
+        $idxByKey = @{}
+        foreach ($row in $m.Rows) { $idxByKey[$row.Key] = [int]$row.Index }
+        $mapped = @($script:SelectMemo.Keys | Where-Object { $idxByKey.ContainsKey($_) } | ForEach-Object { [int]$idxByKey[$_] } | Sort-Object)
+        if ($mapped.Count -eq @($script:SelectMemo.Keys).Count -and ($mapped -join ',') -ne ($want -join ',')) {
+            $want = [int[]]$mapped
+            $memoNote = "（列表在本任务中途有变化：沿用首次选择时冻结的行身份，现在是 $(Format-RowRanges $want)）"
+        }
+    }
+    if ($useKeys -and -not ($script:SelectMemo -and $script:SelectMemo.Spec -eq $spec)) {
+        $script:SelectMemo = [pscustomobject]@{ Spec = $spec; Keys = @($want | ForEach-Object { $m.Rows[$_ - 1].Key }) }
+    }
+    $wantSet = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($i in $want) { [void]$wantSet.Add([int]$i) }
+    $frozen = @{}
+    foreach ($i in $want) { $frozen[$m.Rows[$i - 1].Key] = $i }
+    $changed = 0
+    foreach ($row in $m.Rows) {
+        Test-Abort
+        $isT = $wantSet.Contains([int]$row.Index)
+        $isOn = ($row.Cb.State -eq 'on')
+        if ($isT -eq $isOn) { continue }
+        if (-not $isT -and -not $exclusive) { continue }
+        # 网页重绘会让元素引用失效：单行出错不中止，交给下面的「重新扫描 + 核验 + 纠正」处理
+        try { [void](Set-CheckState (ConvertTo-RowCbItem $row) $isT "R$($row.Index)") } catch { if ($_.Exception.Message -like '触发保护*') { throw } }
+        $changed++
+    }
+    $note = ''
+    $missing = @(); $extra = @(); $onNow = @(); $stable = $false
+    for ($pass = 1; $pass -le 3; $pass++) {
+        Wait-Safe 350
+        $v = Get-RowModel $script:ObsHwnd
+        $byKey = $useKeys
+        if ($byKey) {
+            $found = @($v.Rows | Where-Object { $frozen.ContainsKey($_.Key) }).Count
+            if ($found -lt [Math]::Ceiling($want.Count / 2.0)) { $byKey = $false; $note = '（行文字在操作后有变化，已改按行号核验）' }
+            elseif ($found -lt $want.Count) { $note = "（有 $($want.Count - $found) 个目标行已不在列表中）" }
+        }
+        $missing = @(); $extra = @(); $onNow = @()
+        foreach ($row in $v.Rows) {
+            $isT = if ($byKey) { $frozen.ContainsKey($row.Key) } else { $wantSet.Contains([int]$row.Index) }
+            $isOn = ($row.Cb.State -eq 'on')
+            if ($isOn) { $onNow += [int]$row.Index }
+            if ($isT -and -not $isOn) { $missing += $row }
+            elseif ((-not $isT) -and $isOn -and $exclusive) { $extra += $row }
+        }
+        if (($missing.Count + $extra.Count) -eq 0) {
+            Wait-Safe 800
+            $v2 = Get-RowModel $script:ObsHwnd
+            $on2 = @($v2.Rows | Where-Object { $_.Cb.State -eq 'on' } | ForEach-Object { [int]$_.Index })
+            if (($on2 -join ',') -eq ($onNow -join ',')) { $stable = $true; break }
+            continue   # 0.8 秒内又有变化（迟到的异步切换）：下一轮重新核对并纠正
+        }
+        if ($pass -eq 3) { break }
+        foreach ($row in @($missing) + @($extra)) {
+            $wantOn = $missing -contains $row
+            try { [void](Set-CheckState (ConvertTo-RowCbItem $row) $wantOn "R$($row.Index)") } catch { if ($_.Exception.Message -like '触发保护*') { throw } }
+            $changed++
+        }
+    }
+    $tgt = Format-RowRanges $want
+    if ($stable -and ($missing.Count + $extra.Count) -eq 0) {
+        $tail = if ($exclusive) { '，其他行均未勾选' } else { '' }
+        return "select_rows $spec：目标 $($want.Count) 行（$tgt），本次改动 $changed 个复选框；✓ 闭环验证通过（0.8 秒后复扫一致）：当前共勾选 $($onNow.Count) 行（$(Format-RowRanges $onNow)）$tail$note$memoNote"
+    }
+    $mi = Format-RowRanges @($missing | ForEach-Object { [int]$_.Index })
+    $ex = Format-RowRanges @($extra | ForEach-Object { [int]$_.Index })
+    $why = if (($missing.Count + $extra.Count) -eq 0) { '勾选状态在复扫时仍在变化（页面迟到的异步更新）' } else { "未勾上 $mi；多勾了 $ex" }
+    return "select_rows $spec：✗ 未完全达成（已自动纠正）：$why；当前勾选 $($onNow.Count) 行（$(Format-RowRanges $onNow)）$note$memoNote。请 wait 1 秒后再 select_rows 一次，此时不要点删除"
+}
+function Test-InterlockDecision([int]$qty, [string]$name, [string]$type, [bool]$isMaster, [int]$rowCount, [int]$onCount, [bool]$inRow) {
+    # 纯判定函数（自检可直接测）：返回 $null 表示放行，否则返回拒绝原因
+    if ($qty -le 0 -or $rowCount -le 0) { return $null }
+    $nm = "$name".Trim()
+    if ($isMaster -and $rowCount -gt $qty) { return "安全联锁：任务只要求 $qty 个，禁止点击「全选」复选框（列表共 $rowCount 行）；请用 select_rows 精确勾选第 1-$qty 行" }
+    if ($nm -match $script:SelectAllPattern -and $rowCount -gt $qty) { return "安全联锁：任务只要求 $qty 个，禁止使用「$nm」（会选中全部 $rowCount 行）；请用 select_rows 精确勾选第 1-$qty 行" }
+    if ($nm -match $script:DestructivePattern) {
+        if ($inRow -and $qty -ne 1) { return "安全联锁：「$(Limit-Text $nm 16)」位于某一行内，只会处理那一行，而任务要求 $qty 个；请先 select_rows 勾选，再点工具栏上的按钮" }
+        if (-not $inRow -and $onCount -ne $qty) { return "安全联锁：任务要求处理 $qty 个，但列表当前实际勾选 $onCount 个，已拒绝「$(Limit-Text $nm 16)」（未发送任何输入）；请先用 select_rows 精确勾选第 1-$qty 行，看到 ✓ 闭环验证通过后再删除" }
+    }
+    return $null
+}
+function Find-ItemAt([int]$x, [int]$y) {
+    $best = $null; $bestA = [double]::MaxValue
+    foreach ($kv in $script:Elements.GetEnumerator()) {
+        $it = $kv.Value
+        if ($it.Off) { continue }   # 视口外的行：未裁剪的矩形可能与屏幕上别的控件重叠
+        if ($x -ge $it.L -and $x -le ($it.L + $it.W) -and $y -ge $it.T -and $y -le ($it.T + $it.H)) {
+            $ar = [double]$it.W * [double]$it.H
+            if ($ar -lt $bestA) { $bestA = $ar; $best = $it }
+        }
+    }
+    return $best
+}
+function Assert-BulkInterlock($a, [string]$kind) {
+    # 只在「任务有明确数量」且目标看起来是 删除/归档/全选 时才额外扫描一次列表；-NoSafety 可关闭
+    if ($NoSafety -or $script:TaskQty -le 0) { return }
+    $targets = New-Object System.Collections.Generic.List[object]
+    if ($kind -in 'click', 'double_click', 'check', 'click_many') {
+        $idList = @()
+        if ($null -ne $a.ids) { $idList = @($a.ids) } elseif (Test-IdValue $a.id) { $idList = @($a.id) }
+        foreach ($i in $idList) { if ((Test-IdValue $i) -and $script:Elements.ContainsKey([int]"$i")) { $targets.Add($script:Elements[[int]"$i"]) } }
+        if ($idList.Count -eq 0 -and (Test-NumValue $a.x) -and (Test-NumValue $a.y)) { $hitItem = Find-ItemAt ([int]$a.x) ([int]$a.y); if ($hitItem) { $targets.Add($hitItem) } }
+    }
+    elseif ($kind -in 'key', 'hotkey') {
+        if ("$($a.keys)" -match '(?i)(^|[\s+])(delete|del)(\s|$)|shift\+3') {
+            $targets.Add([pscustomobject]@{ Type = 'Key'; FullName = 'delete'; Name = 'delete'; IsMaster = $false; L = 0; T = 0; W = 0; H = 0 })
+        }
+    }
+    if ($targets.Count -eq 0) { return }
+    $need = $false
+    foreach ($t in $targets) { $nm = "$($t.FullName)"; if (-not $nm) { $nm = "$($t.Name)" }; if ($nm -match $script:DestructivePattern -or $nm -match $script:SelectAllPattern -or [bool]$t.IsMaster) { $need = $true } }
+    if (-not $need) { return }
+    $m = Get-RowModel $script:ObsHwnd
+    $rowCount = @($m.Rows).Count
+    if ($rowCount -eq 0) { return }
+    $onCount = @($m.Rows | Where-Object { $_.Cb.State -eq 'on' }).Count
+    foreach ($t in $targets) {
+        $nm = "$($t.FullName)"; if (-not $nm) { $nm = "$($t.Name)" }
+        $inRow = ($t.W -gt 0 -and (Test-InAnyRect $t @($m.Rows | ForEach-Object { $_.Row })))
+        $why = Test-InterlockDecision $script:TaskQty $nm "$($t.Type)" ([bool]$t.IsMaster) $rowCount $onCount $inRow
+        if ($why) { throw $why }
+    }
+}
+#endregion
 #region ---------- 发送前校验（Schema） ----------
-$script:ActionNames = @('click', 'click_many', 'double_click', 'right_click', 'middle_click', 'hover', 'drag', 'type', 'key', 'hotkey',
+$script:ActionNames = @('click', 'click_many', 'check', 'uncheck', 'select_rows', 'double_click', 'right_click', 'middle_click', 'hover', 'drag', 'type', 'key', 'hotkey',
     'scroll', 'launch', 'focus_window', 'wait', 'run_powershell', 'done', 'fail')
 function Test-IdValue($v) { return ($null -ne $v -and "$v" -match '^\d+$') }
 function Test-NumValue($v) { return ($null -ne $v -and "$v" -ne '' -and $null -ne ("$v" -as [double])) }
@@ -1294,6 +1939,21 @@ function Test-ActionSchema($a, [int]$index) {
                 if (-not (Test-IdValue $i)) { return "click_many 的 ids 里有非法编号 '$i'" }
                 if (-not $script:Elements.ContainsKey([int]"$i")) { return "元素编号 $i 不存在" }
             }
+        }
+        { $_ -in 'check', 'uncheck' } {
+            $cids = @()
+            if ($null -ne $a.ids) { $cids = @($a.ids) } elseif (Test-IdValue $a.id) { $cids = @($a.id) }
+            if ($cids.Count -lt 1 -or $cids.Count -gt 60) { return "$k 需要 id 或 1~60 个 ids" }
+            foreach ($i in $cids) {
+                if (-not (Test-IdValue $i)) { return "$k 的 ids 里有非法编号 '$i'" }
+                if (-not $script:Elements.ContainsKey([int]"$i")) { return "元素编号 $i 不存在" }
+                $ci = $script:Elements[[int]"$i"]
+                if ($ci.Type -ne 'CheckBox' -and $ci.Pat -notcontains 'tog') { return "元素 $i 是 $($ci.Type)，不是复选框/开关，不能 $k" }
+            }
+        }
+        'select_rows' {
+            if ([string]::IsNullOrWhiteSpace("$($a.rows)")) { return 'select_rows 需要 rows，例如 "1-10"' }
+            try { [void](ConvertTo-RowList "$($a.rows)" 0) } catch { return $_.Exception.Message }
         }
         'drag' {
             foreach ($end in @(@('from_id', 'from_x', 'from_y'), @('to_id', 'to_x', 'to_y'))) {
@@ -1372,7 +2032,7 @@ function Find-ElementAtPoint([int]$x, [int]$y) {
         $best = $null; $bestId = 0; $bestArea = [double]::MaxValue
         foreach ($kv in $script:Elements.GetEnumerator()) {
             $it = $kv.Value
-            if ($it.Type -eq 'Text' -or $it.Pat.Count -eq 0) { continue }
+            if ($it.Type -eq 'Text' -or $it.Pat.Count -eq 0 -or $it.Off) { continue }
             if ($x -ge $it.L -and $x -le ($it.L + $it.W) -and $y -ge $it.T -and $y -le ($it.T + $it.H)) {
                 $area = [double]$it.W * [double]$it.H
                 if ($area -lt $bestArea) { $best = $it; $bestId = [int]$kv.Key; $bestArea = $area }
@@ -1414,14 +2074,15 @@ function Resolve-Target($a) {
             }
             else { throw "控件 [$n] $($item.Type) `"$($item.Name)`" 已不存在（界面已变化），请重新观察后再操作" }
         }
-        if ($r.IsEmpty -or $offscreen) { throw "控件 [$n] `"$($item.Name)`" 已不可见，请重新观察" }
+        if ($r.IsEmpty -or $offscreen) { throw "控件 [$n] `"$($item.Name)`" 已不可见（视口外的列表行请用 select_rows / check，无需先滚动），请重新观察" }
         if (-not $enabled) { throw "控件 [$n] `"$($item.Name)`" 当前被禁用，点击不会有效果" }
         if ($item.Name -and (Limit-Text $liveName 80) -ne $item.Name) { throw "控件 [$n] 的名称已由 `"$($item.Name)`" 变为 `"$(Limit-Text $liveName 40)`"，界面已变化，请重新观察" }
         $lx = [int]($r.Left + $r.Width / 2); $ly = [int]($r.Top + $r.Height / 2)
         $drift = [Math]::Sqrt([Math]::Pow($lx - $item.cx, 2) + [Math]::Pow($ly - $item.cy, 2))
-        if ($drift -gt 40) { throw "控件 [$n] 位置已偏移 $([int]$drift) 像素，界面已变化，请重新观察" }
+        $tol = Get-DriftTolerance $item
+        if ($drift -gt $tol) { throw "控件 [$n] 位置已偏移 $([int]$drift) 像素（容差 $tol），界面已变化，请重新观察" }
         if ($lx -le 1 -and $ly -le 1) { throw '目标坐标位于屏幕左上角保护区，拒绝操作。' }
-        return @{ x = $lx; y = $ly; label = "[$n] $($item.Type) $($item.Name)"; item = $item }
+        return @{ x = $lx; y = $ly; label = "[$n] $($item.Type) $($item.Name)"; item = $item; byId = $true }
     }
     if ((Test-NumValue $a.x) -and (Test-NumValue $a.y)) {
         $px = [Math]::Min([Math]::Max([int]$a.x, $vx + 2), $vx + $vw - 3)
@@ -1456,7 +2117,7 @@ function Update-ItemElement($item) {
             }
             catch { continue }
         }
-        if ($null -ne $best -and $bestD -le 80) { $item.El = $best; return $true }
+        if ($null -ne $best -and $bestD -le (Get-DriftTolerance $item)) { $item.El = $best; return $true }
     }
     catch { }
     return $false
@@ -1508,10 +2169,15 @@ function Invoke-UiaClickOnce($item) {
                     $p = $el.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
                     $was = "$($p.Current.ToggleState)".ToLower()
                     $p.Toggle()
-                    Start-Sleep -Milliseconds 50
-                    $now = "$($p.Current.ToggleState)".ToLower()
+                    $now = $was
+                    $tEnd = (Get-Date).AddMilliseconds(1200)
+                    do {
+                        Start-Sleep -Milliseconds 60
+                        try { $now = "$($p.Current.ToggleState)".ToLower() } catch { break }
+                    } while ($now -eq $was -and (Get-Date) -lt $tEnd)
                     $script:LastClickState = $now
-                    return "UIA Toggle：$was → 读回 $now"
+                    $conf = if ($now -eq $was) { '（1.2 秒内读回未变化，可能未生效）' } else { '' }
+                    return "UIA Toggle：$was → 读回 $now$conf"
                 }
                 'sel' {
                     $p = $el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
@@ -1587,11 +2253,25 @@ function Invoke-PointerAction([string]$kind, $a) {
         if ($script:Mode -eq 'Message') { throw '窗口消息发送失败' }
     }
     # ---- 第 3 层：物理输入（先让位、再校验、借用后归位）----
+    $hitNote = ''
+    if ($item -and $t.byId) {
+        # v4.2：不盲点矩形中心，挑一个「严格命中测试」通过的落点
+        try {
+            $lr = $item.El.Current.BoundingRectangle
+            if (-not $lr.IsEmpty) {
+                $pp = Get-PrecisePoint $item $lr
+                $t.x = $pp.x; $t.y = $pp.y
+                $hitNote = if ($pp.verified) { '；落点已核验命中目标' } else { '；落点未能核验' }
+                Move-VirtualCursor $t.x $t.y
+            }
+        }
+        catch { }
+    }
     Assert-PhysicalReady $t
     Set-CursorPulse $(if ($btn -eq 1) { 1 } else { 0 })
     if ($n -eq 2) { Start-Sleep -Milliseconds 90; Set-CursorPulse 0 }
     [DsNative4]::PhysicalClick($t.x, $t.y, $btn, $n, $true)
-    return "已执行 $kind $($t.label)（物理输入；真实鼠标瞬时借用并已归位；页面弹窗可能稍后才出现，以下一轮的『界面变化』为准）$fallback"
+    return "已执行 $kind $($t.label)（物理输入$hitNote；真实鼠标瞬时借用并已归位；页面弹窗可能稍后才出现，以下一轮的『界面变化』为准）$fallback"
 }
 function Invoke-ClickMany($a) {
     # 一次点击/勾选多个控件。每个控件执行前都会实时核对（名称/位置/可见/可用）；任一失败即中止，并报告已完成的部分（不会回滚）。
@@ -1739,7 +2419,7 @@ function Focus-WindowByTitle([string]$keyword) {
 }
 function Describe-Action($a) {
     $parts = @("action=$($a.action)")
-    foreach ($k in 'id', 'ids', 'x', 'y', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id') {
+    foreach ($k in 'id', 'ids', 'rows', 'exclusive', 'x', 'y', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id') {
         $v = "$($a.$k)"
         if ($null -ne $a.$k -and $v -ne '') { $parts += ("{0}={1}" -f $k, (Limit-Text $v 80)) }
     }
@@ -1799,6 +2479,9 @@ function Invoke-ActionCore($a, [string]$kind) {
     switch ($kind) {
         { $_ -in 'click', 'double_click', 'right_click', 'middle_click', 'hover' } { return (Invoke-PointerAction $kind $a) }
         'click_many' { return (Invoke-ClickMany $a) }
+        'check' { return (Invoke-CheckAction $a $true) }
+        'uncheck' { return (Invoke-CheckAction $a $false) }
+        'select_rows' { return (Invoke-SelectRows $a) }
         'drag' { return (Invoke-DragAction $a) }
         'type' { return (Invoke-TypeAction $a) }
         { $_ -in 'key', 'hotkey' } {
@@ -1821,6 +2504,7 @@ function Invoke-ActionCore($a, [string]$kind) {
 }
 function Invoke-Action($a) {
     $kind = "$($a.action)".ToLower().Trim()
+    Assert-BulkInterlock $a $kind   # v4.2：数量联锁（删除/归档/全选前核对已勾选行数）
     $before = [DsNative4]::GetForegroundWindow()
     $r = Invoke-ActionCore $a $kind
     if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell') {
@@ -1838,14 +2522,18 @@ $SystemPrompt = @'
 屏幕分辨率、前台窗口、键盘焦点、已打开的窗口，以及前台窗口的控件列表，每行格式为：
   [编号] 控件类型 "名称" value="当前值" state=on/off/selected ★焦点 {可用模式} @(中心x,中心y)
 {可用模式}：inv=可调用 val=可直接写值 tog=开关 sel=可选中 exp=可展开 scr=可滚动。带这些标记的控件会被「无障碍接口」直接操作，不占用用户的真实鼠标键盘，最可靠。
-观察末尾可能有「复选框汇总」（可见共几个、已勾选几个及其编号），请据此计数，不要靠记忆。
+带复选框的列表（如邮件列表）在观察末尾单独列为「列表行」：R1、R2…按从上到下编号（包含视口外的行），每行给出 复选框[编号]、行[编号] 和行摘要；
+「行勾选汇总」给出已勾选的行。请据此计数，不要靠记忆。标注「⚠全选复选框」的是全选框。
 每轮提示里还有「相对上一轮的界面变化」：标题变化、新增/消失的控件。这是判断「上一步是否生效」的第一证据。
 你必须只输出【一个】JSON 对象（不要 markdown、不要多余文字、不要输出第二个 JSON）。有两种格式：
 A) 单个动作： {"thought":"一句话判断","action":"动作名", ...参数}
 B) 批量动作： {"thought":"一句话判断","actions":[{"action":...},{"action":...}]}   （按顺序执行，任一步出错则中止其余）
 可用动作：
 - {"action":"click","id":12}                       单击控件（必须优先用 id；只有观察里确实没有该控件时才用 x,y）
-- {"action":"click_many","ids":[3,7,12]}           依次点击/勾选多个控件（最多 20 个）；适合「勾选前 N 封邮件 / 多个复选框」，一步完成，结果会回报每个控件的读回状态
+- {"action":"select_rows","rows":"1-10"}           按「列表行」的 R 编号精确勾选（幂等：已勾选的不会被反选；默认 exclusive=true 同时取消其他行；视口外的行也能处理，无需滚动）。
+                                                   系统会重新扫描并闭环核验，结果写「✓ 闭环验证通过」才算成功。「勾选 / 删除 / 归档前 N 个」必须用它
+- {"action":"check","ids":[41,43]} / {"action":"uncheck","ids":[41]}   把复选框设为勾选 / 不勾选（幂等，带读回核验）；对复选框优先用它
+- {"action":"click_many","ids":[3,7,12]}           依次点击多个控件（最多 20 个）。注意 click 对复选框是「切换」，重复点会反选
 - {"action":"double_click","id":12} / right_click / middle_click / hover
 - {"action":"drag","from_id":3,"to_id":8}          拖拽（也可用 from_x,from_y,to_x,to_y）
 - {"action":"type","id":5,"text":"内容","clear":true,"enter":false}
@@ -1860,7 +2548,7 @@ B) 批量动作： {"thought":"一句话判断","actions":[{"action":...},{"acti
 - {"action":"fail","reason":"原因"}                  确认无法完成
 规则：
 1. 追求速度：能用 run_powershell 一步完成的事（读写文件、查询信息、打开路径、启动带参数的程序）就不要去点界面。
-2. 批量动作可以包含多个带 id 的动作（每个动作执行前系统都会实时核对控件，不符即中止）。但：点击后会导致页面/布局大变的动作（打开链接、提交、切换标签页、删除等）应放在批量的最后一个。同类的多个勾选请优先用 click_many。
+2. 批量动作可以包含多个带 id 的动作（每个动作执行前系统都会实时核对控件，不符即中止）。但：点击后会导致页面/布局大变的动作（打开链接、提交、切换标签页、删除等）应放在批量的最后一个。多个复选框请用 check 或 select_rows（click / click_many 是切换，重复点会反选）。
 3. 控件编号只对「当前这一轮」观察有效，每轮重新编号。系统在执行前会核对控件仍是观察时的那个（名称+位置），否则报「界面已变化」，此时只需重新观察。
 4. 浏览器：地址栏用 ctrl+l 后 type 网址并 enter 最稳。网页内容是否可见取决于无障碍；系统会在启动 chrome / msedge 时自动打开渲染器无障碍。
 5. 输入文本后，根据执行结果里的「读回值」和下一轮观察里的 value 确认是否成功。
@@ -1874,8 +2562,11 @@ B) 批量动作： {"thought":"一句话判断","actions":[{"action":...},{"acti
 12. 如果动作结果提示「你正在使用键盘/鼠标，已让出控制权」，先 wait 2~3 秒再重试同一动作，不要换方法。
 13. 如果结果提示「被其他窗口遮挡」或「前台窗口已变化」，先 focus_window 回到目标窗口再操作。
 14. 结果里写明「未被占用」的是无障碍/消息方式，已生效；写明「消息方式无法确认生效」或「物理输入…稍后才出现」的，必须以下一轮的「界面变化」核实。
-15. 「勾选 N 个」类任务：先看「复选框汇总」里已勾选几个，再用 click_many 补足差额；执行完以下一轮的汇总为准，数量对了再点删除/归档等按钮；删除后重新计数，不够再补。
+15. 「勾选 / 删除 / 归档前 N 个」类任务：先 select_rows {"rows":"1-N"}；看到结果里「✓ 闭环验证通过」后，再【单独一步】点击工具栏上的删除/归档按钮。
+   不要用「全选」凑数，不要用 click 逐个切换复选框。任务里有明确数量 N 时系统启用安全联锁：已勾选行数 ≠ N 时拒绝删除类按钮，并禁止全选。
+   删除后以新一轮的提示条和「行勾选汇总」核对，再 done（不要为了「多删一点保险」去删更多）。
 16. 短视频 / 信息流类网页：下一个视频用 key 的 down（或 scroll），然后看「界面变化」里的标题/文案是否更换；换了就不要再按。
+17. 打开第 K 封邮件 / 第 K 行：click 该行的「行[编号]」，不要 click 复选框。
 '@
 function Invoke-DeepSeek([string]$userContent) {
     $messages = @(
@@ -1943,6 +2634,9 @@ function Invoke-AgentTask([string]$TaskText) {
     $script:Auto = -not [bool]$StepConfirm
     $script:BaseKeys = $null
     $script:BaseTitle = ''
+    $script:TaskQty = Get-TaskQuantity $TaskText
+    $script:SelectMemo = $null
+    if ($script:TaskQty -gt 0 -and -not $NoSafety) { Write-Host "  （安全联锁：识别到任务数量 N=$($script:TaskQty)；删除/归档前会核对已勾选行数必须等于 N）" -ForegroundColor DarkGray }
     $history = New-Object System.Collections.Generic.List[string]
     $descCount = @{}
     $repeatNote = ''
@@ -1954,7 +2648,7 @@ function Invoke-AgentTask([string]$TaskText) {
     $lastSig = $null
     $sameCount = 0
     $taskStart = Get-Date
-    Write-Log @{ type = 'task_start'; task = $TaskText; model = $Model; admin = $script:IsAdmin; mode = $script:Mode }
+    Write-Log @{ type = 'task_start'; task = $TaskText; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; qty = $script:TaskQty }
     try {
         for ($step = 1; $step -le $MaxSteps; $step++) {
             Test-Abort
@@ -1984,6 +2678,7 @@ function Invoke-AgentTask([string]$TaskText) {
             $script:BaseTitle = $obs.Foreground.Title
             $hist = if ($history.Count -gt 0) { ($history | Select-Object -Last $HistoryLimit) -join "`n" } else { '（还没有操作）' }
             $shellNote = if ($NoShell) { '禁止使用 run_powershell。' } else { '允许使用 run_powershell。' }
+            if ($script:TaskQty -gt 0 -and -not $NoSafety) { $shellNote += " 系统从任务中识别到数量 N=$($script:TaskQty)：勾选请用 select_rows（rows=`"1-$($script:TaskQty)`"），删除/归档前系统会核对已勾选行数必须等于 N，且禁止全选。" }
             $memNote = ''
             if ($MemoryLimit -gt 0 -and $script:Session.Count -gt 0) {
                 $memNote = "本会话之前的任务（仅供参考）:`n" + (($script:Session | Select-Object -Last $MemoryLimit) -join "`n") + "`n`n"
@@ -2152,6 +2847,36 @@ function Invoke-SelfTest {
     $d1 = Get-ObservationDiff $kPrev $kCur 'A - Chrome' 'B - Chrome'
     $d2 = Get-ObservationDiff $kPrev $kPrev 'A' 'A'
     & $rec '界面对比：勾选变化 / 新增控件 / 标题变化可见' (($d1 -match '邮件1 on') -and ($d1 -match '新弹窗') -and ($d1 -match '标题') -and ($d2 -match '完全相同')) (($d1 -replace '\s+', ' '))
+    # ---- v4.2 纯逻辑自检（不碰鼠标键盘）----
+    $q = @((Get-TaskQuantity '打开gmail，删除前面10个邮件'), (Get-TaskQuantity '删除前十封邮件'), (Get-TaskQuantity 'delete the first 5 emails'),
+        (Get-TaskQuantity '点开第3个视频'), (Get-TaskQuantity '打开一个记事本，输入晚上好'))
+    & $rec 'v4.2 数量解析（前面10个 / 前十封 / first 5 / 第3个不算 / 一个记事本不算）' (($q[0] -eq 10) -and ($q[1] -eq 10) -and ($q[2] -eq 5) -and ($q[3] -eq 0) -and ($q[4] -eq 0)) ("结果=[{0}]" -f ($q -join ','))
+    $rs1 = (ConvertTo-RowList '1-10' 50) -join ','
+    $rs2 = (ConvertTo-RowList '1,3，5-7' 50) -join ','
+    $rsErr = ''; try { [void](ConvertTo-RowList '1-60' 50) } catch { $rsErr = $_.Exception.Message }
+    & $rec 'v4.2 行号解析（1-10 / 1,3，5-7 / 超出列表行数报错）' (($rs1 -eq '1,2,3,4,5,6,7,8,9,10') -and ($rs2 -eq '1,3,5,6,7') -and ($rsErr -match '没有第')) "[$rs1] [$rs2] [$(Limit-Text $rsErr 30)]"
+    $synRows = New-Object System.Collections.Generic.List[object]
+    $synCbs = New-Object System.Collections.Generic.List[object]
+    for ($i = 11; $i -ge 0; $i--) {
+        $synRows.Add([pscustomobject]@{ L = 100; T = 200 + 40 * $i; W = 900; H = 40; Name = "邮件$($i + 1)" })
+        $synCbs.Add([pscustomobject]@{ L = 110; T = 210 + 40 * $i; W = 20; H = 20; Name = '' })
+    }
+    $synCbs.Add([pscustomobject]@{ L = 110; T = 150; W = 20; H = 20; Name = 'master' })
+    $jr = Join-RowCheckboxes $synRows $synCbs
+    & $rec 'v4.2 行归属（12 行各配 1 个复选框、全选框不属于任何行、乱序输入仍按位置编号）' ((@($jr.Rows).Count -eq 12) -and (@($jr.Master).Count -eq 1) -and ($jr.Rows[0].Row.Name -eq '邮件1') -and ($jr.Rows[11].Row.Name -eq '邮件12')) "行=$(@($jr.Rows).Count) 全选框=$(@($jr.Master).Count) R1=$($jr.Rows[0].Row.Name) R12=$($jr.Rows[11].Row.Name)"
+    $kb1 = @('CheckBox||off', 'CheckBox||off', 'CheckBox||on'); $kb2 = @('CheckBox||off', 'CheckBox||on', 'CheckBox||on')
+    $dOld = Get-ObservationDiff (New-KeySet $kb1) (New-KeySet $kb2) 'A' 'A'
+    $dNew = Get-ObservationDiff (New-KeySet (Add-OrdinalKeys $kb1)) (New-KeySet (Add-OrdinalKeys $kb2)) 'A' 'A'
+    & $rec 'v4.2 同名控件序号键（v4.1 会把「多勾了 1 个」误判为完全相同）' (($dOld -match '完全相同') -and ($dNew -notmatch '完全相同')) "旧=[$(Limit-Text $dOld 24)] 新=[$(Limit-Text ($dNew -replace '\s+', ' ') 50)]"
+    $i1 = Test-InterlockDecision 10 '刪除' 'Button' $false 50 50 $false
+    $i2 = Test-InterlockDecision 10 '刪除' 'Button' $false 50 10 $false
+    $i3 = Test-InterlockDecision 10 '全選' 'MenuItem' $false 50 0 $false
+    $i4 = Test-InterlockDecision 10 '' 'CheckBox' $true 50 4 $false
+    $i5 = Test-InterlockDecision 0 '刪除' 'Button' $false 50 50 $false
+    $i6 = Test-InterlockDecision 10 'Delete' 'Button' $false 50 10 $true
+    & $rec 'v4.2 安全联锁重放日志任务5（全选50封后删除→拦截；精确10封→放行）' ([bool]$i1 -and (-not $i2) -and [bool]$i3 -and [bool]$i4 -and (-not $i5) -and [bool]$i6) ("全选后删=拦{0} 精确10=放{1} 全選菜单=拦{2} 全选框=拦{3} 无数量=放{4} 行内删=拦{5}" -f [bool]$i1, (-not $i2), [bool]$i3, [bool]$i4, (-not $i5), [bool]$i6)
+    $tl1 = Get-DriftTolerance ([pscustomobject]@{ W = 20; H = 20 }); $tl2 = Get-DriftTolerance ([pscustomobject]@{ W = 300; H = 40 }); $tl3 = Get-DriftTolerance ([pscustomobject]@{ W = 4; H = 4 })
+    & $rec 'v4.2 漂移容差随尺寸收紧（20px 复选框不会认成相邻 40px 行的那个）' (($tl1 -eq 10) -and ($tl2 -eq 20) -and ($tl3 -eq 8)) "20px→$tl1 高40→$tl2 4px→$tl3"
     $real0 = [DsNative4]::CursorPos()
     if ($script:Cur) {
         $script:Cur.ResetStats()
@@ -2205,6 +2930,11 @@ function Invoke-SelfTest {
             $cx0 = $script:Elements[$cid].cx; $cy0 = $script:Elements[$cid].cy
             try { $msg = Invoke-Action ([pscustomobject]@{ action = 'click'; x = $cx0; y = $cy0 }) } catch { $msg = "异常: $($_.Exception.Message)" }
             & $rec '坐标点击自动吸附到控件并走 UIA（Uia 模式下也成功）' ($tt.GetCheck() -eq 1 -and $msg -match 'UIA') $msg
+            # A4. v4.2 幂等勾选：已勾选时 check 不动作；uncheck 读回 off
+            $tt.SetCheck(1); Start-Sleep -Milliseconds 120
+            $ck1 = $null; $ck2 = $null; $ckErr = ''
+            try { $ck1 = Set-CheckState $script:Elements[$cid] $true '[自检复选框]'; $ck2 = Set-CheckState $script:Elements[$cid] $false '[自检复选框]' } catch { $ckErr = $_.Exception.Message }
+            & $rec 'v4.2 幂等勾选（已勾选时 check 不操作；uncheck 后读回 off）' ($null -ne $ck1 -and -not $ck1.Changed -and $null -ne $ck2 -and $ck2.Ok -and $tt.GetCheck() -eq 0) ("check=[$(if ($ck1) { $ck1.Via })] uncheck=[$(if ($ck2) { "$($ck2.Via)/$($ck2.State)" })] $ckErr")
             # B. 写值
             $want = '你好 DeepSeek 123'
             try { $msg = Invoke-Action ([pscustomobject]@{ action = 'type'; id = $eid; text = $want; clear = $true }) } catch { $msg = "异常: $($_.Exception.Message)" }
@@ -2320,7 +3050,7 @@ function Show-Help {
 }
 function Show-Banner {
     Write-Host ''
-    Write-Host '=== DeepSeek Computer Use v4.1（虚拟鼠标 + 分层精确执行 + 变化感知）===' -ForegroundColor Cyan
+    Write-Host '=== DeepSeek Computer Use v4.2（虚拟鼠标 + 分层精确执行 + 列表行模型 + 幂等勾选 + 数量联锁）===' -ForegroundColor Cyan
     Write-Host "模型    : $Model    每任务最大步数: $MaxSteps    批量动作上限: $MaxBatch"
     Write-Host "模式    : $(if ($DryRun) { '仅预演(DryRun)' } elseif ($script:Auto) { '全自动（无需确认）' } else { '逐步确认' })    Shell: $(if ($NoShell) { '禁止' } else { '允许' })    管理员: $(if ($script:IsAdmin) { '是' } else { '否（加 -RunAsAdmin 可操作高权限窗口）' })    会话记忆: $(if ($MemoryLimit -gt 0) { "最近 $MemoryLimit 个任务" } else { '关闭' })"
     Write-Host "输入    : $($script:Mode)（Auto=UIA→消息→物理借用归位）    虚拟鼠标: $(if ($script:Cur) { '已启用' } else { '未启用' })    让位阈值: ${IdleMs}ms"
@@ -2330,7 +3060,7 @@ function Show-Banner {
 }
 Initialize-Runtime
 Show-Banner
-Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '4.1' }
+Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '4.2' }
 $pending = $Task
 try {
     while ($true) {
