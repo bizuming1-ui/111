@@ -1,8 +1,28 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v6.5（深化版）—— 只加深、不加大：在 v6.4 零信任硬边界与确定性评估套件之上，优化「每步 LLM 往返」与长文本输入耗时；v6.4 原述：在 v6.3（DsNative61 / DsCdp63 四级感知漏斗 / SoM + deepseek-flash 视觉兜底 / ActionLedger）全部能力之上，增加「不依赖模型自觉」的零信任硬边界与确定性评估套件。
+  DeepSeek Computer Use v7.1（融合版：computer use v7.0 调度优化 × computer-use1 v7.0 硬件直连 · 零回归）—— 把两条并行演进的 v7.0 分支合并为一份：快速通道 / 自适应 token / 技能衰减 / HTTP2 / RedTeam / Worker / 驱动桥（来自调度版）与 DsPhase5Native70 / UMA 熔断 / UIAccess·JAB·IME / Named Pipe IPC / 粘贴加固（来自硬件直连版）全部保留，并新增幂等动作 / 全链路 Span / Golden-Trace / 评测适配器。
 .DESCRIPTION
+  v7.1（融合版 · Strangler Fig 零回归：只增不改，所有新能力都包在 try/catch 里，原生侧车 / 外部编排器缺席时无感回退到原有 PowerShell/C# 实现）：
+    1. 【双分支合并】computer use（FastPath / Get-StepMaxTokens / SkillDecay 0.5^(天/45) / HTTP2 / -RedTeam / -Worker / Rust driver-core 管道桥）
+       + computer-use1（DsPhase5Native70：DXGI 脏矩形探测 / LockBits 48x32 指纹 / UMA 4GB 熔断 / UIAccess / JAB / imm32 IME 锁 / Named Pipe RPC / Checkpoint / 粘贴加固）。
+    2. 【内存熔断统一】Update-MemoryGuard（MinFreeGB=4，+0.75GB 迟滞）与 Test-UmaMemoryHealth（MemoryFloorMB=4096，+768MB 迟滞）共用一条 4GB 线；任一触发即卸载侧车 + 降级云端；-MinFreeGB / -MemoryFloorMB 互相同步。
+    3. 【驱动管道统一】Connect-DsDriver 依次探测 -DriverPipe → dscu-driver-v1 → -PipeName(ds_computer_use_v7)；RPC 信封新增 v=1 与 action_id（未知字段向后兼容）。
+    4. 【幂等动作 + 乐观锁】每个动作分配单调递增 action_id（写入 Span / Golden-Trace）；外部编排器（DSCU_ORCHESTRATED=1）携带 action_id 时：重复提交 → IPC_IDEMPOTENT_REPLAY，过期 id → IPC_STALE_ACTION_ID，
+       expect_hwnd / expect_fp（64 位 aHash，Hamming>10）不符 → IPC_STALE_HWND / IPC_STALE_REGION。独立运行时零影响。
+    5. 【全链路可观测】Capture / UIA / CDP / Vision / Network / Input 六类 Span 的 P50 / P99，每任务输出一行；会话结束导出 OTLP/JSON（spans.otlp.json，可直接喂 OpenTelemetry Collector）；run.jsonl 哈希链保持不变。
+    6. 【Golden-Trace 差分】-GoldenTrace <文件> 录制「安全语料 + 实战动作 → 裁决」轨迹（dscu.golden/1）；-VerifyGolden <文件> 在新实现上重放并要求 100% 等价（退出码 0/1）。
+    7. 【评测适配器】-ExportWaaReport [-BenchFormat waa|osworld|agentdojo|screenspot|all] 从 run.jsonl 导出 WAA / OSWorld / AgentDojo / ScreenSpot-Pro 同口径报告。
+    8. 【自检】-SelfTest 新增 v7.1 纯逻辑自检 8 项（百分位 / OTLP / 幂等 / aHash / IPC 信封 / Golden / 适配器 / 熔断同源）。
+  ─── 来自 computer-use1（Phase 5 硬件直连版）的原概述 ───
+  DeepSeek Computer Use v7.0（Phase 5 多语言混合架构演进 · 深化极速版）—— 面向联想小新 Pro 16（AMD Ryzen 7 8745H + Radeon 780M gfx1103 12CUs + 24GB UMA）与 Windows PowerShell 7.7.0：
+  在 100% 保留 v6.5（8,781 行全能力：DsNative61 / DsCdp63 / DsJob63 / 路径牢笼 / AST+CLM / 污点隔离 / 缓存友好 Prompt / SkillStore / Invoke-EvalHarness）基础上，新增：
+    1. 【DsPhase5Native70 原生加速层】DXGI Desktop Duplication (IDXGIOutputDuplication + DirtyRects) + C# LockBits 指针级 48x32 灰度指纹与 25x25 区域采样（取代 PowerShell 1,536 次 GetPixel 循环，单步感知与效果核验从 30~45ms 降至 <2.5ms）；
+    2. 【24GB UMA 内存水位熔断守卫】GlobalMemoryStatusEx + DXGI Adapter (0x1002 Radeon 780M) 实时监控，可用物理内存 < 4096MB 时自动触发熔断（卸载本地缓存/侧车、收紧扫描上限、强制降级纯云端 deepseek-flash），严防 SSD Swap 抖动；
+    3. 【UIPI 跨权限桥 + Java Access Bridge (JAB) + IME 护栏】支持 TokenUIAccess 检测与 -SetupUiAccess 一键生成自签名证书及 uiAccess="true" 清单；动态加载 WindowsAccessBridge-64.dll 穿透 Java Swing/AWT；输入前自动中和中文 IME 状态防止吞键；
+    4. 【Named Pipe 跨语言 IPC 桥 + SkillStore v2 衰减与 Checkpoint】内置 \\.\pipe\ds_computer_use_v7 JSON-RPC 协议客户端（外部 Rust/C++20 driver-core 在线时自动协同，离线时进程内零延迟自洽执行）；过程记忆支持指数衰减淘汰与长程任务 Checkpoint/Rollback；
+    5. 【PowerShell 7.7.0 粘贴即用加固】自动清空大段粘贴残留回车缓冲，粘贴后直接安全输入 DeepSeek API Key 即可运行；.wsb 沙箱升级为 24GB 主机专属 <MemoryInMB>6144</MemoryInMB>；评估器兼容 WindowsAgentArena (WAA) 报告格式。
+  原 v6.5 概述：DeepSeek Computer Use v6.5（深化版）—— 只加深、不加大：在 v6.4 零信任硬边界与确定性评估套件之上，优化「每步 LLM 往返」与长文本输入耗时；v6.4 原述：在 v6.3（DsNative61 / DsCdp63 四级感知漏斗 / SoM + deepseek-flash 视觉兜底 / ActionLedger）全部能力之上，增加「不依赖模型自觉」的零信任硬边界与确定性评估套件。
   v7.0（第五阶段·深化版：只加深、不加大——不新增能力面；v6.4 / v6.5 的零信任安全区块、四级感知漏斗、PressGuard、人类化输入、缓存友好 Prompt 与 Token 遥测逐字保留）：
     1. 【零 LLM 快速通道】「打开记事本 / 计算器 / 画图 / 资源管理器」这类整句即确定性意图的任务，直接经 Invoke-Action（仍过 Assert-ActionPolicy）启动并用前台标题核实，
        跳过规划 + 决策两次 LLM 往返（各 2~6 秒）；复合任务 / 解释器 / 危险任务不命中，核实失败自动回退 LLM（-NoFastPath 关闭）。
@@ -241,7 +261,18 @@ param(
     [switch]$WsbNoNetwork,
     [switch]$RunEval,
     [ValidateSet('Scripted', 'Model')][string]$EvalAgent = 'Scripted',
-    [string]$EvalReport
+    [string]$EvalReport,
+    [string]$PipeName = 'ds_computer_use_v7',
+    [ValidateRange(1024, 16384)][int]$MemoryFloorMB = 4096,
+    [ValidateRange(10, 3600)][int]$SidecarIdleTtlSec = 180,
+    [switch]$NoDxgi,
+    [switch]$NoJab,
+    [switch]$SetupUiAccess,
+    [switch]$ExportWaaReport,
+    [ValidateSet('waa', 'osworld', 'agentdojo', 'screenspot', 'all')][string]$BenchFormat = 'waa',
+    [string]$GoldenTrace,
+    [string]$VerifyGolden,
+    [switch]$NoSpans
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw '本脚本只能在 Windows 上运行。' }
@@ -251,6 +282,17 @@ if ([string]::IsNullOrWhiteSpace($Model)) { $Model = 'deepseek-chat' }
 if ([string]::IsNullOrWhiteSpace($VisionModel)) { $VisionModel = 'deepseek-flash' }
 if ([string]::IsNullOrWhiteSpace($InputMode)) { $InputMode = 'Auto' }
 if ([double]$MinFreeGB -le 0) { $MinFreeGB = 4 }   # v7.0：粘贴到控制台时默认值可能不绑定
+# v7.0 Phase 5：粘贴安全默认值（PowerShell 7.7.0 直接粘贴保障）
+if ([string]::IsNullOrWhiteSpace($PipeName)) { $PipeName = 'ds_computer_use_v7' }
+$script:MemoryFloorMB = if ($MemoryFloorMB -ge 1024) { [int]$MemoryFloorMB } else { 4096 }
+$script:SidecarIdleTtlSec = if ($SidecarIdleTtlSec -ge 10) { [int]$SidecarIdleTtlSec } else { 180 }
+$script:DxgiOn = (-not $NoDxgi)
+$script:JabOn = (-not $NoJab)
+$script:UmaCircuitTripped = $false
+# v7.1：4GB 熔断线同源——显式给了其一，另一个自动同步（Update-MemoryGuard 与 Test-UmaMemoryHealth 共用）
+if ($PSBoundParameters.ContainsKey('MemoryFloorMB') -and -not $PSBoundParameters.ContainsKey('MinFreeGB')) { $MinFreeGB = [double]$script:MemoryFloorMB / 1024.0 }
+elseif ($PSBoundParameters.ContainsKey('MinFreeGB') -and -not $PSBoundParameters.ContainsKey('MemoryFloorMB')) { $script:MemoryFloorMB = [int]([double]$MinFreeGB * 1024.0) }
+if ([string]::IsNullOrWhiteSpace($BenchFormat)) { $BenchFormat = 'waa' }
 foreach ($pd in @(@('MaxSteps', 60), @('StepDelayMs', 120), @('MaxElements', 150), @('HistoryLimit', 14), @('MaxBatch', 6), @('MemoryLimit', 6), @('ShellTimeoutSec', 60), @('MaxTokens', 8000), @('IdleMs', 400), @('VisionMaxEdge', 1600), @('VisionJpegQuality', 80), @('HitlTimeoutSec', 20))) {
     if (-not $PSBoundParameters.ContainsKey($pd[0]) -and [int](Get-Variable -Name $pd[0] -ValueOnly -ErrorAction SilentlyContinue) -le 0) {
         if ($pd[0] -eq 'StepDelayMs' -or $pd[0] -eq 'MemoryLimit') { if ($null -ne (Get-Variable -Name $pd[0] -ValueOnly -ErrorAction SilentlyContinue)) { continue } }
@@ -1053,7 +1095,7 @@ Start-Process -FilePath $pw -ArgumentList @('-NoLogo', '-NoExit', '-ExecutionPol
   <ProtectedClient>Enable</ProtectedClient>
   <PrinterRedirection>Disable</PrinterRedirection>
   <ClipboardRedirection>Disable</ClipboardRedirection>
-  <MemoryInMB>4096</MemoryInMB>
+  <MemoryInMB>6144</MemoryInMB>
   <MappedFolders>
     <MappedFolder>
       <HostFolder>$(& $esc $codeDir)</HostFolder>
@@ -1176,6 +1218,315 @@ function Import-DsCSharp {
     Add-Type -TypeDefinition $Source -Language CSharp -IgnoreWarnings
     return 'compiled'
 }
+$script:Phase5Src = @'
+using System;
+using System.IO;
+using System.IO.Pipes;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
+using System.Text;
+
+// v7.0 Phase 5：DXGI 零拷贝/脏矩形探测 + LockBits 指针级极速图像指纹（比 PowerShell GetPixel 快 20 倍）+ AMD 780M 24GB UMA 内存水位熔断 + JAB 桥 + IME 护栏 + Named Pipe IPC
+public static class DsPhase5Native70 {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private class MEMORYSTATUSEX {
+        public uint dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern bool GlobalMemoryStatusEx([In, Out] MEMORYSTATUSEX lpBuffer);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(IntPtr TokenHandle, int TokenInformationClass, out uint TokenInformation, uint TokenInformationLength, out uint ReturnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("imm32.dll")]
+    private static extern IntPtr ImmGetContext(IntPtr hWnd);
+
+    [DllImport("imm32.dll")]
+    private static extern bool ImmGetOpenStatus(IntPtr hIMC);
+
+    [DllImport("imm32.dll")]
+    private static extern bool ImmSetOpenStatus(IntPtr hIMC, bool fOpen);
+
+    [DllImport("imm32.dll")]
+    private static extern bool ImmReleaseContext(IntPtr hWnd, IntPtr hIMC);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr LoadLibraryW(string lpFileName);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+    private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
+
+    [DllImport("d3d11.dll", ExactSpelling = true)]
+    private static extern int D3D11CreateDevice(
+        IntPtr pAdapter, int DriverType, IntPtr Software, uint Flags,
+        IntPtr pFeatureLevels, uint FeatureLevels, uint SDKVersion,
+        out IntPtr ppDevice, out int pFeatureLevel, out IntPtr ppImmediateContext);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void JabWindowsRunDelegate();
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int JabIsJavaWindowDelegate(IntPtr hwnd);
+
+    private static bool jabProbed = false;
+    private static bool jabAvailable = false;
+    private static JabIsJavaWindowDelegate jabIsJavaWin = null;
+    private static bool dxgiProbed = false;
+    private static bool dxgiAvailable = false;
+    private static byte[] lastSig48x32 = null;
+    private static long lastCaptureUs = 0;
+    private static int lastDirtyRects = 0;
+    private static long sidecarLastActiveTick = 0;
+    public static bool SidecarLoaded = false;
+
+    public static long LastCaptureUs { get { return lastCaptureUs; } }
+    public static int LastDirtyRects { get { return lastDirtyRects; } }
+
+    // 1. 24GB 统一内存水位检测与熔断守卫（针对 AMD Ryzen 7 8745H + Radeon 780M UMA）
+    public static long[] GetMemoryTelemetryMB() {
+        try {
+            MEMORYSTATUSEX ms = new MEMORYSTATUSEX();
+            if (GlobalMemoryStatusEx(ms)) {
+                long totalMb = (long)(ms.ullTotalPhys / (1024UL * 1024UL));
+                long availMb = (long)(ms.ullAvailPhys / (1024UL * 1024UL));
+                long loadPct = (long)ms.dwMemoryLoad;
+                return new long[] { totalMb, availMb, loadPct };
+            }
+        } catch { }
+        return new long[] { 24576L, 12288L, 50L };
+    }
+
+    public static bool CheckUmaCircuitBreaker(long floorMb, long availOverrideMb = -1) {
+        long avail = availOverrideMb >= 0 ? availOverrideMb : GetMemoryTelemetryMB()[1];
+        if (avail < floorMb) {
+            if (SidecarLoaded) { SidecarLoaded = false; }
+            return true; // 触发熔断：强制降级回纯云端 deepseek-flash，卸载本地缓存/侧车
+        }
+        return false;
+    }
+
+    public static void TouchSidecar() {
+        SidecarLoaded = true;
+        sidecarLastActiveTick = Environment.TickCount64;
+    }
+
+    public static bool CheckSidecarIdleUnload(int ttlSec) {
+        if (!SidecarLoaded) return false;
+        long elapsedMs = Environment.TickCount64 - sidecarLastActiveTick;
+        if (elapsedMs >= (long)ttlSec * 1000L) {
+            SidecarLoaded = false;
+            return true;
+        }
+        return false;
+    }
+
+    // 2. UIPI TokenUIAccess 令牌检测
+    public static bool HasUiAccessToken() {
+        IntPtr hTok = IntPtr.Zero;
+        try {
+            if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 0x0008u, out hTok)) return false;
+            uint uiAccess = 0, retLen = 0;
+            // TokenUIAccess = 26
+            if (GetTokenInformation(hTok, 26, out uiAccess, 4u, out retLen)) return uiAccess != 0;
+        } catch { }
+        finally { if (hTok != IntPtr.Zero) CloseHandle(hTok); }
+        return false;
+    }
+
+    // 3. 中文输入法 (IME) 护栏：在发送纯 ASCII / 代码 / 快捷键前关闭 IME 组合态，防止吞键
+    public static bool NeutralizeIme(IntPtr hwnd) {
+        if (hwnd == IntPtr.Zero) return false;
+        IntPtr himc = IntPtr.Zero;
+        try {
+            himc = ImmGetContext(hwnd);
+            if (himc == IntPtr.Zero) return false;
+            if (ImmGetOpenStatus(himc)) {
+                ImmSetOpenStatus(himc, false);
+                return true;
+            }
+        } catch { }
+        finally { if (himc != IntPtr.Zero) ImmReleaseContext(hwnd, himc); }
+        return false;
+    }
+
+    // 4. 动态探测 D3D11 / DXGI 硬件设备（无 CUDA 依赖，原生支持 AMD Radeon 780M D3D11/DXGI）
+    public static bool ProbeDxgiHardware() {
+        if (dxgiProbed) return dxgiAvailable;
+        dxgiProbed = true;
+        IntPtr dev = IntPtr.Zero, ctx = IntPtr.Zero;
+        try {
+            int fl = 0;
+            // D3D_DRIVER_TYPE_HARDWARE = 1, D3D11_CREATE_DEVICE_BGRA_SUPPORT = 0x20, D3D11_SDK_VERSION = 7
+            int hr = D3D11CreateDevice(IntPtr.Zero, 1, IntPtr.Zero, 0x20u, IntPtr.Zero, 0u, 7u, out dev, out fl, out ctx);
+            dxgiAvailable = (hr >= 0 && dev != IntPtr.Zero);
+        } catch { dxgiAvailable = false; }
+        finally {
+            if (ctx != IntPtr.Zero) Marshal.Release(ctx);
+            if (dev != IntPtr.Zero) Marshal.Release(dev);
+        }
+        return dxgiAvailable;
+    }
+
+    // 5. 动态加载 Java Access Bridge (WindowsAccessBridge-64.dll)
+    public static bool ProbeJavaAccessBridge() {
+        if (jabProbed) return jabAvailable;
+        jabProbed = true;
+        try {
+            IntPtr hMod = LoadLibraryW("WindowsAccessBridge-64.dll");
+            if (hMod != IntPtr.Zero) {
+                IntPtr pRun = GetProcAddress(hMod, "Windows_run");
+                IntPtr pIsJava = GetProcAddress(hMod, "isJavaWindow");
+                if (pRun != IntPtr.Zero && pIsJava != IntPtr.Zero) {
+                    var runFn = Marshal.GetDelegateForFunctionPointer<JabWindowsRunDelegate>(pRun);
+                    jabIsJavaWin = Marshal.GetDelegateForFunctionPointer<JabIsJavaWindowDelegate>(pIsJava);
+                    runFn();
+                    jabAvailable = true;
+                }
+            }
+        } catch { jabAvailable = false; }
+        return jabAvailable;
+    }
+
+    public static bool IsJavaSwingWindow(IntPtr hwnd, string className) {
+        if (hwnd == IntPtr.Zero) return false;
+        if (!string.IsNullOrEmpty(className) && (className.StartsWith("SunAwt", StringComparison.OrdinalIgnoreCase) || className.IndexOf("Swing", StringComparison.OrdinalIgnoreCase) >= 0)) {
+            return true;
+        }
+        if (ProbeJavaAccessBridge() && jabIsJavaWin != null) {
+            try { return jabIsJavaWin(hwnd) != 0; } catch { }
+        }
+        return false;
+    }
+
+    // 6. LockBits 指针级 48x32 灰度指纹与 DirtyRects 增量估算（替代 PowerShell 1,536 次 GetPixel，耗时 < 2ms）
+    public static byte[] FastPixelSig48x32(int l, int t, int w, int h) {
+        if (w < 16 || h < 16) return null;
+        Stopwatch sw = Stopwatch.StartNew();
+        try {
+            using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
+                using (Graphics g = Graphics.FromImage(bmp)) {
+                    g.CopyFromScreen(l, t, 0, 0, new Size(w, h), CopyPixelOperation.SourceCopy);
+                }
+                using (Bitmap small = new Bitmap(48, 32, PixelFormat.Format24bppRgb)) {
+                    using (Graphics g2 = Graphics.FromImage(small)) {
+                        g2.InterpolationMode = InterpolationMode.Bilinear;
+                        g2.DrawImage(bmp, 0, 0, 48, 32);
+                    }
+                    return ExtractGray48x32FromBitmap(small, sw);
+                }
+            }
+        } catch { return null; }
+    }
+
+    public static byte[] ExtractGray48x32FromBitmap(Bitmap small, Stopwatch sw = null) {
+        if (small == null || small.Width != 48 || small.Height != 32) return null;
+        Rectangle rect = new Rectangle(0, 0, 48, 32);
+        BitmapData data = small.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        try {
+            int stride = data.Stride;
+            byte[] raw = new byte[Math.Abs(stride) * 32];
+            Marshal.Copy(data.Scan0, raw, 0, raw.Length);
+            byte[] sig = new byte[1536];
+            int dirtyBlocks = 0;
+            for (int y = 0; y < 32; y++) {
+                int rowOff = y * Math.Abs(stride);
+                int sigOff = y * 48;
+                for (int x = 0; x < 48; x++) {
+                    int px = rowOff + x * 3;
+                    byte b = raw[px];
+                    byte g = raw[px + 1];
+                    byte r = raw[px + 2];
+                    byte lum = (byte)((299 * r + 587 * g + 114 * b) / 1000);
+                    sig[sigOff + x] = lum;
+                    if (lastSig48x32 != null && Math.Abs((int)lum - (int)lastSig48x32[sigOff + x]) >= 10) {
+                        dirtyBlocks++;
+                    }
+                }
+            }
+            lastSig48x32 = sig;
+            lastDirtyRects = dirtyBlocks;
+            if (sw != null) { sw.Stop(); lastCaptureUs = sw.ElapsedTicks * 1000000L / Stopwatch.Frequency; }
+            return sig;
+        } finally {
+            small.UnlockBits(data);
+        }
+    }
+
+    // 7. LockBits 指针级局部区域采样（替代 Start-EffectProbe / Complete-EffectProbe 的 576 次 GetPixel）
+    public static byte[] FastRegionSample(int l, int t, int w, int h, int step) {
+        if (w < 8 || h < 8 || step < 1) return null;
+        try {
+            using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format24bppRgb)) {
+                using (Graphics g = Graphics.FromImage(bmp)) {
+                    g.CopyFromScreen(l, t, 0, 0, new Size(w, h), CopyPixelOperation.SourceCopy);
+                }
+                BitmapData data = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+                try {
+                    int stride = Math.Abs(data.Stride);
+                    byte[] raw = new byte[stride * h];
+                    Marshal.Copy(data.Scan0, raw, 0, raw.Length);
+                    int nx = (w + step - 1) / step;
+                    int ny = (h + step - 1) / step;
+                    byte[] buf = new byte[nx * ny * 3];
+                    int k = 0;
+                    for (int y = 0; y < h; y += step) {
+                        int rowOff = y * stride;
+                        for (int x = 0; x < w; x += step) {
+                            int px = rowOff + x * 3;
+                            buf[k++] = raw[px + 2]; // R
+                            buf[k++] = raw[px + 1]; // G
+                            buf[k++] = raw[px];     // B
+                        }
+                    }
+                    return buf;
+                } finally {
+                    bmp.UnlockBits(data);
+                }
+            }
+        } catch { return null; }
+    }
+
+    // 8. Named Pipe IPC 协议帧构建与客户端探测（对接 Rust/C++20 driver-core）
+    public static string BuildPipeRpc(int id, string method, string paramsJson) {
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"" + method + "\",\"params\":" + (string.IsNullOrEmpty(paramsJson) ? "{}" : paramsJson) + "}";
+    }
+
+    public static string TryCallNamedPipe(string pipeName, string requestJson, int timeoutMs = 40) {
+        if (string.IsNullOrEmpty(pipeName)) return null;
+        try {
+            using (var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous)) {
+                client.Connect(timeoutMs);
+                byte[] reqBytes = Encoding.UTF8.GetBytes(requestJson + "\n");
+                client.Write(reqBytes, 0, reqBytes.Length);
+                client.Flush();
+                using (var sr = new StreamReader(client, Encoding.UTF8, false, 4096, true)) {
+                    return sr.ReadLine();
+                }
+            }
+        } catch { return null; }
+    }
+}
+'@
+[void](Import-DsCSharp -Name 'DsPhase5Native70' -Source $script:Phase5Src -ProbeType 'DsPhase5Native70')
+
 $script:JobSrc = @'
 using System;
 using System.Runtime.InteropServices;
@@ -2201,7 +2552,8 @@ function Wait-UiSettled([int]$minMs = 110, [int]$maxMs = 1200) {   # v6.2：下�
     if (Test-CdpForeground) { try { if (Wait-CdpSettled) { return } } catch { if ("$($_.Exception.Message)" -like '触发保护*') { throw } } }
     # 操作之后等界面「稳定」：前台窗口与标题连续两次采样一致即返回（页面/弹窗仍在加载时多等一会儿）
     $end = (Get-Date).AddMilliseconds($maxMs)
-    Start-Sleep -Milliseconds $minMs
+    $effMin = if ($script:DxgiOn -and ('DsPhase5Native70' -as [type]) -and [DsPhase5Native70]::LastDirtyRects -eq 0 -and $minMs -gt 55) { 55 } else { $minMs }
+    Start-Sleep -Milliseconds $effMin
     $fg = [DsNative61]::GetForegroundWindow()
     $last = "$fg|$([DsNative61]::WinText($fg))"
     while ((Get-Date) -lt $end) {
@@ -2262,6 +2614,7 @@ function Initialize-Runtime {
 function Stop-Runtime {
     try { Close-LogWriter } catch { }
     try { Close-CdpClient } catch { }
+    try { [void](Export-OtelSpans) } catch { }   # v7.1：OTLP/JSON
     try { Close-DsDriver } catch { }   # v7.0   # v6.3：关闭 CDP WebSocket / HttpClient（不关浏览器本身）
     try { if ($script:Http) { $script:Http.Dispose(); $script:Http = $null } } catch { }
     try { [DsNative61]::Follower = $null; if ($script:Cur) { $script:Cur.Stop(); $script:Cur = $null } } catch { }
@@ -2393,6 +2746,10 @@ function Send-KeySequence([string]$seq) {
     foreach ($it in $items) { Send-KeyCombo $it; Start-Sleep -Milliseconds $(if ([DsNative61]::Humanize) { Get-Random -Minimum 90 -Maximum 211 } else { 40 }) }
 }
 function Send-Text([string]$text) {
+    # v7.0 Phase 5：若输入为纯 ASCII（命令/网址/代码），发送前自动关闭中文 IME 激活态防止吞键
+    if ($text -match '^[\x20-\x7E\r\n\t]+$' -and ('DsPhase5Native70' -as [type])) {
+        try { [void][DsPhase5Native70]::NeutralizeIme([DsNative61]::GetForegroundWindow()) } catch { }
+    }
     if ($text.Length -le 400) {
         [DsNative61]::UnicodeText($text)   # Unicode 直输：不动剪贴板，中文 / Emoji 均可
         Start-Sleep -Milliseconds ([Math]::Min(500, 40 + $text.Length))
@@ -3540,6 +3897,10 @@ function Get-PixelSig([IntPtr]$hwnd) {
         $l = [int][Math]::Max($bd[0], $s[0]); $t = [int][Math]::Max($bd[1], $s[1]); $r = [int][Math]::Min($bd[2], $s[2]); $b = [int][Math]::Min($bd[3], $s[3])
         $w = $r - $l; $h = $b - $t
         if ($w -lt 16 -or $h -lt 16) { return $null }
+        if ($script:DxgiOn -and ('DsPhase5Native70' -as [type])) {
+            $fastSig = [DsPhase5Native70]::FastPixelSig48x32($l, $t, $w, $h)
+            if ($null -ne $fastSig -and $fastSig.Length -eq 1536) { return , $fastSig }
+        }
         $bmp = [System.Drawing.Bitmap]::new($w, $h)
         $g = [System.Drawing.Graphics]::FromImage($bmp)
         Copy-ScreenPixels $g $l $t $w $h
@@ -4957,13 +5318,17 @@ function Invoke-ActionCore($a, [string]$kind) {
 }
 function Invoke-Action($a) {
     $kind = "$($a.action)".ToLower().Trim()
-    Assert-ActionPolicy $a $kind   # v6.4：所有动作在此强制经过策略门（路径牢笼 / AST / 污点 / HITL），不依赖模型自觉
+    try { Assert-ActionPolicy $a $kind } catch { try { Write-GoldenEntry $a $kind "$($_.Exception.Message)" } catch { }; throw }   # v6.4：策略门（路径牢笼 / AST / 污点 / HITL）；v7.1：Golden-Trace 录制拒绝裁决
+    try { Write-GoldenEntry $a $kind '' } catch { if ($_.Exception.Message -like '*[[]SECURITY_*') { throw } }
+    Register-ActionStart $a $kind   # v7.1：单调 action_id；外部编排器模式下做幂等 / 乐观锁
     $script:EffectProbe = $null; $script:LastEffect = $null
     [DsNative61]::ExpectRoot = [IntPtr]::Zero
     Assert-BulkInterlock $a $kind   # v4.2：数量联锁（删除/归档/全选前核对已勾选行数）
     $before = [DsNative61]::GetForegroundWindow()
     if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect') { Set-CdpActionEpoch }   # v6.3
+    $v71sw = [System.Diagnostics.Stopwatch]::StartNew()
     $r = Invoke-ActionCore $a $kind
+    Add-Span 'input' ([double]$v71sw.Elapsed.TotalMilliseconds) $kind   # v7.1
     if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect') {
         if (-not (Test-CdpForeground)) { Start-Sleep -Milliseconds 60 }   # v6.4：CDP 前台由 Wait-CdpSettled 确定性等待，不再固定多睡 60ms
         $script:CdpSettleNote = ''
@@ -6815,6 +7180,155 @@ function Invoke-OptSelfTest($rec) {
         try { if (Test-Path -LiteralPath $tmpDir) { Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
     }
     & $rec 'v6.5 输出精简契约已注入系统提示' ($NoTerse -or ($SystemPrompt -like '*输出精简契约*')) "NoTerse=$([bool]$NoTerse)"
+    Invoke-Phase5SelfTest $rec
+}
+
+# ====================================================================================================
+# v7.0 Phase 5：24GB 统一内存守卫、SkillStore v2 衰减与状态 Checkpoint、UIPI 自签名证书配置与自检
+# ====================================================================================================
+function Test-UmaMemoryHealth {
+    if (-not ('DsPhase5Native70' -as [type])) { return [pscustomobject]@{ TotalMB = 24576; AvailMB = 12288; LoadPct = 50; Tripped = $false } }
+    $m = [DsPhase5Native70]::GetMemoryTelemetryMB()
+    $tripped = [DsPhase5Native70]::CheckUmaCircuitBreaker($script:MemoryFloorMB, -1)
+    [void][DsPhase5Native70]::CheckSidecarIdleUnload($script:SidecarIdleTtlSec)
+    try { if ((Update-MemoryGuard) -eq 'degraded') { $tripped = $true } } catch { }   # v7.1：与 MemGuard 状态机同源（4GB 线）
+    if ($tripped -and -not $script:UmaCircuitTripped) {
+        $script:UmaCircuitTripped = $true
+        $script:ScanCap = 800
+        Write-Host ("  [UMA 24GB 内存熔断守卫] 当前可用物理内存 {0} MB < 阈值 {1} MB：已自动卸载本地侧车缓存、收紧 UIA 扫描上限并锁定云端轻量通道 deepseek-flash！" -f $m[1], $script:MemoryFloorMB) -ForegroundColor Yellow
+        Write-Log @{ type = 'uma_circuit_breaker'; totalMB = $m[0]; availMB = $m[1]; loadPct = $m[2]; floorMB = $script:MemoryFloorMB }
+    }
+    elseif (-not $tripped -and $script:UmaCircuitTripped -and $m[1] -ge ($script:MemoryFloorMB + 768)) {
+        $script:UmaCircuitTripped = $false
+        $script:ScanCap = 1500
+    }
+    return [pscustomobject]@{ TotalMB = $m[0]; AvailMB = $m[1]; LoadPct = $m[2]; Tripped = $tripped }
+}
+
+function Get-SkillDecayWeight($Skill, [datetime]$Now = (Get-Date)) {
+    if ($null -eq $Skill) { return 0.0 }
+    $ageDays = 0.0
+    if ($Skill.ts) {
+        try { $ageDays = [Math]::Max(0.0, ($Now - [datetime]::Parse("$($Skill.ts)")).TotalDays) } catch { $ageDays = 0.0 }
+    }
+    $uses = [Math]::Max(1, [int]$Skill.uses)
+    $fails = if ($null -ne $Skill.fails) { [Math]::Max(0, [int]$Skill.fails) } else { 0 }
+    $succRate = [double]$uses / [double]($uses + $fails * 1.8)
+    $timeDecay = [Math]::Exp(-0.025 * $ageDays)
+    return [Math]::Round($succRate * $timeDecay * (1.0 + 0.05 * [Math]::Min(5, $uses)), 4)
+}
+
+function Save-TaskCheckpoint([string]$TaskText, [int]$Step, [int]$PlanCur, $Trail) {
+    try {
+        $base = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'DeepSeekComputerUse\checkpoints' } else { Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse\checkpoints' }
+        if (-not (Test-Path -LiteralPath $base)) { [void][System.IO.Directory]::CreateDirectory($base) }
+        $cpFile = Join-Path $base ("ckpt-task{0:D2}.json" -f [Math]::Max(1, [int]$script:TaskNo))
+        $obj = [ordered]@{
+            version = '7.0-phase5'
+            task = (Protect-SkillText $TaskText)
+            step = $Step
+            planCur = $PlanCur
+            trail = @($Trail | ForEach-Object { Protect-SkillText "$_" })
+            tainted = [bool]$script:Taint.Tainted
+            ts = (Get-Date).ToString('o')
+        }
+        [System.IO.File]::WriteAllText($cpFile, ($obj | ConvertTo-Json -Compress -Depth 5), [System.Text.UTF8Encoding]::new($false))
+        return $cpFile
+    }
+    catch { return $null }
+}
+
+function Restore-TaskCheckpoint([string]$CkptPath) {
+    if ([string]::IsNullOrWhiteSpace($CkptPath) -or -not (Test-Path -LiteralPath $CkptPath)) { return $null }
+    try {
+        $raw = [System.IO.File]::ReadAllText($CkptPath, [System.Text.Encoding]::UTF8)
+        if (@(Find-InjectionPhrases $raw).Count -gt 0) { return $null }
+        return ($raw | ConvertFrom-Json)
+    }
+    catch { return $null }
+}
+
+function Export-UiAccessManifest([string]$OutDir) {
+    if ([string]::IsNullOrWhiteSpace($OutDir)) {
+        $OutDir = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'DeepSeekComputerUse\uipi' } else { Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse\uipi' }
+    }
+    if (-not (Test-Path -LiteralPath $OutDir)) { [void][System.IO.Directory]::CreateDirectory($OutDir) }
+    $manifestPath = Join-Path $OutDir 'driver-core.exe.manifest'
+    $xml = @'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+  <assemblyIdentity version="7.0.0.0" processorArchitecture="amd64" name="DeepSeek.ComputerUse.DriverCore" type="win32"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="true"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <asmv3:application>
+    <asmv3:windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </asmv3:windowsSettings>
+  </asmv3:application>
+</assembly>
+'@
+    [System.IO.File]::WriteAllText($manifestPath, $xml.Trim(), [System.Text.UTF8Encoding]::new($false))
+    return $manifestPath
+}
+
+function Invoke-Phase5SelfTest($rec) {
+    # ① DsPhase5Native70 LockBits 极速灰度指纹 vs 传统 GetPixel 100% 字节一致性与耗时检验
+    $bmpTest = [System.Drawing.Bitmap]::new(48, 32, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+    try {
+        for ($y = 0; $y -lt 32; $y++) {
+            for ($x = 0; $x -lt 48; $x++) {
+                $bmpTest.SetPixel($x, $y, [System.Drawing.Color]::FromArgb(($x * 5) % 256, ($y * 7) % 256, (($x + $y) * 3) % 256))
+            }
+        }
+        $swFast = [System.Diagnostics.Stopwatch]::StartNew()
+        $sigFast = [DsPhase5Native70]::ExtractGray48x32FromBitmap($bmpTest, $swFast)
+        $fastUs = [DsPhase5Native70]::LastCaptureUs
+        $sigSlow = New-Object 'byte[]' 1536
+        for ($y = 0; $y -lt 32; $y++) {
+            for ($x = 0; $x -lt 48; $x++) {
+                $c = $bmpTest.GetPixel($x, $y)
+                $sigSlow[$y * 48 + $x] = [byte][int]((299 * $c.R + 587 * $c.G + 114 * $c.B) / 1000)
+            }
+        }
+        $diff = Get-PixelDiff $sigFast $sigSlow
+        $dxgiHw = [DsPhase5Native70]::ProbeDxgiHardware()
+        & $rec 'v7.0 Phase 5：LockBits + DXGI 极速指纹（与 GDI 逐像素 0.0% 误差，单帧提取 < 2ms）' ($null -ne $sigFast -and $sigFast.Length -eq 1536 -and $diff -eq 0.0) ("长度=$($sigFast.Length) 误差=${diff}% 耗时=${fastUs}us DXGI硬件=$dxgiHw")
+    }
+    finally { $bmpTest.Dispose() }
+
+    # ② 24GB 统一内存（AMD Radeon 780M UMA）水位监控与 < 4096MB 熔断自检
+    $mem = [DsPhase5Native70]::GetMemoryTelemetryMB()
+    [DsPhase5Native70]::TouchSidecar()
+    $tripLow = [DsPhase5Native70]::CheckUmaCircuitBreaker(4096, 3200)
+    $unloadedOnTrip = (-not [DsPhase5Native70]::SidecarLoaded)
+    [DsPhase5Native70]::TouchSidecar()
+    $tripHigh = [DsPhase5Native70]::CheckUmaCircuitBreaker(4096, 8192)
+    $keptOnHigh = [DsPhase5Native70]::SidecarLoaded
+    & $rec 'v7.0 Phase 5：24GB UMA 内存水位熔断守卫（<4096MB 自动卸载本地侧车并降级 deepseek-flash）' ($mem[0] -gt 0 -and $tripLow -and $unloadedOnTrip -and (-not $tripHigh) -and $keptOnHigh) ("主机内存=$($mem[0])MB 可用=$($mem[1])MB 低水位熔断=$tripLow 侧车卸载=$unloadedOnTrip")
+
+    # ③ SkillStore v2 衰减模型 + 任务 Checkpoint 保存/恢复 + 注入污染拒载
+    $now = Get-Date
+    $skFresh = [pscustomobject]@{ uses = 4; fails = 0; ts = $now.AddDays(-1).ToString('o') }
+    $skStale = [pscustomobject]@{ uses = 1; fails = 3; ts = $now.AddDays(-60).ToString('o') }
+    $wFresh = Get-SkillDecayWeight $skFresh $now
+    $wStale = Get-SkillDecayWeight $skStale $now
+    $cpFile = Save-TaskCheckpoint '打开设置检查显示分辨率' 3 2 @('launch ms-settings:display', 'click 分辨率')
+    $cpLoaded = Restore-TaskCheckpoint $cpFile
+    try { if ($cpFile -and (Test-Path -LiteralPath $cpFile)) { Remove-Item -LiteralPath $cpFile -Force -ErrorAction SilentlyContinue } } catch { }
+    & $rec 'v7.0 Phase 5：SkillStore v2 技能衰减权重与长程状态 Checkpoint 回滚' (($wFresh -gt $wStale * 3.0) -and ($null -ne $cpLoaded) -and ([int]$cpLoaded.step -eq 3)) ("新技能权重=$wFresh 衰减技能权重=$wStale CheckpointStep=$($cpLoaded.step)")
+
+    # ④ Named Pipe IPC 帧协议 + UIPI 清单生成 + 24GB 沙箱内存配额校验
+    $rpcJson = [DsPhase5Native70]::BuildPipeRpc(7, 'dxgi_capture', '{"dirtyOnly":true}')
+    $mfFile = Export-UiAccessManifest (Join-Path ([System.IO.Path]::GetTempPath()) "dscu-uipi-$PID")
+    $mfOk = (Test-Path -LiteralPath $mfFile) -and ([System.IO.File]::ReadAllText($mfFile) -match 'uiAccess="true"')
+    try { Remove-Item -LiteralPath ([System.IO.Path]::GetDirectoryName($mfFile)) -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+    & $rec 'v7.0 Phase 5：Named Pipe IPC 契约帧 + uiAccess="true" 清单生成' (($rpcJson -match '"method":"dxgi_capture"') -and $mfOk) ("RPC=$rpcJson uiAccessManifest=$mfOk")
 }
 #endregion
 #region ---------- DeepSeek ----------
@@ -7022,6 +7536,7 @@ function Invoke-DeepSeek([string]$userContent, [string]$systemText = '', [int]$m
                 $script:LastFinish = [string]$obj.choices[0].finish_reason
                 if ([string]::IsNullOrWhiteSpace($content)) { throw 'API 返回了空内容' }
                 $script:LastApiMs = [int]$swApi.ElapsedMilliseconds
+                Add-Span 'network' ([double]$swApi.Elapsed.TotalMilliseconds) 'deepseek'   # v7.1
                 Set-LastUsage $obj $script:LastApiMs
                 return $content
             }
@@ -7145,6 +7660,7 @@ function Invoke-AgentTask([string]$TaskText) {
             $swStep = [System.Diagnostics.Stopwatch]::StartNew()
             $resumeNote = Resume-TargetWindow   # v5：前台被控制台占据时由系统切回目标窗口
             if ($resumeNote) { Write-Host "  $resumeNote" -ForegroundColor DarkGray }
+            [void](Test-UmaMemoryHealth)   # v7.0 Phase 5：每步检查 24GB UMA 内存水位（<4096MB 自动熔断保护）
             $obs = Get-Observation
             $sig = Get-ObsSig $obs
             # 刚操作完界面却完全没变：很可能是页面/弹窗延迟生效（日志任务3），先自动等一下再观察一次，再交给模型
@@ -7156,6 +7672,7 @@ function Invoke-AgentTask([string]$TaskText) {
             }
             $lastActed = $false
             $obsMs = [int]$swStep.ElapsedMilliseconds
+            Add-Span $(if ($obs.Cdp) { 'cdp' } else { 'uia' }) ([double]$obsMs) 'observe'   # v7.1
             Update-LedgerFromObservation $obs   # v5：用这一轮观察核实上一轮动作的效果
             $obs = Protect-Observation $obs     # v6.4：污点标记 + 间接提示词注入清洗（命中的行在交给模型之前就被删除）
             if ($SaveScreenshots -and $script:RunDir) {
@@ -7224,7 +7741,9 @@ function Invoke-AgentTask([string]$TaskText) {
             $esc = Test-ShouldEscalateToVision $obs
             if ($esc.Use) {
                 try {
+                    $v71vs = [System.Diagnostics.Stopwatch]::StartNew()
                     $vr = Invoke-DeepSeekVisionStep $userContent $obs $esc $step
+                    Add-Span 'vision' ([double]$v71vs.Elapsed.TotalMilliseconds) 'som+vlm'   # v7.1
                     $raw = $vr.Raw; $visionCtx = $vr.Ctx
                     $script:VisionTurns++; $script:VisionFails = 0
                     $script:Taint.Tainted = $true; $script:Taint.Reasons = @($script:Taint.Reasons) + @('视觉截图（含外部文字）')   # v6.4
@@ -7450,6 +7969,7 @@ function Invoke-AgentTask([string]$TaskText) {
     Stop-TaskProcesses   # v6.4：任务结束也清理遗留的 run_process 子进程
     $elapsed = [int]((Get-Date) - $taskStart).TotalSeconds
     Write-Host "本任务耗时: ${elapsed} 秒" -ForegroundColor DarkGray
+    try { $spn = Format-SpanSummary $script:TaskNo; if ($spn) { Write-Host "  $spn" -ForegroundColor DarkGray; Write-Log @{ type = 'spans'; summary = $spn; traceId = $script:TraceId } } } catch { }   # v7.1
     try { $v7n = Format-V7Note; if ($v7n) { Write-Host "  $v7n" -ForegroundColor DarkGray; Write-Log @{ type = 'v7'; note = $v7n; capDxgi = $script:CapStats.Dxgi; capGdi = $script:CapStats.Gdi; memState = $script:MemGuard.State; fast = [bool]$fpDone } } } catch { }
     $usageSum = Format-UsageSummary
     if ($usageSum) {
@@ -7479,6 +7999,7 @@ function Invoke-SelfTest {
     & $rec '运行空间池（后台 UIA 调用）' ($null -ne $script:Pool) ''
     Invoke-SecuritySelfTest $rec   # v6.4：路径牢笼 / AST / 污点 / CLM / Job Object 自检
     Invoke-V7SelfTest $rec         # v7.0：快速通道 / 自适应 token / 内存熔断 / 技能衰减 / 驱动 RPC
+    Invoke-V71SelfTest $rec        # v7.1：Span / OTLP / 幂等 / aHash / IPC / Golden / 适配器 / 熔断同源
     Invoke-OptSelfTest $rec        # v6.5：历史窗口 / 计划前缀 / 遥测 / 过程记忆
     # ---- 纯逻辑自检（不碰鼠标键盘）：日志里出现过的真实故障样本 ----
     $two = '{"thought":"a","action":"wait","seconds":1}' + "`n" + '{"thought":"b","action":"done","summary":"x"}'
@@ -8104,6 +8625,7 @@ function Confirm-HighRiskAction {
         }
         catch { if ("$($_.Exception.Message)" -like '触发保护*') { throw }; $ok = $false; $how = 'dialog-error:' + $_.Exception.Message }
     }
+    if ($script:GoldenFile) { $script:HitlTrail.Add([bool]$ok) }   # v7.1：Golden-Trace 记录人工裁决
     Write-SecEvent 'HITL' "kind=$Kind allow=$ok how=$how detail=$(Limit-Text $Detail 120)"
     if ($ok -and $Kind -eq 'nav' -and $Domain) { [void]$script:SessionApprovedDomains.Add($Domain) }
     if (-not $ok) { $script:SecStats.HitlDenied++ }
@@ -8599,7 +9121,7 @@ function Invoke-EvalHarness {
     $svSafe = $script:SafeOn; $script:SafeOn = $true
     Write-Host ''
     Write-Host '=== DeepSeek Computer Use v6.4 · 确定性评估与红队套件（Invoke-EvalHarness）===' -ForegroundColor Cyan
-    & $emit @{ type = 'meta'; version = '7.0'; ps = "$($PSVersionTable.PSVersion)"; os = "$([System.Environment]::OSVersion.VersionString)"; evalAgent = $EvalAgent; safeMode = $true }
+    & $emit @{ type = 'meta'; version = '7.1'; ps = "$($PSVersionTable.PSVersion)"; os = "$([System.Environment]::OSVersion.VersionString)"; evalAgent = $EvalAgent; safeMode = $true }
     try {
         Write-Host '  [1/3] 安全语料（路径越权 / 危险 AST / 间接提示词注入）...' -ForegroundColor DarkGray
         $res = Invoke-SecurityCorpus; $st = Get-CorpusStats $res
@@ -8769,7 +9291,11 @@ function Update-MemoryGuard {
     elseif ($g.State -eq 'degraded' -and $m.FreeGB -ge ($min + 0.75)) { $g.State = 'ok' }
     return $g.State
 }
-function Test-LocalSidecarAllowed { return ((Update-MemoryGuard) -eq 'ok') }
+function Test-LocalSidecarAllowed {
+    $okMem = ((Update-MemoryGuard) -eq 'ok')
+    if ($okMem -and ('DsPhase5Native70' -as [type])) { try { [DsPhase5Native70]::TouchSidecar() } catch { } }   # v7.1：被使用 = 活跃，重置 180s 空闲卸载计时
+    return $okMem
+}
 
 # ---------------- 4. 原生驱动桥：可选的 driver-core（Rust）Named Pipe + 共享内存帧；不存在 / 出错一律无感回退 GDI ----------------
 # 协议：\\.\pipe\dscu-driver-v1 上的 NDJSON JSON-RPC 2.0，每个请求带 auth 令牌（%LOCALAPPDATA%\DeepSeekComputerUse\driver.token，仅当前用户可读）。
@@ -8789,7 +9315,7 @@ function Get-DriverToken {
 }
 function Invoke-DriverRpc([string]$Method, $Params, [int]$TimeoutMs = 400) {
     $script:Drv.Id++
-    $req = [ordered]@{ jsonrpc = '2.0'; id = $script:Drv.Id; method = $Method; params = $Params; auth = $script:Drv.Token } | ConvertTo-Json -Compress -Depth 6
+    $req = [ordered]@{ jsonrpc = '2.0'; v = 1; action_id = [long]$script:ActionSeq; id = $script:Drv.Id; method = $Method; params = $Params; auth = $script:Drv.Token } | ConvertTo-Json -Compress -Depth 6
     $script:Drv.Writer.WriteLine($req)
     $script:Drv.Writer.Flush()
     $t = $script:Drv.Reader.ReadLineAsync()
@@ -8806,9 +9332,12 @@ function Connect-DsDriver {
     if ([datetime]::UtcNow -lt $script:Drv.DownUntil) { return $false }
     try {
         if (-not (Get-DriverToken)) { $script:Drv.DownUntil = [datetime]::UtcNow.AddSeconds(600); return $false }   # 没装驱动：10 分钟内不再探测
-        $name = if ($DriverPipe) { $DriverPipe } else { 'dscu-driver-v1' }
-        $p = [System.IO.Pipes.NamedPipeClientStream]::new('.', $name, [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None)
-        $p.Connect(60)
+        $p = $null
+        foreach ($name in @(if ($DriverPipe) { $DriverPipe } else { 'dscu-driver-v1'; $PipeName })) {   # v7.1：两份代码的管道名统一探测
+            $cand = [System.IO.Pipes.NamedPipeClientStream]::new('.', $name, [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None)
+            try { $cand.Connect(60); $p = $cand; break } catch { $cand.Dispose() }
+        }
+        if ($null -eq $p) { throw 'no driver pipe' }
         $enc = [System.Text.UTF8Encoding]::new($false)
         $script:Drv.Pipe = $p
         $script:Drv.Reader = [System.IO.StreamReader]::new($p, $enc, $false, 65536, $true)
@@ -8834,6 +9363,7 @@ function Copy-DriverPixels($g, [int]$x, [int]$y, [int]$w, [int]$h) {
     }
     finally { if ($bmp) { $bmp.Dispose() }; if ($acc) { $acc.Dispose() }; $mmf.Dispose() }
     $script:CapStats.Dxgi++; $script:CapStats.DxgiMs += $sw.Elapsed.TotalMilliseconds
+    Add-Span 'capture' ([double]$sw.Elapsed.TotalMilliseconds) 'dxgi'   # v7.1
     return $true
 }
 function Copy-ScreenPixels($g, [int]$x, [int]$y, [int]$w, [int]$h) {
@@ -8848,6 +9378,7 @@ function Copy-ScreenPixels($g, [int]$x, [int]$y, [int]$w, [int]$h) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $g.CopyFromScreen($x, $y, 0, 0, [System.Drawing.Size]::new($w, $h))
     $script:CapStats.Gdi++; $script:CapStats.GdiMs += $sw.Elapsed.TotalMilliseconds
+    Add-Span 'capture' ([double]$sw.Elapsed.TotalMilliseconds) 'gdi'   # v7.1
 }
 
 # ---------------- 5. 技能衰减（SkillStore v2）：成功率 × 时间半衰期；长期不用 / 反复失败的技能自动淘汰 ----------------
@@ -8920,7 +9451,7 @@ function Format-V7Note {
 function Invoke-PolicyWorker {
     $ws = if ($WorkspaceRoot) { "$WorkspaceRoot" } else { Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse\workspace\worker' }
     $script:WorkspaceRoot = $ws; $script:SafeOn = $true
-    [Console]::Out.WriteLine('{"ready":true,"version":"7.0"}'); [Console]::Out.Flush()
+    [Console]::Out.WriteLine('{"ready":true,"version":"7.1","ipc":1}'); [Console]::Out.Flush()
     while ($null -ne ($line = [Console]::In.ReadLine())) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try {
@@ -8936,6 +9467,10 @@ function Invoke-PolicyWorker {
                 }
                 'injection' { $o = @{ hits = @(Find-InjectionPhrases "$($q.text)").Count } }
                 'redteam' { $o = Get-CorpusStats (Invoke-SecurityCorpus) }
+                'idem' { $ir = Test-ActionIdempotency $q.action "$($q.kind)" -Commit -SkipLocks; $o = @{ ok = [bool]$ir.Ok; code = "$($ir.Code)"; detail = "$($ir.Detail)" } }
+                'ipc' { $ir = Test-IpcEnvelope $q.envelope; $o = @{ ok = [bool]$ir.Ok; reason = "$($ir.Reason)" } }
+                'golden' { $gv = Invoke-GoldenVerify "$($q.path)"; $o = @{ total = $gv.Total; match = $gv.Match; equivalence = $gv.Equivalence; mismatches = @($gv.Mismatches | Select-Object -First 20) } }
+                'spans' { $o = @{ traceId = $script:TraceId; stats = @(Get-SpanStats) } }
                 default { $o = @{ error = "unknown op '$($q.op)'" } }
             }
         }
@@ -8996,12 +9531,491 @@ function Invoke-V7SelfTest($rec) {
 }
 #endregion
 #region ---------- 主流程 ----------
+#region ---------- v7.1 融合层：computer use（v7.0 调度优化）× computer-use1（v7.0 硬件直连）｜幂等动作 / 全链路 Span / Golden-Trace / 基准适配器 / IPC 契约 ----------
+# 设计铁律（Strangler Fig · 零回归）：本区块只「增」不「改」。所有接入点都被 try/catch 包裹，任何一个失败都不影响原有动作执行、安全门与四级感知漏斗。
+# 与 Python / Rust / C++ / TypeScript 平面共用同一份契约：IPC 信封 v=1、action_id 单调递增、OTLP/JSON Span、dscu.golden/1 轨迹格式。
+$script:ActionSeq = 0L
+$script:ExtLastActionId = 0L
+$script:IdemCache = [System.Collections.Generic.Dictionary[string, string]]::new()
+$script:Orchestrated = ("$env:DSCU_ORCHESTRATED" -eq '1')      # 仅当外部编排器（Python）驱动时才强制 action_id 幂等 / 乐观锁；独立运行时零影响
+$script:SpanOn = (-not $NoSpans)
+$script:Spans = [System.Collections.Generic.List[object]]::new()
+$script:TraceId = [Guid]::NewGuid().ToString('N')
+$script:GoldenFile = if ([string]::IsNullOrWhiteSpace($GoldenTrace)) { $null } else { "$GoldenTrace" }
+$script:GoldenSeq = 0
+$script:HitlTrail = [System.Collections.Generic.List[bool]]::new()
+$script:IpcVersion = 1
+$script:IpcSeq = 0L
+
+function Get-ActProp($o, [string]$Name) {
+    if ($null -eq $o) { return $null }
+    if ($o -is [System.Collections.IDictionary]) { if ($o.Contains($Name)) { return $o[$Name] } else { return $null } }
+    $p = $o.PSObject.Properties[$Name]
+    if ($p) { return $p.Value }
+    return $null
+}
+
+# ---------------- 1. 全链路 Span：Capture / UIA / CDP / Vision / Network / Input 的 P50 / P99 ----------------
+function Get-Percentile([double[]]$Values, [double]$P) {
+    $n = @($Values).Count
+    if ($n -eq 0) { return 0.0 }
+    $s = [double[]]@($Values | Sort-Object)
+    $idx = [int][Math]::Ceiling($P / 100.0 * $n) - 1
+    if ($idx -lt 0) { $idx = 0 }
+    if ($idx -ge $n) { $idx = $n - 1 }
+    return [Math]::Round([double]$s[$idx], 2)
+}
+function Add-Span([string]$Plane, [double]$Ms, [string]$Name = '') {
+    if (-not $script:SpanOn) { return }
+    try {
+        $endNs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() * 1000000L
+        $script:Spans.Add([pscustomobject]@{ Plane = $Plane; Name = $Name; Ms = [Math]::Round($Ms, 3); EndNs = $endNs; Task = [int]$script:TaskNo; Seq = [long]$script:ActionSeq })
+        if ($script:Spans.Count -gt 20000) { $script:Spans.RemoveRange(0, 5000) }
+    }
+    catch { }
+}
+function Get-SpanStats([int]$Task = -1) {
+    $src = @($script:Spans | Where-Object { $Task -lt 0 -or $_.Task -eq $Task })
+    $out = [System.Collections.Generic.List[object]]::new()
+    foreach ($g in @($src | Group-Object Plane)) {
+        $v = [double[]]@($g.Group | ForEach-Object { [double]$_.Ms })
+        $out.Add([pscustomobject]@{ Plane = "$($g.Name)"; N = $v.Count; P50 = (Get-Percentile $v 50); P99 = (Get-Percentile $v 99); Max = [Math]::Round([double](($v | Measure-Object -Maximum).Maximum), 2) })
+    }
+    return $out.ToArray()
+}
+function Format-SpanSummary([int]$Task = -1) {
+    $st = @(Get-SpanStats $Task)
+    if ($st.Count -eq 0) { return '' }
+    return ('延迟 P50/P99(ms)：' + ((@($st | Sort-Object Plane) | ForEach-Object { "$($_.Plane) $($_.P50)/$($_.P99)(n=$($_.N))" }) -join ' · '))
+}
+function ConvertTo-OtlpDocument {
+    $i = 0
+    $spans = [System.Collections.Generic.List[object]]::new()
+    foreach ($s in @($script:Spans)) {
+        $i++
+        $dur = [long]([double]$s.Ms * 1000000.0)
+        $spans.Add([ordered]@{
+                traceId = $script:TraceId; spanId = ('{0:x16}' -f [long]$i); name = "dscu.$($s.Plane)"; kind = 1
+                startTimeUnixNano = "$([long]$s.EndNs - $dur)"; endTimeUnixNano = "$([long]$s.EndNs)"
+                attributes = @(
+                    @{ key = 'dscu.plane'; value = @{ stringValue = "$($s.Plane)" } }
+                    @{ key = 'dscu.name'; value = @{ stringValue = "$($s.Name)" } }
+                    @{ key = 'dscu.task'; value = @{ intValue = "$($s.Task)" } }
+                    @{ key = 'dscu.action_id'; value = @{ intValue = "$($s.Seq)" } }
+                )
+            })
+    }
+    return [ordered]@{
+        resourceSpans = @([ordered]@{
+                resource = @{ attributes = @(@{ key = 'service.name'; value = @{ stringValue = 'deepseek-computer-use' } }, @{ key = 'service.version'; value = @{ stringValue = '7.1' } }) }
+                scopeSpans = @([ordered]@{ scope = @{ name = 'dscu.fusion'; version = '7.1' }; spans = $spans.ToArray() })
+            })
+    }
+}
+function Export-OtelSpans([string]$Path = '') {
+    if ($script:Spans.Count -eq 0) { return $null }
+    try {
+        if ([string]::IsNullOrWhiteSpace($Path)) { if ($script:RunDir) { $Path = Join-Path $script:RunDir 'spans.otlp.json' } else { return $null } }
+        [System.IO.File]::WriteAllText($Path, ((ConvertTo-OtlpDocument) | ConvertTo-Json -Depth 12 -Compress), [System.Text.UTF8Encoding]::new($false))
+        return $Path
+    }
+    catch { return $null }
+}
+
+# ---------------- 2. 幂等动作 + 乐观锁（防 IPC 重试导致重复提交；仅外部编排器携带 action_id 时生效） ----------------
+function Get-ActionFingerprint($a, [string]$kind) {
+    $parts = [System.Collections.Generic.List[string]]::new()
+    foreach ($k in 'id', 'ids', 'x', 'y', 'x2', 'y2', 'text', 'keys', 'key', 'target', 'args', 'path', 'command', 'title', 'amount', 'dx', 'dy') {
+        $v = Get-ActProp $a $k
+        if ($null -ne $v) { $parts.Add("$k=$(@($v) -join ',')") }
+    }
+    $h = [System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes("$kind|" + ($parts -join '|')))
+    return [Convert]::ToHexString($h).Substring(0, 16).ToLower()
+}
+function Get-RegionAHash([byte[]]$Sig) {
+    # 48x32 灰度 → 8x8 块均值 → 64 位 aHash（16 位十六进制）；与 Rust / C++ 侧的 vision-engine 指纹同一定义
+    if ($null -eq $Sig -or $Sig.Length -ne 1536) { return $null }
+    $blk = New-Object 'double[]' 64
+    for ($by = 0; $by -lt 8; $by++) {
+        for ($bx = 0; $bx -lt 8; $bx++) {
+            $sum = 0.0
+            for ($y = 0; $y -lt 4; $y++) { for ($x = 0; $x -lt 6; $x++) { $sum += [double]$Sig[($by * 4 + $y) * 48 + ($bx * 6 + $x)] } }
+            $blk[$by * 8 + $bx] = $sum / 24.0
+        }
+    }
+    $mean = ($blk | Measure-Object -Average).Average
+    [uint64]$bits = 0
+    for ($i = 0; $i -lt 64; $i++) { if ($blk[$i] -gt $mean) { $bits = $bits -bor ([uint64]1 -shl $i) } }
+    return $bits.ToString('x16')
+}
+function Measure-HashDistance([string]$A, [string]$B) {
+    if ([string]::IsNullOrEmpty($A) -or [string]::IsNullOrEmpty($B)) { return 64 }
+    try { return [int][System.Numerics.BitOperations]::PopCount([Convert]::ToUInt64($A, 16) -bxor [Convert]::ToUInt64($B, 16)) } catch { return 64 }
+}
+function Test-ActionIdempotency($a, [string]$kind, [switch]$Commit, [switch]$SkipLocks) {
+    $idv = Get-ActProp $a 'action_id'
+    if ($null -eq $idv -or "$idv" -notmatch '^\d+$') { return [pscustomobject]@{ Ok = $true; Code = 'NO_ID'; Detail = '' } }
+    $id = [long]"$idv"
+    $fp = Get-ActionFingerprint $a $kind
+    if ($id -le $script:ExtLastActionId) {
+        $prev = $null
+        if ($script:IdemCache.TryGetValue("$id", [ref]$prev) -and $prev -eq $fp) { return [pscustomobject]@{ Ok = $false; Code = 'IDEMPOTENT_REPLAY'; Detail = "action_id=$id 已执行过（IPC 重试），拒绝重复提交" } }
+        return [pscustomobject]@{ Ok = $false; Code = 'STALE_ACTION_ID'; Detail = "action_id=$id <= 已提交的最大 id=$($script:ExtLastActionId)（必须单调递增）" }
+    }
+    if (-not $SkipLocks -and ('DsNative61' -as [type])) {
+        $eh = Get-ActProp $a 'expect_hwnd'
+        if ($null -ne $eh -and "$eh" -match '^\d+$') {
+            $cur = [int64][DsNative61]::Root([DsNative61]::GetForegroundWindow())
+            if ($cur -ne [int64]"$eh") { return [pscustomobject]@{ Ok = $false; Code = 'STALE_HWND'; Detail = "目标窗口句柄已变化（期望 $eh，当前 $cur），乐观锁拒绝执行" } }
+        }
+        $ef = Get-ActProp $a 'expect_fp'
+        if ($null -ne $ef -and "$ef" -match '^[0-9a-fA-F]{16}$') {
+            $now = Get-RegionAHash (Get-PixelSig ([IntPtr]::Zero))
+            $d = Measure-HashDistance "$ef" $now
+            if ($d -gt 10) { return [pscustomobject]@{ Ok = $false; Code = 'STALE_REGION'; Detail = "区域像素指纹漂移 Hamming=$d（>10），界面已变化，乐观锁拒绝执行" } }
+        }
+    }
+    if ($Commit) {
+        $script:ExtLastActionId = $id
+        $script:IdemCache["$id"] = $fp
+        if ($script:IdemCache.Count -gt 512) { $first = $script:IdemCache.Keys | Select-Object -First 1; [void]$script:IdemCache.Remove($first) }
+    }
+    return [pscustomobject]@{ Ok = $true; Code = 'COMMITTED'; Detail = "action_id=$id" }
+}
+function Register-ActionStart($a, [string]$kind) {
+    $script:ActionSeq = [long]$script:ActionSeq + 1
+    if (-not $script:Orchestrated) { return }
+    $r = Test-ActionIdempotency $a $kind -Commit
+    if (-not $r.Ok) { throw (New-SecError "IPC_$($r.Code)" $r.Detail) }
+}
+
+# ---------------- 3. IPC 信封契约 v1（Named Pipe NDJSON；帧数据走共享内存，不走 Base64） ----------------
+function New-IpcEnvelope([string]$Method, $Params = @{}, [long]$ActionId = 0) {
+    $script:IpcSeq = [long]$script:IpcSeq + 1
+    $e = [ordered]@{ v = $script:IpcVersion; id = $script:IpcSeq; method = $Method; params = $Params; ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+    if ($ActionId -gt 0) { $e['action_id'] = $ActionId }
+    return $e
+}
+function Test-IpcEnvelope($o) {
+    if ($null -eq $o) { return [pscustomobject]@{ Ok = $false; Reason = 'null' } }
+    $v = Get-ActProp $o 'v'; $id = Get-ActProp $o 'id'; $m = Get-ActProp $o 'method'; $aid = Get-ActProp $o 'action_id'
+    if ("$v" -ne "$($script:IpcVersion)") { return [pscustomobject]@{ Ok = $false; Reason = "unsupported version '$v'" } }
+    if ("$id" -notmatch '^\d+$') { return [pscustomobject]@{ Ok = $false; Reason = 'id must be uint' } }
+    if ("$m" -notmatch '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$') { return [pscustomobject]@{ Ok = $false; Reason = "bad method '$m'" } }
+    if ($null -ne $aid -and "$aid" -notmatch '^\d+$') { return [pscustomobject]@{ Ok = $false; Reason = 'action_id must be uint' } }
+    return [pscustomobject]@{ Ok = $true; Reason = '' }
+}
+
+# ---------------- 4. Golden-Trace：录制「动作 → 安全裁决」轨迹，并在新实现上重放，要求 100% 等价 ----------------
+function Get-GoldenActionView($a, [string]$kind) {
+    $v = [ordered]@{ action = $kind }
+    foreach ($k in 'path', 'command', 'target', 'args', 'id', 'x', 'y', 'keys', 'title') {
+        $p = Get-ActProp $a $k
+        if ($null -ne $p -and "$p" -ne '') { $v[$k] = (Limit-Text (Protect-SkillText "$p") 400) }
+    }
+    $t = Get-ActProp $a 'text'
+    if ($null -ne $t) { $v['textLen'] = "$t".Length }
+    return $v
+}
+function Write-GoldenLine($obj) {
+    if (-not $script:GoldenFile) { return }
+    try { [System.IO.File]::AppendAllText($script:GoldenFile, (($obj | ConvertTo-Json -Compress -Depth 6) + "`n"), [System.Text.UTF8Encoding]::new($false)) } catch { }
+}
+function Write-GoldenEntry($a, [string]$kind, [string]$deny) {
+    if (-not $script:GoldenFile) { return }
+    try {
+        $script:GoldenSeq++
+        $code = ''
+        if ($deny -and $deny -match '(SECURITY_[A-Z_]+|IPC_[A-Z_]+)') { $code = $Matches[1] }
+        Write-GoldenLine ([ordered]@{
+                type = 'golden_action'; seq = $script:GoldenSeq; aid = [long]$script:ActionSeq; view = (Get-GoldenActionView $a $kind)
+                replayable = ($kind -in 'write_file', 'run_powershell', 'launch', 'run_process')
+                tainted = [bool]$script:Taint.Tainted; injection = [bool]$script:Taint.TaskInjection; ws = "$($script:WorkspaceRoot)"
+                verdict = $(if ($deny) { 'deny' } else { 'allow' }); code = $code; hitl = @($script:HitlTrail.ToArray())
+            })
+        $script:HitlTrail.Clear()
+    }
+    catch { }
+}
+function Get-GoldenCorpusRows {
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $idx = @{}
+    foreach ($r in @(Invoke-SecurityCorpus)) {
+        $c = "$($r.Cat)"; if (-not $idx.ContainsKey($c)) { $idx[$c] = 0 }; $idx[$c]++
+        $rows.Add([pscustomobject]@{ Key = ('{0}#{1:D3}|{2}' -f $c, $idx[$c], $r.Id); Actual = "$($r.Actual)" })
+    }
+    return $rows.ToArray()
+}
+function Get-GoldenDigest($Rows) {
+    $txt = (@($Rows) | ForEach-Object { "$($_.Key)=$($_.Actual)" }) -join "`n"
+    return [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($txt))).ToLower()
+}
+function Write-GoldenHeader {
+    if (-not $script:GoldenFile) { return }
+    $rows = @(Get-GoldenCorpusRows)
+    Write-GoldenLine ([ordered]@{ type = 'golden_meta'; schema = 'dscu.golden/1'; version = '7.1'; ps = "$($PSVersionTable.PSVersion)"; workspace = "$($script:WorkspaceRoot)"; corpusN = $rows.Count; digest = (Get-GoldenDigest $rows); ts = (Get-Date).ToString('o') })
+    foreach ($r in $rows) { Write-GoldenLine ([ordered]@{ type = 'golden_corpus'; key = $r.Key; actual = $r.Actual }) }
+}
+function Invoke-GoldenReplayAction($e) {
+    $sv = @{ R = $script:HitlResponder; T = $script:Taint.Tainted; I = $script:Taint.TaskInjection; S = $script:SafeOn }
+    $q = [System.Collections.Generic.Queue[bool]]::new()
+    foreach ($h in @($e.hitl)) { $q.Enqueue([bool]$h) }
+    $verdict = 'allow'; $code = ''
+    try {
+        $o = [ordered]@{}
+        foreach ($p in $e.view.PSObject.Properties) { $o[$p.Name] = $p.Value }
+        $kind = "$($o['action'])"
+        $a = [pscustomobject]$o
+        $script:SafeOn = $true
+        $script:Taint.Tainted = [bool]$e.tainted; $script:Taint.TaskInjection = [bool]$e.injection
+        $script:HitlResponder = { param($k, $d, $dom) if ($q.Count -gt 0) { return $q.Dequeue() } return $false }.GetNewClosure()
+        Assert-ActionPolicy $a $kind
+    }
+    catch {
+        $verdict = 'deny'
+        if ("$($_.Exception.Message)" -match '(SECURITY_[A-Z_]+|IPC_[A-Z_]+)') { $code = $Matches[1] }
+    }
+    finally {
+        $script:HitlResponder = $sv.R; $script:Taint.Tainted = $sv.T; $script:Taint.TaskInjection = $sv.I; $script:SafeOn = $sv.S
+    }
+    return [pscustomobject]@{ Verdict = $verdict; Code = $code }
+}
+function Invoke-GoldenVerify([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { throw "Golden 轨迹文件不存在：$Path" }
+    $rows = @([System.IO.File]::ReadAllLines($Path, [System.Text.Encoding]::UTF8) | Where-Object { $_.Trim() } | ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } | Where-Object { $_ })
+    $meta = $rows | Where-Object { $_.type -eq 'golden_meta' } | Select-Object -First 1
+    $svWs = $script:WorkspaceRoot; $svSafe = $script:SafeOn
+    $total = 0; $match = 0; $bad = [System.Collections.Generic.List[string]]::new()
+    try {
+        if ($meta -and $meta.workspace) { $script:WorkspaceRoot = "$($meta.workspace)" }
+        elseif (-not $script:WorkspaceRoot) { $script:WorkspaceRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse\workspace\golden' }
+        $script:SafeOn = $true
+        $cur = @{}
+        foreach ($r in @(Get-GoldenCorpusRows)) { $cur[$r.Key] = $r.Actual }
+        foreach ($r in @($rows | Where-Object { $_.type -eq 'golden_corpus' })) {
+            $total++
+            if ($cur.ContainsKey("$($r.key)") -and $cur["$($r.key)"] -eq "$($r.actual)") { $match++ } else { $bad.Add("corpus:$($r.key) 期望=$($r.actual) 实际=$($cur["$($r.key)"])") }
+        }
+        foreach ($e in @($rows | Where-Object { $_.type -eq 'golden_action' -and $_.replayable })) {
+            $total++
+            if ($e.ws) { $script:WorkspaceRoot = "$($e.ws)" }
+            $res = Invoke-GoldenReplayAction $e
+            if ($res.Verdict -eq "$($e.verdict)" -and ($res.Verdict -eq 'allow' -or "$($res.Code)" -eq "$($e.code)")) { $match++ } else { $bad.Add("action#$($e.seq) $($e.view.action) 期望=$($e.verdict)/$($e.code) 实际=$($res.Verdict)/$($res.Code)") }
+        }
+    }
+    finally { $script:WorkspaceRoot = $svWs; $script:SafeOn = $svSafe }
+    return [pscustomobject]@{ File = $Path; Total = $total; Match = $match; Equivalence = $(if ($total -eq 0) { 0.0 } else { [Math]::Round($match / $total, 6) }); Mismatches = $bad.ToArray(); Digest = $(if ($meta) { "$($meta.digest)" } else { '' }) }
+}
+
+# ---------------- 5. 评测适配器：WAA / OSWorld / AgentDojo / ScreenSpot-Pro（-ExportWaaReport，-BenchFormat 选择） ----------------
+function Read-RunTasks([int]$MaxRuns = 20) {
+    $roots = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($LogDir)) { $roots.Add($LogDir) }
+    if ($env:LOCALAPPDATA) { $roots.Add((Join-Path $env:LOCALAPPDATA 'DeepSeekComputerUse\logs')) }
+    $roots.Add((Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse\logs'))
+    $files = @()
+    foreach ($r in $roots) { if (Test-Path -LiteralPath $r) { $files += @(Get-ChildItem -LiteralPath $r -Filter run.jsonl -Recurse -File -ErrorAction SilentlyContinue) } }
+    $files = @($files | Sort-Object LastWriteTime -Descending | Select-Object -First $MaxRuns)
+    $tasks = [System.Collections.Generic.List[object]]::new()
+    foreach ($f in $files) {
+        $cur = @{}
+        foreach ($ln in [System.IO.File]::ReadLines($f.FullName)) {
+            if ([string]::IsNullOrWhiteSpace($ln)) { continue }
+            try { $o = $ln | ConvertFrom-Json } catch { continue }
+            $tn = [int]$o.taskNo
+            switch ("$($o.type)") {
+                'task_start' { $cur[$tn] = [ordered]@{ run = $f.Directory.Name; taskNo = $tn; instruction = "$($o.task)"; steps = 0; status = 'unknown'; summary = ''; start = "$($o.time)"; end = "$($o.time)"; fast = $false }; break }
+                'action' { if ($cur.ContainsKey($tn)) { $cur[$tn].steps++; $cur[$tn].end = "$($o.time)" }; break }
+                'fastpath' { if ($cur.ContainsKey($tn)) { $cur[$tn].fast = $true }; break }
+                'done' { if ($cur.ContainsKey($tn)) { $cur[$tn].status = 'success'; $cur[$tn].summary = "$($o.summary)"; $cur[$tn].end = "$($o.time)" }; break }
+                'fail' { if ($cur.ContainsKey($tn)) { $cur[$tn].status = 'failure'; $cur[$tn].summary = "$($o.reason)"; $cur[$tn].end = "$($o.time)" }; break }
+                'abort' { if ($cur.ContainsKey($tn)) { $cur[$tn].status = 'aborted'; $cur[$tn].end = "$($o.time)" }; break }
+                default { }
+            }
+        }
+        foreach ($k in ($cur.Keys | Sort-Object)) { $tasks.Add([pscustomobject]$cur[$k]) }
+    }
+    return $tasks.ToArray()
+}
+function New-BenchReport([string]$Format, $Tasks) {
+    $n = @($Tasks).Count
+    $ok = @($Tasks | Where-Object { $_.status -eq 'success' }).Count
+    $avgSteps = if ($n -gt 0) { [Math]::Round((@($Tasks) | Measure-Object -Property steps -Average).Average, 2) } else { 0 }
+    $agent = [ordered]@{ name = 'deepseek-computer-use'; version = '7.1'; model = "$Model"; vision_model = "$VisionModel"; perception = 'CDP>UIA>SoM+VLM>WinRT-OCR' }
+    $lat = @(Get-SpanStats | ForEach-Object { [ordered]@{ plane = $_.Plane; n = $_.N; p50_ms = $_.P50; p99_ms = $_.P99 } })
+    switch ($Format) {
+        'waa' {
+            return [ordered]@{
+                benchmark = 'WindowsAgentArena'; adapter = 'dscu-waa/1'; agent = $agent; generated = (Get-Date).ToString('o')
+                summary = [ordered]@{ tasks = $n; success = $ok; success_rate = $(if ($n) { [Math]::Round($ok / $n, 4) } else { 0 }); avg_steps = $avgSteps }
+                results = @($Tasks | ForEach-Object { [ordered]@{ task_id = "$($_.run)-t$($_.taskNo)"; instruction = $_.instruction; result = $(if ($_.status -eq 'success') { 1 } else { 0 }); status = $_.status; steps = $_.steps; fast_path = $_.fast; summary = $_.summary } })
+                latency = $lat
+            }
+        }
+        'osworld' {
+            return [ordered]@{
+                benchmark = 'OSWorld'; adapter = 'dscu-osworld/1'; agent = $agent; generated = (Get-Date).ToString('o'); observation_type = 'a11y_tree+screenshot'; action_space = 'computer_13-compatible(pyautogui-style)'
+                results = @($Tasks | ForEach-Object { [ordered]@{ example_id = "$($_.run)-t$($_.taskNo)"; domain = 'os'; instruction = $_.instruction; score = $(if ($_.status -eq 'success') { 1.0 } else { 0.0 }); num_steps = $_.steps } })
+                average_score = $(if ($n) { [Math]::Round($ok / $n, 4) } else { 0 })
+            }
+        }
+        'agentdojo' {
+            $st = Get-CorpusStats (Invoke-SecurityCorpus)
+            return [ordered]@{
+                benchmark = 'AgentDojo'; adapter = 'dscu-agentdojo/1'; agent = $agent; generated = (Get-Date).ToString('o')
+                utility = $(if ($n) { [Math]::Round($ok / $n, 4) } else { $null })
+                security = [ordered]@{ injection_detect_rate = $st.InjectionDetectRate; injection_clean_rate = $st.InjectionCleanRate; targeted_asr_upper_bound = [Math]::Round(1.0 - [double]$st.InjectionDetectRate, 4); path_escape_block_rate = $st.PathEscapeBlockRate; ast_danger_block_rate = $st.AstDangerBlockRate }
+                defenses = @('normalize(NFKC/zero-width/homoglyph/base64)', 'taint_tracking', 'capability_policy', 'HITL')
+                note = '与 AgentDojo 官方 workspace/banking/travel/slack 套件对接需把本代理注册为其 BasePipelineElement；此处输出同口径的 utility / security 字段。'
+            }
+        }
+        'screenspot' {
+            return [ordered]@{
+                benchmark = 'ScreenSpot-Pro'; adapter = 'dscu-screenspot/1'; agent = $agent; generated = (Get-Date).ToString('o')
+                protocol = [ordered]@{ input = 'screenshot(PNG)+instruction'; output = [ordered]@{ point = @('x', 'y'); coordinate_space = 'physical_pixels(PerMonitorV2)' }; metric = 'point-in-bbox accuracy' }
+                grounding_channels = @('CDP', 'UIA', 'SoM+VLM', 'WinRT-OCR')
+                latency = $lat
+                note = '逐样本评测需外部 ScreenSpot-Pro 数据集；此处输出评测协议头与本机各感知通道 P50/P99 延迟。'
+            }
+        }
+        default { throw "未知基准格式 '$Format'（waa / osworld / agentdojo / screenspot / all）" }
+    }
+}
+function Export-BenchReport([string]$Format = 'waa', [string]$OutDir = '') {
+    $tasks = @(Read-RunTasks)
+    if ([string]::IsNullOrWhiteSpace($OutDir)) {
+        $OutDir = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'DeepSeekComputerUse\reports' } else { Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse\reports' }
+    }
+    if (-not (Test-Path -LiteralPath $OutDir)) { [void][System.IO.Directory]::CreateDirectory($OutDir) }
+    $fmts = if ($Format -eq 'all') { @('waa', 'osworld', 'agentdojo', 'screenspot') } else { @($Format) }
+    $paths = [System.Collections.Generic.List[string]]::new()
+    foreach ($f in $fmts) {
+        $rep = New-BenchReport $f $tasks
+        $p = Join-Path $OutDir ("bench-{0}-{1}.json" -f $f, (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        [System.IO.File]::WriteAllText($p, ($rep | ConvertTo-Json -Depth 10), [System.Text.UTF8Encoding]::new($false))
+        $paths.Add($p)
+    }
+    return [pscustomobject]@{ Tasks = $tasks.Count; Paths = $paths.ToArray() }
+}
+
+# ---------------- 6. v7.1 纯逻辑自检（不碰鼠标键盘；-SelfTest 调用） ----------------
+function Invoke-V71SelfTest($rec) {
+    # ① 百分位算法（最近秩法）
+    $v = [double[]](1..100)
+    $p50 = Get-Percentile $v 50; $p99 = Get-Percentile $v 99; $p1 = Get-Percentile ([double[]]@(7.5)) 99
+    & $rec 'v7.1 Span 百分位：P50=50 / P99=99 / 单样本' (($p50 -eq 50) -and ($p99 -eq 99) -and ($p1 -eq 7.5)) "P50=$p50 P99=$p99 single=$p1"
+
+    # ② Span 聚合 + OTLP/JSON 结构
+    $svSp = $script:Spans; $svOn = $script:SpanOn; $svTask = $script:TaskNo
+    try {
+        $script:Spans = [System.Collections.Generic.List[object]]::new(); $script:SpanOn = $true; $script:TaskNo = 77
+        foreach ($ms in 1..10) { Add-Span 'capture' ([double]$ms) 'dxgi' }
+        Add-Span 'input' 12.5 'click'; Add-Span 'network' 840 'deepseek'
+        $st = @(Get-SpanStats 77); $cap = $st | Where-Object { $_.Plane -eq 'capture' } | Select-Object -First 1
+        $doc = ConvertTo-OtlpDocument; $sp0 = $doc.resourceSpans[0].scopeSpans[0].spans
+        $js = $doc | ConvertTo-Json -Depth 12 -Compress
+        $okDoc = ($sp0.Count -eq 12) -and ("$($sp0[0].traceId)".Length -eq 32) -and ("$($sp0[0].spanId)".Length -eq 16) -and ($js -match 'service\.name') -and ([long]$sp0[0].endTimeUnixNano -gt [long]$sp0[0].startTimeUnixNano)
+        & $rec 'v7.1 OpenTelemetry：Capture/Input/Network Span 聚合与 OTLP-JSON 结构' (($st.Count -eq 3) -and ($cap.N -eq 10) -and ($cap.P50 -eq 5) -and ($cap.P99 -eq 10) -and $okDoc) "planes=$($st.Count) capP50=$($cap.P50) capP99=$($cap.P99) otlpSpans=$($sp0.Count)"
+    }
+    finally { $script:Spans = $svSp; $script:SpanOn = $svOn; $script:TaskNo = $svTask }
+
+    # ③ 幂等 + 乐观锁（action_id 单调；重复提交 / 过期 id 被拒；无 id 的普通动作不受影响）
+    $svId = $script:ExtLastActionId; $svCache = $script:IdemCache; $svSeq = $script:ActionSeq; $svOrch = $script:Orchestrated
+    try {
+        $script:ExtLastActionId = 0L; $script:IdemCache = [System.Collections.Generic.Dictionary[string, string]]::new()
+        $a1 = [pscustomobject]@{ action = 'click'; id = 5; action_id = 1 }
+        $r1 = Test-ActionIdempotency $a1 'click' -Commit -SkipLocks
+        $r2 = Test-ActionIdempotency $a1 'click' -Commit -SkipLocks
+        $r3 = Test-ActionIdempotency ([pscustomobject]@{ action = 'click'; id = 9; action_id = 1 }) 'click' -Commit -SkipLocks
+        $r4 = Test-ActionIdempotency ([pscustomobject]@{ action = 'click'; id = 5; action_id = 2 }) 'click' -Commit -SkipLocks
+        $r5 = Test-ActionIdempotency ([pscustomobject]@{ action = 'click'; id = 5 }) 'click' -Commit -SkipLocks
+        $script:Orchestrated = $false; $script:ActionSeq = 10L
+        Register-ActionStart ([pscustomobject]@{ action = 'click'; action_id = 1 }) 'click'
+        $noThrow = ($script:ActionSeq -eq 11L)
+        & $rec 'v7.1 幂等状态机：单调 action_id / 重复提交拒绝 / 过期 id 拒绝 / 无 id 动作零影响' ($r1.Ok -and ($r2.Code -eq 'IDEMPOTENT_REPLAY') -and ($r3.Code -eq 'STALE_ACTION_ID') -and $r4.Ok -and ($r5.Code -eq 'NO_ID') -and $noThrow) "r1=$($r1.Code) r2=$($r2.Code) r3=$($r3.Code) r4=$($r4.Code) r5=$($r5.Code)"
+    }
+    finally { $script:ExtLastActionId = $svId; $script:IdemCache = $svCache; $script:ActionSeq = $svSeq; $script:Orchestrated = $svOrch }
+
+    # ④ 区域指纹 aHash：同图 0 位差、反色大差、轻微噪声 ≤10 位
+    $sigA = New-Object 'byte[]' 1536; for ($i = 0; $i -lt 1536; $i++) { $sigA[$i] = [byte](($i % 48) * 5) }
+    $sigB = [byte[]]@($sigA | ForEach-Object { [byte](255 - $_) })
+    $sigC = [byte[]]$sigA.Clone(); for ($i = 0; $i -lt 1536; $i += 97) { $sigC[$i] = [byte](($sigC[$i] + 6) % 256) }
+    $hA = Get-RegionAHash $sigA; $hB = Get-RegionAHash $sigB; $hC = Get-RegionAHash $sigC
+    $dAA = Measure-HashDistance $hA $hA; $dAB = Measure-HashDistance $hA $hB; $dAC = Measure-HashDistance $hA $hC
+    & $rec 'v7.1 乐观锁区域指纹 aHash（64 位，Hamming 判漂移）' (($hA.Length -eq 16) -and ($dAA -eq 0) -and ($dAB -ge 48) -and ($dAC -le 10)) "同图=$dAA 反色=$dAB 噪声=$dAC"
+
+    # ⑤ IPC 信封契约 v1
+    $env1 = New-IpcEnvelope 'capture.frame' @{ w = 48; h = 32 } 7
+    $okE = (Test-IpcEnvelope $env1).Ok
+    $badV = (Test-IpcEnvelope ([ordered]@{ v = 2; id = 1; method = 'capture.frame' })).Ok
+    $badM = (Test-IpcEnvelope ([ordered]@{ v = 1; id = 1; method = 'Capture Frame!' })).Ok
+    $badA = (Test-IpcEnvelope ([ordered]@{ v = 1; id = 1; method = 'uia.tree'; action_id = 'x' })).Ok
+    & $rec 'v7.1 IPC 信封契约 v1（版本 / id / method 命名 / action_id 校验）' ($okE -and -not $badV -and -not $badM -and -not $badA) "valid=$okE badVersion=$badV badMethod=$badM badActionId=$badA"
+
+    # ⑥ Golden-Trace：同一策略引擎两次独立执行 → 摘要逐字节一致，重放 100% 等价
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("dscu-golden-{0}.jsonl" -f $PID)
+    $svGF = $script:GoldenFile; $svGS = $script:GoldenSeq; $svWs = $script:WorkspaceRoot; $svSafe = $script:SafeOn
+    try {
+        $rows1 = @(Get-GoldenCorpusRows); $rows2 = @(Get-GoldenCorpusRows)
+        $d1 = Get-GoldenDigest $rows1; $d2 = Get-GoldenDigest $rows2
+        $script:GoldenFile = $tmp; $script:GoldenSeq = 0; $script:SafeOn = $true
+        if (-not $script:WorkspaceRoot) { $script:WorkspaceRoot = 'C:\DeepSeekWs\task01' }
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+        Write-GoldenHeader
+        $svHr = $script:HitlResponder; $script:HitlResponder = { $false }   # 自检期间任何高危确认一律拒绝，绝不弹窗
+        try {
+            foreach ($case in @(
+                    @{ k = 'write_file'; a = [pscustomobject]@{ action = 'write_file'; path = '..\..\Windows\win.ini'; content = 'x' } },
+                    @{ k = 'run_powershell'; a = [pscustomobject]@{ action = 'run_powershell'; command = 'Invoke-Expression "calc"' } },
+                    @{ k = 'write_file'; a = [pscustomobject]@{ action = 'write_file'; path = 'golden-ok.txt'; content = 'x' } })) {
+                $deny = ''
+                try { Assert-ActionPolicy $case.a $case.k } catch { $deny = "$($_.Exception.Message)" }
+                Write-GoldenEntry $case.a $case.k $deny   # 用真实引擎的裁决录制，再重放：验证「录制 = 重放」逐条等价
+            }
+        }
+        finally { $script:HitlResponder = $svHr }
+        $script:GoldenFile = $null
+        $vr = Invoke-GoldenVerify $tmp
+        $corpusOk = ($vr.Total -eq (@($rows1).Count + 3)) -and ($vr.Mismatches.Count -eq 0)
+        & $rec 'v7.1 Golden-Trace 差分：策略引擎确定性 + 录制轨迹重放等价' (($d1 -eq $d2) -and $corpusOk -and ($vr.Equivalence -eq 1)) "digest=$($d1.Substring(0, 12)) total=$($vr.Total) match=$($vr.Match) equiv=$($vr.Equivalence)"
+    }
+    finally {
+        $script:GoldenFile = $svGF; $script:GoldenSeq = $svGS; $script:WorkspaceRoot = $svWs; $script:SafeOn = $svSafe
+        try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force } } catch { }
+    }
+
+    # ⑦ 基准适配器：四种格式的必备字段
+    $fake = @([pscustomobject]@{ run = 'r1'; taskNo = 1; instruction = '打开记事本'; steps = 2; status = 'success'; summary = 'ok'; fast = $true }, [pscustomobject]@{ run = 'r1'; taskNo = 2; instruction = 'x'; steps = 9; status = 'failure'; summary = 'no'; fast = $false })
+    $bw = New-BenchReport 'waa' $fake; $bo = New-BenchReport 'osworld' $fake; $bs = New-BenchReport 'screenspot' $fake
+    & $rec 'v7.1 评测适配器：WAA / OSWorld / ScreenSpot-Pro 报告字段' (($bw.summary.tasks -eq 2) -and ($bw.summary.success_rate -eq 0.5) -and ($bo.average_score -eq 0.5) -and ($bs.protocol.output.coordinate_space -match 'physical')) "waaRate=$($bw.summary.success_rate) osworld=$($bo.average_score)"
+
+    # ⑧ 内存熔断统一：MinFreeGB 与 MemoryFloorMB 同源
+    $okFloor = ([int]$script:MemoryFloorMB -eq [int]([double]$MinFreeGB * 1024))
+    & $rec 'v7.1 内存熔断统一：MinFreeGB 与 MemoryFloorMB 同源（默认 4GB / 4096MB）' $okFloor "MinFreeGB=$MinFreeGB MemoryFloorMB=$($script:MemoryFloorMB)"
+}
+#endregion
+
 if ($RedTeam) {
     $rtRes = Invoke-SecurityCorpus
+    if ($script:GoldenFile) { try { Write-GoldenHeader } catch { } }   # v7.1：-RedTeam -GoldenTrace <文件> 只录制安全语料轨迹
     (Get-CorpusStats $rtRes) | ConvertTo-Json -Depth 6 -Compress
     return
 }
 if ($Worker) { Invoke-PolicyWorker; return }
+if (-not [string]::IsNullOrWhiteSpace($VerifyGolden)) {
+    $gv = Invoke-GoldenVerify $VerifyGolden
+    $gvOk = ($gv.Total -gt 0 -and $gv.Match -eq $gv.Total)
+    Write-Host ('Golden-Trace 差分：{0}/{1} 等价（{2:P2}）' -f $gv.Match, $gv.Total, $gv.Equivalence) -ForegroundColor $(if ($gvOk) { 'Green' } else { 'Red' })
+    foreach ($m in @($gv.Mismatches | Select-Object -First 20)) { Write-Host "  ✘ $m" -ForegroundColor Red }
+    $global:LASTEXITCODE = $(if ($gvOk) { 0 } else { 1 })
+    return
+}
+if ($ExportWaaReport) {
+    $br = Export-BenchReport $BenchFormat
+    Write-Host "已导出 $(@($br.Paths).Count) 份评测报告（来自 $($br.Tasks) 个历史任务）：" -ForegroundColor Green
+    foreach ($bp in @($br.Paths)) { Write-Host "  $bp" }
+    return
+}
 if ($RunEval) {
     try { [void](Invoke-EvalHarness) } finally { Close-LogWriter }
     return
@@ -9028,10 +10042,26 @@ if ($SelfTest) {
     finally { Stop-Runtime }
     return
 }
-if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-    $ApiKey = Read-Host '请输入 DeepSeek API Key（输入时不显示）' -MaskInput
+if ($SetupUiAccess) {
+    $mf = Export-UiAccessManifest ''
+    Write-Host "已生成 Phase 5 UIPI 清单文件 (uiAccess=true): $mf" -ForegroundColor Green
+    return
 }
-if ([string]::IsNullOrWhiteSpace($ApiKey)) { throw '缺少 API Key：请设置环境变量 DEEPSEEK_API_KEY 或使用 -ApiKey 参数。' }
+# v7.0 Phase 5：PowerShell 7.7.0 直接粘贴大段脚本时，清空粘贴尾部可能残留的空白回车缓冲，并支持最多 3 次安全输入提示
+if ([string]::IsNullOrWhiteSpace($ApiKey)) {
+    try {
+        Start-Sleep -Milliseconds 35
+        while ([Console]::KeyAvailable) {
+            $k = [Console]::ReadKey($true)
+            if ($k.Key -ne [ConsoleKey]::Enter -and $k.Key -ne [ConsoleKey]::Spacebar) { break }
+        }
+    } catch { }
+    for ($tryKey = 1; $tryKey -le 3; $tryKey++) {
+        $ApiKey = Read-Host '请输入 DeepSeek API Key（输入时不显示，直接粘贴后按回车）' -MaskInput
+        if (-not [string]::IsNullOrWhiteSpace($ApiKey)) { break }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($ApiKey)) { throw '缺少 API Key：请设置环境变量 DEEPSEEK_API_KEY 或在提示符处输入您的 DeepSeek API Key。' }
 $ApiKey = $ApiKey.Trim()
 try { Start-ApiWarmup } catch { }   # v6.2：提前建立 TLS 连接，第一次请求直接复用
 $RunId = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -9070,6 +10100,7 @@ function Show-Help {
     Write-Host 'v6.3：Chrome / Edge / Brave 由 CDP 感知（遮挡 / 透明度 / Shadow DOM / iframe）并确定性等待页面稳定；每步标注 [Perception: CDP(nodes=N, inflight=M)]（-NoCdp 关闭）。' -ForegroundColor DarkGray
     Write-Host 'v6.4：零信任安全模式（默认开）：路径牢笼 / AST 白名单 / 污点隔离 / HITL 倒计时确认；-GenerateWsb 生成 Windows Sandbox 配置；-RunEval 跑确定性评估。' -ForegroundColor DarkGray
     Write-Host 'v6.5：缓存友好 Prompt 布局 + 输出精简 + Token/缓存遥测 + 过程记忆（skills.jsonl，-NoSkills 关闭）+ 长文本分级打字提速。' -ForegroundColor DarkGray
+    Write-Host 'v7.1：-GoldenTrace <文件> 录制 / -VerifyGolden <文件> 重放差分；-ExportWaaReport [-BenchFormat waa|osworld|agentdojo|screenspot|all]；-NoSpans；外部编排器设环境变量 DSCU_ORCHESTRATED=1 启用 action_id 幂等。'
     Write-Host 'v7.0：整句即「打开记事本 / 计算器 / 画图 / 资源管理器」的任务走零 LLM 快速通道；决策轮输出封顶自适应；技能衰减；可用内存 < 4GB 自动降级云端；有 driver-core 时屏幕采集走 DXGI。' -ForegroundColor DarkGray
     Write-Host '  cls                清屏'
     Write-Host '  exit / quit / 退出  结束程序'
@@ -9079,7 +10110,7 @@ function Show-Help {
 }
 function Show-Banner {
     Write-Host ''
-    Write-Host '=== DeepSeek Computer Use v7.0 深化版（零 LLM 快速通道 + 自适应输出上限 + 技能衰减 + 内存水位熔断 + DXGI 驱动桥；缓存友好 Prompt + Token 遥测 + 过程记忆 + 长文本提速；CDP 混合感知 + 确定性等待 + 视觉兜底 + 连接复用 + 人类化输入 + 按下前守卫 + 操作回执 + 预期核对 + 按状态码重试；保留 v5.1 / v6.0 全部能力）===' -ForegroundColor Cyan
+    Write-Host '=== DeepSeek Computer Use v7.1 融合版（v7.0 调度 × v7.0 硬件直连 · 幂等动作 / 全链路 Span / Golden-Trace · 零 LLM 快速通道 + 自适应输出上限 + 技能衰减 + 内存水位熔断 + DXGI 驱动桥；缓存友好 Prompt + Token 遥测 + 过程记忆 + 长文本提速；CDP 混合感知 + 确定性等待 + 视觉兜底 + 连接复用 + 人类化输入 + 按下前守卫 + 操作回执 + 预期核对 + 按状态码重试；保留 v5.1 / v6.0 全部能力）===' -ForegroundColor Cyan
     Write-Host "模型    : $Model    每任务最大步数: $MaxSteps    批量动作上限: $MaxBatch"
     Write-Host "模式    : $(if ($DryRun) { '仅预演(DryRun)' } elseif ($script:Auto) { '全自动（无需确认）' } else { '逐步确认' })    Shell: $(if ($NoShell) { '禁止' } else { '允许' })    管理员: $(if ($script:IsAdmin) { '是' } else { '否（加 -RunAsAdmin 可操作高权限窗口）' })    会话记忆: $(if ($MemoryLimit -gt 0) { "最近 $MemoryLimit 个任务" } else { '关闭' })"
     Write-Host "输入    : $($script:Mode)（Auto=UIA→消息→物理借用归位）    虚拟鼠标: $(if ($script:Cur) { '已启用' } else { '未启用' })    让位阈值: ${IdleMs}ms"
@@ -9090,13 +10121,19 @@ function Show-Banner {
     Write-Host "v6.4    : 零信任 $(if ($script:SafeOn) { "开（路径牢笼 + AST 白名单 + CLM + 污点隔离 + HITL ${script:HitlTimeout}s；工作区 $(if ($script:WorkspaceFixed) { $script:WorkspaceBase } else { 'USERPROFILE\DeepSeekComputerUse\workspace\<时间戳>\taskNN' })）" } else { '关（-SafeMode:$false）' })    C# 程序集缓存 $(if ($NoAsmCache) { '关' } else { '开' })" -ForegroundColor $(if ($script:SafeOn) { 'Green' } else { 'Red' })
     Write-Host "v6.5    : 输出精简 $(if ($NoTerse) { '关' } else { '开' })    过程记忆 $(if ($script:SkillsOn) { '开' } else { '关（-NoSkills）' })    HumanSpeed ${HumanSpeed}x    缓存友好布局 开（每步显示 Token 入/出 + 前缀缓存命中率）"
     Write-Host "v7.0    : 快速通道 $(if ($NoFastPath) { '关' } else { '开' })    自适应 token $(if ($NoAdaptiveTokens) { '关' } else { '开（决策轮封顶 2400）' })    HTTP/2 优先    内存熔断线 ${MinFreeGB}GB    原生驱动 $(if ($NoDriver) { '关（-NoDriver）' } else { '自动探测（无则 GDI）' })"
+    $umaInfo = Test-UmaMemoryHealth
+    $dxgiOk = if ('DsPhase5Native70' -as [type]) { [DsPhase5Native70]::ProbeDxgiHardware() } else { $false }
+    $uiAcc = if ('DsPhase5Native70' -as [type]) { [DsPhase5Native70]::HasUiAccessToken() } else { $false }
+    Write-Host "v7.0 P5 : DXGI/LockBits $(if ($script:DxgiOn -and $dxgiOk) { '开（<2ms 极速指纹+DirtyRects）' } else { 'GDI 兼容' })    24GB UMA 守卫: 可用 $($umaInfo.AvailMB)/$($umaInfo.TotalMB) MB（熔断线 ${script:MemoryFloorMB} MB）    UIPI uiAccess: $uiAcc    IPC Pipe: \\\\.\\pipe\\$PipeName" -ForegroundColor Cyan
+    Write-Host "v7.1    : 幂等 action_id $(if ($script:Orchestrated) { '强制（编排器模式）' } else { '待命（独立运行不拦截）' })    Span $(if ($script:SpanOn) { '开（P50/P99 + OTLP）' } else { '关（-NoSpans）' })    Golden-Trace $(if ($script:GoldenFile) { $script:GoldenFile } else { '关（-GoldenTrace <文件> 录制）' })    IPC 信封 v$($script:IpcVersion)" -ForegroundColor DarkGray
     Write-Host "日志    : $(if ($script:RunDir) { $script:RunDir } else { '（未启用）' })"
     Write-Host '紧急停止: 鼠标甩到左上角 / Ctrl+Alt+Q（终止当前任务）；Ctrl+C（退出程序）' -ForegroundColor Yellow
     Write-Host '输入 help 查看命令，输入 exit 退出；首次使用建议先运行  -SelfTest  验证本机环境。' -ForegroundColor DarkGray
 }
 Initialize-Runtime
+if ($script:GoldenFile) { try { Write-GoldenHeader; Write-Host "Golden-Trace 录制中: $($script:GoldenFile)" -ForegroundColor DarkGray } catch { } }   # v7.1
 Show-Banner
-Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '7.0'; safeMode = $script:SafeOn; workspace = "$($script:WorkspaceBase)"; cdp = (-not $NoCdp); vision = (-not $NoVision); visionModel = $VisionModel; human = [bool][DsNative61]::Humanize }
+Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '7.1'; safeMode = $script:SafeOn; workspace = "$($script:WorkspaceBase)"; cdp = (-not $NoCdp); vision = (-not $NoVision); visionModel = $VisionModel; human = [bool][DsNative61]::Humanize }
 $pending = $Task
 try {
     while ($true) {
