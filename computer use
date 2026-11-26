@@ -1,42 +1,22 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v4.2 —— 在 v4.1 已验证可用的基础上，针对「删除前 10 个邮件却删了 50 封」的根因，做「看得全、认得准、点得准、数得对、删前核验」。
+  DeepSeek Computer Use v4.3 —— 在 v4.2 已验证可用的功能上做「更深」而不是「更大」：只修运行日志里实证的故障，并补上「看得更准、点得更准」的证据链。
 .DESCRIPTION
-  DeepSeek 官方 API 是纯文本模型，所以仍用 Windows UI Automation 把前台窗口读成文本，模型返回 JSON 动作。
-  v4.2 相对 v4.1 的改动（全部来自运行日志任务5「删除前面10个邮件」的根因分析；参数、命令、急停方式、C# 原生层 DsNative4 不变）：
-    1. 【观察截断】v4.1 在 UIA 文档顺序里截断到 100 个控件，Gmail 左侧栏/工具栏先占满名额，模型只看到 6 行邮件。
-       现在全部取回、按屏幕位置排序后再截断（默认上限 150），列表行单独成区、不占名额。
-    2. 【列表行模型】复选框按几何包含关系归到所属行，编号 R1..Rn（含视口外的行），每行附摘要（发件人/主题等）；
-       不属于任何行的复选框标注「⚠全选复选框」。
-    3. 【幂等勾选】新增 check / uncheck / select_rows：设定目标状态而不是切换，已勾选的不会被反选；读回最多等 1.5 秒，
-       仍不对才用「落点已核验」的物理点击；select_rows 结束后重新扫描、按冻结的行身份闭环核验，不符自动纠正，
-       通过后隔 0.8 秒复扫确认稳定；同一任务内再次选择时沿用首次冻结的行身份（中途到达的新邮件不会被算进「前 N 个」）。
-    4. 【安全联锁】从任务文本识别数量 N（前面10个 / 前十封 / first 10）：已勾选行数 ≠ N 时拒绝删除/归档类按钮与 Delete 键，
-       禁止「全选」与全选复选框；行内的单行删除按钮在 N≠1 时也拒绝。-NoSafety 可关闭。
-    5. 【认错控件】同名控件的重新定位 / 漂移核对容差从固定 80/40 像素改为半个控件尺寸（8~40 像素）。
-    6. 【界面对比】同名控件加序号参与对比（v4.1 会把「多勾了 1 个」误报成「控件列表完全相同」）。
-    7. 【精确落点】物理点击前用 TryGetClickablePoint + 多点严格命中测试挑选确实落在目标上的点，而不是盲点矩形中心。
-    8. 【读回】UIA Toggle 后轮询状态最多 1.2 秒，不再 50 毫秒读一次就报 off。
-    9. 【自检】-SelfTest 新增 7 项：数量解析、行号解析、行归属、去重键、联锁重放日志任务5、容差、真实 Win32 复选框的幂等勾选。
-  v4.1 相对 v4 的改动（全部来自运行日志的实证；v4 的参数、命令、急停方式、C# 原生层全部保留）：
-    1. 【JSON 解析】日志里任务1第1、2步失败：模型一次输出了两个 JSON 对象，旧解析器取「第一个{到最后一个}」导致整段非法。
-       现改为「字符串感知的括号配对」，只取第一个完整对象；括号出现在字符串里也不会误判。
-    2. 【批量里允许 id】日志里任务6约 10 次被拒：「批量动作中只有第一个动作可以使用 id」，白白浪费步数。
-       现允许批量中使用 id（每个动作执行前仍会按「名称+位置+可见+可用」实时重新核对，不符立即中止其余动作），
-       并新增 click_many（一次勾选/点击最多 20 个控件）。
-    3. 【状态读回】控件的开关状态 / 输入框值 / 选中状态改由 CacheRequest 一次取回（不再受 45 个的限制）；
-       点击复选框后立即读回 ToggleState 写进结果；观察里附「复选框汇总：共 N 个，已勾选 M 个」。（日志里删 10 封只删了 8 封，就是数错了。）
-    4. 【界面变化对比】每轮观察会对比上一轮：窗口标题变化、新增/消失的控件。模型能直接看到「操作是否生效」，
-       不再靠猜（日志任务3：点击其实生效了，但弹窗晚到，模型误判为未生效又多点 3 次；任务4：连按 4 次 down 才确认）。
-    5. 【延迟生效自动复查】操作后若界面完全没变，先自动等 0.9 秒再观察一次，再交给模型。
-    6. 【UIA 重试 + 重新定位】UIA 首次失败后，先重新按「名称+类型+就近位置」找回控件再试一次，而不是直接降级到物理点击
-       （日志任务6第7步：UIA 失败 → 降级物理点击 → 被误判「被遮挡」）。物理层的命中核对改为：跨窗口遮挡严格拦截，同窗口内仅拦截菜单/弹出窗口。
-    7. 【坐标点击自动吸附】模型给 x,y 时，如果该点实时命中的正是某个有 UIA 模式的已观察控件，则自动改走 UIA（不占用真实鼠标）。
-    8. 【done / fail 必须单独输出】批量里 done 放在其他动作之后属于「没看到结果就宣布完成」，整批拒绝。
-    9. 【launch 更可靠】记录启动前的窗口集合，启动后等待新窗口或前台变化，必要时主动激活新窗口；chrome / msedge 自动补 --force-renderer-accessibility。
-   10. 【防循环】同一动作在同一任务里重复 ≥3 次，会在下一轮提示模型它可能无效。
-   11. 【自检扩充】-SelfTest 新增：日志中的双 JSON 样本、括号在字符串里、界面对比、click_many、坐标吸附、状态读回、done 位置校验。
+  DeepSeek 官方 API 是纯文本模型，所以仍用 Windows UI Automation（无障碍树，思路同 vercel-labs/agent-desktop）把前台窗口读成文本，模型返回 JSON 动作。
+  C# 原生层 DsNative4 逐字未改（日志证明它工作正常）；所有新增都是纯 PowerShell，参数 / 命令 / 急停方式与 v4.2 完全兼容。
+  v4.3 相对 v4.2（全部来自运行日志）：
+    1. 【联锁误判·根因】日志任务3：select_rows 46-50 后工具栏「刪除」被判成「行内按钮」，连续被拒 58 步。原因：几何包含用了「所有行」，
+       含已滚出视口的行（未裁剪矩形盖到吸顶工具栏的坐标）。现在只看视口内的行，并用 UIA 祖先链核验按钮是否真是某一行的后代。
+    2. 【错误码 + 熔断】借鉴 agent-desktop 的结构化错误（code + retry）：INTERLOCK / STALE_REF / TIMEOUT / OCCLUDED / USER_ACTIVE …；
+       同一动作同一错误 3 次提示换法、5 次（或连续 10 次出错）终止任务，不再白烧 58 步。
+    3. 【长输出不再变非法 JSON】日志任务1：长脚本触到 max_tokens=2500 被截断，连续 5 次「没有完整 JSON」。现在 max_tokens=8000，
+       识别 finish_reason=length 并告诉模型拆分；修复 JSON 字符串里的裸换行；新增 write_file（分段写）与 run_process（子进程，超时杀进程树）。
+    4. 【看得更准】观察里给出坐标系（物理像素 / 虚拟桌面 / 各显示器 / DPI / 窗口矩形）；控件坐标取「可见部分」中心（被吸顶栏或窗口边缘
+       遮一半的控件不再点到看不见的地方）；新增独立于 UIA 的「屏幕像素」变化证据，界面是否真的变了不再只靠控件文本。
+    5. 【点得更准】物理点击的候选落点只在可见部分内选；漂移核对同时考虑可见中心。
+    6. 【自检】-SelfTest 新增 9 项（联锁误判回放、错误码、JSON 修复、可见区裁剪、像素差、write_file+run_process、超时杀进程树、
+       像素采样、物理光标回读/DPI 一致性）。
   紧急停止（只终止当前任务）：鼠标甩到屏幕左上角 (0,0) / Ctrl+Alt+Q ；Ctrl+C 退出整个程序。
   使用：保存为 UTF-8 的 DeepSeekComputerUse.ps1，然后运行（不要粘贴进控制台）：
       pwsh -ExecutionPolicy Bypass -File .\DeepSeekComputerUse.ps1
@@ -74,6 +54,7 @@ param(
     [int]$MaxBatch = 6,
     [int]$MemoryLimit = 6,
     [int]$ShellTimeoutSec = 60,
+    [int]$MaxTokens = 8000,
     [ValidateSet('Auto', 'Uia', 'Message', 'Physical')]
     [string]$InputMode = 'Auto',
     [double]$CursorSpeed = 1.0,
@@ -995,6 +976,7 @@ function Get-UiElements([IntPtr]$hwnd) {
     try { $root = $AE::FromHandle($hwnd) } catch { return @() }
     $interactive = @('Button', 'Edit', 'MenuItem', 'ListItem', 'TabItem', 'CheckBox', 'RadioButton',
         'ComboBox', 'Hyperlink', 'TreeItem', 'SplitButton', 'Slider', 'DataItem')
+    $vb = Get-ViewBounds   # v4.3：控件坐标取「可见部分」中心
     $cond = New-UiaCondition ($interactive + @('Text'))
     $patProps = [ordered]@{
         inv = $AE::IsInvokePatternAvailableProperty
@@ -1033,6 +1015,8 @@ function Get-UiElements([IntPtr]$hwnd) {
             $c = if ($useCache) { $el.Cached } else { $el.Current }
             $r = $c.BoundingRectangle
             if ($r.IsEmpty -or $r.Width -lt 2 -or $r.Height -lt 2) { continue }
+            $vr = Get-ClipRect $r $vb
+            if ($vr.IsEmpty) { continue }
             $type = ($c.ControlType.ProgrammaticName -replace '^ControlType\.', '')
             $isText = ($type -eq 'Text')
             $name = $c.Name
@@ -1115,8 +1099,8 @@ function Get-UiElements([IntPtr]$hwnd) {
                     IsMaster = $false
                     RowIdx = 0
                     RowText = ''
-                    cx = [int]($r.Left + $r.Width / 2)
-                    cy = [int]($r.Top + $r.Height / 2)
+                    cx = [int]($vr.Left + $vr.Width / 2)
+                    cy = [int]($vr.Top + $vr.Height / 2)
                     L = [int]$r.Left
                     T = [int]$r.Top
                     W = [int]$r.Width
@@ -1229,8 +1213,10 @@ function Get-Observation {
     $consoleHint = ''
     $isConsole = (Test-IsConsoleWindow $fg.Handle) -or ($fg.Process -in @('pwsh', 'powershell', 'WindowsTerminal', 'conhost', 'OpenConsole'))
     if ($isConsole) { $consoleHint = '（注意：当前前台是运行本脚本的控制台，请先 launch 或 focus_window 切换到目标程序）' }
+    $coordLine = Get-CoordLine $fg.Handle
     $text = @(
         "屏幕分辨率: ${sw}x${sh}  真实鼠标位置: ($($cursor[0]),$($cursor[1]))（虚拟鼠标不会移动它）"
+        $coordLine
         "前台窗口: [$($fg.Process)] $(Limit-Text $fg.Title 100) $consoleHint"
         $focusLine
         '已打开的窗口:'
@@ -1243,7 +1229,15 @@ function Get-Observation {
     $text = $text -join "`n"
     $curSet = New-KeySet (Add-OrdinalKeys $baseKeys.ToArray())
     $changes = Get-ObservationDiff $script:BaseKeys $curSet $script:BaseTitle $fg.Title
-    return [pscustomobject]@{ Text = $text; Foreground = $fg; Keys = $curSet; Changes = $changes; Rows = $model }
+    # v4.3：独立于 UIA 的像素证据（控件文本没变但屏幕变了 = 动作其实生效了；两者都没变 = 真的没生效）
+    $pix = Get-PixelSig $fg.Handle
+    $pixPct = Get-PixelDiff $script:PixPrev $pix
+    $script:PixPrev = $pix
+    if ($null -ne $pixPct) {
+        $pl = if ($pixPct -lt 0.2) { '屏幕像素: 前台窗口几乎无变化' } else { "屏幕像素: 前台窗口约 $pixPct% 的区块发生了变化" }
+        $changes = "$changes`n $pl".Trim()
+    }
+    return [pscustomobject]@{ Text = $text; Foreground = $fg; Keys = $curSet; Changes = $changes; Rows = $model; PixPct = $pixPct }
 }
 #endregion
 #region ---------- 安全检查（仅拦截灾难性命令，-NoSafety 可关闭） ----------
@@ -1903,15 +1897,200 @@ function Assert-BulkInterlock($a, [string]$kind) {
     $onCount = @($m.Rows | Where-Object { $_.Cb.State -eq 'on' }).Count
     foreach ($t in $targets) {
         $nm = "$($t.FullName)"; if (-not $nm) { $nm = "$($t.Name)" }
-        $inRow = ($t.W -gt 0 -and (Test-InAnyRect $t @($m.Rows | ForEach-Object { $_.Row })))
+        $rowNo = Test-TargetInRow $t @($m.Rows)   # v4.3：只看视口内的行 + UIA 祖先链核验
+        $inRow = ($rowNo -gt 0)
         $why = Test-InterlockDecision $script:TaskQty $nm "$($t.Type)" ([bool]$t.IsMaster) $rowCount $onCount $inRow
-        if ($why) { throw $why }
+        if ($why) { if ($inRow) { $why += "（判定依据：该控件是可见行 R$rowNo 的后代）" }; throw $why }
     }
+}
+#endregion
+#region ---------- v4.3：精确可见区 / 错误码熔断 / 像素证据 / 长任务通道 ----------
+function Get-ViewBounds {
+    # 控件可见区的边界：前台窗口矩形、虚拟桌面（物理像素）。返回 @{ Win; Screen }，各为 [l,t,r,b]
+    $vx = [DsNative4]::VirtX(); $vy = [DsNative4]::VirtY(); $vw = [DsNative4]::VirtW(); $vh = [DsNative4]::VirtH()
+    $scr = @([double]$vx, [double]$vy, [double]($vx + $vw), [double]($vy + $vh))
+    $win = $null
+    try {
+        if ($script:ObsHwnd -ne [IntPtr]::Zero -and [DsNative4]::IsWindow($script:ObsHwnd)) {
+            $w = [DsNative4]::WinRect($script:ObsHwnd)
+            $win = @([double]$w[0], [double]$w[1], [double]$w[2], [double]$w[3])
+        }
+    }
+    catch { $win = $null }
+    return @{ Win = $win; Screen = $scr }
+}
+function Get-ClipRect($r, $vb) {
+    # 把控件矩形裁到「真正看得见」的部分（窗口 ∩ 屏幕）；与窗口无交集的（弹出层）只与屏幕求交。
+    # 日志任务3的教训：被吸顶工具栏 / 窗口边缘遮住一半的控件，几何中心会落在看不见的地方。
+    # 注意：PowerShell 变量不区分大小写，所以不能同时用 $L 和 $l。
+    $x0 = [double]$r.Left; $y0 = [double]$r.Top; $x1 = $x0 + [double]$r.Width; $y1 = $y0 + [double]$r.Height
+    $scr = $vb.Screen
+    foreach ($bd in @($vb.Win, $scr)) {
+        if ($null -eq $bd) { continue }
+        $ax = [Math]::Max($x0, $bd[0]); $ay = [Math]::Max($y0, $bd[1]); $bx = [Math]::Min($x1, $bd[2]); $by = [Math]::Min($y1, $bd[3])
+        if ($null -ne $scr) { $ax = [Math]::Max($ax, $scr[0]); $ay = [Math]::Max($ay, $scr[1]); $bx = [Math]::Min($bx, $scr[2]); $by = [Math]::Min($by, $scr[3]) }
+        if ($bx -gt $ax -and $by -gt $ay) { return [pscustomobject]@{ Left = $ax; Top = $ay; Width = ($bx - $ax); Height = ($by - $ay); IsEmpty = $false } }
+    }
+    return [pscustomobject]@{ Left = 0.0; Top = 0.0; Width = 0.0; Height = 0.0; IsEmpty = $true }
+}
+function Get-CoordLine([IntPtr]$hwnd) {
+    try {
+        $mons = (@([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)@($($_.Bounds.X),$($_.Bounds.Y))" + $(if ($_.Primary) { '主' } else { '' }) })) -join ' '
+        $wr = [DsNative4]::WinRect($hwnd)
+        return "坐标系: 物理像素（已 Per-Monitor DPI 感知，系统缩放 $(([DsNative4]::DpiScale()).ToString('0.00'))x），原点=主屏左上角，副屏可为负数；虚拟桌面 ($([DsNative4]::VirtX()),$([DsNative4]::VirtY())) $([DsNative4]::VirtW())x$([DsNative4]::VirtH())；显示器: $mons；前台窗口矩形 ($($wr[0]),$($wr[1]))-($($wr[2]),$($wr[3]))；控件 @(x,y) 是其「可见部分」的中心"
+    }
+    catch { return '' }
+}
+function Test-TargetInRow($t, $modelRows) {
+    # 目标（按钮）是否真的在某个「可见」列表行里面，返回行号，0 = 不在。
+    # 日志任务3根因：旧版拿「所有行（含已滚出视口的行，其未裁剪矩形会盖到吸顶工具栏的坐标上）」做几何包含，
+    # 把工具栏的「刪除」误判成行内按钮，连续拒绝 58 步。现在：只看视口内的行 + UIA 祖先链核验。
+    if ($null -eq $t -or [double]$t.W -le 0) { return 0 }
+    $cx = [double]$t.L + [double]$t.W / 2.0; $cy = [double]$t.T + [double]$t.H / 2.0
+    $hit = New-Object System.Collections.Generic.List[object]
+    foreach ($rw in $modelRows) {
+        $q = $rw.Row
+        if ($q.Off) { continue }
+        if ($cx -ge $q.L -and $cx -le ($q.L + $q.W) -and $cy -ge $q.T -and $cy -le ($q.T + $q.H)) { $hit.Add($rw) }
+    }
+    if ($hit.Count -eq 0) { return 0 }
+    if ($null -eq $t.El) { return [int]$hit[0].Index }
+    try {
+        $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+        $cur = $t.El
+        for ($i = 0; $i -lt 24 -and $null -ne $cur; $i++) {
+            foreach ($h in $hit) { if ([System.Windows.Automation.Automation]::Compare($cur, $h.Row.El)) { return [int]$h.Index } }
+            $cur = $walker.GetParent($cur)
+        }
+        return 0   # 整条祖先链都不经过任何一行 → 不是行内按钮
+    }
+    catch { return [int]$hit[0].Index }   # 无法核验时保守地当作行内（宁可多拦）
+}
+function Get-ErrorInfo([string]$msg) {
+    # 借鉴 agent-desktop 的结构化错误（code + 可否重试），让模型和熔断器不再靠猜
+    $m = "$msg"; $code = 'ERROR'; $retry = 'after_observe'
+    if ($m -match '安全联锁') { $code = 'INTERLOCK'; $retry = 'no' }
+    elseif ($m -match '黑名单|禁止写入|已使用 -NoShell') { $code = 'BLOCKED'; $retry = 'no' }
+    elseif ($m -match '超过 \d+ 秒') { $code = 'TIMEOUT'; $retry = 'no_same_command' }
+    elseif ($m -match '让出控制权|正在使用键盘|正在使用鼠标') { $code = 'USER_ACTIVE'; $retry = 'safe_after_wait' }
+    elseif ($m -match '遮挡|前台窗口已变化') { $code = 'OCCLUDED'; $retry = 'after_focus_window' }
+    elseif ($m -match '已不存在|界面已变化|位置已偏移|名称已由|已不可见|不存在（当前|滚动后仍不可见') { $code = 'STALE_REF'; $retry = 'after_observe' }
+    elseif ($m -match '被禁用') { $code = 'DISABLED'; $retry = 'no' }
+    elseif ($m -match '拒绝访问|UnauthorizedAccess|Access is denied') { $code = 'PERMISSION'; $retry = 'no' }
+    return [pscustomobject]@{ Code = $code; Retry = $retry }
+}
+function Get-PixelSig([IntPtr]$hwnd) {
+    # 前台窗口可见部分缩成 48x32 灰度：独立于 UIA 的「屏幕是否真的变了」证据（虚拟鼠标窗口已排除出截图）
+    $bmp = $null; $g = $null; $small = $null; $g2 = $null
+    try {
+        $vb = Get-ViewBounds
+        $bd = if ($null -ne $vb.Win) { $vb.Win } else { $vb.Screen }
+        $s = $vb.Screen
+        $l = [int][Math]::Max($bd[0], $s[0]); $t = [int][Math]::Max($bd[1], $s[1]); $r = [int][Math]::Min($bd[2], $s[2]); $b = [int][Math]::Min($bd[3], $s[3])
+        $w = $r - $l; $h = $b - $t
+        if ($w -lt 16 -or $h -lt 16) { return $null }
+        $bmp = [System.Drawing.Bitmap]::new($w, $h)
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($l, $t, 0, 0, [System.Drawing.Size]::new($w, $h))
+        $small = [System.Drawing.Bitmap]::new(48, 32)
+        $g2 = [System.Drawing.Graphics]::FromImage($small)
+        $g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
+        $g2.DrawImage($bmp, 0, 0, 48, 32)
+        $sig = New-Object 'byte[]' 1536
+        for ($y = 0; $y -lt 32; $y++) { for ($x = 0; $x -lt 48; $x++) { $c = $small.GetPixel($x, $y); $sig[$y * 48 + $x] = [byte][int](0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B) } }
+        return , $sig
+    }
+    catch { return $null }
+    finally { foreach ($o in @($g2, $small, $g, $bmp)) { if ($o) { $o.Dispose() } } }
+}
+function Get-PixelDiff($a, $b) {
+    # 返回发生明显变化（亮度差 ≥10）的区块占比（%）；任一为空返回 $null
+    if ($null -eq $a -or $null -eq $b -or $a.Length -ne $b.Length -or $a.Length -eq 0) { return $null }
+    $n = 0
+    for ($i = 0; $i -lt $a.Length; $i++) { if ([Math]::Abs([int]$a[$i] - [int]$b[$i]) -ge 10) { $n++ } }
+    return [Math]::Round(100.0 * $n / $a.Length, 1)
+}
+function Get-ObsSig($obs) {
+    # 「界面有没有变」的指纹 = 控件文本（去掉鼠标位置）+ 像素大面积变化标记（≥3% 才算，避免光标闪烁误判）
+    $s = ($obs.Text -replace '真实鼠标位置: \(\d+,\d+\)', '')
+    if ($null -ne $obs.PixPct -and [double]$obs.PixPct -ge 3.0) { $s += "|px$([int]$obs.PixPct)" }
+    return $s
+}
+function Repair-JsonControlChars([string]$j) {
+    # 模型常在 JSON 字符串里直接换行（多行脚本）→ 严格解析失败；把字符串内部的裸换行 / 制表符转义后重试
+    $sb = [System.Text.StringBuilder]::new(); $inStr = $false; $esc = $false
+    foreach ($ch in $j.ToCharArray()) {
+        if ($inStr) {
+            if ($esc) { [void]$sb.Append($ch); $esc = $false; continue }
+            if ($ch -eq '\') { $esc = $true; [void]$sb.Append($ch); continue }
+            if ($ch -eq '"') { $inStr = $false; [void]$sb.Append($ch); continue }
+            if ($ch -eq "`n") { [void]$sb.Append('\n'); continue }
+            if ($ch -eq "`r") { [void]$sb.Append('\r'); continue }
+            if ($ch -eq "`t") { [void]$sb.Append('\t'); continue }
+            [void]$sb.Append($ch)
+        }
+        else { if ($ch -eq '"') { $inStr = $true }; [void]$sb.Append($ch) }
+    }
+    return $sb.ToString()
+}
+function Invoke-WriteFile($a) {
+    # 长脚本通道：模型不必把几十行脚本塞进一个 JSON（日志任务1：输出被截断 → 非法 JSON 连续 5 次）
+    $p = [Environment]::ExpandEnvironmentVariables("$($a.path)").Trim()
+    if (-not [System.IO.Path]::IsPathRooted($p)) { throw 'write_file 的 path 必须是绝对路径（桌面请先用 [Environment]::GetFolderPath(''Desktop'') 查询）' }
+    $full = [System.IO.Path]::GetFullPath($p)
+    if (-not $NoSafety -and $full -match '(?i)^[a-z]:\\(Windows|Program Files|Program Files \(x86\))(\\|$)') { throw "禁止写入系统目录: $full" }
+    $content = "$($a.content)"
+    if ($content.Length -gt 400000) { throw 'write_file 的 content 过长（>400000），请分段（append=true）' }
+    $dir = [System.IO.Path]::GetDirectoryName($full)
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { [void](New-Item -ItemType Directory -Force -Path $dir) }
+    $append = Test-True $a.append
+    $ext = [System.IO.Path]::GetExtension($full).ToLower()
+    $enc = [System.Text.UTF8Encoding]::new($ext -in '.ps1', '.psm1')   # .ps1 带 BOM 兼容 Windows PowerShell 5；.bat/.py 等不带
+    $before = if (Test-Path -LiteralPath $full) { ([System.IO.FileInfo]$full).Length } else { 0 }
+    if ($append) { [System.IO.File]::AppendAllText($full, $content, $enc) } else { [System.IO.File]::WriteAllText($full, $content, $enc); $before = 0 }
+    $len = ([System.IO.FileInfo]$full).Length
+    $fresh = ((-not $append) -or $before -eq 0)
+    $exp = $before + $enc.GetByteCount($content) + $(if ($fresh) { $enc.GetPreamble().Length } else { 0 })
+    if ($len -ne $exp) { throw "写入后读回大小不符（期望 $exp 字节，实际 $len 字节）: $full" }
+    return "已$(if ($append) { '追加' } else { '写入' }) $($content.Length) 字符到 $full；读回核验：文件共 $len 字节"
+}
+function Invoke-ProcessAction($a) {
+    # 子进程通道：按扩展名选解释器，stdout/stderr 异步读取（不死锁），超时杀整个进程树（日志任务1：PowerPoint COM 卡死 60 秒）
+    $file = [Environment]::ExpandEnvironmentVariables("$($a.file)").Trim()
+    $argStr = "$($a.args)"
+    if (-not $NoSafety) { $hit = Test-DangerousCommand "$file $argStr"; if ($hit) { throw "命令命中灾难性命令黑名单 ($hit)，已拒绝（如确需执行请使用 -NoSafety）" } }
+    $to = 120
+    if (Test-NumValue $a.timeout) { $to = [int][Math]::Min([Math]::Max([double]"$($a.timeout)", 1), 900) }
+    $ext = [System.IO.Path]::GetExtension($file).ToLower()
+    $exe = $file; $full = $argStr
+    switch ($ext) {
+        '.ps1' { $exe = (Get-Process -Id $PID).Path; $full = "-NoProfile -ExecutionPolicy Bypass -File `"$file`" $argStr" }
+        '.py' { $exe = 'python'; $full = "`"$file`" $argStr" }
+        { $_ -in '.js', '.mjs', '.cjs' } { $exe = 'node'; $full = "`"$file`" $argStr" }
+        { $_ -in '.bat', '.cmd' } { $exe = $(if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }); $full = "/d /c `"`"$file`" $argStr`"" }
+    }
+    $psi = [System.Diagnostics.ProcessStartInfo]::new($exe, $full)
+    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+    $oem = ("$($a.encoding)" -match '(?i)oem|gbk')
+    $encd = if ($oem) { try { [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { [System.Text.Encoding]::UTF8 } } else { [System.Text.Encoding]::UTF8 }
+    $psi.StandardOutputEncoding = $encd; $psi.StandardErrorEncoding = $encd
+    $psi.Environment['PYTHONIOENCODING'] = 'utf-8'; $psi.Environment['PYTHONUTF8'] = '1'
+    if (-not [string]::IsNullOrWhiteSpace("$($a.cwd)")) { $psi.WorkingDirectory = [Environment]::ExpandEnvironmentVariables("$($a.cwd)") }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()
+    while (-not $p.WaitForExit(200)) {
+        Test-Abort
+        if ($sw.Elapsed.TotalSeconds -gt $to) { try { $p.Kill($true) } catch { }; throw "进程超过 $to 秒未完成，已终止整个进程树（$exe）" }
+    }
+    $p.WaitForExit()
+    $o = Limit-Text $so.Result 1500; $e = Limit-Text $se.Result 700
+    return "退出码 $($p.ExitCode)（$([int]$sw.Elapsed.TotalSeconds) 秒）; stdout: $o$(if ($e) { "; stderr: $e" })"
 }
 #endregion
 #region ---------- 发送前校验（Schema） ----------
 $script:ActionNames = @('click', 'click_many', 'check', 'uncheck', 'select_rows', 'double_click', 'right_click', 'middle_click', 'hover', 'drag', 'type', 'key', 'hotkey',
-    'scroll', 'launch', 'focus_window', 'wait', 'run_powershell', 'done', 'fail')
+    'scroll', 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'done', 'fail')
 function Test-IdValue($v) { return ($null -ne $v -and "$v" -match '^\d+$') }
 function Test-NumValue($v) { return ($null -ne $v -and "$v" -ne '' -and $null -ne ("$v" -as [double])) }
 function Test-ActionUsesId($a) {
@@ -1992,6 +2171,15 @@ function Test-ActionSchema($a, [int]$index) {
         'run_powershell' {
             if ($NoShell) { return '已使用 -NoShell，禁止 run_powershell' }
             if ([string]::IsNullOrWhiteSpace("$($a.command)")) { return 'run_powershell 需要 command' }
+        }
+        'write_file' {
+            if ($NoShell) { return '已使用 -NoShell，禁止 write_file' }
+            if ([string]::IsNullOrWhiteSpace("$($a.path)")) { return 'write_file 需要 path（绝对路径）' }
+            if ($null -eq $a.content) { return 'write_file 需要 content' }
+        }
+        'run_process' {
+            if ($NoShell) { return '已使用 -NoShell，禁止 run_process' }
+            if ([string]::IsNullOrWhiteSpace("$($a.file)")) { return 'run_process 需要 file' }
         }
         'wait' { if ($null -ne $a.seconds -and "$($a.seconds)" -ne '' -and -not (Test-NumValue $a.seconds)) { return 'wait 的 seconds 必须是数字' } }
     }
@@ -2077,8 +2265,12 @@ function Resolve-Target($a) {
         if ($r.IsEmpty -or $offscreen) { throw "控件 [$n] `"$($item.Name)`" 已不可见（视口外的列表行请用 select_rows / check，无需先滚动），请重新观察" }
         if (-not $enabled) { throw "控件 [$n] `"$($item.Name)`" 当前被禁用，点击不会有效果" }
         if ($item.Name -and (Limit-Text $liveName 80) -ne $item.Name) { throw "控件 [$n] 的名称已由 `"$($item.Name)`" 变为 `"$(Limit-Text $liveName 40)`"，界面已变化，请重新观察" }
-        $lx = [int]($r.Left + $r.Width / 2); $ly = [int]($r.Top + $r.Height / 2)
-        $drift = [Math]::Sqrt([Math]::Pow($lx - $item.cx, 2) + [Math]::Pow($ly - $item.cy, 2))
+        $lx0 = [int]($r.Left + $r.Width / 2); $ly0 = [int]($r.Top + $r.Height / 2)
+        $vr = Get-ClipRect $r (Get-ViewBounds)
+        if ($vr.IsEmpty) { throw "控件 [$n] `"$($item.Name)`" 已不可见（在窗口/屏幕之外），请重新观察" }
+        $lx = [int]($vr.Left + $vr.Width / 2); $ly = [int]($vr.Top + $vr.Height / 2)
+        $dA = [Math]::Sqrt([Math]::Pow($lx - $item.cx, 2) + [Math]::Pow($ly - $item.cy, 2)); $dB = [Math]::Sqrt([Math]::Pow($lx0 - $item.cx, 2) + [Math]::Pow($ly0 - $item.cy, 2))
+        $drift = [Math]::Min($dA, $dB)
         $tol = Get-DriftTolerance $item
         if ($drift -gt $tol) { throw "控件 [$n] 位置已偏移 $([int]$drift) 像素（容差 $tol），界面已变化，请重新观察" }
         if ($lx -le 1 -and $ly -le 1) { throw '目标坐标位于屏幕左上角保护区，拒绝操作。' }
@@ -2257,7 +2449,7 @@ function Invoke-PointerAction([string]$kind, $a) {
     if ($item -and $t.byId) {
         # v4.2：不盲点矩形中心，挑一个「严格命中测试」通过的落点
         try {
-            $lr = $item.El.Current.BoundingRectangle
+            $lr = Get-ClipRect $item.El.Current.BoundingRectangle (Get-ViewBounds)   # v4.3：只在可见部分内选落点
             if (-not $lr.IsEmpty) {
                 $pp = Get-PrecisePoint $item $lr
                 $t.x = $pp.x; $t.y = $pp.y
@@ -2419,13 +2611,14 @@ function Focus-WindowByTitle([string]$keyword) {
 }
 function Describe-Action($a) {
     $parts = @("action=$($a.action)")
-    foreach ($k in 'id', 'ids', 'rows', 'exclusive', 'x', 'y', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id') {
+    foreach ($k in 'id', 'ids', 'rows', 'exclusive', 'x', 'y', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id', 'path', 'file', 'cwd', 'timeout', 'append') {
         $v = "$($a.$k)"
         if ($null -ne $a.$k -and $v -ne '') { $parts += ("{0}={1}" -f $k, (Limit-Text $v 80)) }
     }
     return ($parts -join ' ')
 }
-function Invoke-ShellCommand([string]$cmd) {
+function Invoke-ShellCommand([string]$cmd, [int]$timeoutSec = 0) {
+    $to = if ($timeoutSec -gt 0) { [Math]::Min($timeoutSec, 900) } else { $ShellTimeoutSec }
     if (-not $NoSafety) {
         $hit = Test-DangerousCommand $cmd
         if ($hit) { throw "命令命中灾难性命令黑名单 ($hit)，已拒绝（如确需执行请使用 -NoSafety）" }
@@ -2435,9 +2628,9 @@ function Invoke-ShellCommand([string]$cmd) {
     if (Get-Command Start-ThreadJob -ErrorAction SilentlyContinue) { $job = Start-ThreadJob -ScriptBlock $sb }
     else { $job = Start-Job -ScriptBlock $sb }
     try {
-        if (-not (Wait-Job $job -Timeout $ShellTimeoutSec)) {
+        if (-not (Wait-Job $job -Timeout $to)) {
             Stop-Job $job -ErrorAction SilentlyContinue
-            throw "命令超过 $ShellTimeoutSec 秒未完成，已终止"
+            throw "命令超过 $to 秒未完成，已终止"
         }
         $out = & { $ErrorActionPreference = 'Continue'; Receive-Job $job 2>&1 | Out-String }
         return "命令输出: $(Limit-Text $out 1800)"
@@ -2498,7 +2691,9 @@ function Invoke-ActionCore($a, [string]$kind) {
             Wait-Safe ([int]($s * 1000))
             return "已等待 $s 秒"
         }
-        'run_powershell' { return (Invoke-ShellCommand "$($a.command)") }
+        'run_powershell' { return (Invoke-ShellCommand "$($a.command)" $(if (Test-NumValue $a.timeout) { [int][double]"$($a.timeout)" } else { 0 })) }
+        'write_file' { return (Invoke-WriteFile $a) }
+        'run_process' { return (Invoke-ProcessAction $a) }
         default { throw "未知动作: '$($a.action)'" }
     }
 }
@@ -2507,7 +2702,7 @@ function Invoke-Action($a) {
     Assert-BulkInterlock $a $kind   # v4.2：数量联锁（删除/归档/全选前核对已勾选行数）
     $before = [DsNative4]::GetForegroundWindow()
     $r = Invoke-ActionCore $a $kind
-    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell') {
+    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process') {
         Start-Sleep -Milliseconds 60
         Wait-UiSettled
         $after = [DsNative4]::GetForegroundWindow()
@@ -2543,7 +2738,9 @@ B) 批量动作： {"thought":"一句话判断","actions":[{"action":...},{"acti
 - {"action":"launch","target":"notepad","args":""} 启动程序/网址/文件（notepad、calc、chrome、msedge、https://www.bing.com）
 - {"action":"focus_window","title":"记事本"}         按标题或进程名切换窗口
 - {"action":"wait","seconds":2}
-- {"action":"run_powershell","command":"Get-Date"} 执行 PowerShell（仅当系统提示允许时可用；约 60 秒超时，不要运行会常驻/交互的命令）
+- {"action":"run_powershell","command":"Get-Date","timeout":60} 执行 PowerShell（仅当系统提示允许时可用；默认约 60 秒超时，可用 timeout 加长到 900；不要运行会常驻/交互的命令；脚本超过约 40 行不要塞进 command，改用 write_file）
+- {"action":"write_file","path":"C:\\绝对路径\\x.py","content":"…","append":false}   写 UTF-8 文本文件（系统读回核验大小）。长脚本分段写：第一段 append=false，后续段 append=true，每段不超过约 150 行
+- {"action":"run_process","file":"python","args":"C:\\x.py","cwd":"","timeout":300}   以子进程运行（.ps1/.py/.js/.bat 自动选解释器；gcc/cl/cargo/nvcc/node/npm 也可直接当 file）。返回退出码和输出；超时会杀掉整个进程树
 - {"action":"done","summary":"完成情况"}             当前任务已完成
 - {"action":"fail","reason":"原因"}                  确认无法完成
 规则：
@@ -2567,13 +2764,16 @@ B) 批量动作： {"thought":"一句话判断","actions":[{"action":...},{"acti
    删除后以新一轮的提示条和「行勾选汇总」核对，再 done（不要为了「多删一点保险」去删更多）。
 16. 短视频 / 信息流类网页：下一个视频用 key 的 down（或 scroll），然后看「界面变化」里的标题/文案是否更换；换了就不要再按。
 17. 打开第 K 封邮件 / 第 K 行：click 该行的「行[编号]」，不要 click 复选框。
+18. 做 PPT / 写程序 / 多步脚本：先 write_file 分段写脚本，再 run_process 运行并看退出码和输出；不要把几十行脚本塞进一次 JSON（输出会被截断成非法 JSON）。Office COM 很慢，run_process 设 timeout 300。
+19. 结果里出现「[错误码 …]」时：INTERLOCK / BLOCKED = 规则拒绝，同一动作重试没有意义，必须换方法；STALE_REF = 先重新观察；OCCLUDED = 先 focus_window；USER_ACTIVE = 先 wait。同一错误出现 3 次系统会提示熔断，5 次终止任务。
+20. 观察里的「屏幕像素」行是独立于无障碍树的证据：大面积变化 = 界面确实变了；「几乎无变化」且控件也没变 = 动作没生效。「坐标系」行说明所有坐标都是物理像素；控件 @(x,y) 已是可见部分的中心，按坐标点击时直接用它。
 '@
 function Invoke-DeepSeek([string]$userContent) {
     $messages = @(
         [ordered]@{ role = 'system'; content = $SystemPrompt }
         [ordered]@{ role = 'user'; content = $userContent }
     )
-    $payload = [ordered]@{ model = $Model; messages = $messages; temperature = 0; max_tokens = 2500 }
+    $payload = [ordered]@{ model = $Model; messages = $messages; temperature = 0; max_tokens = $MaxTokens }
     if ($Model -notlike '*reasoner*') { $payload['response_format'] = @{ type = 'json_object' } }
     $json = $payload | ConvertTo-Json -Depth 10 -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -2584,6 +2784,7 @@ function Invoke-DeepSeek([string]$userContent) {
                 -Headers @{ Authorization = "Bearer $ApiKey" } `
                 -ContentType 'application/json; charset=utf-8' -Body $bytes -TimeoutSec 120
             $content = [string]$resp.choices[0].message.content
+            $script:LastFinish = [string]$resp.choices[0].finish_reason
             if ([string]::IsNullOrWhiteSpace($content)) { throw 'API 返回了空内容' }
             return $content
         }
@@ -2626,7 +2827,11 @@ function ConvertFrom-ModelJson([string]$text) {
     if ($null -eq $first) { throw "模型输出里没有完整的 JSON 对象: $(Limit-Text $text 200)" }
     $rest = $text.Substring($text.IndexOf($first) + $first.Length)
     if ($rest.IndexOf('{') -ge 0) { Write-Host '  （模型输出了多个 JSON 对象，只执行第一个；其余已忽略）' -ForegroundColor DarkYellow }
-    return ($first | ConvertFrom-Json)
+    try { return ($first | ConvertFrom-Json) }
+    catch {
+        try { return ((Repair-JsonControlChars $first) | ConvertFrom-Json) }
+        catch { throw "模型输出的 JSON 无法解析: $($_.Exception.Message)" }
+    }
 }
 #endregion
 #region ---------- 单个任务的「观察 → 思考 → 操作」循环 ----------
@@ -2636,6 +2841,7 @@ function Invoke-AgentTask([string]$TaskText) {
     $script:BaseTitle = ''
     $script:TaskQty = Get-TaskQuantity $TaskText
     $script:SelectMemo = $null
+    $script:PixPrev = $null
     if ($script:TaskQty -gt 0 -and -not $NoSafety) { Write-Host "  （安全联锁：识别到任务数量 N=$($script:TaskQty)；删除/归档前会核对已勾选行数必须等于 N）" -ForegroundColor DarkGray }
     $history = New-Object System.Collections.Generic.List[string]
     $descCount = @{}
@@ -2647,6 +2853,9 @@ function Invoke-AgentTask([string]$TaskText) {
     $failCount = 0
     $lastSig = $null
     $sameCount = 0
+    $errCount = @{}
+    $errStreak = 0
+    $script:LastFinish = ''
     $taskStart = Get-Date
     Write-Log @{ type = 'task_start'; task = $TaskText; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; qty = $script:TaskQty }
     try {
@@ -2654,13 +2863,13 @@ function Invoke-AgentTask([string]$TaskText) {
             Test-Abort
             Write-Host "── 第 $step 步 ──" -ForegroundColor Cyan
             $obs = Get-Observation
-            $sig = ($obs.Text -replace '真实鼠标位置: \(\d+,\d+\)', '')
+            $sig = Get-ObsSig $obs
             # 刚操作完界面却完全没变：很可能是页面/弹窗延迟生效（日志任务3），先自动等一下再观察一次，再交给模型
             if ($lastActed -and $null -ne $lastSig -and $sig -eq $lastSig) {
                 Write-Host '  界面暂无变化，稍候重新观察一次（页面可能仍在加载）...' -ForegroundColor DarkGray
                 Wait-Safe 900
                 $obs = Get-Observation
-                $sig = ($obs.Text -replace '真实鼠标位置: \(\d+,\d+\)', '')
+                $sig = Get-ObsSig $obs
             }
             $lastActed = $false
             if ($SaveScreenshots -and $script:RunDir) {
@@ -2690,7 +2899,8 @@ function Invoke-AgentTask([string]$TaskText) {
             try { $parsed = ConvertFrom-ModelJson $raw }
             catch {
                 Write-Host "  解析失败: $($_.Exception.Message)" -ForegroundColor Red
-                $history.Add("第${step}步: 模型输出不是合法 JSON，已忽略（必须只输出一个 JSON 对象；多个动作请放进 actions 数组）")
+                if ($script:LastFinish -eq 'length') { $history.Add("第${step}步: 你的输出因过长被截断（finish_reason=length，已超过 max_tokens）而不是合法 JSON。不要在一个 JSON 里放长脚本：用 write_file 分段（每段不超过约 150 行，后续段 append=true）写入文件，再用 run_process 运行") }
+            else { $history.Add("第${step}步: 模型输出不是合法 JSON，已忽略（必须只输出一个 JSON 对象；多个动作请放进 actions 数组）") }
                 $failCount++
                 if ($failCount -ge 4) { throw '模型连续输出非法 JSON，已终止当前任务。' }
                 continue
@@ -2776,13 +2986,25 @@ function Invoke-AgentTask([string]$TaskText) {
                     Write-Host "  结果: $result" -ForegroundColor Green
                     $history.Add("第${step}步: $desc → $result")
                     $failCount = 0
-                    if ($kind -notin 'wait', 'run_powershell') { $lastActed = $true }
+                    $errStreak = 0
+                    if ($kind -notin 'wait', 'run_powershell', 'write_file', 'run_process') { $lastActed = $true }
                 }
                 catch {
                     if ($_.Exception.Message -like '触发保护*') { throw }
                     $msg = $_.Exception.Message
                     Write-Host "  执行出错: $msg" -ForegroundColor Red
-                    $history.Add("第${step}步: $desc → 出错（已完成的部分不会回滚，请重新观察核对）: $msg")
+                    $ei = Get-ErrorInfo $msg
+                    $ek = "$kind|$($ei.Code)|$(Limit-Text $desc 60)"
+                    $errCount[$ek] = 1 + [int]$errCount[$ek]
+                    $errStreak++
+                    $history.Add("第${step}步: $desc → 出错[错误码 $($ei.Code) retry=$($ei.Retry)]（已完成的部分不会回滚，请重新观察核对）: $msg")
+                    if ($errCount[$ek] -ge 3) { $repeatNote = "`n【熔断】动作「$(Limit-Text $desc 60)」已因 $($ei.Code) 失败 $($errCount[$ek]) 次，原样重试不会有不同结果；必须换一种方法（换控件 / 换快捷键 / 先重新观察 / run_powershell），否则任务将被终止。" }
+                    if ($errCount[$ek] -ge 5 -or $errStreak -ge 10) {
+                        $outcome = 'fail'; $summary = "熔断终止：「$(Limit-Text $desc 60)」重复失败（$($ei.Code)），或连续出错 $errStreak 次。最后一次错误: $(Limit-Text $msg 160)"
+                        Write-Host "✘ $summary" -ForegroundColor Red
+                        Write-Log @{ type = 'circuit_break'; step = $step; code = $ei.Code; message = $msg }
+                        $finished = $true
+                    }
                     Write-Log @{ type = 'error'; step = $step; message = $msg }
                     break   # 批量动作中途出错：中止其余动作，重新观察
                 }
@@ -2877,6 +3099,60 @@ function Invoke-SelfTest {
     & $rec 'v4.2 安全联锁重放日志任务5（全选50封后删除→拦截；精确10封→放行）' ([bool]$i1 -and (-not $i2) -and [bool]$i3 -and [bool]$i4 -and (-not $i5) -and [bool]$i6) ("全选后删=拦{0} 精确10=放{1} 全選菜单=拦{2} 全选框=拦{3} 无数量=放{4} 行内删=拦{5}" -f [bool]$i1, (-not $i2), [bool]$i3, [bool]$i4, (-not $i5), [bool]$i6)
     $tl1 = Get-DriftTolerance ([pscustomobject]@{ W = 20; H = 20 }); $tl2 = Get-DriftTolerance ([pscustomobject]@{ W = 300; H = 40 }); $tl3 = Get-DriftTolerance ([pscustomobject]@{ W = 4; H = 4 })
     & $rec 'v4.2 漂移容差随尺寸收紧（20px 复选框不会认成相邻 40px 行的那个）' (($tl1 -eq 10) -and ($tl2 -eq 20) -and ($tl3 -eq 8)) "20px→$tl1 高40→$tl2 4px→$tl3"
+    # ---- v4.3 纯逻辑自检（日志任务1 / 任务3 的真实故障样本；不碰鼠标键盘）----
+    $tOff = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt 12; $i++) {
+        $isOff = ($i -lt 8)
+        $tOff.Add([pscustomobject]@{ Index = ($i + 1); Row = [pscustomobject]@{ L = 100; T = (200 + 40 * $i); W = 900; H = 40; Off = $isOff; El = $null } })
+    }
+    $tbBtn = [pscustomobject]@{ L = 645; T = 300; W = 60; H = 28; El = $null }          # 吸顶工具栏的「刪除」，中心 (675,314)，与已滚出视口的 R8 的未裁剪矩形重叠
+    $rowBtn = [pscustomobject]@{ L = 900; T = 530; W = 40; H = 28; El = $null }         # 真正位于可见行 R12（T=640?）以内的行内按钮
+    $rowBtn.T = 645; $rowBtn.L = 900
+    $oldHit = Test-InAnyRect $tbBtn @($tOff | ForEach-Object { $_.Row })
+    $newTb = Test-TargetInRow $tbBtn $tOff
+    $newRow = Test-TargetInRow $rowBtn $tOff
+    & $rec 'v4.3 联锁误判回放（日志任务3：工具栏「刪除」被已滚走的行盖住）' ($oldHit -and ($newTb -eq 0) -and ($newRow -gt 0)) "旧判定=行内($oldHit)  新判定=工具栏(行号 $newTb)  真行内按钮=R$newRow"
+    $e1 = Get-ErrorInfo '安全联锁：「刪除」位于某一行内，只会处理那一行，而任务要求 5 个'; $e2 = Get-ErrorInfo '命令超过 60 秒未完成，已终止'; $e3 = Get-ErrorInfo '控件 [5] Button "x" 已不存在（界面已变化），请重新观察后再操作'; $e4 = Get-ErrorInfo '你正在使用键盘，已让出控制权'
+    & $rec 'v4.3 结构化错误码（INTERLOCK / TIMEOUT / STALE_REF / USER_ACTIVE）' (($e1.Code -eq 'INTERLOCK') -and ($e1.Retry -eq 'no') -and ($e2.Code -eq 'TIMEOUT') -and ($e3.Code -eq 'STALE_REF') -and ($e4.Code -eq 'USER_ACTIVE')) "$($e1.Code) $($e2.Code) $($e3.Code) $($e4.Code)"
+    $raw = '{"thought":"多行脚本","action":"run_powershell","command":"$a=1' + "`n" + 'Write-Output $a"}'
+    $pjr = $null; $pjrErr = ''
+    try { $pjr = ConvertFrom-ModelJson $raw } catch { $pjrErr = $_.Exception.Message }
+    & $rec 'v4.3 JSON 修复：字符串内的裸换行（模型直接贴多行脚本）' ($null -ne $pjr -and "$($pjr.command)" -match 'Write-Output') "解析结果 action=[$($pjr.action)] $(Limit-Text $pjrErr 60)"
+    $c1 = Get-ClipRect ([pscustomobject]@{ Left = 0; Top = -60; Width = 100; Height = 100 }) @{ Win = @(0.0, 0.0, 800.0, 600.0); Screen = @(0.0, 0.0, 1920.0, 1080.0) }
+    $c2 = Get-ClipRect ([pscustomobject]@{ Left = 900; Top = 50; Width = 100; Height = 40 }) @{ Win = @(0.0, 0.0, 800.0, 600.0); Screen = @(0.0, 0.0, 1920.0, 1080.0) }
+    $c3 = Get-ClipRect ([pscustomobject]@{ Left = 0; Top = 2000; Width = 100; Height = 40 }) @{ Win = @(0.0, 0.0, 800.0, 600.0); Screen = @(0.0, 0.0, 1920.0, 1080.0) }
+    & $rec 'v4.3 可见区裁剪（被吸顶栏遮一半→点可见部分；弹出层在窗外→按屏幕；屏幕外→空）' ((-not $c1.IsEmpty) -and ([int]$c1.Top -eq 0) -and ([int]$c1.Height -eq 40) -and (-not $c2.IsEmpty) -and ([int]$c2.Left -eq 900) -and $c3.IsEmpty) "半遮挡可见高度=$([int]$c1.Height) 窗外弹层=$(-not $c2.IsEmpty) 屏外为空=$($c3.IsEmpty)"
+    $pa = New-Object 'byte[]' 1536; $pb = New-Object 'byte[]' 1536; for ($i = 0; $i -lt 100; $i++) { $pb[$i] = 200 }
+    $pd0 = Get-PixelDiff $pa $pa; $pd1 = Get-PixelDiff $pa $pb
+    & $rec 'v4.3 像素差（相同=0%，100/1536 区块变化≈6.5%，空输入=null）' (($pd0 -eq 0) -and ([Math]::Abs($pd1 - 6.5) -lt 0.1) -and ($null -eq (Get-PixelDiff $null $pa))) "相同=$pd0% 变化=$pd1%"
+    $wf = Join-Path ([System.IO.Path]::GetTempPath()) "dscu-selftest-$PID.ps1"
+    $wfOk = $false; $wfMsg = ''
+    try {
+        [void](Invoke-WriteFile @{ path = $wf; content = "Write-Output 'part1:你好'`n"; append = $false })
+        [void](Invoke-WriteFile @{ path = $wf; content = "Write-Output 'part2'`n"; append = $true })
+        $pr = Invoke-ProcessAction @{ file = $wf; timeout = 30 }
+        $wfOk = ($pr -match '退出码 0' -and $pr -match 'part1:你好' -and $pr -match 'part2'); $wfMsg = Limit-Text $pr 70
+    }
+    catch { $wfMsg = $_.Exception.Message }
+    finally { Remove-Item -LiteralPath $wf -ErrorAction SilentlyContinue }
+    & $rec 'v4.3 write_file 分段写入 + run_process 运行（含中文，读回核验）' $wfOk $wfMsg
+    $tmo = $false; $tmoSec = 0
+    try {
+        $swT = [System.Diagnostics.Stopwatch]::StartNew()
+        [void](Invoke-ProcessAction @{ file = (Get-Process -Id $PID).Path; args = '-NoProfile -Command Start-Sleep -Seconds 30'; timeout = 2 })
+    }
+    catch { $tmo = ($_.Exception.Message -match '超过 2 秒'); $tmoSec = [int]$swT.Elapsed.TotalSeconds }
+    & $rec 'v4.3 run_process 超时会杀进程树（睡 30 秒、2 秒超时）' ($tmo -and $tmoSec -le 6) "已终止=$tmo 用时 ${tmoSec} 秒"
+    $pxs = Get-PixelSig ([DsNative4]::GetForegroundWindow())
+    & $rec 'v4.3 屏幕像素采样可用（独立于 UIA 的变化证据）' ($null -ne $pxs -and $pxs.Length -eq 1536) $(if ($null -ne $pxs) { '48x32 灰度采样成功' } else { '采样失败' })
+    $sbn = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $cpOld = [DsNative4]::CursorPos()
+    $vx = [DsNative4]::VirtX(); $vy = [DsNative4]::VirtY(); $vw = [DsNative4]::VirtW(); $vh = [DsNative4]::VirtH()
+    $probe = @(@(($vx + 6), ($vy + 6)), @(($vx + $vw - 7), ($vy + $vh - 7)), @([int]($w / 2), [int]($h / 2)), @(($vx + 123), ($vy + 457)))
+    $badPts = @()
+    foreach ($pp in $probe) { [DsNative4]::SetCursor([int]$pp[0], [int]$pp[1]); $rb = [DsNative4]::CursorPos(); if ($rb[0] -ne [int]$pp[0] -or $rb[1] -ne [int]$pp[1]) { $badPts += "($($pp[0]),$($pp[1]))→($($rb[0]),$($rb[1]))" } }
+    [DsNative4]::SetCursor($cpOld[0], $cpOld[1])
+    & $rec 'v4.3 物理光标回读（虚拟桌面四角/中心写入再读回，且 WinForms 与 Win32 对主屏尺寸一致=DPI 无虚拟化）' (($badPts.Count -eq 0) -and ($sbn.Width -eq $w) -and ($sbn.Height -eq $h)) "偏差点=$($badPts -join ' ') WinForms=$($sbn.Width)x$($sbn.Height) Win32=${w}x${h}"
     $real0 = [DsNative4]::CursorPos()
     if ($script:Cur) {
         $script:Cur.ResetStats()
@@ -3050,7 +3326,7 @@ function Show-Help {
 }
 function Show-Banner {
     Write-Host ''
-    Write-Host '=== DeepSeek Computer Use v4.2（虚拟鼠标 + 分层精确执行 + 列表行模型 + 幂等勾选 + 数量联锁）===' -ForegroundColor Cyan
+    Write-Host '=== DeepSeek Computer Use v4.3（可见区精确坐标 + 像素证据 + 联锁根因修复 + 错误码熔断 + 长任务通道）===' -ForegroundColor Cyan
     Write-Host "模型    : $Model    每任务最大步数: $MaxSteps    批量动作上限: $MaxBatch"
     Write-Host "模式    : $(if ($DryRun) { '仅预演(DryRun)' } elseif ($script:Auto) { '全自动（无需确认）' } else { '逐步确认' })    Shell: $(if ($NoShell) { '禁止' } else { '允许' })    管理员: $(if ($script:IsAdmin) { '是' } else { '否（加 -RunAsAdmin 可操作高权限窗口）' })    会话记忆: $(if ($MemoryLimit -gt 0) { "最近 $MemoryLimit 个任务" } else { '关闭' })"
     Write-Host "输入    : $($script:Mode)（Auto=UIA→消息→物理借用归位）    虚拟鼠标: $(if ($script:Cur) { '已启用' } else { '未启用' })    让位阈值: ${IdleMs}ms"
@@ -3060,7 +3336,7 @@ function Show-Banner {
 }
 Initialize-Runtime
 Show-Banner
-Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '4.2' }
+Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '4.3' }
 $pending = $Task
 try {
     while ($true) {
