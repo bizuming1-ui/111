@@ -1,8 +1,19 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v6.2 —— 在 v5.1 已验证的全部能力上继续做「更深」而不是「更大」：浏览器里的每一次鼠标 / 键盘操作都和真人一样。
+  DeepSeek Computer Use v6.3 —— 在 v5.1 已验证的全部能力上继续做「更深」而不是「更大」：浏览器里的每一次鼠标 / 键盘操作都和真人一样。
 .DESCRIPTION
+  v6.3（第二阶段：Chromium 系浏览器的 CDP 混合感知 + 确定性等待；感知与执行解耦，所有鼠标 / 键盘仍由 DsNative61 物理执行，PressGuard / 人类化轨迹 / 动作账本 / -NoVision / -SelfTest 全部保留）：
+    1. 【CDP 感知通道】Chrome / Edge / Brave 默认以「独立 --user-data-dir + --remote-debugging-port」启动（不污染日常浏览器登录态；-CdpProfile 可显式复用）。前台是已附着的 Chromium 时，
+       Get-Observation 先走 CDP：Accessibility.getFullAXTree + DOM.getDocument(depth=-1, pierce=true) 融合（穿透 Shadow DOM / 同源 iframe），DOM.getBoxModel 管线化取几何，
+       DOM.getNodeForLocation + 页面内 elementFromPoint 做遮挡 / 透明遮罩检测，过滤 display:none / visibility:hidden / opacity:0 / 视口外。整页感知通常 10~60ms（UIA 常 300ms~数秒）。
+    2. 【坐标闭环】视口 CSS 像素 → Windows 物理屏幕坐标：Chrome_RenderWidgetHostHWND 真实视口矩形 → 客户区推算 → screenX/Y 公式 三级降级；首次点击后用页面实际收到的 mousemove(clientX/Y) 校准原点。
+       控件仍以 id 引用，点击前用 backendNodeId 实时重算几何 + 命中检查（比 UIA 的「按名称 + 位置漂移」更稳，省掉大量「请重新观察」往返）。
+    3. 【确定性等待】Wait-CdpSettled 取代标题轮询：readyState==='complete' 且 Network 在途请求==0 并持续安静窗口（有网络活动 250ms / 纯界面操作 120ms，总超时 5000ms，80ms 轮询并检查 Ctrl+Alt+Q）；
+       长连接 / 流媒体 / 信标不计入，超龄长轮询自动剔除；无变化时不再固定多等 900ms。
+    4. 【四级感知漏斗】[CDP] → [UIA] → [SoM + deepseek-flash 视觉] → [WinRT OCR]；CDP 遇到 canvas / WebGL / 验证码 / 跨进程 iframe 时自动触发 v6.2 的视觉兜底；每步输出 [Perception: CDP(nodes=N, inflight=M)]。
+    5. 【零依赖 / 向后兼容】只用 PowerShell 7 内置 .NET（ClientWebSocket / System.Text.Json / HttpClient）；-NoCdp 一键关闭；页面上有 ≥2 个复选框时回到 UIA 行模型（select_rows / 数量联锁不变）；任何 CDP 失败平滑回退 UIA。
+    6. 【自检】-SelfTest 新增离线单元测试（JSON-RPC 序列化、DPI 坐标换算、遮挡过滤、在途计数、Target 匹配、启动参数），并自动启动无头隔离 Edge / Chrome 做活体端到端验证。
   v6.2（第一阶段：按需触发的多模态视觉兜底 + 提速；C# 原生层 / 规划 / 动作账本 / 安全联锁 / 人类化输入逐字保留，-SelfTest / -DryRun / -StepConfirm 语义不变）：
     1. 【视觉兜底】UIA 仍是主通道。仅当「前台非控制台窗口可交互控件 < 6（盲区）」「动作账本连续 2 次无效 / REPEAT_NOEFFECT / UNGROUNDED」「模型输出 vision_inspect」时，
        才把带 SoM 编号框 + 坐标标尺的前台窗口截图交给 -VisionModel（默认 deepseek-flash）；常规步骤与规划阶段仍用 -Model（deepseek-chat）。
@@ -71,6 +82,16 @@
   不自动最小化 / 绕开运行本脚本的控制台（v5）。
 .PARAMETER NoContainers
   观察中不列出无名的可交互 Group/Image/Custom（v5）。
+.PARAMETER NoCdp
+  关闭 CDP 混合感知与确定性等待（v6.3）：浏览器里恢复 v6.2 的 UIA / 视觉行为，启动 Chrome / Edge 时不再附加远程调试端口。
+.PARAMETER CdpPort
+  启动隔离浏览器时使用的远程调试端口，默认 9222；被占用时自动换成动态空闲端口；0 = 总是动态空闲端口。
+.PARAMETER CdpProfile
+  显式复用指定的浏览器 Profile 目录（默认使用临时目录下独立的 DeepSeekComputerUse-cdp-<浏览器>，不碰你日常的 Profile）。注意：不能是浏览器默认目录（Chrome 136+ 会忽略调试端口）。
+.PARAMETER CdpQuietMs
+  Wait-CdpSettled 的安静窗口（毫秒），默认 250（纯界面操作自动缩短为 120）。
+.PARAMETER CdpTimeoutMs
+  Wait-CdpSettled 的总超时（毫秒），默认 5000。
 .PARAMETER NoVision
   关闭视觉兜底（v6.2）：恢复纯 UIA + OCR 行为。
 .PARAMETER VisionModel
@@ -128,6 +149,11 @@ param(
     [switch]$NoContainers,
     [switch]$NoHuman,
     [switch]$NoVision,
+    [switch]$NoCdp,
+    [ValidateRange(0, 65535)][int]$CdpPort = 9222,
+    [string]$CdpProfile,
+    [ValidateRange(50, 5000)][int]$CdpQuietMs = 250,
+    [ValidateRange(500, 60000)][int]$CdpTimeoutMs = 5000,
     [string]$VisionModel = 'deepseek-flash',
     [ValidateRange(200, 4096)][int]$VisionMaxEdge = 1600,
     [ValidateRange(30, 100)][int]$VisionJpegQuality = 80,
@@ -146,6 +172,10 @@ $script:ScanCap = 1500
 $script:TaskQty = 0
 $script:SelectMemo = $null
 if ($CursorSpeed -le 0.1) { $CursorSpeed = 0.1 }
+# v6.3：CDP 参数归一化（粘贴到控制台运行时 param 块不会绑定默认值，这里保证新参数始终有合法值）
+$script:CdpPortCfg = 9222; if ($PSBoundParameters.ContainsKey('CdpPort')) { $script:CdpPortCfg = [int]$CdpPort }
+$script:CdpQuietMs = if ($CdpQuietMs -gt 0) { [int]$CdpQuietMs } else { 250 }
+$script:CdpSettleTimeoutMs = if ($CdpTimeoutMs -gt 0) { [int]$CdpTimeoutMs } else { 5000 }
 #region ---------- 管理员提权 ----------
 function Test-IsAdmin {
     try {
@@ -1062,6 +1092,8 @@ function Test-IsConsoleWindow([IntPtr]$h) {
     return ([DsNative61]::Root($h) -eq [DsNative61]::Root($script:ConsoleHwnd))
 }
 function Wait-UiSettled([int]$minMs = 110, [int]$maxMs = 1200) {   # v6.2：下限 150→110ms
+    # v6.3：前台是已附着 CDP 的浏览器时，用「readyState + 在途请求 + 安静窗口」的确定性等待替代标题轮询；CDP 不可用 → 走下面的 v6.2 原逻辑
+    if (Test-CdpForeground) { try { if (Wait-CdpSettled) { return } } catch { if ("$($_.Exception.Message)" -like '触发保护*') { throw } } }
     # 操作之后等界面「稳定」：前台窗口与标题连续两次采样一致即返回（页面/弹窗仍在加载时多等一会儿）
     $end = (Get-Date).AddMilliseconds($maxMs)
     Start-Sleep -Milliseconds $minMs
@@ -1122,6 +1154,7 @@ function Initialize-Runtime {
     }
 }
 function Stop-Runtime {
+    try { Close-CdpClient } catch { }   # v6.3：关闭 CDP WebSocket / HttpClient（不关浏览器本身）
     try { if ($script:Http) { $script:Http.Dispose(); $script:Http = $null } } catch { }
     try { [DsNative61]::Follower = $null; if ($script:Cur) { $script:Cur.Stop(); $script:Cur = $null } } catch { }
     try { if ($script:Pool) { $script:Pool.Close(); $script:Pool.Dispose(); $script:Pool = $null } } catch { }
@@ -1169,6 +1202,7 @@ function Set-ExpectRoot($t) {
     [DsNative61]::ExpectRoot = $r
 }
 function Invoke-HumanApproach($t, $item) {
+    if ($item -and $item.Cdp -and $t.byId) { Invoke-CdpApproach $t $item; return }   # v6.3：CDP 实时几何重核对 + 光标闭环
     # 像人一样「先移过去，再看一眼目标还在不在原地」：光标到位后重读目标矩形，移动期间页面发生布局位移就追加一次短修正（最多 2 次）
     $w = 40
     if ($item) { try { $w = [int][Math]::Max(8.0, [Math]::Min([double]$item.W, [double]$item.H)) } catch { $w = 40 } }
@@ -1493,11 +1527,26 @@ function Get-Observation {
     $sw = [DsNative61]::PrimaryW(); $sh = [DsNative61]::PrimaryH()
     $cursor = [DsNative61]::CursorPos()
     $windows = @(Get-TopWindowList 15 | ForEach-Object { "  - $($_.Process): $(Limit-Text $_.Title 60)" })
-    $all = @(Get-UiElements $fg.Handle | Sort-Object cy, cx)
-    try { Add-NearLabels $all } catch { }   # v5：无名可点击容器带上内部 / 紧邻文字
+    # v6.3：感知路由器——前台是 Chromium 且 CDP 已附着时优先用 CDP（DOM + AXTree 融合）；失败 / 页面有 ≥2 个复选框（需要 UIA 行模型）时回到 UIA
+    $cdpObs = $null
+    try { $cdpObs = Get-CdpObservation $fg }
+    catch {
+        if ("$($_.Exception.Message)" -like '触发保护*') { throw }
+        Write-Host "  CDP 感知异常，本步回退 UIA: $(Limit-Text $_.Exception.Message 120)" -ForegroundColor DarkYellow
+        $cdpObs = $null
+    }
+    if ($cdpObs -and (@($cdpObs.Items | Where-Object { $_.Type -eq 'CheckBox' }).Count -ge 2)) { $cdpObs.UseItems = $false }
+    $useCdp = [bool]($cdpObs -and $cdpObs.UseItems)
+    if ($useCdp) { $all = @($cdpObs.Items | Sort-Object cy, cx) }
+    else {
+        $all = @(Get-UiElements $fg.Handle | Sort-Object cy, cx)
+        try { Add-NearLabels $all } catch { }   # v5：无名可点击容器带上内部 / 紧邻文字
+        # 隔离浏览器没有强制开启渲染器无障碍：UIA 回退拿到的控件明显比 CDP 少时，继续使用 CDP 条目（不让感知「失明」）
+        if ($cdpObs -and (@($all | Where-Object { $_.Type -ne 'Text' }).Count -lt [Math]::Max(4, [int]($cdpObs.Nodes / 3)))) { $cdpObs.UseItems = $true; $useCdp = $true; $all = @($cdpObs.Items | Sort-Object cy, cx) }
+    }
     # v4.2：屏幕上有 ≥2 个复选框时建立「列表行模型」（含视口外的行）
     $model = $null
-    if (@($all | Where-Object { $_.Type -eq 'CheckBox' }).Count -ge 2) { try { $model = Get-RowModel $fg.Handle } catch { $model = $null } }
+    if (-not $useCdp -and @($all | Where-Object { $_.Type -eq 'CheckBox' }).Count -ge 2) { try { $model = Get-RowModel $fg.Handle } catch { $model = $null } }
     $rowParts = [System.Collections.Generic.HashSet[string]]::new()
     $masterKeys = [System.Collections.Generic.HashSet[string]]::new()
     $rowRects = [System.Collections.Generic.List[object]]::new()
@@ -1536,6 +1585,7 @@ function Get-Observation {
         if (-not $it.Enabled) { $line += ' (disabled)' }
         if ($it.Focus) { $line += ' ★焦点' }
         if ($it.IsMaster) { $line += ' ⚠全选复选框' }
+        if ($it.Covered) { $line += " ⛔被「$($it.CoveredBy)」遮挡（点不到）" }
         if ($it.Pat.Count -gt 0) { $line += ' {' + ($it.Pat -join ',') + '}' }
         $line += " @($($it.cx),$($it.cy))"
         $lines.Add($line)
@@ -1571,7 +1621,7 @@ function Get-Observation {
     }
     $focusLine = ''
     try {
-        $fe = [System.Windows.Automation.AutomationElement]::FocusedElement
+        $fe = if ($useCdp) { $null } else { [System.Windows.Automation.AutomationElement]::FocusedElement }
         if ($null -ne $fe) {
             $fc = $fe.Current
             $focusLine = "当前键盘焦点: $($fc.ControlType.ProgrammaticName -replace '^ControlType\.', '') `"$(Limit-Text $fc.Name 50)`""
@@ -1589,6 +1639,8 @@ function Get-Observation {
     $text = @(
         "屏幕分辨率: ${sw}x${sh}  真实鼠标位置: ($($cursor[0]),$($cursor[1]))（虚拟鼠标不会移动它）"
         $coordLine
+        $(if ($useCdp) { $cdpObs.Line } else { '' })
+        $(if ($useCdp) { $cdpObs.FocusLine } else { '' })
         "前台窗口: [$($fg.Process)] $(Limit-Text $fg.Title 100) $consoleHint"
         $focusLine
         '已打开的窗口:'
@@ -1616,7 +1668,7 @@ function Get-Observation {
         $pl = if ($pixPct -lt 0.2) { '屏幕像素: 前台窗口几乎无变化' } else { "屏幕像素: 前台窗口约 $pixPct% 的区块发生了变化" }
         $changes = "$changes`n $pl".Trim()
     }
-    return [pscustomobject]@{ Text = $text; Foreground = $fg; Keys = $curSet; Changes = $changes; Rows = $model; PixPct = $pixPct; Inter = $interAll; IsConsole = [bool]$isConsole; Pix = $pix }
+    return [pscustomobject]@{ Text = $text; Foreground = $fg; Keys = $curSet; Changes = $changes; Rows = $model; PixPct = $pixPct; Inter = $interAll; IsConsole = [bool]$isConsole; Pix = $pix; Cdp = $(if ($useCdp) { $cdpObs } else { $null }); CdpHint = $(if ($useCdp) { $cdpObs.Hint } else { '' }) }
 }
 #endregion
 #region ---------- 安全检查（仅拦截灾难性命令，-NoSafety 可关闭） ----------
@@ -2134,8 +2186,11 @@ function Invoke-CheckAction($a, [bool]$on) {
         Test-Abort
         $n = [int]"$i"
         $item = $script:Elements[$n]
-        Assert-ItemFresh $item $n
-        $res = Set-CheckState $item $on "[$n]"
+        if ($item.Cdp) { $res = Set-CdpCheckState $item $on "[$n]" $n }   # v6.3：CDP 读回 checked / aria-checked，幂等设定
+        else {
+            Assert-ItemFresh $item $n
+            $res = Set-CheckState $item $on "[$n]"
+        }
         if (-not $res.Ok) { $bad++ }
         $tag = if (-not $res.Changed) { "已是$want" } elseif ($res.Ok) { "→$($res.State)✓" } else { "→$($res.State)✗($($res.Via))" }
         $parts.Add("[$n]$tag")
@@ -2359,6 +2414,7 @@ function Get-ErrorInfo([string]$msg) {
     elseif ($m -match '超过 \d+ 秒') { $code = 'TIMEOUT'; $retry = 'no_same_command' }
     elseif ($m -match '让出控制权|正在使用键盘|正在使用鼠标') { $code = 'USER_ACTIVE'; $retry = 'safe_after_wait' }
     elseif ($m -match '光标定位失败') { $code = 'CURSOR_FIX'; $retry = 'after_observe' }
+    elseif ($m -match '网页元素.*遮挡') { $code = 'OCCLUDED'; $retry = 'after_close_overlay' }
     elseif ($m -match '遮挡|前台窗口已变化') { $code = 'OCCLUDED'; $retry = 'after_focus_window' }
     elseif ($m -match '已不存在|界面已变化|位置已偏移|名称已由|已不可见|不存在（当前|滚动后仍不可见') { $code = 'STALE_REF'; $retry = 'after_observe' }
     elseif ($m -match '被禁用') { $code = 'DISABLED'; $retry = 'no' }
@@ -2657,6 +2713,7 @@ function Complete-EffectProbe {
 # ---------- ③ 坐标依据 / 不吸附大容器 ----------
 function Test-UiaActionable($item) {
     if ($null -eq $item) { return $false }
+    if ($item.Cdp) { return $false }   # v6.3：网页 CDP 条目没有 UIA 元素
     if ($item.Type -eq 'Edit') { return $true }
     foreach ($p in @($item.Pat)) { if ($p -in 'inv', 'tog', 'sel', 'exp') { return $true } }
     return $false
@@ -3205,6 +3262,7 @@ function Test-ActionSchema($a, [int]$index) {
 #endregion
 #region ---------- 动作执行（分层精确） ----------
 function Test-HitTarget($item, [int]$x, [int]$y, [switch]$Strict) {
+    if ($item.Cdp) { return (Test-CdpHit $item $x $y) }   # v6.3
     # 目标点处「实际」的 UIA 元素必须是目标本身、其后代，或其近亲祖先。
     # -Strict（坐标吸附用）：只接受「命中元素本身或其后代」。
     # 非 Strict（物理点击前核对）：跨窗口遮挡已由 RootAt 严格拦截；同窗口内只拦截菜单 / 弹出窗口类遮挡，避免 Chrome 页面里的误判。
@@ -3256,6 +3314,7 @@ function Resolve-Target($a) {
         $n = [int]"$($a.id)"
         if (-not $script:Elements.ContainsKey($n)) { throw "元素编号 $n 不存在（当前只有 $($script:Elements.Count) 个元素）" }
         $item = $script:Elements[$n]
+        if ($item.Cdp) { return (Resolve-CdpItemTarget $item $n) }   # v6.3：CDP 条目用 backendNodeId 实时重算几何 + 命中检查
         # 发送前重新核对：控件还在、没被隐藏、没被禁用、名称没变、位置没有大幅漂移 —— 并使用「此刻」的精确坐标
         $liveName = ''; $r = $null; $enabled = $true; $offscreen = $false
         try {
@@ -3476,7 +3535,7 @@ function Invoke-PointerAction([string]$kind, $a) {
     }
     # ---- 第 3 层：物理输入（先让位、再校验、借用后归位）----
     $hitNote = ''
-    if ($item -and $t.byId) {
+    if ($item -and $t.byId -and -not $item.Cdp) {
         # v4.2：不盲点矩形中心，挑一个「严格命中测试」通过的落点
         try {
             $lr = Get-ClipRect $item.El.Current.BoundingRectangle (Get-ViewBounds)   # v4.3：只在可见部分内选落点
@@ -3501,7 +3560,8 @@ function Invoke-PointerAction([string]$kind, $a) {
     $rcpt = ''
     if ([DsNative61]::Humanize) { $rcpt = "；回执：按下前光标偏差 $([DsNative61]::LastPressDev)px、释放后偏差 $([DsNative61]::LastReleaseDev)px、落点修正 $([DsNative61]::Fixups) 次" }
     $how = if ([DsNative61]::Humanize) { "人类化物理输入：光标沿曲线移到目标→核对位置与遮挡→悬停→按下抬起，光标停在目标上$hitNote" } else { "物理输入$hitNote；真实鼠标瞬时借用并已归位" }
-    return "已执行 $kind $($t.label)（$how；页面弹窗可能稍后才出现，以下一轮的『界面变化』为准）$fallback$rcpt"
+    $aim = "$($script:CdpAimNote)"; $script:CdpAimNote = ''
+    return "已执行 $kind $($t.label)（$how；页面弹窗可能稍后才出现，以下一轮的『界面变化』为准）$fallback$rcpt$aim"
 }
 function Invoke-ClickMany($a) {
     # 一次点击/勾选多个控件。每个控件执行前都会实时核对（名称/位置/可见/可用）；任一失败即中止，并报告已完成的部分（不会回滚）。
@@ -3582,6 +3642,7 @@ function Invoke-TypeAction($a) {
         if ($item) {
             $focused = $false
             try { $focused = [bool]$item.El.Current.HasKeyboardFocus } catch { }
+            if ($item.Cdp) { $focused = Test-CdpFocused $item }   # v6.3：已聚焦就不再多点一次
             if (-not $focused) {
                 $t2 = Resolve-Target $a
                 Assert-PhysicalReady $t2
@@ -3595,6 +3656,13 @@ function Invoke-TypeAction($a) {
         if ($clear) { Send-KeyCombo 'ctrl+a'; Start-Sleep -Milliseconds 40; Send-KeyCombo 'backspace'; Start-Sleep -Milliseconds 40 }
         Send-Text $text
         $note = '（键盘输入）'
+        if ($item -and $item.Cdp) {
+            $back = Get-CdpValue $item   # v6.3：用 CDP 读回输入框的真实值
+            if ($null -ne $back) {
+                $tail = if ($text.Length -gt 20) { $text.Substring($text.Length - 20) } else { $text }
+                $note = if ($back.Contains($tail)) { "（键盘输入；CDP 读回值包含所输入文本 ✓）" } else { "（键盘输入；CDP 读回值=$(Limit-Text $back 60)，与预期不符，请核对）" }
+            }
+        }
         if ($item -and $item.Pat -contains 'val') {
             try {
                 $back = "$($item.El.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value)"
@@ -3646,7 +3714,7 @@ function Invoke-ScrollAction($a) {
     Assert-PhysicalReady $t
     Set-ExpectRoot $t
     try { [DsNative61]::PhysicalWheel($t.x, $t.y, $dir * $amount, $true) } catch { throw (Get-NativeError $_) }
-    if ([DsNative61]::Humanize) { Start-Sleep -Milliseconds 260 }   # 网页的平滑滚动需要时间落定，之后的观察才是稳定画面
+    if (Test-CdpForeground) { Wait-CdpScrollIdle } elseif ([DsNative61]::Humanize) { Start-Sleep -Milliseconds 260 }   # v6.3：CDP 读 scrollY 落定即返回   # 网页的平滑滚动需要时间落定，之后的观察才是稳定画面
     return "已滚动 $($a.direction) x$amount（$(if ([DsNative61]::Humanize) { '人类化物理滚轮：光标移到滚动区域→停顿→逐格滚动，光标停在原处' } else { '物理滚轮；真实鼠标已归位' })）"
 }
 function Focus-WindowByTitle([string]$keyword) {
@@ -3692,12 +3760,20 @@ function Invoke-Launch($a) {
     $before = [DsNative61]::GetForegroundWindow()
     $known = Get-TopHandles
     $argStr = "$($a.args)"
-    # Chrome / Edge：自动打开渲染器无障碍，网页内容才会出现在控件列表里
-    if ($target -match '(?i)(^|[\\/])(chrome|msedge)(\.exe)?$' -and $argStr -notmatch 'force-renderer-accessibility') {
-        $argStr = ('--force-renderer-accessibility ' + $argStr).Trim()
+    # v6.3：Chrome / Edge / Brave 默认以「隔离 Profile + 远程调试端口」启动，由 CDP 负责感知与等待；-NoCdp 或失败时回到 v6.2 的 --force-renderer-accessibility
+    $cdpLa = $null
+    if ((Test-CdpEnabled) -and ($target -match '(?i)(^|[\\/])(chrome|msedge|brave)(\.exe)?$')) {
+        try { $cdpLa = Start-CdpBrowser $target $argStr }
+        catch { $cdpLa = $null; Write-Host "  CDP 隔离启动失败，改用普通启动: $(Limit-Text $_.Exception.Message 120)" -ForegroundColor DarkYellow }
     }
-    if ($argStr) { Start-Process -FilePath $target -ArgumentList $argStr }
-    else { Start-Process -FilePath $target }
+    if ($null -eq $cdpLa) {
+        # Chrome / Edge：自动打开渲染器无障碍，网页内容才会出现在控件列表里
+        if ($target -match '(?i)(^|[\\/])(chrome|msedge)(\.exe)?$' -and $argStr -notmatch 'force-renderer-accessibility') {
+            $argStr = ('--force-renderer-accessibility ' + $argStr).Trim()
+        }
+        if ($argStr) { Start-Process -FilePath $target -ArgumentList $argStr }
+        else { Start-Process -FilePath $target }
+    }
     # 等待：前台窗口变化，或出现新的顶层窗口（最多 5 秒）
     $end = (Get-Date).AddSeconds(5)
     $newHandle = [IntPtr]::Zero
@@ -3712,11 +3788,18 @@ function Invoke-Launch($a) {
         if ($newHandle -ne [IntPtr]::Zero) { break }
     }
     if ($newHandle -ne [IntPtr]::Zero -and [DsNative61]::GetForegroundWindow() -ne $newHandle) { [void][DsNative61]::Activate($newHandle) }
-    Start-Sleep -Milliseconds 450
+    $cdpNote = ''
+    if ($cdpLa) {
+        $cdpUp = Wait-CdpEndpoint ([int]$cdpLa.Port) 3000
+        $cdpNote = if ($cdpUp) { "；CDP 隔离实例已就绪（端口 $($cdpLa.Port)，Profile $($cdpLa.Profile)）" } else { '；CDP 端点未就绪（本轮回退 UIA 感知）' }
+        if ($cdpLa.Warn) { $cdpNote += "；$($cdpLa.Warn)" }
+        Start-Sleep -Milliseconds $(if ($cdpUp) { 120 } else { 450 })
+    }
+    else { Start-Sleep -Milliseconds 450 }
     $now = [DsNative61]::GetForegroundWindow()
     $script:ObsHwnd = $now
     $tail = if ($now -eq $before) { '；前台窗口未变化（程序可能已在运行或在后台打开，必要时用 focus_window）' } else { "；前台窗口: [$(Limit-Text ([DsNative61]::WinText($now)) 50)]" }
-    return "已启动 $target$tail"
+    return "已启动 $target$tail$cdpNote"
 }
 function Invoke-ActionCore($a, [string]$kind) {
     switch ($kind) {
@@ -3759,10 +3842,13 @@ function Invoke-Action($a) {
     [DsNative61]::ExpectRoot = [IntPtr]::Zero
     Assert-BulkInterlock $a $kind   # v4.2：数量联锁（删除/归档/全选前核对已勾选行数）
     $before = [DsNative61]::GetForegroundWindow()
+    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect') { Set-CdpActionEpoch }   # v6.3
     $r = Invoke-ActionCore $a $kind
     if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect') {
         Start-Sleep -Milliseconds 60
+        $script:CdpSettleNote = ''
         Wait-UiSettled
+        if ($script:CdpSettleNote) { $r += "；$($script:CdpSettleNote)" }
         $after = [DsNative61]::GetForegroundWindow()
         if ($after -ne $before) { $r += "；前台窗口已变为 [$(Limit-Text ([DsNative61]::WinText($after)) 50)]" }
         $fx = Complete-EffectProbe   # v5：局部视觉证据
@@ -3826,6 +3912,7 @@ function Test-ShouldEscalateToVision($obs, $ledger = $script:Ledger) {
         return [pscustomobject]@{ Use = $true; Reason = 'EXPLICIT'; Why = '模型显式请求 vision_inspect'; Detail = (ConvertTo-VisionDetail $req.Detail); Region = $req.Region }
     }
     if ($obs.IsConsole) { return $no }
+    if ($obs.CdpHint) { return [pscustomobject]@{ Use = $true; Reason = 'CDP_CANVAS'; Why = "CDP 盲区：$($obs.CdpHint)"; Detail = 'original'; Region = $null } }   # v6.3：canvas / WebGL / 验证码 / 跨进程 iframe
     $ic = if ($null -ne $obs.Inter) { [int]$obs.Inter } else { 99 }
     if ($ic -lt 6) {
         return [pscustomobject]@{ Use = $true; Reason = 'UIA_BLIND'; Why = "UIA 盲区：可交互控件 $ic 个 < 6"; Detail = 'original'; Region = $null }
@@ -4107,6 +4194,1232 @@ function Invoke-DeepSeekVisionStep([string]$userContent, $obs, $esc, [int]$step 
     }
     $script:LastVision = $shot
     return [pscustomobject]@{ Raw = $raw; Ctx = $shot }
+}
+#endregion
+#region ---------- v6.3 第二阶段：CDP 混合浏览器感知 + 确定性等待引擎（纯 BCL：ClientWebSocket + System.Text.Json；感知与执行解耦）----------
+# 设计要点（只加深、不加大；DsNative61 / DsOverlay61 / DsTestTarget61 与 v6.2 逐字相同，物理执行 / PressGuard / 人类化轨迹一行未动）：
+#  1) CDP 只负责「看」与「等」：AXTree + DOM(pierce) 融合、getBoxModel 几何、命中测试（遮挡）、Network 在途计数。点击 / 悬停 / 输入仍由 DsNative61 的 SendInput 完成。
+#  2) 接收循环 / JSON-RPC 分发 / 在途请求计数放在 C#（DsCdp63）：PowerShell 脚本块不能在 WebSocket 回调线程上执行（会抛 "There is no Runspace available"）。
+#  3) 管线化：一次发出全部 DOM.getBoxModel / DOM.getNodeForLocation 再统一等待，整页感知通常 10~60ms（UIA FindAll 在 Chrome 上常见 300ms~数秒）。
+#  4) 坐标闭环：Chrome_RenderWidgetHostHWND 真实视口矩形（Win32）→ 客户区推算 → screenX/Y 公式 三级降级；首次点击后用页面收到的 mousemove(clientX/Y) 反推并校准原点。
+#  5) 任一环节失败 → 返回 $null，Get-Observation 自动回到 UIA / SoM 视觉通道；-NoCdp 一键关闭。
+$script:ChromiumNames = @('chrome', 'msedge', 'brave', 'chromium', 'vivaldi', 'opera', 'opera_gx', 'thorium', 'yandex', 'arc')
+$script:Cdp = $null
+$script:CdpDisabled = $false
+$script:CdpState = @{ Port = 0; Root = [IntPtr]::Zero; TargetId = ''; FgTitle = ''; Profile = ''; Launched = $false; Verified = ''; CalX = 0.0; CalY = 0.0; CalKey = ''; Origin = $null; Fails = 0 }
+$script:CdpPidPort = @{}
+$script:CdpRetryAfter = 0L
+$script:CdpHttp = $null
+$script:CdpActEp = $null
+$script:CdpSettleNote = ''
+$script:CdpAimNote = ''
+$script:CdpLast = $null
+if ($null -eq $script:CdpPortCfg) { $script:CdpPortCfg = 9222 }
+if ($null -eq $script:CdpQuietMs) { $script:CdpQuietMs = 250 }
+if ($null -eq $script:CdpSettleTimeoutMs) { $script:CdpSettleTimeoutMs = 5000 }
+$script:CdpWinSrc = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+// v6.3：Chromium 视口真实物理矩形（DPI 感知进程下的物理像素）
+public static class DsWin63 {
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+    [StructLayout(LayoutKind.Sequential)] struct PT { public int X, Y; }
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr h, ref PT p);
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr h, EnumProc cb, IntPtr l);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int n);
+    public static int[] ClientRect(IntPtr h) {
+        RECT r; if (!GetClientRect(h, out r)) return null;
+        PT p = new PT(); p.X = 0; p.Y = 0; if (!ClientToScreen(h, ref p)) return null;
+        return new int[] { p.X, p.Y, r.R - r.L, r.B - r.T };
+    }
+    public static int[] RenderRect(IntPtr top) {
+        int[] best = null; long bestA = 0;
+        EnumProc cb = delegate (IntPtr h, IntPtr l) {
+            StringBuilder sb = new StringBuilder(64); GetClassName(h, sb, 64);
+            if (sb.ToString() == "Chrome_RenderWidgetHostHWND" && IsWindowVisible(h)) {
+                RECT r; if (GetWindowRect(h, out r)) { long a = (long)(r.R - r.L) * (r.B - r.T); if (a > bestA) { bestA = a; best = new int[] { r.L, r.T, r.R - r.L, r.B - r.T }; } }
+            }
+            return true;
+        };
+        EnumChildWindows(top, cb, IntPtr.Zero);
+        GC.KeepAlive(cb);
+        return best;
+    }
+}
+'@
+$script:CdpSrc = @'
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+
+// v6.3：CDP 客户端（纯 BCL：ClientWebSocket + System.Text.Json）。接收循环 / JSON-RPC 分发 / 在途请求计数全部在 C# 线程里完成，
+// 不会有 PowerShell 脚本块在非 Runspace 线程上回调（那会抛 "There is no Runspace available"）。
+public sealed class DsCdp63 : IDisposable {
+    ClientWebSocket ws; CancellationTokenSource cts;
+    readonly ConcurrentDictionary<int, TaskCompletionSource<string>> pending = new ConcurrentDictionary<int, TaskCompletionSource<string>>();
+    readonly ConcurrentDictionary<string, long> inflight = new ConcurrentDictionary<string, long>();
+    readonly object sendLock = new object();
+    int nextId; long epoch, docEpoch, lastEvt;
+    public volatile bool Connected;
+    public volatile bool DialogOpen;
+    public string DialogInfo = "";
+    public string LastError = "";
+    public string WsUrl = "";
+    public int Sent;
+    public static readonly JsonDocumentOptions Jo = new JsonDocumentOptions { MaxDepth = 4096, AllowTrailingCommas = true };
+    // 页面侧辅助：鼠标位置记录（用于「光标 → 视口坐标」闭环校准）
+    const string HookJs = "(()=>{if(!window.__dsM){window.__dsM={x:-1,y:-1,t:0};addEventListener('mousemove',e=>{window.__dsM={x:e.clientX,y:e.clientY,t:performance.now()}},true)}})()";
+
+    public long Epoch { get { return Interlocked.Read(ref epoch); } }
+    public long DocEpoch { get { return Interlocked.Read(ref docEpoch); } }
+    public long LastEventTick { get { return Interlocked.Read(ref lastEvt); } }
+
+    // ===== JSON-RPC 编解码（静态，可离线自检）=====
+    public static string BuildRequest(int id, string method, string paramsJson) {
+        return "{\"id\":" + id + ",\"method\":\"" + method + "\",\"params\":" + (string.IsNullOrEmpty(paramsJson) ? "{}" : paramsJson) + "}";
+    }
+    public static int IdOf(string msg) {
+        if (msg == null || !msg.StartsWith("{\"id\":", StringComparison.Ordinal)) return -1;
+        int j = 6, v = 0, n = 0;
+        while (j < msg.Length && msg[j] >= '0' && msg[j] <= '9') { v = v * 10 + (msg[j] - '0'); j++; n++; }
+        return n > 0 ? v : -1;
+    }
+    public static string ErrorOf(string msg) {
+        if (string.IsNullOrEmpty(msg)) return "空响应";
+        int k = msg.IndexOf("\"error\":", 0, Math.Min(msg.Length, 48), StringComparison.Ordinal);
+        if (k < 0) return null;
+        try { using (var d = JsonDocument.Parse(msg, Jo)) { JsonElement e; if (d.RootElement.TryGetProperty("error", out e)) { JsonElement m; return e.TryGetProperty("message", out m) ? m.GetString() : e.GetRawText(); } } } catch { }
+        return "未知错误";
+    }
+    public static string ResultOf(string msg) {
+        try { using (var d = JsonDocument.Parse(msg, Jo)) { JsonElement r; return d.RootElement.TryGetProperty("result", out r) ? r.GetRawText() : "{}"; } } catch { return "{}"; }
+    }
+
+    // ===== 连接 =====
+    public void Connect(string url, int timeoutMs) {
+        Close();
+        var sock = new ClientWebSocket();
+        var c = new CancellationTokenSource();
+        using (var t = new CancellationTokenSource(timeoutMs)) { sock.ConnectAsync(new Uri(url), t.Token).GetAwaiter().GetResult(); }
+        ws = sock; cts = c; WsUrl = url; LastError = ""; DialogOpen = false; inflight.Clear();
+        Connected = true;
+        var tk = Task.Run(() => RecvLoop(sock, c.Token));
+        Call("Network.enable", "{}", 4000);
+        Call("Page.enable", "{}", 4000);
+        try { Call("Page.addScriptToEvaluateOnNewDocument", "{\"source\":" + JsonSerializer.Serialize(HookJs) + "}", 3000); } catch { }
+        try { Call("Runtime.evaluate", "{\"expression\":" + JsonSerializer.Serialize(HookJs) + "}", 3000); } catch { }
+    }
+    public void Close() {
+        Connected = false;
+        try { if (cts != null) cts.Cancel(); } catch { }
+        try { if (ws != null) ws.Abort(); } catch { }
+        try { if (ws != null) ws.Dispose(); } catch { }
+        ws = null; cts = null;
+        FailAll("连接已关闭");
+    }
+    public void Dispose() { Close(); }
+    void FailAll(string why) {
+        foreach (var k in pending.Keys) { TaskCompletionSource<string> t; if (pending.TryRemove(k, out t)) t.TrySetException(new InvalidOperationException(why)); }
+    }
+    void RecvLoop(ClientWebSocket sock, CancellationToken ct) {
+        var buf = new byte[65536]; var ms = new MemoryStream();
+        try {
+            while (!ct.IsCancellationRequested && sock.State == WebSocketState.Open) {
+                ms.SetLength(0);
+                WebSocketReceiveResult r; bool closed = false;
+                do {
+                    r = sock.ReceiveAsync(new ArraySegment<byte>(buf), ct).GetAwaiter().GetResult();
+                    if (r.MessageType == WebSocketMessageType.Close) { closed = true; break; }
+                    ms.Write(buf, 0, r.Count);
+                } while (!r.EndOfMessage);
+                if (closed) break;
+                Dispatch(Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length));
+            }
+        } catch (Exception e) { if (!ct.IsCancellationRequested) LastError = e.Message; }
+        if (ws == sock) { Connected = false; }
+        FailAll("CDP 连接已断开" + (string.IsNullOrEmpty(LastError) ? "" : "：" + LastError));
+    }
+    void Dispatch(string msg) {
+        int id = IdOf(msg);
+        if (id >= 0) { TaskCompletionSource<string> t; if (pending.TryRemove(id, out t)) t.TrySetResult(msg); return; }
+        OnEvent(msg);
+    }
+    static string Str(string msg, string key) {
+        int i = msg.IndexOf(key, StringComparison.Ordinal); if (i < 0) return null;
+        i += key.Length; int j = msg.IndexOf('"', i); return j < 0 ? null : msg.Substring(i, j - i);
+    }
+    void Touch(bool nav) {
+        Interlocked.Increment(ref epoch); Interlocked.Exchange(ref lastEvt, Environment.TickCount64);
+        if (nav) Interlocked.Increment(ref docEpoch);
+    }
+    // 事件处理（也供离线自检 FeedEvent 调用）
+    public void OnEvent(string msg) {
+        int i = msg.IndexOf("\"method\":\"", StringComparison.Ordinal); if (i < 0) return;
+        i += 10; int j = msg.IndexOf('"', i); if (j < 0) return;
+        string m = msg.Substring(i, j - i);
+        switch (m) {
+            case "Network.requestWillBeSent": {
+                try {
+                    using (var d = JsonDocument.Parse(msg, Jo)) {
+                        var p = d.RootElement.GetProperty("params");
+                        string rid = p.GetProperty("requestId").GetString(), type = "", url = "";
+                        JsonElement e;
+                        if (p.TryGetProperty("type", out e)) type = e.GetString() ?? "";
+                        if (p.TryGetProperty("request", out e) && e.TryGetProperty("url", out e)) url = e.GetString() ?? "";
+                        // 长连接 / 流媒体 / 信标不算「页面还在加载」
+                        if (type == "WebSocket" || type == "EventSource" || type == "Ping" || type == "Media" || type == "Prefetch" || type == "CSPViolationReport" || type == "Preflight" || type == "SignedExchange") return;
+                        if (url.StartsWith("data:", StringComparison.Ordinal) || url.StartsWith("blob:", StringComparison.Ordinal)) return;
+                        inflight[rid] = Environment.TickCount64;
+                        Touch(type == "Document");
+                    }
+                } catch { }
+                break; }
+            case "Network.loadingFinished":
+            case "Network.loadingFailed": {
+                string rid = Str(msg, "\"requestId\":\"");
+                long t0; if (rid != null && inflight.TryRemove(rid, out t0)) Touch(false);
+                break; }
+            case "Page.frameNavigated":
+            case "Page.frameStartedNavigating":
+            case "Page.frameStartedLoading": Touch(true); break;
+            case "Page.navigatedWithinDocument": Touch(false); break;
+            case "Page.javascriptDialogOpening": DialogOpen = true; DialogInfo = (Str(msg, "\"type\":\"") ?? "dialog") + ": " + (Str(msg, "\"message\":\"") ?? ""); break;
+            case "Page.javascriptDialogClosed": DialogOpen = false; break;
+            case "Inspector.detached": case "Inspector.targetCrashed": Connected = false; LastError = m; break;
+        }
+    }
+    public void FeedEvent(string json) { OnEvent(json); }
+    public void ResetNet() { inflight.Clear(); }
+    // 在途请求数：超过 staleMs 仍未结束的请求视为后台长轮询，不再计入（否则永远等不到「安静」）
+    public int InFlight(int staleMs) {
+        long now = Environment.TickCount64; int n = 0;
+        foreach (var kv in inflight) { long age = now - kv.Value; if (age > 120000) { long x; inflight.TryRemove(kv.Key, out x); } else if (age < staleMs) n++; }
+        return n;
+    }
+
+    // ===== 请求 / 响应（线程安全；Batch 一次性发出全部请求再统一等待 = 管线化）=====
+    Task<string> Post(string method, string paramsJson) {
+        if (!Connected || ws == null) throw new InvalidOperationException("CDP 未连接");
+        int id = Interlocked.Increment(ref nextId);
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        pending[id] = tcs;
+        tcs.Task.ContinueWith(t => { var x = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+        var bytes = Encoding.UTF8.GetBytes(BuildRequest(id, method, paramsJson));
+        try { lock (sendLock) { ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, cts.Token).GetAwaiter().GetResult(); } Interlocked.Increment(ref Sent); }
+        catch { TaskCompletionSource<string> d; pending.TryRemove(id, out d); throw; }
+        return tcs.Task;
+    }
+    public string Call(string method, string paramsJson, int timeoutMs) {
+        var t = Post(method, paramsJson);
+        try { if (!t.Wait(timeoutMs)) throw new TimeoutException(method + " 超时（" + timeoutMs + "ms）"); }
+        catch (AggregateException ae) { throw ae.InnerException ?? ae; }
+        string err = ErrorOf(t.Result);
+        if (err != null) throw new InvalidOperationException("CDP " + method + " 错误: " + err);
+        return t.Result;
+    }
+    // 失败 / 超时的项返回 null
+    public string[] Batch(string[] methods, string[] paramsJson, int timeoutMs) {
+        int n = methods.Length; var tasks = new Task<string>[n]; var res = new string[n];
+        for (int i = 0; i < n; i++) { try { tasks[i] = Post(methods[i], paramsJson[i]); } catch { tasks[i] = null; } }
+        long end = Environment.TickCount64 + timeoutMs;
+        for (int i = 0; i < n; i++) {
+            if (tasks[i] == null) continue;
+            long left = Math.Max(1, end - Environment.TickCount64);
+            try { if (tasks[i].Wait((int)Math.Min(left, int.MaxValue))) { string m = tasks[i].Result; if (ErrorOf(m) == null) res[i] = m; } } catch { }
+        }
+        return res;
+    }
+    public string Eval(string expr, int timeoutMs) {   // Runtime.evaluate → returnByValue 的 JSON 值
+        string msg = Call("Runtime.evaluate", "{\"expression\":" + JsonSerializer.Serialize(expr) + ",\"returnByValue\":true,\"awaitPromise\":true}", timeoutMs);
+        using (var d = JsonDocument.Parse(msg, Jo)) {
+            var r = d.RootElement.GetProperty("result");
+            JsonElement ex; if (r.TryGetProperty("exceptionDetails", out ex)) throw new InvalidOperationException("页面脚本异常: " + ex.GetRawText());
+            JsonElement v; if (r.TryGetProperty("result", out v) && v.TryGetProperty("value", out v)) return v.GetRawText();
+            return "null";
+        }
+    }
+
+    // ===== DOM + AXTree 融合感知 =====
+    const string MetricsJs = @"(()=>{try{const w=window,d=document,de=d.documentElement,vv=w.visualViewport||{},vw=w.innerWidth,vh=w.innerHeight;
+if(!w.__dsM){w.__dsM={x:-1,y:-1,t:0};addEventListener('mousemove',e=>{w.__dsM={x:e.clientX,y:e.clientY,t:performance.now()}},true)}
+const vis=r=>Math.max(0,Math.min(r.right,vw)-Math.max(r.left,0))*Math.max(0,Math.min(r.bottom,vh)-Math.max(r.top,0));
+let cv=0;for(const c of d.querySelectorAll('canvas')){cv+=vis(c.getBoundingClientRect())}
+let cap=0,fr=0;for(const f of d.querySelectorAll('iframe')){const r=f.getBoundingClientRect();if(vis(r)<=0)continue;fr++;if(/captcha|hcaptcha|geetest|turnstile|challenge|arkose|funcaptcha|verify/i.test((f.src||'')+' '+(f.title||'')+' '+(f.id||'')))cap++}
+const ce=d.querySelector('[class*=captcha i],[id*=captcha i],[class*=geetest i],[class*=gt_] ,[class*=nc_wrapper i],[id*=nc_]');if(ce&&vis(ce.getBoundingClientRect())>0)cap++;
+const ae=d.activeElement;let act=null;if(ae&&ae!==d.body){act={tag:ae.tagName.toLowerCase(),type:ae.type||'',name:(ae.getAttribute('aria-label')||ae.placeholder||ae.name||ae.id||'').slice(0,40),val:ae.type==='password'?'':String(ae.value||'').slice(0,40)}}
+const texts=[];try{const tw=d.createTreeWalker(d.body,NodeFilter.SHOW_TEXT);let n,k=0;while((n=tw.nextNode())&&k<3000&&texts.length<60){k++;const s=n.nodeValue.replace(/\s+/g,' ').trim();if(s.length<2)continue;const p=n.parentElement;if(!p||p.closest('a,button,input,select,textarea,label,script,style,noscript,[role=button],[role=link],[role=tab],[role=menuitem],[role=option]'))continue;const rg=d.createRange();rg.selectNodeContents(n);const r=rg.getBoundingClientRect();if(r.width<2||r.height<2||r.bottom<0||r.top>vh||r.right<0||r.left>vw)continue;const cs=getComputedStyle(p);if(cs.visibility==='hidden'||cs.display==='none'||+cs.opacity<0.05)continue;texts.push([s.slice(0,80),r.left,r.top,r.width,r.height])}}catch(e){}
+return {sx:w.screenX,sy:w.screenY,ow:w.outerWidth,oh:w.outerHeight,iw:vw,ih:vh,dpr:w.devicePixelRatio||1,vx:vv.offsetLeft||0,vy:vv.offsetTop||0,vs:vv.scale||1,px:w.scrollX,py:w.scrollY,sh:Math.max(de.scrollHeight,d.body?d.body.scrollHeight:0),rs:d.readyState,title:d.title,url:location.href,cv:cv/Math.max(1,vw*vh),cap:cap,fr:fr,act:act,texts:texts}}catch(e){return {err:String(e)}}})()";
+    const string MetricsLiteJs = "({sx:window.screenX,sy:window.screenY,ow:window.outerWidth,oh:window.outerHeight,iw:window.innerWidth,ih:window.innerHeight,dpr:window.devicePixelRatio||1,px:window.scrollX,py:window.scrollY,rs:document.readyState})";
+    // 页面内「深度 elementFromPoint」（穿透 open Shadow DOM 与同源 iframe）+ 透明度链
+    const string DeepJs = "const deep=(x,y)=>{let lx=x,ly=y,e=document.elementFromPoint(lx,ly);for(let g=0;g<8&&e;g++){const sr=e.shadowRoot;if(sr){const s=sr.elementFromPoint(lx,ly);if(s&&s!==e){e=s;continue}}if(e.tagName==='IFRAME'||e.tagName==='FRAME'){try{const dd=e.contentDocument;if(dd){const r=e.getBoundingClientRect();lx-=r.left+e.clientLeft;ly-=r.top+e.clientTop;const s=dd.elementFromPoint(lx,ly);if(s){e=s;continue}}}catch(_){}}break}return e};const par=n=>n.parentElement||(n.getRootNode&&n.getRootNode().host)||null;";
+    static readonly string StyleJs = "((pts)=>{" + DeepJs + "return pts.map(p=>{const e=deep(p[0],p[1]);if(!e)return [1,1];let o=1,v=1,k=0;for(let n=e;n&&k<40;n=par(n),k++){const cs=getComputedStyle(n);o*=+cs.opacity;if(k===0&&cs.visibility==='hidden')v=0}return [Math.round(o*100)/100,v]})})";
+    static readonly string RelFn = "function(pts){" + DeepJs + "const anc=(a,b)=>{for(let n=b,k=0;n&&k<80;n=par(n),k++)if(n===a)return true;return false};const isW=e=>/^(A|BUTTON|LABEL|SUMMARY|SELECT)$/.test(e.tagName)||(e.hasAttribute&&e.hasAttribute('role'));const lab=this.closest?this.closest('label'):null;const rel=e=>!!e&&(anc(this,e)||(anc(e,this)&&isW(e))||(!!lab&&anc(lab,e)));let ox=0,oy=0;try{let w=this.ownerDocument.defaultView;while(w&&w.frameElement){const r=w.frameElement.getBoundingClientRect();ox+=r.left+w.frameElement.clientLeft;oy+=r.top+w.frameElement.clientTop;w=w.parent}}catch(_){}const out=[];let d='';for(let i=0;i<pts.length;i++){const e=deep(pts[i][0]-ox,pts[i][1]-oy);out.push(rel(e)?1:0);if(i===0&&e)d=e.tagName.toLowerCase()+(e.id?'#'+e.id:'')+((typeof e.className==='string'&&e.className.trim())?'.'+e.className.trim().split(/\\s+/)[0]:'')}return {r:out,d:d}}";
+
+    static readonly Dictionary<string, string> RoleType = new Dictionary<string, string> {
+        {"button","Button"},{"link","Hyperlink"},{"textbox","Edit"},{"searchbox","Edit"},{"spinbutton","Edit"},{"combobox","ComboBox"},{"listbox","ComboBox"},
+        {"PopUpButton","ComboBox"},{"DisclosureTriangle","Button"},{"checkbox","CheckBox"},{"switch","CheckBox"},{"radio","RadioButton"},{"tab","TabItem"},
+        {"menuitem","MenuItem"},{"menuitemcheckbox","MenuItem"},{"menuitemradio","MenuItem"},{"option","ListItem"},{"slider","Slider"},{"treeitem","TreeItem"}
+    };
+    static readonly HashSet<string> GenericRoles = new HashSet<string> { "generic", "group", "none", "image", "img", "paragraph", "listitem", "cell", "gridcell", "heading", "StaticText" };
+
+    sealed class Dn { public int Parent = -1; public string Tag = ""; public JsonElement Attrs; public bool HasAttrs; }
+    sealed class Cand { public int Bid, Order; public string Role = "", Type = "", Name = "", Value = "", State = "", Tag = "", Frame = "", By = "", Href = ""; public bool Enabled = true, Focus, Extra, Covered, Ghost; public double L, T, R, B, X, Y; }
+
+    static string S(JsonElement e) { return e.ValueKind == JsonValueKind.String ? e.GetString() : (e.ValueKind == JsonValueKind.Null || e.ValueKind == JsonValueKind.Undefined ? "" : e.GetRawText()); }
+    static string Attr(Dn n, string name) {
+        if (n == null || !n.HasAttrs || n.Attrs.ValueKind != JsonValueKind.Array) return null;
+        int c = n.Attrs.GetArrayLength();
+        for (int i = 0; i + 1 < c; i += 2) { if (n.Attrs[i].GetString() == name) return n.Attrs[i + 1].GetString(); }
+        return null;
+    }
+    static Dictionary<int, Dn> ParseDom(JsonElement root) {
+        var map = new Dictionary<int, Dn>();
+        var st = new Stack<KeyValuePair<JsonElement, int>>();
+        st.Push(new KeyValuePair<JsonElement, int>(root, -1));
+        while (st.Count > 0) {
+            var kv = st.Pop(); var n = kv.Key; JsonElement e;
+            int bid = n.TryGetProperty("backendNodeId", out e) ? e.GetInt32() : -1;
+            if (bid >= 0) {
+                var d = new Dn { Parent = kv.Value };
+                string tag = n.TryGetProperty("localName", out e) ? e.GetString() : null;
+                if (string.IsNullOrEmpty(tag)) tag = n.TryGetProperty("nodeName", out e) ? e.GetString() : "";
+                d.Tag = (tag ?? "").ToLowerInvariant();
+                if (n.TryGetProperty("attributes", out e)) { d.Attrs = e; d.HasAttrs = true; }
+                map[bid] = d;
+            }
+            int me = bid >= 0 ? bid : kv.Value;
+            if (n.TryGetProperty("children", out e) && e.ValueKind == JsonValueKind.Array) foreach (var c in e.EnumerateArray()) st.Push(new KeyValuePair<JsonElement, int>(c, me));
+            if (n.TryGetProperty("shadowRoots", out e) && e.ValueKind == JsonValueKind.Array) foreach (var c in e.EnumerateArray()) st.Push(new KeyValuePair<JsonElement, int>(c, me));
+            if (n.TryGetProperty("contentDocument", out e) && e.ValueKind == JsonValueKind.Object) st.Push(new KeyValuePair<JsonElement, int>(e, me));
+        }
+        return map;
+    }
+    // 遮挡关系（纯函数，离线可测）：命中节点 hit 是候选 cand 本身 / 后代 / 可点击祖先包装（a、button、label、summary、[role]）/ 同一 <label> 内 → 视为「点得到」
+    public static bool Related(int cand, int hit, Dictionary<int, int> parent, Dictionary<int, string> tag, HashSet<int> wrapper) {
+        if (hit < 0) return false;
+        if (cand == hit) return true;
+        int n = hit, k = 0, p;
+        while (parent.TryGetValue(n, out p) && p >= 0 && k++ < 80) { if (p == cand) return true; n = p; }
+        n = cand; k = 0;
+        int label = -1;
+        while (parent.TryGetValue(n, out p) && p >= 0 && k++ < 80) {
+            if (p == hit) return (tag.ContainsKey(hit) && (tag[hit] == "a" || tag[hit] == "button" || tag[hit] == "label" || tag[hit] == "summary" || tag[hit] == "select")) || (wrapper != null && wrapper.Contains(hit));
+            if (label < 0 && k <= 8 && tag.ContainsKey(p) && tag[p] == "label") label = p;
+            n = p;
+        }
+        if (label >= 0) { n = hit; k = 0; while (parent.TryGetValue(n, out p) && p >= 0 && k++ < 80) { if (p == label) return true; n = p; } if (hit == label) return true; }
+        return false;
+    }
+    // 视口裁剪：返回可见部分 [l,t,r,b]，没有可见部分返回 null
+    public static double[] ClipRect(double l, double t, double r, double b, double vw, double vh) {
+        double a = Math.Max(l, 0), c = Math.Max(t, 0), d = Math.Min(r, vw), e = Math.Min(b, vh);
+        if (d - a < 1 || e - c < 1) return null;
+        return new double[] { a, c, d, e };
+    }
+    public static bool IsGhost(double opacity, double visibility) { return opacity < 0.05 || visibility < 0.5; }
+
+    static double[] Box(string resp) {
+        if (resp == null) return null;
+        try {
+            using (var d = JsonDocument.Parse(resp, Jo)) {
+                JsonElement r, m, q;
+                if (!d.RootElement.TryGetProperty("result", out r) || !r.TryGetProperty("model", out m)) return null;
+                if (!m.TryGetProperty("border", out q) && !m.TryGetProperty("content", out q)) return null;
+                double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
+                for (int i = 0; i + 1 < q.GetArrayLength(); i += 2) { double x = q[i].GetDouble(), y = q[i + 1].GetDouble(); x0 = Math.Min(x0, x); x1 = Math.Max(x1, x); y0 = Math.Min(y0, y); y1 = Math.Max(y1, y); }
+                return new double[] { x0, y0, x1, y1 };
+            }
+        } catch { return null; }
+    }
+    static int HitOf(string resp) {
+        if (resp == null) return -1;
+        try { using (var d = JsonDocument.Parse(resp, Jo)) { JsonElement r, b; if (d.RootElement.TryGetProperty("result", out r) && r.TryGetProperty("backendNodeId", out b)) return b.GetInt32(); } } catch { }
+        return -1;
+    }
+    static string Describe(Dictionary<int, Dn> dom, int bid) {
+        Dn n; if (bid < 0 || !dom.TryGetValue(bid, out n)) return "未知元素";
+        string s = string.IsNullOrEmpty(n.Tag) ? "node" : n.Tag;
+        string id = Attr(n, "id"), cl = Attr(n, "class");
+        if (!string.IsNullOrEmpty(id)) s += "#" + id;
+        else if (!string.IsNullOrEmpty(cl)) s += "." + cl.Trim().Split(' ')[0];
+        return s.Length > 40 ? s.Substring(0, 40) : s;
+    }
+    static string Js(string s) { return JsonSerializer.Serialize(s); }
+    static string Num(double d) { return Math.Round(d, 2).ToString(System.Globalization.CultureInfo.InvariantCulture); }
+
+    // 缓存最近一次观察的 DOM 关系（Related 用）
+    Dictionary<int, int> lastParent = new Dictionary<int, int>(); Dictionary<int, string> lastTag = new Dictionary<int, string>();
+
+    public string Observe(int maxCand, int timeoutMs) {
+        var sw = Stopwatch.StartNew(); long tA, tB, tC;
+        // ---- 阶段 A：四路并发（页面度量 / AXTree / DOM 树 pierce / Frame 树）----
+        var ra = Batch(new[] { "Runtime.evaluate", "Accessibility.getFullAXTree", "DOM.getDocument", "Page.getFrameTree" },
+            new[] { "{\"expression\":" + Js(MetricsJs) + ",\"returnByValue\":true}", "{}", "{\"depth\":-1,\"pierce\":true}", "{}" }, timeoutMs);
+        if (ra[0] == null || ra[1] == null || ra[2] == null) throw new InvalidOperationException("CDP 感知失败：" + (ra[0] == null ? "Runtime.evaluate " : "") + (ra[1] == null ? "AXTree " : "") + (ra[2] == null ? "DOM " : "") + "无响应");
+        tA = sw.ElapsedMilliseconds;
+        var docs = new List<JsonDocument>();
+        try {
+            var dMetrics = JsonDocument.Parse(ra[0], Jo); docs.Add(dMetrics);
+            var mEl = dMetrics.RootElement.GetProperty("result").GetProperty("result").GetProperty("value");
+            JsonElement tmp;
+            if (mEl.TryGetProperty("err", out tmp)) throw new InvalidOperationException("页面度量失败: " + tmp.GetString());
+            double vw = mEl.GetProperty("iw").GetDouble(), vh = mEl.GetProperty("ih").GetDouble();
+            var dDom = JsonDocument.Parse(ra[2], Jo); docs.Add(dDom);
+            var dom = ParseDom(dDom.RootElement.GetProperty("result").GetProperty("root"));
+            var dAx = JsonDocument.Parse(ra[1], Jo); docs.Add(dAx);
+            var axRoots = new List<KeyValuePair<JsonElement, string>>();
+            axRoots.Add(new KeyValuePair<JsonElement, string>(dAx.RootElement.GetProperty("result").GetProperty("nodes"), ""));
+            // 同进程子 frame 的 AXTree（跨进程 OOPIF 取不到，计数后交给视觉兜底）
+            int oopif = 0;
+            try {
+                var dFt = JsonDocument.Parse(ra[3] ?? "{\"result\":{\"frameTree\":{}}}", Jo); docs.Add(dFt);
+                var fids = new List<string>(); var stack = new Stack<JsonElement>(); stack.Push(dFt.RootElement.GetProperty("result").GetProperty("frameTree"));
+                bool first = true;
+                while (stack.Count > 0) { var ft = stack.Pop(); JsonElement e;
+                    if (!first && ft.TryGetProperty("frame", out e) && e.TryGetProperty("id", out e)) fids.Add(e.GetString());
+                    first = false;
+                    if (ft.TryGetProperty("childFrames", out e)) foreach (var c in e.EnumerateArray()) stack.Push(c); }
+                if (fids.Count > 0) {
+                    if (fids.Count > 8) fids = fids.GetRange(0, 8);
+                    var ms = new string[fids.Count]; var ps = new string[fids.Count];
+                    for (int i = 0; i < ms.Length; i++) { ms[i] = "Accessibility.getFullAXTree"; ps[i] = "{\"frameId\":" + Js(fids[i]) + "}"; }
+                    var rf = Batch(ms, ps, Math.Min(timeoutMs, 2500));
+                    for (int i = 0; i < rf.Length; i++) {
+                        if (rf[i] == null) { oopif++; continue; }
+                        var df = JsonDocument.Parse(rf[i], Jo); docs.Add(df);
+                        axRoots.Add(new KeyValuePair<JsonElement, string>(df.RootElement.GetProperty("result").GetProperty("nodes"), fids[i]));
+                    }
+                }
+            } catch { }
+            // ---- 候选：AX 非 ignored 的可交互角色 / 可聚焦的泛型节点 ----
+            var cands = new List<Cand>(); var seen = new HashSet<int>(); var texts = new List<Cand>(); int axTotal = 0;
+            foreach (var ar in axRoots) {
+                foreach (var node in ar.Key.EnumerateArray()) {
+                    axTotal++;
+                    JsonElement e;
+                    if (node.TryGetProperty("ignored", out e) && e.ValueKind == JsonValueKind.True) continue;
+                    string role = node.TryGetProperty("role", out e) && e.TryGetProperty("value", out e) ? S(e) : "";
+                    if (!node.TryGetProperty("backendDOMNodeId", out e)) continue;
+                    int bid = e.GetInt32();
+                    string type; bool extra = false;
+                    bool focusable = false; string url = "";
+                    var c = new Cand { Bid = bid, Role = role, Frame = ar.Value, Order = cands.Count };
+                    c.Name = node.TryGetProperty("name", out e) && e.TryGetProperty("value", out e) ? S(e) : "";
+                    c.Value = node.TryGetProperty("value", out e) && e.TryGetProperty("value", out e) ? S(e) : "";
+                    if (node.TryGetProperty("properties", out e) && e.ValueKind == JsonValueKind.Array) {
+                        foreach (var p in e.EnumerateArray()) {
+                            string pn = p.TryGetProperty("name", out var pe) ? pe.GetString() : ""; string pv = p.TryGetProperty("value", out pe) && pe.TryGetProperty("value", out pe) ? S(pe) : "";
+                            switch (pn) {
+                                case "disabled": if (pv == "true") c.Enabled = false; break;
+                                case "focused": if (pv == "true") c.Focus = true; break;
+                                case "focusable": focusable = (pv == "true"); break;
+                                case "url": url = pv; break;
+                                case "checked": case "pressed": c.State = pv == "true" ? "on" : (pv == "mixed" ? "mixed" : "off"); break;
+                                case "expanded": if (c.State == "") c.State = pv == "true" ? "expanded" : "collapsed"; break;
+                                case "selected": if (pv == "true" && c.State == "") c.State = "selected"; break;
+                            }
+                        }
+                    }
+                    if (!RoleType.TryGetValue(role, out type)) {
+                        if (role == "StaticText" || !GenericRoles.Contains(role) || !focusable) continue;
+                        if (role == "heading" || role == "cell" || role == "gridcell" || role == "listitem") { if (string.IsNullOrWhiteSpace(c.Name)) continue; }
+                        type = "Group"; extra = true;
+                    }
+                    if (!seen.Add(bid)) continue;
+                    c.Type = type; c.Extra = extra; c.Href = url;
+                    Dn dn; if (dom.TryGetValue(bid, out dn)) {
+                        c.Tag = dn.Tag;
+                        if (type == "Edit" && string.Equals(Attr(dn, "type"), "password", StringComparison.OrdinalIgnoreCase)) c.Value = string.IsNullOrEmpty(c.Value) ? "" : "••••";
+                        if (string.IsNullOrWhiteSpace(c.Name)) {
+                            c.Name = Attr(dn, "title") ?? Attr(dn, "aria-label") ?? Attr(dn, "placeholder") ?? Attr(dn, "alt") ?? Attr(dn, "name") ?? Attr(dn, "id") ?? "";
+                            if (c.Name == "" && url != "") c.Name = "→ " + (url.Length > 50 ? url.Substring(url.Length - 50) : url);
+                        }
+                    }
+                    cands.Add(c);
+                    if (cands.Count >= maxCand * 3) break;
+                }
+            }
+            // 父子关系表（Related 用）
+            var parent = new Dictionary<int, int>(dom.Count); var tags = new Dictionary<int, string>(dom.Count);
+            foreach (var kv in dom) { parent[kv.Key] = kv.Value.Parent; tags[kv.Key] = kv.Value.Tag; }
+            lastParent = parent; lastTag = tags;
+            // ---- 阶段 B：DOM.getBoxModel 管线化 ----
+            int n0 = cands.Count; var bm = new string[n0]; var bp = new string[n0];
+            for (int i = 0; i < n0; i++) { bm[i] = "DOM.getBoxModel"; bp[i] = "{\"backendNodeId\":" + cands[i].Bid + "}"; }
+            var rb = n0 > 0 ? Batch(bm, bp, timeoutMs) : new string[0];
+            tB = sw.ElapsedMilliseconds;
+            var vis = new List<Cand>(); int above = 0, below = 0;
+            var belowNames = new List<string>(); var aboveNames = new List<string>();
+            for (int i = 0; i < n0; i++) {
+                var bx = Box(rb[i]); var c = cands[i];
+                if (bx == null || bx[2] - bx[0] < 1 || bx[3] - bx[1] < 1) continue;   // display:none / 无布局 / 零尺寸
+                var cl = ClipRect(bx[0], bx[1], bx[2], bx[3], vw, vh);
+                if (cl == null) {
+                    if (c.Type == "Group") continue;
+                    if (bx[3] <= 0) { above++; if (aboveNames.Count < 6 && c.Name != "") aboveNames.Add(c.Name); }
+                    else if (bx[1] >= vh) { below++; if (belowNames.Count < 10 && c.Name != "") belowNames.Add(c.Name); }
+                    continue;
+                }
+                c.L = cl[0]; c.T = cl[1]; c.R = cl[2]; c.B = cl[3]; c.X = (cl[0] + cl[2]) / 2; c.Y = (cl[1] + cl[3]) / 2;
+                if ((cl[2] - cl[0]) * (cl[3] - cl[1]) > 0.6 * vw * vh && c.Type == "Group") continue;   // 整页容器不是按钮
+                vis.Add(c);
+                if (vis.Count >= maxCand * 2) break;
+            }
+            // ---- 阶段 C：中心点命中测试（DOM.getNodeForLocation = 浏览器真实 elementFromPoint 语义）∥ 页面内透明度 / visibility 链 ----
+            int nv = vis.Count; var cm = new string[nv + 1]; var cp = new string[nv + 1];
+            var ptsJson = new StringBuilder("[");
+            for (int i = 0; i < nv; i++) {
+                cm[i] = "DOM.getNodeForLocation"; cp[i] = "{\"x\":" + (int)Math.Round(vis[i].X) + ",\"y\":" + (int)Math.Round(vis[i].Y) + ",\"includeUserAgentShadowDOM\":false}";
+                if (i > 0) ptsJson.Append(','); ptsJson.Append('[').Append(Num(vis[i].X)).Append(',').Append(Num(vis[i].Y)).Append(']');
+            }
+            ptsJson.Append(']');
+            cm[nv] = "Runtime.evaluate"; cp[nv] = "{\"expression\":" + Js(StyleJs + "(" + ptsJson + ")") + ",\"returnByValue\":true}";
+            var rc = Batch(cm, cp, timeoutMs);
+            double[][] sty = null;
+            if (rc[nv] != null) { try { using (var ds = JsonDocument.Parse(rc[nv], Jo)) { var arr = ds.RootElement.GetProperty("result").GetProperty("result").GetProperty("value"); sty = new double[arr.GetArrayLength()][]; int k = 0; foreach (var it in arr.EnumerateArray()) sty[k++] = new[] { it[0].GetDouble(), it[1].GetDouble() }; } } catch { sty = null; } }
+            var blocked = new List<int>(); var hits = new int[nv];
+            for (int i = 0; i < nv; i++) {
+                hits[i] = HitOf(rc[i]);
+                if (hits[i] < 0) continue;   // 命中测试失败：不误杀
+                if (Related(vis[i].Bid, hits[i], parent, tags, null)) { if (sty != null && i < sty.Length && IsGhost(sty[i][0], sty[i][1])) vis[i].Ghost = true; }
+                else blocked.Add(i);
+            }
+            // 被挡住的候选：在可见矩形内再试 4 个内部点，找到「点得到」的位置就改用它；全部被挡才标记 Covered
+            if (blocked.Count > 0) {
+                var m2 = new List<string>(); var p2 = new List<string>();
+                foreach (int i in blocked) {
+                    var c = vis[i]; double w = c.R - c.L, h = c.B - c.T;
+                    double[][] alt = { new[] { c.L + w * 0.25, c.Y }, new[] { c.L + w * 0.75, c.Y }, new[] { c.X, c.T + h * 0.25 }, new[] { c.X, c.T + h * 0.75 } };
+                    foreach (var a in alt) { m2.Add("DOM.getNodeForLocation"); p2.Add("{\"x\":" + (int)Math.Round(a[0]) + ",\"y\":" + (int)Math.Round(a[1]) + ",\"includeUserAgentShadowDOM\":false}"); }
+                }
+                var r2 = Batch(m2.ToArray(), p2.ToArray(), Math.Min(timeoutMs, 3000));
+                int q = 0;
+                foreach (int i in blocked) {
+                    var c = vis[i]; double w = c.R - c.L, h = c.B - c.T; bool ok = false;
+                    double[][] alt = { new[] { c.L + w * 0.25, c.Y }, new[] { c.L + w * 0.75, c.Y }, new[] { c.X, c.T + h * 0.25 }, new[] { c.X, c.T + h * 0.75 } };
+                    for (int k = 0; k < 4; k++) { int hb = HitOf(r2[q + k]); if (hb >= 0 && Related(c.Bid, hb, parent, tags, null)) { c.X = Math.Round(alt[k][0]); c.Y = Math.Round(alt[k][1]); ok = true; break; } }
+                    q += 4;
+                    if (!ok) { c.Covered = true; c.By = Describe(dom, hits[i]); }
+                }
+            }
+            tC = sw.ElapsedMilliseconds;
+            // ---- 输出 ----
+            int covered = 0, ghost = 0;
+            var ms2 = new MemoryStream();
+            using (var w = new Utf8JsonWriter(ms2)) {
+                w.WriteStartObject();
+                w.WritePropertyName("m"); mEl.WriteTo(w);
+                w.WriteStartArray("items");
+                foreach (var c in vis) {
+                    if (c.Ghost) { ghost++; continue; }
+                    if (c.Covered) covered++;
+                    w.WriteStartObject();
+                    w.WriteNumber("bid", c.Bid); w.WriteString("ty", c.Type); w.WriteString("role", c.Role); w.WriteString("nm", c.Name); w.WriteString("val", c.Value); w.WriteString("st", c.State);
+                    w.WriteBoolean("en", c.Enabled); w.WriteBoolean("fo", c.Focus); w.WriteBoolean("ex", c.Extra); w.WriteString("tag", c.Tag); w.WriteString("fr", c.Frame);
+                    w.WriteNumber("x", c.X); w.WriteNumber("y", c.Y); w.WriteNumber("l", c.L); w.WriteNumber("t", c.T); w.WriteNumber("w", c.R - c.L); w.WriteNumber("h", c.B - c.T);
+                    w.WriteBoolean("cv", c.Covered); w.WriteString("by", c.By);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                w.WriteStartObject("s");
+                w.WriteNumber("ax", axTotal); w.WriteNumber("dom", dom.Count); w.WriteNumber("cand", n0); w.WriteNumber("vis", nv - ghost); w.WriteNumber("covered", covered); w.WriteNumber("ghost", ghost);
+                w.WriteNumber("above", above); w.WriteNumber("below", below); w.WriteNumber("oopif", oopif);
+                w.WriteNumber("tA", tA); w.WriteNumber("tB", tB - tA); w.WriteNumber("tC", tC - tB); w.WriteNumber("tD", sw.ElapsedMilliseconds - tC);
+                w.WriteEndObject();
+                w.WriteStartArray("belowNames"); foreach (var s in belowNames) w.WriteStringValue(s); w.WriteEndArray();
+                w.WriteStartArray("aboveNames"); foreach (var s in aboveNames) w.WriteStringValue(s); w.WriteEndArray();
+                w.WriteEndObject();
+            }
+            return Encoding.UTF8.GetString(ms2.ToArray());
+        }
+        finally { foreach (var d in docs) { try { d.Dispose(); } catch { } } }
+    }
+
+    // ===== 单目标实时核对：几何 + 名称 + 命中（页面内 elementFromPoint）=====
+    // 返回 JSON：{ok, err, m:{...}, name, x, y, l,t,w,h, by}（坐标 = 视口 CSS 像素）
+    public string LiveTarget(int bid, int timeoutMs) {
+        var r1 = Batch(new[] { "DOM.resolveNode", "Runtime.evaluate", "DOM.getBoxModel", "Accessibility.getPartialAXTree" },
+            new[] { "{\"backendNodeId\":" + bid + ",\"objectGroup\":\"dscu\"}", "{\"expression\":" + Js(MetricsLiteJs) + ",\"returnByValue\":true}", "{\"backendNodeId\":" + bid + "}", "{\"backendNodeId\":" + bid + ",\"fetchRelatives\":false}" }, timeoutMs);
+        string mj = "null", name = "";
+        if (r1[1] != null) { try { using (var d = JsonDocument.Parse(r1[1], Jo)) mj = d.RootElement.GetProperty("result").GetProperty("result").GetProperty("value").GetRawText(); } catch { } }
+        if (r1[0] == null || r1[2] == null) return "{\"ok\":false,\"err\":\"gone\",\"m\":" + mj + "}";
+        if (r1[3] != null) { try { using (var d = JsonDocument.Parse(r1[3], Jo)) { foreach (var nd in d.RootElement.GetProperty("result").GetProperty("nodes").EnumerateArray()) { JsonElement e; if (nd.TryGetProperty("ignored", out e) && e.ValueKind == JsonValueKind.True) continue; if (nd.TryGetProperty("name", out e) && e.TryGetProperty("value", out e)) { name = S(e); break; } } } } catch { } }
+        var bx = Box(r1[2]); double vw = 0, vh = 0;
+        try { using (var d = JsonDocument.Parse(mj, Jo)) { vw = d.RootElement.GetProperty("iw").GetDouble(); vh = d.RootElement.GetProperty("ih").GetDouble(); } } catch { }
+        if (bx == null) return "{\"ok\":false,\"err\":\"nobox\",\"m\":" + mj + ",\"name\":" + Js(name) + "}";
+        var cl = ClipRect(bx[0], bx[1], bx[2], bx[3], vw, vh);
+        if (cl == null) return "{\"ok\":false,\"err\":\"offscreen\",\"m\":" + mj + ",\"name\":" + Js(name) + ",\"t\":" + Num(bx[1]) + ",\"b\":" + Num(bx[3]) + ",\"vh\":" + Num(vh) + "}";
+        double w0 = cl[2] - cl[0], h0 = cl[3] - cl[1];
+        double[][] pts = { new[] { (cl[0] + cl[2]) / 2, (cl[1] + cl[3]) / 2 }, new[] { cl[0] + w0 * 0.25, cl[1] + h0 * 0.5 }, new[] { cl[0] + w0 * 0.75, cl[1] + h0 * 0.5 }, new[] { cl[0] + w0 * 0.5, cl[1] + h0 * 0.25 }, new[] { cl[0] + w0 * 0.5, cl[1] + h0 * 0.75 } };
+        string oid; using (var d = JsonDocument.Parse(r1[0], Jo)) oid = d.RootElement.GetProperty("result").GetProperty("object").GetProperty("objectId").GetString();
+        var sb = new StringBuilder("["); for (int i = 0; i < pts.Length; i++) { if (i > 0) sb.Append(','); sb.Append('[').Append(Num(pts[i][0])).Append(',').Append(Num(pts[i][1])).Append(']'); }
+        sb.Append(']');
+        string rr = Call("Runtime.callFunctionOn", "{\"objectId\":" + Js(oid) + ",\"functionDeclaration\":" + Js(RelFn) + ",\"arguments\":[{\"value\":" + sb + "}],\"returnByValue\":true}", timeoutMs);
+        try { Post("Runtime.releaseObjectGroup", "{\"objectGroup\":\"dscu\"}"); } catch { }
+        int pick = -1; string by = "";
+        using (var d = JsonDocument.Parse(rr, Jo)) {
+            var v = d.RootElement.GetProperty("result").GetProperty("result").GetProperty("value");
+            by = v.GetProperty("d").GetString(); int k = 0;
+            foreach (var it in v.GetProperty("r").EnumerateArray()) { if (it.GetInt32() == 1 && pick < 0) pick = k; k++; }
+        }
+        if (pick < 0) return "{\"ok\":false,\"err\":\"covered\",\"by\":" + Js(by) + ",\"m\":" + mj + ",\"name\":" + Js(name) + "}";
+        return "{\"ok\":true,\"m\":" + mj + ",\"name\":" + Js(name) + ",\"x\":" + Num(pts[pick][0]) + ",\"y\":" + Num(pts[pick][1]) + ",\"l\":" + Num(cl[0]) + ",\"t\":" + Num(cl[1]) + ",\"w\":" + Num(w0) + ",\"h\":" + Num(h0) + ",\"pick\":" + pick + "}";
+    }
+    // 页面内函数调用（取状态 / 值 / 焦点 / 命中）
+    public string CallOn(int bid, string fn, int timeoutMs) {
+        string r = Call("DOM.resolveNode", "{\"backendNodeId\":" + bid + ",\"objectGroup\":\"dscu\"}", timeoutMs);
+        string oid; using (var d = JsonDocument.Parse(r, Jo)) oid = d.RootElement.GetProperty("result").GetProperty("object").GetProperty("objectId").GetString();
+        string rr = Call("Runtime.callFunctionOn", "{\"objectId\":" + Js(oid) + ",\"functionDeclaration\":" + Js(fn) + ",\"returnByValue\":true}", timeoutMs);
+        try { Post("Runtime.releaseObjectGroup", "{\"objectGroup\":\"dscu\"}"); } catch { }
+        using (var d = JsonDocument.Parse(rr, Jo)) { JsonElement v = d.RootElement.GetProperty("result").GetProperty("result"); JsonElement val; return v.TryGetProperty("value", out val) ? val.GetRawText() : "null"; }
+    }
+    // 物理点位 → 命中检查（页面内）：该点处「真正会收到点击」的元素是否就是 bid（或其后代 / 可点击包装）
+    public string HitAt(int bid, double vx, double vy, int timeoutMs) {
+        string fn = RelFn.Replace("function(pts)", "function()").Replace("let ox=0,oy=0;", "const pts=[[" + Num(vx) + "," + Num(vy) + "]];let ox=0,oy=0;");
+        return CallOn(bid, fn, timeoutMs);
+    }
+}
+'@
+function Initialize-CdpEngine {
+    if ($script:CdpDisabled) { return $false }
+    if ($null -ne $script:Cdp) { return $true }
+    try {
+        if (-not ('DsCdp63' -as [type])) { Add-Type -TypeDefinition $script:CdpSrc -Language CSharp -IgnoreWarnings }
+        if (-not ('DsWin63' -as [type])) { Add-Type -TypeDefinition $script:CdpWinSrc -Language CSharp -IgnoreWarnings }
+        $script:Cdp = [DsCdp63]::new()
+        return $true
+    }
+    catch {
+        $script:CdpDisabled = $true
+        Write-Host "  CDP 引擎编译 / 初始化失败，本次会话自动关闭 CDP（回退 UIA）: $(Limit-Text $_.Exception.Message 160)" -ForegroundColor DarkYellow
+        return $false
+    }
+}
+function Test-CdpEnabled { return ((-not $NoCdp) -and (-not $script:CdpDisabled) -and ($script:Mode -in 'Auto', 'Physical')) }
+function Test-CdpForeground {
+    # 当前前台窗口就是已附着 CDP 的那个浏览器窗口（切到别的程序 / 别的浏览器实例时为 $false）
+    $c = $script:Cdp
+    if ($null -eq $c -or -not $c.Connected) { return $false }
+    $h = [DsNative61]::GetForegroundWindow()
+    if ($h -eq [IntPtr]::Zero) { return $false }
+    return ([DsNative61]::Root($h) -eq $script:CdpState.Root)
+}
+function Get-CdpHttp {
+    if ($null -eq $script:CdpHttp) { $script:CdpHttp = [System.Net.Http.HttpClient]::new(); $script:CdpHttp.Timeout = [TimeSpan]::FromMilliseconds(2500) }
+    return $script:CdpHttp
+}
+function Invoke-CdpHttp([int]$Port, [string]$Path, [string]$Verb = 'GET', [int]$TimeoutMs = 1500) {
+    $cts = $null
+    try {
+        $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::new($Verb), "http://127.0.0.1:$Port$Path")
+        $cts = [System.Threading.CancellationTokenSource]::new($TimeoutMs)
+        $resp = (Get-CdpHttp).SendAsync($req, $cts.Token).GetAwaiter().GetResult()
+        $txt = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        if (-not $resp.IsSuccessStatusCode) { return $null }
+        return $txt
+    }
+    catch { return $null }
+    finally { if ($cts) { $cts.Dispose() } }
+}
+function Test-CdpEndpoint([int]$Port, [int]$TimeoutMs = 700) {
+    if ($Port -le 0) { return $null }
+    $t = Invoke-CdpHttp $Port '/json/version' 'GET' $TimeoutMs
+    if ($null -eq $t) { return $null }
+    try { return ($t | ConvertFrom-Json) } catch { return $null }
+}
+function Get-CdpTargets([int]$Port) {
+    $t = Invoke-CdpHttp $Port '/json/list' 'GET' 1500
+    if ($null -eq $t) { return @() }
+    try { return @(($t | ConvertFrom-Json) | Where-Object { $_.type -eq 'page' -and $_.webSocketDebuggerUrl -and "$($_.url)" -notmatch '^(devtools|chrome-extension|chrome-untrusted)://' }) } catch { return @() }
+}
+function Test-CdpPortFree([int]$Port) {
+    try { $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port); $l.Start(); $l.Stop(); return $true } catch { return $false }
+}
+function Find-CdpFreePort([int]$Preferred) {
+    if ($Preferred -gt 0 -and (Test-CdpPortFree $Preferred)) { return $Preferred }
+    $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $l.Start(); $p = [int]$l.LocalEndpoint.Port; $l.Stop()
+    return $p
+}
+function Select-CdpTarget($Targets, [string]$FgTitle, [string]$CurrentId = '') {
+    # 把前台浏览器窗口匹配到 /json/list 里的某个 Page Target。窗口标题 =「页面标题 - Google Chrome / Microsoft​ Edge …」，所以用 StartsWith 并取最长标题。
+    $pages = @($Targets | Where-Object { $_ -and $_.webSocketDebuggerUrl })
+    if ($pages.Count -eq 0) { return $null }
+    $ft = ("$FgTitle" -replace '[\u200B-\u200D\uFEFF]', '').Trim()
+    $hits = @($pages | Where-Object { $t = ("$($_.title)" -replace '[\u200B-\u200D\uFEFF]', '').Trim(); $t.Length -gt 0 -and $ft.StartsWith($t, [System.StringComparison]::OrdinalIgnoreCase) })
+    if ($hits.Count -gt 0) {
+        $cur = $hits | Where-Object { $_.id -eq $CurrentId } | Select-Object -First 1
+        if ($cur) { return $cur }
+        return ($hits | Sort-Object { ("$($_.title)").Length } -Descending | Select-Object -First 1)
+    }
+    $byUrl = @($pages | Where-Object { $u = ("$($_.url)" -replace '^[a-z]+://', '').TrimEnd('/'); $u.Length -ge 4 -and $ft.Contains($u) })
+    if ($byUrl.Count -ge 1) { return ($byUrl | Sort-Object { ("$($_.url)").Length } -Descending | Select-Object -First 1) }
+    $blank = @($pages | Where-Object { "$($_.url)" -in 'about:blank', 'chrome://newtab/', 'edge://newtab/' -and [string]::IsNullOrWhiteSpace("$($_.title)") })
+    if ($blank.Count -eq 1 -and $ft -match '(?i)(新标签页|new tab|about:blank|untitled|无标题)') { return $blank[0] }
+    if ($pages.Count -eq 1) { return $pages[0] }
+    $keep = $pages | Where-Object { $_.id -eq $CurrentId } | Select-Object -First 1
+    if ($keep) { return $keep }
+    return $null
+}
+function Test-CdpDefaultProfile([string]$Path) {
+    # Chrome 136+ 起：使用「默认」user-data-dir 时 --remote-debugging-port 会被忽略（安全策略）；所以必须是独立目录
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    try {
+        $p = [System.IO.Path]::GetFullPath($Path).TrimEnd('\').ToLowerInvariant()
+        foreach ($d in @("$env:LOCALAPPDATA\Google\Chrome\User Data", "$env:LOCALAPPDATA\Microsoft\Edge\User Data", "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data")) {
+            if ($d -and $p -eq $d.TrimEnd('\').ToLowerInvariant()) { return $true }
+        }
+    }
+    catch { }
+    return $false
+}
+function Get-CdpLaunchArgs([string]$Target, [string]$ArgStr) {
+    $key = if ($Target -match '(?i)msedge') { 'edge' } elseif ($Target -match '(?i)brave') { 'brave' } else { 'chrome' }
+    $port = 0
+    if ($ArgStr -match '--remote-debugging-port=(\d+)') { $port = [int]$Matches[1] }
+    elseif ($script:CdpState.Port -gt 0 -and (Test-CdpEndpoint $script:CdpState.Port)) { $port = [int]$script:CdpState.Port }
+    else { $port = Find-CdpFreePort ([int]$script:CdpPortCfg) }
+    $profile = ''
+    if ($ArgStr -match '--user-data-dir=(?:"([^"]+)"|(\S+))') { $profile = if ($Matches[1]) { $Matches[1] } else { $Matches[2] } }
+    elseif (-not [string]::IsNullOrWhiteSpace($CdpProfile)) { $profile = $CdpProfile }
+    else { $profile = Join-Path ([System.IO.Path]::GetTempPath()) "DeepSeekComputerUse-cdp-$key" }
+    $warn = ''
+    if (Test-CdpDefaultProfile $profile) {
+        $warn = "指定的 Profile 是浏览器默认目录，Chrome 136+ 会忽略远程调试端口；已改用隔离目录"
+        $profile = Join-Path ([System.IO.Path]::GetTempPath()) "DeepSeekComputerUse-cdp-$key"
+    }
+    $flags = [System.Collections.Generic.List[string]]::new()
+    if ($ArgStr -notmatch '--remote-debugging-port') { $flags.Add("--remote-debugging-port=$port") }
+    if ($ArgStr -notmatch '--user-data-dir') { $flags.Add("--user-data-dir=`"$profile`"") }
+    foreach ($f in @('--no-first-run', '--no-default-browser-check', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows')) {
+        if ($ArgStr -notmatch [regex]::Escape($f)) { $flags.Add($f) }   # 后三项：窗口被遮挡 / 失焦时不降频，rAF / 定时器照常，等待才是确定性的
+    }
+    $full = (($flags -join ' ') + ' ' + $ArgStr).Trim()
+    return @{ Args = $full; Port = $port; Profile = $profile; Key = $key; Warn = $warn }
+}
+function Start-CdpBrowser([string]$Target, [string]$ArgStr = '') {
+    # 隔离式启动：独立 --user-data-dir（不污染 / 不冲突你日常浏览器的登录态）+ --remote-debugging-port；显式 -CdpProfile 才复用指定目录
+    $la = Get-CdpLaunchArgs $Target $ArgStr
+    New-Item -ItemType Directory -Force -Path $la.Profile | Out-Null
+    Start-Process -FilePath $Target -ArgumentList $la.Args
+    $script:CdpState.Port = [int]$la.Port; $script:CdpState.Profile = $la.Profile; $script:CdpState.Launched = $true
+    $script:CdpPidPort = @{}
+    return $la
+}
+function Wait-CdpEndpoint([int]$Port, [int]$TimeoutMs = 3000) {
+    $end = [Environment]::TickCount64 + $TimeoutMs
+    while ([Environment]::TickCount64 -lt $end) {
+        Test-Abort
+        $v = Test-CdpEndpoint $Port 400
+        if ($v) { if (@(Get-CdpTargets $Port).Count -gt 0) { return $true } }
+        Start-Sleep -Milliseconds 50
+    }
+    return $false
+}
+function Resolve-CdpPort($Fg) {
+    $procId = [int][DsNative61]::WinPid($Fg.Handle)
+    $now = [Environment]::TickCount64
+    $e = $script:CdpPidPort[$procId]
+    if ($e -and ($e.Port -gt 0 -or ($now - $e.At) -lt 15000)) { return [int]$e.Port }
+    $port = 0; $cimOk = $false
+    try {
+        $ci = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$procId" -ErrorAction Stop
+        $cimOk = $true
+        if ("$($ci.CommandLine)" -match '--remote-debugging-port=(\d+)') { $port = [int]$Matches[1] }
+    }
+    catch { }
+    if ($port -le 0 -and -not $cimOk -and $script:CdpState.Port -gt 0) { $port = [int]$script:CdpState.Port }   # 读不到命令行时才退回本会话启动的端口
+    if ($port -gt 0 -and -not (Test-CdpEndpoint $port)) { $port = 0 }
+    $script:CdpPidPort[$procId] = @{ Port = $port; At = $now }
+    return $port
+}
+function Connect-CdpTarget($Fg, [switch]$Force) {
+    if (-not (Initialize-CdpEngine)) { return $false }
+    $c = $script:Cdp
+    $fgTitle = "$($Fg.Title)"
+    $root = [DsNative61]::Root($Fg.Handle)
+    if (-not $Force -and $c.Connected -and $script:CdpState.Root -eq $root -and $script:CdpState.FgTitle -eq $fgTitle) { return $true }
+    $port = Resolve-CdpPort $Fg
+    if ($port -le 0) { return $false }
+    $targets = @(Get-CdpTargets $port)
+    if ($targets.Count -eq 0) { return $false }
+    $t = Select-CdpTarget $targets $fgTitle $script:CdpState.TargetId
+    if ($null -eq $t) { return $false }
+    if ($Force -or -not ($c.Connected -and $c.WsUrl -eq $t.webSocketDebuggerUrl)) {
+        try { $c.Connect([string]$t.webSocketDebuggerUrl, 3000) }
+        catch { Write-Host "  CDP 附着失败: $(Limit-Text (Get-NativeError $_) 120)" -ForegroundColor DarkYellow; return $false }
+    }
+    $script:CdpState.Port = $port; $script:CdpState.Root = $root; $script:CdpState.TargetId = [string]$t.id; $script:CdpState.FgTitle = $fgTitle
+    return $true
+}
+function Restore-CdpConnection {
+    try {
+        $h = [DsNative61]::GetForegroundWindow()
+        if ([DsNative61]::Root($h) -ne $script:CdpState.Root) { return $false }
+        $fg = Get-ForegroundInfo
+        return (Connect-CdpTarget $fg -Force)
+    }
+    catch { return $false }
+}
+function Invoke-CdpMethod([string]$Method, $Params = $null, [int]$TimeoutMs = 5000, [switch]$NoReconnect) {
+    # JSON-RPC 请求 → 响应（C# 分发器按 id 匹配，线程安全）；带超时；连接断开时自动重连一次再重试
+    $c = $script:Cdp
+    if ($null -eq $c) { throw 'CDP 未初始化' }
+    $pj = if ($null -eq $Params) { '{}' } elseif ($Params -is [string]) { $Params } else { ($Params | ConvertTo-Json -Compress -Depth 8) }
+    for ($try = 0; $try -lt 2; $try++) {
+        try {
+            if (-not $c.Connected) { throw [System.InvalidOperationException]::new('CDP 未连接') }
+            $msg = $c.Call($Method, $pj, $TimeoutMs)
+            return ($msg | ConvertFrom-Json).result
+        }
+        catch {
+            $em = Get-NativeError $_
+            $dead = (-not $c.Connected) -or ($em -match '未连接|已断开|已关闭')
+            if ($try -eq 0 -and $dead -and -not $NoReconnect -and (Restore-CdpConnection)) { continue }
+            throw $em
+        }
+    }
+}
+function Close-CdpClient {
+    try { if ($script:Cdp) { $script:Cdp.Close() } } catch { }
+    try { if ($script:CdpHttp) { $script:CdpHttp.Dispose(); $script:CdpHttp = $null } } catch { }
+    $script:Cdp = $null
+}
+# ---------- 视口（CSS 像素）→ Windows 物理屏幕坐标 ----------
+function Get-CdpOrigin($m, $Client, $Render) {
+    # 三级降级：① Chrome_RenderWidgetHostHWND 的真实物理矩形（与 innerWidth*dpr 吻合时）② 窗口客户区（左 / 下贴边，上方多出的是标签栏 + 地址栏）③ screenX/Y + 边框 + 工具栏高度 经典公式
+    $dpr = [double]$m.dpr; if ($dpr -le 0.1) { $dpr = 1.0 }
+    $vpW = [double]$m.iw * $dpr; $vpH = [double]$m.ih * $dpr
+    if ($Render -and @($Render).Count -ge 4) {
+        if ([Math]::Abs($Render[2] - $vpW) -le [Math]::Max(6.0, 0.03 * $vpW) -and [Math]::Abs($Render[3] - $vpH) -le [Math]::Max(6.0, 0.03 * $vpH)) {
+            return @{ OX = [double]$Render[0]; OY = [double]$Render[1]; Scale = $dpr; Src = 'render-hwnd' }
+        }
+    }
+    if ($Client -and @($Client).Count -ge 4 -and $Client[2] -ge ($vpW - 6) -and $Client[3] -ge ($vpH - 6)) {
+        return @{ OX = [double]$Client[0]; OY = [double]($Client[1] + [Math]::Max(0.0, $Client[3] - $vpH)); Scale = $dpr; Src = 'client-rect' }
+    }
+    $border = [Math]::Max(0.0, ([double]$m.ow - [double]$m.iw) / 2.0)
+    $top = [Math]::Max(0.0, [double]$m.oh - [double]$m.ih - $border)
+    return @{ OX = (([double]$m.sx + $border) * $dpr); OY = (([double]$m.sy + $top) * $dpr); Scale = $dpr; Src = 'screenXY' }
+}
+function ConvertTo-CdpScreenPoint([double]$Vx, [double]$Vy, $o) {
+    return @([int][Math]::Round($o.OX + $Vx * $o.Scale), [int][Math]::Round($o.OY + $Vy * $o.Scale))
+}
+function ConvertFrom-CdpScreenPoint([double]$Px, [double]$Py, $o) {
+    return @((($Px - $o.OX) / $o.Scale), (($Py - $o.OY) / $o.Scale))
+}
+function Get-CdpViewportOrigin([IntPtr]$Hwnd, $m) {
+    $root = [DsNative61]::Root($Hwnd)
+    $client = $null; $render = $null
+    try { $client = [DsWin63]::ClientRect($root) } catch { }
+    try { $render = [DsWin63]::RenderRect($root) } catch { }
+    $o = Get-CdpOrigin $m $client $render
+    $key = "$root|$($o.Src)"
+    if ($script:CdpState.CalKey -ne $key) { $script:CdpState.CalKey = $key; $script:CdpState.CalX = 0.0; $script:CdpState.CalY = 0.0 }
+    $o.OX += [double]$script:CdpState.CalX; $o.OY += [double]$script:CdpState.CalY   # 由页面 mousemove 回读学到的校准量
+    $script:CdpState.Origin = $o
+    return $o
+}
+# ---------- DOM + AXTree 融合观测 ----------
+function Get-CdpObservation($Fg) {
+    if (-not (Test-CdpEnabled)) { return $null }
+    if ($script:ChromiumNames -notcontains "$($Fg.Process)".ToLower()) { return $null }
+    if ([Environment]::TickCount64 -lt $script:CdpRetryAfter) { return $null }
+    if (-not (Initialize-CdpEngine)) { return $null }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    if (-not (Connect-CdpTarget $Fg)) { $script:CdpRetryAfter = [Environment]::TickCount64 + 1200; return $null }
+    $c = $script:Cdp
+    if ($c.DialogOpen) { Write-Host "  页面有未处理的 JS 对话框（$($c.DialogInfo)），CDP 暂停，本步改用 UIA" -ForegroundColor DarkYellow; return $null }
+    $o = $null
+    for ($try = 0; $try -lt 2 -and $null -eq $o; $try++) {
+        try { $o = ($c.Observe([int]($MaxElements + 60), 6000) | ConvertFrom-Json) }
+        catch {
+            $em = Get-NativeError $_
+            if ($try -eq 0 -and (-not $c.Connected) -and (Restore-CdpConnection)) { continue }
+            $script:CdpState.Fails++
+            if ($script:CdpState.Fails -ge 3) { $script:CdpRetryAfter = [Environment]::TickCount64 + 30000; $script:CdpState.Fails = 0 }
+            Write-Host "  CDP 感知失败，本步回退 UIA: $(Limit-Text $em 140)" -ForegroundColor DarkYellow
+            return $null
+        }
+    }
+    if ($null -eq $o) { return $null }
+    $script:CdpState.Fails = 0
+    $m = $o.m
+    # 刚导航 / 仍在加载：先做确定性等待再重新观察一次（只做一次）
+    if ("$($m.rs)" -ne 'complete' -or $c.InFlight(3000) -gt 0) {
+        try {
+            if (Wait-CdpSettled -TimeoutMs 3000) { $o = ($c.Observe([int]($MaxElements + 60), 6000) | ConvertFrom-Json); $m = $o.m }
+        }
+        catch { if ($_.Exception.Message -like '触发保护*') { throw } }
+    }
+    $origin = Get-CdpViewportOrigin $Fg.Handle $m
+    $sc = [double]$origin.Scale
+    $items = [System.Collections.Generic.List[object]]::new()
+    $inter = 0
+    foreach ($it in @($o.items)) {
+        $pt = ConvertTo-CdpScreenPoint ([double]$it.x) ([double]$it.y) $origin
+        $L = [int][Math]::Round($origin.OX + [double]$it.l * $sc); $T = [int][Math]::Round($origin.OY + [double]$it.t * $sc)
+        $W = [int][Math]::Max(2.0, [Math]::Round([double]$it.w * $sc)); $H = [int][Math]::Max(2.0, [Math]::Round([double]$it.h * $sc))
+        $name = "$($it.nm)"; $full = if ($name.Length -gt 300) { $name.Substring(0, 300) } else { $name }
+        $inter++
+        $items.Add([pscustomobject]@{
+                Type = "$($it.ty)"; Name = (Limit-Text $name 80); FullName = $full; Value = (Limit-Text "$($it.val)" 80); State = "$($it.st)"
+                Enabled = [bool]$it.en; Focus = [bool]$it.fo; Hwnd = 0; Pat = @(); El = $null; IsMaster = $false; RowIdx = 0; RowText = ''
+                Extra = [bool]$it.ex; Near = ''; cx = $pt[0]; cy = $pt[1]; L = $L; T = $T; W = $W; H = $H
+                Cdp = $true; Bid = [int]$it.bid; Covered = [bool]$it.cv; CoveredBy = "$($it.by)"; Frame = "$($it.fr)"
+            })
+    }
+    foreach ($tx in @($m.texts)) {
+        $s = "$($tx[0])"; if ([string]::IsNullOrWhiteSpace($s)) { continue }
+        $L = [int][Math]::Round($origin.OX + [double]$tx[1] * $sc); $T = [int][Math]::Round($origin.OY + [double]$tx[2] * $sc)
+        $W = [int][Math]::Max(2.0, [Math]::Round([double]$tx[3] * $sc)); $H = [int][Math]::Max(2.0, [Math]::Round([double]$tx[4] * $sc))
+        $items.Add([pscustomobject]@{
+                Type = 'Text'; Name = (Limit-Text $s 80); FullName = $s; Value = ''; State = ''; Enabled = $true; Focus = $false; Hwnd = 0; Pat = @(); El = $null
+                IsMaster = $false; RowIdx = 0; RowText = ''; Extra = $false; Near = ''; cx = [int]($L + $W / 2); cy = [int]($T + $H / 2); L = $L; T = $T; W = $W; H = $H
+                Cdp = $true; Bid = -1; Covered = $false; CoveredBy = ''; Frame = ''
+            })
+    }
+    # 视口外摘要 / 页面信息行 / 焦点行
+    $pageLine = "网页(CDP): 《$(Limit-Text "$($m.title)" 60)》 $(Limit-Text "$($m.url)" 140) readyState=$($m.rs) 在途网络请求=$($c.InFlight(4000)) 滚动 $([int]$m.py)/$([int][Math]::Max(0, [double]$m.sh - [double]$m.ih))px；坐标原点来源=$($origin.Src) 缩放=$([Math]::Round($sc, 3))"
+    $s = $o.s
+    if ([int]$s.below -gt 0 -or [int]$s.above -gt 0) {
+        $pageLine += "`n  视口外还有可交互元素：下方 $($s.below) 个$(if (@($o.belowNames).Count -gt 0) { '（如：' + ((@($o.belowNames) | Select-Object -First 6 | ForEach-Object { Limit-Text $_ 18 }) -join '、') + '）' })，上方 $($s.above) 个（需要先 scroll 再操作）"
+    }
+    if ([int]$s.covered -gt 0) { $pageLine += "`n  ⛔ 标记的控件被其它元素（遮罩 / 弹窗）挡住，点击会落在遮挡物上；请先关闭遮挡物（通常是弹窗的关闭 / 同意按钮）" }
+    $focusLine = ''
+    if ($m.act) { $focusLine = "当前键盘焦点: [网页] $($m.act.tag)$(if ($m.act.type) { '/' + $m.act.type }) `"$(Limit-Text "$($m.act.name)" 40)`"" }
+    $hint = ''
+    if ([double]$m.cv -ge 0.25 -and $inter -lt 25) { $hint = "画布 / WebGL 占视口 $([int]([double]$m.cv * 100))% 且可交互 DOM 节点只有 $inter 个" }
+    elseif ([int]$m.cap -gt 0) { $hint = "视口内检测到验证码组件（$($m.cap) 处，可能是无语义图片）" }
+    elseif ([int]$s.oopif -gt 0 -and $inter -lt 12) { $hint = "$($s.oopif) 个跨进程 iframe 无法经 CDP 读取" }
+    $res = [pscustomobject]@{
+        Items = $items; Nodes = $inter; Inflight = [int]$c.InFlight(4000); Ms = [int]$sw.ElapsedMilliseconds; Hint = $hint; Line = $pageLine; FocusLine = $focusLine
+        Stats = $s; Origin = $origin; UseItems = $true; Url = "$($m.url)"; Title = "$($m.title)"
+    }
+    $script:CdpLast = $res
+    return $res
+}
+# ---------- 单目标实时解析（身份 = backendNodeId，不靠位置猜）----------
+function Resolve-CdpItemTarget($item, [int]$n) {
+    if (-not (Test-CdpForeground)) { throw "控件 [$n] 所在的网页已不在前台（界面已变化），请重新观察" }
+    $c = $script:Cdp
+    if ($c.DialogOpen) { throw "页面正显示 JS 对话框（$($c.DialogInfo)），请先用 key enter / escape 处理，再继续" }
+    $r = $null
+    for ($try = 0; $try -lt 2 -and $null -eq $r; $try++) {
+        try { $r = ($c.LiveTarget([int]$item.Bid, 3000) | ConvertFrom-Json) }
+        catch { if ($try -eq 0 -and (-not $c.Connected) -and (Restore-CdpConnection)) { continue }; throw "控件 [$n] 无法通过 CDP 核对（$(Limit-Text (Get-NativeError $_) 100)），请重新观察" }
+    }
+    $lbl = "[$n] $($item.Type) $($item.Name)"
+    switch ("$($r.err)") {
+        { $_ -in 'gone', 'nobox' } { throw "控件 [$n] $($item.Type) `"$($item.Name)`" 已不存在或已不可见（界面已变化），请重新观察后再操作" }
+        'offscreen' { throw "控件 [$n] `"$($item.Name)`" 已不可见（在视口外，滚动后仍不可见），请先 scroll 再重新观察" }
+        'covered' { throw "网页元素 $lbl 被「$($r.by)」遮挡（遮罩层 / 弹窗），点击会落在遮挡物上，已取消；请先关闭遮挡物" }
+    }
+    if (-not $item.Enabled) { throw "控件 [$n] `"$($item.Name)`" 当前被禁用，点击不会有效果" }
+    $live = "$($r.name)"
+    if ($live -and $item.Name -and (Limit-Text $live 80) -ne $item.Name) { throw "控件 [$n] 的名称已由 `"$($item.Name)`" 变为 `"$(Limit-Text $live 40)`"，界面已变化，请重新观察" }
+    $fg = [DsNative61]::GetForegroundWindow()
+    $o = Get-CdpViewportOrigin $fg $r.m
+    $pt = ConvertTo-CdpScreenPoint ([double]$r.x) ([double]$r.y) $o
+    if ($pt[0] -le 1 -and $pt[1] -le 1) { throw '目标坐标位于屏幕左上角保护区，拒绝操作。' }
+    return @{ x = $pt[0]; y = $pt[1]; label = $lbl; item = $item; byId = $true; n = $n }
+}
+function Test-CdpHit($item, [int]$x, [int]$y) {
+    # 物理点位处「真正会收到点击」的元素是不是目标（页面内 elementFromPoint，穿透 Shadow DOM / 同源 iframe）；无法核验时不误杀
+    try {
+        if (-not (Test-CdpForeground)) { return $true }
+        $o = $script:CdpState.Origin
+        if ($null -eq $o) { return $true }
+        $v = ConvertFrom-CdpScreenPoint $x $y $o
+        $r = ($script:Cdp.HitAt([int]$item.Bid, $v[0], $v[1], 2000) | ConvertFrom-Json)
+        return ([int]$r.r[0] -eq 1)
+    }
+    catch { return $true }
+}
+function Confirm-CdpAim($t, $item) {
+    # 光标到位后的闭环：页面真实收到的 mousemove(clientX/Y) 与我们换算的视口坐标比对；偏差 > 2.5 CSS px 就校准原点并重新瞄准（同一几何只验证一次，之后零开销）
+    try {
+        if ("$($item.Frame)" -ne '') { return }
+        $o = $script:CdpState.Origin
+        if ($null -eq $o) { return }
+        $key = '{0}|{1:N1}|{2:N1}|{3:N3}' -f $script:CdpState.Root, $o.OX, $o.OY, $o.Scale
+        if ($script:CdpState.Verified -eq $key) { return }
+        Start-Sleep -Milliseconds 30
+        $cur = [DsNative61]::CursorPos()
+        $mm = ($script:Cdp.Eval('(()=>{const m=window.__dsM;return m?{x:m.x,y:m.y,age:performance.now()-m.t}:null})()', 1500) | ConvertFrom-Json)
+        if ($null -eq $mm -or [double]$mm.x -lt 0 -or [double]$mm.age -gt 1500) { return }
+        $exp = ConvertFrom-CdpScreenPoint $cur[0] $cur[1] $o
+        $dx = [double]$mm.x - $exp[0]; $dy = [double]$mm.y - $exp[1]
+        if ([Math]::Abs($dx) -le 2.5 -and [Math]::Abs($dy) -le 2.5) { $script:CdpState.Verified = $key; return }
+        if ([Math]::Abs($dx) -gt 600 -or [Math]::Abs($dy) -gt 600) { return }
+        $script:CdpState.CalX += ($cur[0] - [double]$mm.x * $o.Scale) - $o.OX
+        $script:CdpState.CalY += ($cur[1] - [double]$mm.y * $o.Scale) - $o.OY
+        $t2 = Resolve-CdpItemTarget $item $t.n
+        $script:CdpAimNote = "；CDP 光标闭环：页面实测偏差 ($([Math]::Round($dx, 1)),$([Math]::Round($dy, 1))) CSS px → 已校准原点并重新瞄准"
+        $t.x = $t2.x; $t.y = $t2.y
+        [DsNative61]::HumanMoveTo([int]$t.x, [int]$t.y)
+        $o2 = $script:CdpState.Origin
+        $script:CdpState.Verified = '{0}|{1:N1}|{2:N1}|{3:N3}' -f $script:CdpState.Root, $o2.OX, $o2.OY, $o2.Scale
+    }
+    catch { if ("$($_.Exception.Message)" -match '触发保护|让出控制权') { throw (Get-NativeError $_) } }
+}
+function Invoke-CdpApproach($t, $item) {
+    # CDP 版 Invoke-HumanApproach：移动完成后用 CDP 实时几何重核对（页面在移动期间发生布局位移就追加修正，最多 2 次），再做一次光标闭环
+    $script:CdpAimNote = ''
+    $w = 40
+    try { $w = [int][Math]::Max(8.0, [Math]::Min([double]$item.W, [double]$item.H)) } catch { $w = 40 }
+    [DsNative61]::TargetW = $w
+    try { [DsNative61]::HumanMoveTo([int]$t.x, [int]$t.y) } catch { throw (Get-NativeError $_) }
+    for ($k = 0; $k -lt 2; $k++) {
+        try {
+            $t2 = Resolve-CdpItemTarget $item $t.n
+            if ([Math]::Abs([int]$t2.x - [int]$t.x) -le 2 -and [Math]::Abs([int]$t2.y - [int]$t.y) -le 2) { break }
+            $t.x = $t2.x; $t.y = $t2.y
+            [DsNative61]::HumanMoveTo([int]$t.x, [int]$t.y)
+        }
+        catch { if ("$($_.Exception.Message)" -match '触发保护|让出控制权') { throw (Get-NativeError $_) }; throw }
+    }
+    Confirm-CdpAim $t $item
+}
+# ---------- 节点状态读回（check / type 使用）----------
+function Get-CdpCheckState($item) {
+    $r = $script:Cdp.CallOn([int]$item.Bid, "function(){const a=this.getAttribute&&this.getAttribute('aria-checked');if(typeof this.checked==='boolean'&&this.type!=='button')return this.checked?'on':'off';if(a==='true')return 'on';if(a==='false')return 'off';if(a==='mixed')return 'mixed';const p=this.getAttribute&&this.getAttribute('aria-pressed');if(p==='true')return 'on';return 'off'}", 2000)
+    return ("$r").Trim([char]34)
+}
+function Set-CdpCheckState($item, [bool]$on, [string]$label, [int]$n) {
+    $want = if ($on) { 'on' } else { 'off' }
+    $s0 = Get-CdpCheckState $item
+    if ($s0 -eq $want) { return [pscustomobject]@{ Ok = $true; Changed = $false; State = $s0; Via = '已是目标状态，未操作' } }
+    [void](Invoke-PointerAction 'click' ([pscustomobject]@{ id = $n }))
+    Wait-UiSettled
+    $st = Get-CdpCheckState $item
+    if ($st -ne $want) { Start-Sleep -Milliseconds 300; $st = Get-CdpCheckState $item }   # 迟到的异步生效：再读一次，绝不盲目再点（会把它点回去）
+    return [pscustomobject]@{ Ok = ($st -eq $want); Changed = $true; State = $st; Via = '物理点击(CDP 落点已核验)' }
+}
+function Test-CdpFocused($item) {
+    try { return ("$($script:Cdp.CallOn([int]$item.Bid, 'function(){return document.activeElement===this||this.contains(document.activeElement)}', 1500))" -eq 'true') } catch { return $false }
+}
+function Get-CdpValue($item) {
+    $fn = 'function(){return this.value!==undefined?String(this.value):(this.isContentEditable?this.innerText:String())}'
+    try { $r = $script:Cdp.CallOn([int]$item.Bid, $fn, 1500); return ("$r").Trim([char]34) } catch { return $null }
+}
+# ---------- 确定性等待引擎 ----------
+function Set-CdpActionEpoch {
+    # 动作开始前记下事件序号：动作期间发生的任何网络 / 导航事件都算「有活动」
+    if (Test-CdpForeground) { $script:CdpActEp = @{ Epoch = [long]$script:Cdp.Epoch; Doc = [long]$script:Cdp.DocEpoch } } else { $script:CdpActEp = $null }
+}
+function Wait-CdpSettled {
+    # 等待 document.readyState==='complete' 且 InFlightRequests==0 并持续「安静窗口」（有网络 / 导航活动 -QuietMs=250ms；纯界面操作缩短到 120ms；总超时 -CdpTimeoutMs=5000ms；
+    # 没有导航时最多等 2s，避免被统计 / 心跳类请求拖到 5s）。80ms 轮询，每圈检查急停（Ctrl+Alt+Q）。返回 $false = CDP 不可用（调用方回退 UIA 等待）。
+    [CmdletBinding()]
+    param([int]$QuietMs = 0, [int]$TimeoutMs = 0)
+    $c = $script:Cdp
+    if ($null -eq $c -or -not $c.Connected) { return $false }
+    if ($QuietMs -le 0) { $QuietMs = [int]$script:CdpQuietMs }
+    if ($TimeoutMs -le 0) { $TimeoutMs = [int]$script:CdpSettleTimeoutMs }
+    $ap = $script:CdpActEp; $script:CdpActEp = $null
+    $ep0 = if ($ap) { [long]$ap.Epoch } else { [long]$c.Epoch }
+    $doc0 = if ($ap) { [long]$ap.Doc } else { [long]$c.DocEpoch }
+    $t0 = [Environment]::TickCount64
+    $quietSince = 0L; $rs = ''; $first = $true; $infl = 0; $nav = $false; $note = ''
+    while ($true) {
+        Test-Abort
+        $now = [Environment]::TickCount64
+        if (-not $c.Connected) { return $false }
+        if ($c.DialogOpen) { $note = "JS 对话框未处理($($c.DialogInfo))"; break }
+        $nav = ([long]$c.DocEpoch -ne $doc0); $act = ([long]$c.Epoch -ne $ep0)
+        $need = if ($act) { $QuietMs } else { [Math]::Min($QuietMs, 120) }
+        $cap = if ($nav) { $TimeoutMs } else { [Math]::Min($TimeoutMs, 2000) }
+        $infl = [int]$c.InFlight(4000)
+        if (($now - $t0) -ge $cap) { $note = "超时 ${cap}ms（在途=$infl rs=$rs）"; break }
+        try {
+            $expr = if ($first) { 'new Promise(r=>{let d=0;const f=()=>{if(!d){d=1;r(document.readyState)}};requestAnimationFrame(()=>requestAnimationFrame(f));setTimeout(f,100)})' } else { 'document.readyState' }
+            $first = $false
+            $rs = ("$($c.Eval($expr, 1500))").Trim('"')
+        }
+        catch { $rs = 'busy' }   # 导航中 / 执行上下文已销毁
+        $infl = [int]$c.InFlight(4000)
+        if ($rs -eq 'complete' -and $infl -eq 0) {
+            if ($quietSince -eq 0) { $quietSince = $now }
+            $ref = [Math]::Max($quietSince, [Math]::Max([long]$c.LastEventTick, $t0))
+            if (([Environment]::TickCount64 - $ref) -ge $need) { break }
+        }
+        else { $quietSince = 0 }
+        Start-Sleep -Milliseconds ([Math]::Min(80, [Math]::Max(10, $need / 2)))
+    }
+    $ms = [int]([Environment]::TickCount64 - $t0)
+    $script:CdpSettleNote = if ($note) { "CDP 等待: $note，共 ${ms}ms" } else { "CDP 已稳定 ${ms}ms（readyState=$rs，在途=$infl$(if ($nav) { '，含导航' })）" }
+    return $true
+}
+function Wait-CdpScrollIdle([int]$MaxMs = 700) {
+    # 滚动落定：scrollX/Y 连续两次读数不变即返回（替代固定 260ms 睡眠）
+    try {
+        $end = [Environment]::TickCount64 + $MaxMs
+        Start-Sleep -Milliseconds 50
+        $last = $null; $stable = 0
+        while ([Environment]::TickCount64 -lt $end) {
+            Test-Abort
+            $y = "$($script:Cdp.Eval('[window.scrollY,window.scrollX].join()', 800))"
+            if ($y -eq $last) { $stable++; if ($stable -ge 2) { break } } else { $stable = 0 }
+            $last = $y
+            Start-Sleep -Milliseconds 40
+        }
+    }
+    catch { }
+}
+# ---------- 自检（离线单元测试 + 可选活体端到端）----------
+function Find-CdpTestBrowser {
+    if ($env:DSCU_CDP_TEST_BROWSER -and (Test-Path -LiteralPath $env:DSCU_CDP_TEST_BROWSER)) { return $env:DSCU_CDP_TEST_BROWSER }
+    foreach ($exe in @('msedge.exe', 'chrome.exe')) {
+        foreach ($hive in @('HKLM', 'HKCU')) {
+            try {
+                $p = (Get-ItemProperty -Path "${hive}:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\$exe" -ErrorAction Stop).'(default)'
+                if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+            }
+            catch { }
+        }
+    }
+    foreach ($p in @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe")) {
+        if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+    }
+    return $null
+}
+function Invoke-CdpSelfTest($rec) {
+    $okEng = Initialize-CdpEngine
+    & $rec 'v6.3 CDP 引擎（C# DsCdp63 / DsWin63 编译）' $okEng $(if ($okEng) { 'ClientWebSocket + System.Text.Json，零外部依赖' } else { '编译失败' })
+    if (-not $okEng) { return }
+    # 1) JSON-RPC 序列化 / 解析 / 事件分类
+    $rq = [DsCdp63]::BuildRequest(7, 'DOM.getDocument', '{"depth":-1,"pierce":true}')
+    $rqo = $rq | ConvertFrom-Json
+    $rq2 = [DsCdp63]::BuildRequest(8, 'Page.enable', $null) | ConvertFrom-Json
+    $eOk = [DsCdp63]::ErrorOf('{"id":5,"result":{"x":1}}'); $eBad = [DsCdp63]::ErrorOf('{"id":6,"error":{"code":-32000,"message":"No node with given id found"}}')
+    $idA = [DsCdp63]::IdOf('{"id":1234,"result":{}}'); $idB = [DsCdp63]::IdOf('{"method":"Network.requestWillBeSent","params":{}}')
+    & $rec 'v6.3 CDP JSON-RPC 序列化 / 响应解析（id 匹配、error 提取、事件与响应区分）' (($rqo.id -eq 7) -and ($rqo.method -eq 'DOM.getDocument') -and ($rqo.params.depth -eq -1) -and ($rqo.params.pierce -eq $true) -and ($null -ne $rq2.params) -and ($null -eq $eOk) -and ($eBad -eq 'No node with given id found') -and ($idA -eq 1234) -and ($idB -eq -1)) "请求=$rq 错误=[$eBad] id=$idA/$idB"
+    # 2) 视口 → 物理屏幕坐标（三级降级 + 往返）
+    $m1 = [pscustomobject]@{ sx = 100; sy = 50; ow = 1400; oh = 900; iw = 1384; ih = 780; dpr = 1.5 }
+    $o1 = Get-CdpOrigin $m1 $null $null; $p1 = ConvertTo-CdpScreenPoint 200 100 $o1
+    $m2 = [pscustomobject]@{ sx = 0; sy = 0; ow = 1280; oh = 720; iw = 1280; ih = 720; dpr = 1.5 }
+    $o2 = Get-CdpOrigin $m2 $null @(0, 140, 1920, 1080); $p2 = ConvertTo-CdpScreenPoint 100 50 $o2
+    $o3 = Get-CdpOrigin $m2 @(8, 0, 1936, 1190) $null; $p3 = ConvertTo-CdpScreenPoint 100 50 $o3
+    $o4 = Get-CdpOrigin $m2 @(8, 0, 1936, 1190) @(0, 0, 500, 300)   # Render 矩形与 innerWidth*dpr 不符（缩放 / 异常）→ 降级到客户区
+    $m5 = [pscustomobject]@{ sx = 0; sy = 0; ow = 1000; oh = 800; iw = 1000; ih = 700; dpr = 1.0 }
+    $o5 = Get-CdpOrigin $m5 $null @(10, 100, 1000, 700); $p5 = ConvertTo-CdpScreenPoint 500 350 $o5
+    $m6 = [pscustomobject]@{ sx = 0; sy = 0; ow = 2000; oh = 1100; iw = 960; ih = 540; dpr = 2.0 }
+    $o6 = Get-CdpOrigin $m6 $null @(-1920, 200, 1920, 1080); $p6 = ConvertTo-CdpScreenPoint 480 270 $o6   # 副屏（负坐标）+ 200% 缩放
+    $bk = ConvertFrom-CdpScreenPoint $p1[0] $p1[1] $o1
+    $dpiOk = ($p1[0] -eq 462 -and $p1[1] -eq 393 -and $o1.Src -eq 'screenXY') -and ($p2[0] -eq 150 -and $p2[1] -eq 215 -and $o2.Src -eq 'render-hwnd') -and ($p3[0] -eq 158 -and $p3[1] -eq 185 -and $o3.Src -eq 'client-rect') -and ($o4.Src -eq 'client-rect') -and ($p5[0] -eq 510 -and $p5[1] -eq 450) -and ($p6[0] -eq -960 -and $p6[1] -eq 740) -and ([Math]::Abs($bk[0] - 200) -lt 0.6 -and [Math]::Abs($bk[1] - 100) -lt 0.6)
+    & $rec 'v6.3 视口→物理屏幕坐标 DPI 换算（Render HWND / 客户区 / screenXY 三级降级、150% / 200% 缩放、副屏负坐标、往返误差 <1px）' $dpiOk "(200,100)@1.5x screenXY→($($p1 -join ',')) render→($($p2 -join ',')) client→($($p3 -join ',')) 副屏200%→($($p6 -join ',')) 来源=[$($o1.Src),$($o2.Src),$($o3.Src),$($o4.Src)]"
+    # 3) 遮挡 / 可见性过滤
+    $par = [System.Collections.Generic.Dictionary[int, int]]::new(); $tg = [System.Collections.Generic.Dictionary[int, string]]::new()
+    foreach ($e in @(@(1, -1, 'html'), @(2, 1, 'body'), @(3, 2, 'div'), @(4, 3, 'button'), @(5, 4, 'span'), @(6, 2, 'div'), @(7, 2, 'label'), @(8, 7, 'input'), @(9, 7, 'span'), @(10, 3, 'a'), @(11, 10, 'img'))) { $par[[int]$e[0]] = [int]$e[1]; $tg[[int]$e[0]] = [string]$e[2] }
+    $rSelf = [DsCdp63]::Related(4, 4, $par, $tg, $null); $rDesc = [DsCdp63]::Related(4, 5, $par, $tg, $null)       # 命中按钮内的 span → 点得到
+    $rCover = [DsCdp63]::Related(4, 6, $par, $tg, $null); $rBody = [DsCdp63]::Related(4, 2, $par, $tg, $null)      # 被兄弟遮罩 / body 挡住 → 点不到
+    $rLabel = [DsCdp63]::Related(8, 9, $par, $tg, $null); $rAnc = [DsCdp63]::Related(11, 10, $par, $tg, $null)     # 自定义复选框（label 里的 span）→ 点得到；img 被外层 a 包着 → 点得到
+    $rDiv = [DsCdp63]::Related(4, 3, $par, $tg, $null); $rNone = [DsCdp63]::Related(4, -1, $par, $tg, $null)       # 命中的是普通祖先 div → 不算；命中失败 → 不误判
+    $c1 = [DsCdp63]::ClipRect(-20, 100, 80, 140, 1280, 720); $c2 = [DsCdp63]::ClipRect(10, 800, 90, 840, 1280, 720); $c3 = [DsCdp63]::ClipRect(1270, 700, 1400, 900, 1280, 720)
+    $gh = @([DsCdp63]::IsGhost(0, 1), [DsCdp63]::IsGhost(0.5, 1), [DsCdp63]::IsGhost(1, 0), [DsCdp63]::IsGhost(0.04, 1), [DsCdp63]::IsGhost(1, 1))
+    $occOk = $rSelf -and $rDesc -and (-not $rCover) -and (-not $rBody) -and $rLabel -and $rAnc -and (-not $rDiv) -and (-not $rNone) -and ($null -ne $c1) -and ($c1[0] -eq 0) -and ($c1[2] -eq 80) -and ($null -eq $c2) -and ($c3[2] -eq 1280 -and $c3[3] -eq 720) -and $gh[0] -and (-not $gh[1]) -and $gh[2] -and $gh[3] -and (-not $gh[4])
+    & $rec 'v6.3 遮挡 / 可见性过滤（后代命中 OK、兄弟遮罩 / body 判遮挡、label 内自定义复选框 OK、视口裁剪、opacity:0 / visibility:hidden 判幽灵）' $occOk "自身=$rSelf 后代=$rDesc 遮罩=$rCover body=$rBody label=$rLabel 祖先a=$rAnc 普通祖先=$rDiv 视口外=$($null -eq $c2) 幽灵=$($gh -join '/')"
+    # 4) 在途请求计数（Network 事件喂入）
+    $ct = [DsCdp63]::new()
+    $ev = { param($m, $p) '{"method":"' + $m + '","params":' + $p + '}' }
+    $ct.FeedEvent((& $ev 'Network.requestWillBeSent' '{"requestId":"1.1","request":{"url":"https://a.test/x.js"},"type":"Script"}'))
+    $ct.FeedEvent((& $ev 'Network.requestWillBeSent' '{"requestId":"1.2","request":{"url":"https://a.test/api"},"type":"XHR"}'))
+    $ct.FeedEvent((& $ev 'Network.requestWillBeSent' '{"requestId":"1.3","request":{"url":"https://a.test/"},"type":"Document"}'))
+    $ct.FeedEvent((& $ev 'Network.requestWillBeSent' '{"requestId":"1.4","request":{"url":"wss://a.test/ws"},"type":"WebSocket"}'))
+    $ct.FeedEvent((& $ev 'Network.requestWillBeSent' '{"requestId":"1.5","request":{"url":"data:image/png;base64,AAAA"},"type":"Image"}'))
+    $ct.FeedEvent((& $ev 'Network.requestWillBeSent' '{"requestId":"1.6","request":{"url":"https://a.test/v.mp4"},"type":"Media"}'))
+    $n3 = $ct.InFlight(4000); $doc = $ct.DocEpoch
+    $ct.FeedEvent((& $ev 'Network.requestWillBeSent' '{"requestId":"1.2","request":{"url":"https://a.test/api2"},"type":"XHR"}'))   # 重定向：同 requestId 不重复计数
+    $nRe = $ct.InFlight(4000)
+    $ct.FeedEvent((& $ev 'Network.loadingFinished' '{"requestId":"1.1","timestamp":1}'))
+    $ct.FeedEvent((& $ev 'Network.loadingFailed' '{"requestId":"1.2","timestamp":1,"errorText":"net::ERR_ABORTED"}'))
+    $nMid = $ct.InFlight(4000)
+    $ct.FeedEvent((& $ev 'Network.loadingFinished' '{"requestId":"1.3","timestamp":1}'))
+    $nEnd = $ct.InFlight(4000)
+    $ep = $ct.Epoch
+    $ct.FeedEvent((& $ev 'Page.javascriptDialogOpening' '{"type":"confirm","message":"Sure?"}')); $dlg = $ct.DialogOpen
+    $ct.FeedEvent((& $ev 'Page.javascriptDialogClosed' '{"result":true}')); $dlg2 = $ct.DialogOpen
+    $stale = [DsCdp63]::new(); $stale.FeedEvent((& $ev 'Network.requestWillBeSent' '{"requestId":"9.1","request":{"url":"https://a.test/poll"},"type":"Fetch"}')); Start-Sleep -Milliseconds 60
+    $staleIn = $stale.InFlight(4000); $staleOut = $stale.InFlight(30)
+    & $rec 'v6.3 InFlightRequests 计数器（WebSocket / Media / data: 不计、重定向不重复、finished / failed 递减、对话框事件、超龄长轮询剔除）' (($n3 -eq 3) -and ($doc -eq 1) -and ($nRe -eq 3) -and ($nMid -eq 1) -and ($nEnd -eq 0) -and ($ep -eq 7) -and $dlg -and (-not $dlg2) -and ($staleIn -eq 1) -and ($staleOut -eq 0)) "开始后=$n3 重定向后=$nRe 完成2个后=$nMid 全部完成=$nEnd 事件序号=$ep 超龄剔除=$staleIn→$staleOut"
+    # 5) Target 匹配（Chrome / Edge 标题后缀、零宽字符、多标签同名）
+    $tgs = @([pscustomobject]@{ id = 'A'; title = 'Gmail'; url = 'https://mail.google.com/'; webSocketDebuggerUrl = 'ws://a' }, [pscustomobject]@{ id = 'B'; title = 'GitHub - Pull requests'; url = 'https://github.com/pulls'; webSocketDebuggerUrl = 'ws://b' }, [pscustomobject]@{ id = 'C'; title = 'GitHub'; url = 'https://github.com/'; webSocketDebuggerUrl = 'ws://c' }, [pscustomobject]@{ id = 'D'; title = ''; url = 'about:blank'; webSocketDebuggerUrl = 'ws://d' })
+    $s1 = Select-CdpTarget $tgs 'GitHub - Pull requests - Google Chrome'
+    $s2 = Select-CdpTarget $tgs ("Gmail - 个人 - Microsoft$([char]0x200B) Edge")
+    $s3 = Select-CdpTarget $tgs 'GitHub - Google Chrome'
+    $s4 = Select-CdpTarget $tgs 'Something else - Google Chrome' 'A'
+    $s5 = Select-CdpTarget @($tgs[0], $tgs[1]) 'Unknown - Google Chrome'
+    $s6 = Select-CdpTarget @($tgs[3]) '新标签页 - Google Chrome'
+    $s7 = Select-CdpTarget @($tgs[0], [pscustomobject]@{ id = 'E'; title = ''; url = 'https://news.example.org/a/b'; webSocketDebuggerUrl = 'ws://e' }) 'news.example.org/a/b - Google Chrome'   # 新标签页加载中：窗口标题就是 URL
+    & $rec 'v6.3 前台标签页 → CDP Target 匹配（最长标题 / Edge 零宽字符 / 无匹配且多标签不乱接 / 单标签 / 新标签页 / 加载中的 URL 标题）' (($s1.id -eq 'B') -and ($s2.id -eq 'A') -and ($s3.id -eq 'C') -and ($s4.id -eq 'A') -and ($null -eq $s5) -and ($s6.id -eq 'D') -and ($s7.id -eq 'E')) "[$($s1.id),$($s2.id),$($s3.id),$(if ($s4) { $s4.id } else { '无' }),$(if ($s5) { $s5.id } else { '无' }),$($s6.id),$($s7.id)]"
+    $la = Get-CdpLaunchArgs 'C:\Program Files\Google\Chrome\Application\chrome.exe' 'https://example.com'
+    $la2 = Get-CdpLaunchArgs 'msedge' '--remote-debugging-port=9555 --user-data-dir="C:\p q\prof"'
+    & $rec 'v6.3 隔离式启动参数（独立 user-data-dir + 远程调试端口 + 防降频；显式参数不被覆盖；不重复添加）' (($la.Args -match '--remote-debugging-port=\d+') -and ($la.Args -match '--user-data-dir="[^"]+DeepSeekComputerUse-cdp-chrome"') -and ($la.Args -match '--disable-backgrounding-occluded-windows') -and ($la.Args -match 'https://example\.com$') -and ($la2.Port -eq 9555) -and (([regex]::Matches($la2.Args, 'user-data-dir')).Count -eq 1) -and (([regex]::Matches($la2.Args, 'remote-debugging-port')).Count -eq 1) -and ($la2.Key -eq 'edge')) "端口=$($la.Port) 参数=$(Limit-Text $la.Args 150)"
+    # 6) 活体端到端：自动启动一个无头隔离浏览器（独立 Profile + 空闲端口），验证 Observe / LiveTarget / 命中 / 等待；找不到 Edge / Chrome 时跳过
+    $exe = Find-CdpTestBrowser
+    if (-not $exe) { & $rec 'v6.3 CDP 活体端到端（无头隔离 Edge / Chrome）' $true '跳过：未找到 Edge / Chrome（可设环境变量 DSCU_CDP_TEST_BROWSER 指定路径）'; return }
+    $port = Find-CdpFreePort 0
+    $prof = Join-Path ([System.IO.Path]::GetTempPath()) "dscu-cdp-selftest-$PID"
+    $html = Join-Path ([System.IO.Path]::GetTempPath()) "dscu-cdp-selftest-$PID.html"
+    $page = '<!doctype html><html><head><title>DsCdp Selftest</title><style>.cover{position:fixed;left:20px;top:300px;width:200px;height:60px;z-index:99}.ghost{opacity:0}</style></head><body><h1>Hello</h1><button id=b1>Save</button> <a href="#x">Docs link</a> <input placeholder="Search here" value="abc"> <button disabled>Disabled</button><button style="display:none">Hidden</button><button style="visibility:hidden">VisHidden</button><button class=ghost>Ghost</button><div role=tab tabindex=0>Tab One</div><div style="position:absolute;left:20px;top:300px"><button style="width:200px;height:60px">Covered Button</button></div><div class=cover id=cover></div><div id=host></div><iframe srcdoc="<button>In Frame</button>" style="width:300px;height:80px"></iframe><canvas width=300 height=100></canvas><script>document.getElementById("host").attachShadow({mode:"open"}).innerHTML="<button>Shadow Btn</button>"</scr' + 'ipt></body></html>'
+    $proc = $null; $tc = $null; $svCdp = $script:Cdp
+    try {
+        [System.IO.File]::WriteAllText($html, $page, [System.Text.UTF8Encoding]::new($false))
+        $url = [System.Uri]::new($html).AbsoluteUri
+        $a = [System.Collections.Generic.List[string]]::new()
+        if (-not $env:DSCU_CDP_TEST_BROWSER) { $a.Add('--headless=new') } else { $a.Add('--no-sandbox') }
+        foreach ($x in @('--disable-gpu', "--remote-debugging-port=$port", "--user-data-dir=`"$prof`"", '--no-first-run', '--no-default-browser-check', '--window-size=1000,800', $url)) { $a.Add($x) }
+        $proc = Start-Process -FilePath $exe -ArgumentList ($a -join ' ') -PassThru
+        $up = Wait-CdpEndpoint $port 9000
+        $tgt = $null
+        for ($i = 0; $i -lt 40 -and -not $tgt; $i++) { $tgt = @(Get-CdpTargets $port) | Where-Object { "$($_.title)" -eq 'DsCdp Selftest' } | Select-Object -First 1; if (-not $tgt) { Start-Sleep -Milliseconds 100 } }
+        if (-not $tgt) { & $rec 'v6.3 CDP 活体端到端（无头隔离 Edge / Chrome）' $false "端点就绪=$up，但没有找到测试页 Target"; return }
+        $tc = [DsCdp63]::new(); $tc.Connect([string]$tgt.webSocketDebuggerUrl, 4000)
+        $script:Cdp = $tc
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $ob = ($tc.Observe(150, 6000) | ConvertFrom-Json)
+        $ms1 = $sw.ElapsedMilliseconds; $sw.Restart(); $null = $tc.Observe(150, 6000); $ms2 = $sw.ElapsedMilliseconds
+        $names = @($ob.items | ForEach-Object { $_.nm })
+        $byNm = @{}; foreach ($it in @($ob.items)) { $byNm[$it.nm] = $it }
+        $must = @('Save', 'Docs link', 'Search here', 'Tab One', 'Shadow Btn', 'In Frame')
+        $missing = @($must | Where-Object { $names -notcontains $_ })
+        $excl = @('Hidden', 'VisHidden', 'Ghost') | Where-Object { $names -contains $_ }
+        $covOk = ($byNm['Covered Button'] -and $byNm['Covered Button'].cv -and "$($byNm['Covered Button'].by)" -match 'cover') -and (-not $byNm['Save'].cv)
+        & $rec 'v6.3 CDP 活体感知：AXTree+DOM(pierce) 融合（Shadow DOM / iframe / 角色）、display:none·visibility:hidden·opacity:0 被过滤、透明遮罩被标记' ($up -and $missing.Count -eq 0 -and @($excl).Count -eq 0 -and $covOk -and [int]$ob.s.ghost -ge 1 -and [double]$ob.m.cv -gt 0) "节点 AX=$($ob.s.ax) DOM=$($ob.s.dom) 候选=$($ob.s.cand) 可见=$($ob.s.vis) 被遮挡=$($ob.s.covered) 幽灵=$($ob.s.ghost) 缺失=[$($missing -join ',')] 误入=[$(@($excl) -join ',')] 首次 ${ms1}ms / 复测 ${ms2}ms"
+        $sv = $byNm['Save']; $cv = $byNm['Covered Button']; $fr = $byNm['In Frame']
+        $l1 = ($tc.LiveTarget([int]$sv.bid, 3000) | ConvertFrom-Json); $l2 = ($tc.LiveTarget([int]$cv.bid, 3000) | ConvertFrom-Json); $l3 = ($tc.LiveTarget([int]$fr.bid, 3000) | ConvertFrom-Json)
+        $h1 = ($tc.HitAt([int]$sv.bid, [double]$sv.x, [double]$sv.y, 3000) | ConvertFrom-Json); $h2 = ($tc.HitAt([int]$cv.bid, [double]$cv.x, [double]$cv.y, 3000) | ConvertFrom-Json)
+        & $rec 'v6.3 CDP 实时目标核对：几何 + 名称 + 页面内 elementFromPoint（含 iframe 坐标换算；被遮罩挡住的按钮拒绝点击）' ($l1.ok -and "$($l1.name)" -eq 'Save' -and (-not $l2.ok) -and $l2.err -eq 'covered' -and $l3.ok -and ($h1.r[0] -eq 1) -and ($h2.r[0] -eq 0)) "Save ok=$($l1.ok) 遮挡按钮=$($l2.err)(by $($l2.by)) iframe 按钮 ok=$($l3.ok) 命中检查=$($h1.r[0])/$($h2.r[0])"
+        $null = $tc.Call('Page.navigate', ('{"url":' + ($url | ConvertTo-Json -Compress) + '}'), 4000)
+        $script:CdpActEp = @{ Epoch = [long]($tc.Epoch - 1); Doc = [long]($tc.DocEpoch - 1) }
+        $swS = [System.Diagnostics.Stopwatch]::StartNew()
+        $settled = Wait-CdpSettled
+        $swS.Stop()
+        & $rec 'v6.3 Wait-CdpSettled：导航后等到 readyState=complete 且在途请求=0 并安静窗口' ($settled -and $script:CdpSettleNote -match '已稳定' -and $swS.ElapsedMilliseconds -lt 4500) "$($script:CdpSettleNote)（实测 $($swS.ElapsedMilliseconds)ms）"
+    }
+    catch { & $rec 'v6.3 CDP 活体端到端（无头隔离 Edge / Chrome）' $false "异常: $(Limit-Text $_.Exception.Message 200)" }
+    finally {
+        $script:Cdp = $svCdp
+        try { if ($tc) { $tc.Close() } } catch { }
+        try { if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } } catch { }
+        try { if ($IsWindows) { Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*dscu-cdp-selftest-$PID*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } } } catch { }
+        Start-Sleep -Milliseconds 300
+        Remove-Item -LiteralPath $html -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $prof -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 #endregion
 #region ---------- DeepSeek ----------
@@ -4394,7 +5707,7 @@ function Invoke-AgentTask([string]$TaskText) {
             # 刚操作完界面却完全没变：很可能是页面/弹窗延迟生效（日志任务3），先自动等一下再观察一次，再交给模型
             if ($lastActed -and $null -ne $lastSig -and $sig -eq $lastSig) {
                 Write-Host '  界面暂无变化，稍候重新观察一次（页面可能仍在加载）...' -ForegroundColor DarkGray
-                Wait-Safe 900
+                Wait-Safe $(if ($obs.Cdp) { 250 } else { 900 })   # v6.3：CDP 已确认页面稳定，不必再固定多等 900ms
                 $obs = Get-Observation
                 $sig = Get-ObsSig $obs
             }
@@ -4483,8 +5796,15 @@ function Invoke-AgentTask([string]$TaskText) {
                 }
             }
             if ($null -eq $raw) {
-                Write-Host "  [Perception: UIA] 可交互控件 $($obs.Inter) 个" -ForegroundColor DarkGray
-                Write-Log @{ type = 'perception'; step = $step; channel = 'uia'; inter = $obs.Inter }
+                if ($obs.Cdp) {
+                    $cs = $obs.Cdp.Stats
+                    Write-Host "  [Perception: CDP(nodes=$($obs.Cdp.Nodes), inflight=$($obs.Cdp.Inflight))] $($obs.Cdp.Ms)ms（AX $($cs.ax) / DOM $($cs.dom) / 候选 $($cs.cand) → 可见 $($cs.vis)，遮挡 $($cs.covered)，幽灵 $($cs.ghost)；AX+DOM $($cs.tA)ms · 几何 $($cs.tB)ms · 命中 $($cs.tC)ms）" -ForegroundColor DarkGray
+                    Write-Log @{ type = 'perception'; step = $step; channel = 'cdp'; nodes = $obs.Cdp.Nodes; inflight = $obs.Cdp.Inflight; ms = $obs.Cdp.Ms; covered = $cs.covered; ghost = $cs.ghost; url = $obs.Cdp.Url }
+                }
+                else {
+                    Write-Host "  [Perception: UIA] 可交互控件 $($obs.Inter) 个" -ForegroundColor DarkGray
+                    Write-Log @{ type = 'perception'; step = $step; channel = 'uia'; inter = $obs.Inter }
+                }
                 $raw = Invoke-DeepSeek $userContent
             }
             Write-Host "  耗时: 感知 ${obsMs}ms · 决策 $($script:LastApiMs)ms（$(if ($visionCtx) { $VisionModel } else { $Model })）" -ForegroundColor DarkGray
@@ -4715,6 +6035,7 @@ function Invoke-SelfTest {
     $d1 = Get-ObservationDiff $kPrev $kCur 'A - Chrome' 'B - Chrome'
     $d2 = Get-ObservationDiff $kPrev $kPrev 'A' 'A'
     & $rec '界面对比：勾选变化 / 新增控件 / 标题变化可见' (($d1 -match '邮件1 on') -and ($d1 -match '新弹窗') -and ($d1 -match '标题') -and ($d2 -match '完全相同')) (($d1 -replace '\s+', ' '))
+    Invoke-CdpSelfTest $rec   # v6.3：CDP 离线单元测试 + 活体端到端
     # ---- v4.2 纯逻辑自检（不碰鼠标键盘）----
     $q = @((Get-TaskQuantity '打开gmail，删除前面10个邮件'), (Get-TaskQuantity '删除前十封邮件'), (Get-TaskQuantity 'delete the first 5 emails'),
         (Get-TaskQuantity '点开第3个视频'), (Get-TaskQuantity '打开一个记事本，输入晚上好'))
@@ -5254,6 +6575,7 @@ function Show-Help {
     Write-Host '  mode <名称>        切换输入模式：auto / uia / message / physical（当前: 见横幅）'
     Write-Host 'v5：每个任务先规划再执行；切换类动作（点赞/收藏/勾选）不会被重复执行；看不清的地方模型会先 inspect / ocr。' -ForegroundColor DarkGray
     Write-Host 'v6.2：UIA 盲区 / 连续无效 / vision_inspect 时自动附带 SoM 标注截图并改用视觉模型看图（-NoVision 关闭）；每步标注 [Perception: UIA|Vision(...)]。' -ForegroundColor DarkGray
+    Write-Host 'v6.3：Chrome / Edge / Brave 由 CDP 感知（遮挡 / 透明度 / Shadow DOM / iframe）并确定性等待页面稳定；每步标注 [Perception: CDP(nodes=N, inflight=M)]（-NoCdp 关闭）。' -ForegroundColor DarkGray
     Write-Host '  cls                清屏'
     Write-Host '  exit / quit / 退出  结束程序'
     Write-Host '执行任务期间的紧急停止（只终止当前任务，回到本提示符）:' -ForegroundColor Yellow
@@ -5262,11 +6584,12 @@ function Show-Help {
 }
 function Show-Banner {
     Write-Host ''
-    Write-Host '=== DeepSeek Computer Use v6.2（视觉兜底 + 连接复用 + 人类化输入 + 按下前守卫 + 操作回执 + 预期核对 + 按状态码重试；保留 v5.1 / v6.0 全部能力）===' -ForegroundColor Cyan
+    Write-Host '=== DeepSeek Computer Use v6.3（CDP 混合感知 + 确定性等待 + 视觉兜底 + 连接复用 + 人类化输入 + 按下前守卫 + 操作回执 + 预期核对 + 按状态码重试；保留 v5.1 / v6.0 全部能力）===' -ForegroundColor Cyan
     Write-Host "模型    : $Model    每任务最大步数: $MaxSteps    批量动作上限: $MaxBatch"
     Write-Host "模式    : $(if ($DryRun) { '仅预演(DryRun)' } elseif ($script:Auto) { '全自动（无需确认）' } else { '逐步确认' })    Shell: $(if ($NoShell) { '禁止' } else { '允许' })    管理员: $(if ($script:IsAdmin) { '是' } else { '否（加 -RunAsAdmin 可操作高权限窗口）' })    会话记忆: $(if ($MemoryLimit -gt 0) { "最近 $MemoryLimit 个任务" } else { '关闭' })"
     Write-Host "输入    : $($script:Mode)（Auto=UIA→消息→物理借用归位）    虚拟鼠标: $(if ($script:Cur) { '已启用' } else { '未启用' })    让位阈值: ${IdleMs}ms"
     Write-Host "v5      : 规划 $(if ($NoPlan) { '关' } else { '开' })    防重复 $(if ($NoRepeatGuard) { '关' } else { '开' })    OCR $(if ($NoOcr) { '关' } else { '开' })    控制台让位 $(if ($NoConsoleYield) { '关' } else { '开' })"
+    Write-Host "v6.3    : CDP $(if ($NoCdp) { '关（-NoCdp）' } else { "开（Chrome / Edge / Brave 隔离 Profile + 调试端口 $script:CdpPortCfg；感知 CDP→UIA→视觉→OCR；等待=readyState+在途请求+${script:CdpQuietMs}ms 安静窗口，总超时 $($script:CdpSettleTimeoutMs)ms）" })"
     Write-Host "v6.2    : 视觉兜底 $(if ($NoVision) { '关（-NoVision）' } else { "开（$VisionModel；UIA 盲区<6 / 连续2次无效 / vision_inspect 时触发；长边≤${VisionMaxEdge}px，JPEG q${VisionJpegQuality}；单任务最多 $($script:VisionMaxTurns) 轮）" })    HTTP 连接复用：开    步间等待：自适应"
     Write-Host "v6 : 人类化输入 $(if ($NoHuman) { '关（-NoHuman）' } else { "开（浏览器内：曲线移动→悬停→按压；速度 ${HumanSpeed}x，打字 ${TypeCps} 字/秒；用户一动鼠标立即让出）" })"
     Write-Host "日志    : $(if ($script:RunDir) { $script:RunDir } else { '（未启用）' })"
@@ -5275,7 +6598,7 @@ function Show-Banner {
 }
 Initialize-Runtime
 Show-Banner
-Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '6.2'; vision = (-not $NoVision); visionModel = $VisionModel; human = [bool][DsNative61]::Humanize }
+Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '6.3'; cdp = (-not $NoCdp); vision = (-not $NoVision); visionModel = $VisionModel; human = [bool][DsNative61]::Humanize }
 $pending = $Task
 try {
     while ($true) {
