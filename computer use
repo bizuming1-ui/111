@@ -1,8 +1,18 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v6.1 —— 在 v5.1 已验证的全部能力上继续做「更深」而不是「更大」：浏览器里的每一次鼠标 / 键盘操作都和真人一样。
+  DeepSeek Computer Use v6.2 —— 在 v5.1 已验证的全部能力上继续做「更深」而不是「更大」：浏览器里的每一次鼠标 / 键盘操作都和真人一样。
 .DESCRIPTION
+  v6.2（第一阶段：按需触发的多模态视觉兜底 + 提速；C# 原生层 / 规划 / 动作账本 / 安全联锁 / 人类化输入逐字保留，-SelfTest / -DryRun / -StepConfirm 语义不变）：
+    1. 【视觉兜底】UIA 仍是主通道。仅当「前台非控制台窗口可交互控件 < 6（盲区）」「动作账本连续 2 次无效 / REPEAT_NOEFFECT / UNGROUNDED」「模型输出 vision_inspect」时，
+       才把带 SoM 编号框 + 坐标标尺的前台窗口截图交给 -VisionModel（默认 deepseek-flash）；常规步骤与规划阶段仍用 -Model（deepseek-chat）。
+    2. 【SoM 截图引擎】New-SomAnnotatedScreenshot：Per-Monitor DPI 物理像素采集 → 等比缩放（长边 <= -VisionMaxEdge，并按服务端约 1300x1300 的像素预算裁剪）
+       → 叠加与观察列表同编号的 [id] 彩色框与图像坐标网格 → JPEG Base64（detail=low 看全局 / original 点坐标）。
+    3. 【坐标闭环】图像坐标 →（offset + x/scale）→ 物理屏幕坐标，再走原有 Test-ActionSchema / Invoke-Action；落在截图窗口内的坐标自动记为 vision_grounded，不再触发 UNGROUNDED。
+       图片只放在 user 消息里，历史只保留文本摘要，旧截图不会进入下一轮上下文。
+    4. 【提速】复用 HttpClient 连接（省掉每次请求的 TCP+TLS 握手）并在启动时预热；等待模型回复期间也能紧急停止；盲区窗口不再先跑 OCR 子进程（视觉失败才回退 OCR）；
+       操作后「等界面稳定」的下限与步间固定等待收紧；每步输出「感知 / 决策」耗时。
+    5. 【可观测】每步输出 [Perception: UIA] 或 [Perception: Vision(deepseek-flash)] 与图片体积 KB；-SaveScreenshots 同时保存 SoM 标注图；日志 type=perception；-SelfTest 新增 6 项视觉自检。
   v6.1（只加深、不加大：给「每一次操作都精准、都有反馈、再进下一步」补上 6 个缺口；其余 v6.0 逻辑逐字保留）：
     1. 【按下前守卫 PressGuard】光标到位并悬停之后、鼠标按下之前再读回一次 GetCursorPos：偏差>6px = 你动了鼠标 → 让出控制权、不点击；1~6px = 微调回目标再点；
        点完再读回一次，偏差写进回执。双击的第二下、拖拽的起点与终点同样守卫。（v6.0 只核对「遮挡」，没有核对「光标是否还在目标上」。）
@@ -61,6 +71,14 @@
   不自动最小化 / 绕开运行本脚本的控制台（v5）。
 .PARAMETER NoContainers
   观察中不列出无名的可交互 Group/Image/Custom（v5）。
+.PARAMETER NoVision
+  关闭视觉兜底（v6.2）：恢复纯 UIA + OCR 行为。
+.PARAMETER VisionModel
+  视觉轮次使用的模型，默认 deepseek-flash（仅在触发视觉兜底时使用，常规步骤与规划仍用 -Model）。
+.PARAMETER VisionMaxEdge
+  视觉截图长边上限（物理像素等比缩放到此以内），默认 1600。
+.PARAMETER VisionJpegQuality
+  视觉截图 JPEG 质量 30~100，默认 80。
 .NOTES
   Task / ApiKey / Model / Once / StepConfirm / ConsoleConfirm / NoShell / NoSafety / RunAsAdmin / MaxBatch /
   MemoryLimit / DryRun / ObserveOnly / SaveScreenshots 等参数与 v3 / v4 完全相同。MaxBatch 默认值由 4 提高到 6。
@@ -109,6 +127,10 @@ param(
     [switch]$NoConsoleYield,
     [switch]$NoContainers,
     [switch]$NoHuman,
+    [switch]$NoVision,
+    [string]$VisionModel = 'deepseek-flash',
+    [ValidateRange(200, 4096)][int]$VisionMaxEdge = 1600,
+    [ValidateRange(30, 100)][int]$VisionJpegQuality = 80,
     [double]$HumanSpeed = 1.0,
     [double]$TypeCps = 14.0,
     [string]$LogDir
@@ -1039,7 +1061,7 @@ function Test-IsConsoleWindow([IntPtr]$h) {
     if ($script:ConsoleHwnd -eq [IntPtr]::Zero -or $h -eq [IntPtr]::Zero) { return $false }
     return ([DsNative61]::Root($h) -eq [DsNative61]::Root($script:ConsoleHwnd))
 }
-function Wait-UiSettled([int]$minMs = 150, [int]$maxMs = 1200) {
+function Wait-UiSettled([int]$minMs = 110, [int]$maxMs = 1200) {   # v6.2：下限 150→110ms
     # 操作之后等界面「稳定」：前台窗口与标题连续两次采样一致即返回（页面/弹窗仍在加载时多等一会儿）
     $end = (Get-Date).AddMilliseconds($maxMs)
     Start-Sleep -Milliseconds $minMs
@@ -1047,7 +1069,7 @@ function Wait-UiSettled([int]$minMs = 150, [int]$maxMs = 1200) {
     $last = "$fg|$([DsNative61]::WinText($fg))"
     while ((Get-Date) -lt $end) {
         Test-Abort
-        Start-Sleep -Milliseconds 150
+        Start-Sleep -Milliseconds 90
         $fg = [DsNative61]::GetForegroundWindow()
         $now = "$fg|$([DsNative61]::WinText($fg))"
         if ($now -eq $last) { break }
@@ -1100,6 +1122,7 @@ function Initialize-Runtime {
     }
 }
 function Stop-Runtime {
+    try { if ($script:Http) { $script:Http.Dispose(); $script:Http = $null } } catch { }
     try { [DsNative61]::Follower = $null; if ($script:Cur) { $script:Cur.Stop(); $script:Cur = $null } } catch { }
     try { if ($script:Pool) { $script:Pool.Close(); $script:Pool.Dispose(); $script:Pool = $null } } catch { }
 }
@@ -1583,14 +1606,17 @@ function Get-Observation {
     $pixPct = Get-PixelDiff $script:PixPrev $pix
     $script:PixPrev = $pix
     # v5：无障碍控件很少（游戏 / 画布 / 远程桌面 / 自绘界面）时自动 OCR，补上「看得见的文字 + 坐标」；画面不变则复用
-    if (-not $NoOcr -and -not $isConsole -and $inter -lt 6 -and $fg.Handle -ne [IntPtr]::Zero) {
+    $interAll = $inter + $(if ($model) { 2 * @($model.Rows).Count } else { 0 })
+    # v6.2：视觉通道可用时，盲区窗口不再先跑 OCR 子进程（约 1~3 秒），截图直接交给视觉模型；视觉失败才由调用方回退 OCR
+    $skipOcr = ((Test-VisionReady) -and $interAll -lt 6)
+    if (-not $NoOcr -and -not $isConsole -and $inter -lt 6 -and $fg.Handle -ne [IntPtr]::Zero -and -not $skipOcr) {
         try { $ob = Get-WindowOcrBlock $fg.Handle $pix; if ($ob) { $text = "$text`n$ob" } } catch { }
     }
     if ($null -ne $pixPct) {
         $pl = if ($pixPct -lt 0.2) { '屏幕像素: 前台窗口几乎无变化' } else { "屏幕像素: 前台窗口约 $pixPct% 的区块发生了变化" }
         $changes = "$changes`n $pl".Trim()
     }
-    return [pscustomobject]@{ Text = $text; Foreground = $fg; Keys = $curSet; Changes = $changes; Rows = $model; PixPct = $pixPct }
+    return [pscustomobject]@{ Text = $text; Foreground = $fg; Keys = $curSet; Changes = $changes; Rows = $model; PixPct = $pixPct; Inter = $interAll; IsConsole = [bool]$isConsole; Pix = $pix }
 }
 #endregion
 #region ---------- 安全检查（仅拦截灾难性命令，-NoSafety 可关闭） ----------
@@ -3055,7 +3081,7 @@ function Invoke-InspectAction($a) {
 #endregion
 #region ---------- 发送前校验（Schema） ----------
 $script:ActionNames = @('click', 'click_many', 'check', 'uncheck', 'select_rows', 'double_click', 'right_click', 'middle_click', 'hover', 'drag', 'type', 'key', 'hotkey',
-    'scroll', 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'replan', 'done', 'fail')
+    'scroll', 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect', 'replan', 'done', 'fail')
 function Test-IdValue($v) { return ($null -ne $v -and "$v" -match '^\d+$') }
 function Test-NumValue($v) { return ($null -ne $v -and "$v" -ne '' -and $null -ne ("$v" -as [double])) }
 function Test-ActionUsesId($a) {
@@ -3151,7 +3177,22 @@ function Test-ActionSchema($a, [int]$index) {
             if ($index -gt 1) { return 'replan 必须单独输出（不能和其他动作放在同一批）' }
             if ($null -eq $a.steps -or @($a.steps).Count -lt 1) { return 'replan 需要非空的 steps 数组，例如 [{"act":"…","how":"…","verify":"…"}]' }
         }
+        'vision_inspect' {
+            if ($NoVision) { return '已使用 -NoVision，禁止 vision_inspect（改用 inspect / ocr）' }
+            if ($index -gt 1) { return 'vision_inspect 必须单独输出（它只登记「下一轮看图」，不改变界面）' }
+            if ($null -ne $a.detail -and "$($a.detail)" -ne '' -and "$($a.detail)".ToLower() -notin 'low', 'high', 'original', 'auto') { return "vision_inspect 的 detail 只能是 low / original（收到 '$($a.detail)'）" }
+            $vrg = $a.region
+            if ($null -ne $vrg) {
+                if (-not ((Test-NumValue $vrg.x) -and (Test-NumValue $vrg.y) -and (Test-NumValue $vrg.w) -and (Test-NumValue $vrg.h))) { return 'region 需要同时给 x,y,w,h' }
+                if ([double]"$($vrg.w)" -lt 16 -or [double]"$($vrg.h)" -lt 16) { return 'region 的 w,h 至少 16' }
+            }
+        }
         'inspect' {
+            if ("$($a.mode)".ToLower() -eq 'vision') {
+                if ($NoVision) { return '已使用 -NoVision，禁止 inspect mode=vision（改用普通 inspect / ocr）' }
+                if ($index -gt 1) { return 'inspect mode=vision 必须单独输出' }
+                break
+            }
             if (Test-IdValue $a.id) { if (-not $script:Elements.ContainsKey([int]"$($a.id)")) { return "元素编号 $($a.id) 不存在" } }
             elseif ($null -ne $a.x -and -not ((Test-NumValue $a.x) -and (Test-NumValue $a.y))) { return 'inspect 需要 id，或同时提供 x 和 y（都不给则检查键盘焦点）' }
         }
@@ -3620,7 +3661,7 @@ function Focus-WindowByTitle([string]$keyword) {
 }
 function Describe-Action($a) {
     $parts = @("action=$($a.action)")
-    foreach ($k in 'id', 'ids', 'rows', 'exclusive', 'x', 'y', 'w', 'h', 'r', 'repeat', 'force', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id', 'path', 'file', 'cwd', 'timeout', 'append') {
+    foreach ($k in 'id', 'ids', 'rows', 'exclusive', 'x', 'y', 'w', 'h', 'r', 'repeat', 'force', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id', 'path', 'file', 'cwd', 'timeout', 'append', 'mode', 'detail', 'vision_grounded') {
         $v = "$($a.$k)"
         if ($null -ne $a.$k -and $v -ne '') { $parts += ("{0}={1}" -f $k, (Limit-Text $v 80)) }
     }
@@ -3703,7 +3744,11 @@ function Invoke-ActionCore($a, [string]$kind) {
         'run_powershell' { return (Invoke-ShellCommand "$($a.command)" $(if (Test-NumValue $a.timeout) { [int][double]"$($a.timeout)" } else { 0 })) }
         'write_file' { return (Invoke-WriteFile $a) }
         'run_process' { return (Invoke-ProcessAction $a) }
-        'inspect' { return (Invoke-InspectAction $a) }
+        'inspect' {
+            if ("$($a.mode)".ToLower() -eq 'vision') { return (Request-VisionInspect $a) }
+            return (Invoke-InspectAction $a)
+        }
+        'vision_inspect' { return (Request-VisionInspect $a) }
         'ocr' { return (Invoke-OcrAction $a) }
         default { throw "未知动作: '$($a.action)'" }
     }
@@ -3715,7 +3760,7 @@ function Invoke-Action($a) {
     Assert-BulkInterlock $a $kind   # v4.2：数量联锁（删除/归档/全选前核对已勾选行数）
     $before = [DsNative61]::GetForegroundWindow()
     $r = Invoke-ActionCore $a $kind
-    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr') {
+    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect') {
         Start-Sleep -Milliseconds 60
         Wait-UiSettled
         $after = [DsNative61]::GetForegroundWindow()
@@ -3724,6 +3769,344 @@ function Invoke-Action($a) {
         if ($fx) { $script:LastEffect = $fx; $r += "；$($fx.Text)" }
     }
     return $r
+}
+#endregion
+#region ---------- v6.2 第一阶段：UIA 主通道 + Set-of-Mark 标注截图 + DeepSeek 视觉兜底（按需触发） ----------
+# 设计要点（只加深、不加大；C# 原生层 DsNative61 / DsOverlay61 / DsTestTarget61 逐字未改）：
+#  1) 视觉通道只在「UIA 盲区 / 执行受阻 / 模型显式 vision_inspect」时触发；常规步骤与规划继续走 $Model。UIA 永远是主通道。
+#  2) 每次请求只带「当前这一帧」图片，图片只放在 user 消息里（assistant 消息带图会 400）；历史里只留文本摘要，旧截图不会进入下一轮。
+#  3) 系统提示词与文本轮次逐字相同（DeepSeek 上下文缓存按前缀命中，不因视觉轮次而失效）；视觉说明放在 user 文本末尾。
+#  4) 坐标闭环：图像坐标 → 物理屏幕坐标 = (offset + x / scale)；落在截图窗口内的坐标自动记为 vision_grounded，通过 UNGROUNDED 校验。
+$script:VisionTurns = 0
+$script:VisionFails = 0
+$script:VisionMaxTurns = 12        # 单任务最多视觉轮数（成本 / 延迟上限）
+$script:VisionRequest = $null      # vision_inspect 写入，下一轮观察时消费
+$script:BlockErrStreak = 0         # 连续 REPEAT_NOEFFECT / UNGROUNDED 次数
+$script:LastVision = $null
+$script:Http = $null
+$script:LastApiMs = 0
+# 8 种高对比、白字可读的 SoM 颜色（按编号循环）
+$script:SomPalette = @(@(220, 20, 60), @(0, 102, 230), @(200, 0, 170), @(235, 110, 0), @(0, 150, 70), @(120, 50, 210), @(0, 140, 150), @(180, 40, 40))
+function Reset-VisionTaskState {
+    $script:VisionTurns = 0; $script:VisionFails = 0
+    $script:VisionRequest = $null; $script:BlockErrStreak = 0; $script:LastVision = $null
+}
+function Test-VisionReady {
+    # 视觉通道当前是否可用：未关闭、未熔断（连续 3 次失败）、本任务未超过轮数上限
+    if ($NoVision -or [string]::IsNullOrWhiteSpace($VisionModel)) { return $false }
+    if ([int]$script:VisionFails -ge 3) { return $false }
+    if ([int]$script:VisionTurns -ge [int]$script:VisionMaxTurns) { return $false }
+    return $true
+}
+function ConvertTo-VisionDetail($d) {
+    $s = "$d".ToLower().Trim()
+    if ($s -eq 'low') { return 'low' }
+    return 'original'   # original / high / auto / 空 → original（官方：high 与 original 等价）
+}
+function Get-LedgerBlockStreak($ledger) {
+    # 动作账本末尾连续「无效果（ineffective）」的条数
+    $n = 0
+    $arr = @($ledger)
+    for ($i = $arr.Count - 1; $i -ge 0; $i--) {
+        if ($null -ne $arr[$i] -and $arr[$i].Outcome -eq 'nochange') { $n++ } else { break }
+    }
+    return $n
+}
+function Test-ShouldEscalateToVision($obs, $ledger = $script:Ledger) {
+    # 自适应路由状态机（感知阶段调用一次）：UIA 永远先行，满足下列任一条件才升级到视觉兜底
+    #   EXPLICIT  : 模型输出 vision_inspect（或 inspect + mode=vision）
+    #   UIA_BLIND : 前台非控制台窗口的可交互 UIA 控件数 < 6（画布 / 游戏 / 远程桌面 / 自绘界面）
+    #   BLOCKED   : 连续 >= 2 次 ineffective（账本无效果）/ REPEAT_NOEFFECT / UNGROUNDED
+    $no = [pscustomobject]@{ Use = $false; Reason = ''; Why = ''; Detail = 'original'; Region = $null }
+    if (-not (Test-VisionReady)) { return $no }
+    if ($null -eq $obs -or $null -eq $obs.Foreground -or $obs.Foreground.Handle -eq [IntPtr]::Zero) { return $no }
+    $req = $script:VisionRequest
+    if ($null -ne $req) {
+        $script:VisionRequest = $null
+        return [pscustomobject]@{ Use = $true; Reason = 'EXPLICIT'; Why = '模型显式请求 vision_inspect'; Detail = (ConvertTo-VisionDetail $req.Detail); Region = $req.Region }
+    }
+    if ($obs.IsConsole) { return $no }
+    $ic = if ($null -ne $obs.Inter) { [int]$obs.Inter } else { 99 }
+    if ($ic -lt 6) {
+        return [pscustomobject]@{ Use = $true; Reason = 'UIA_BLIND'; Why = "UIA 盲区：可交互控件 $ic 个 < 6"; Detail = 'original'; Region = $null }
+    }
+    $streak = (Get-LedgerBlockStreak $ledger) + [int]$script:BlockErrStreak
+    if ($streak -ge 2) {
+        return [pscustomobject]@{ Use = $true; Reason = 'BLOCKED'; Why = "执行受阻：连续 $streak 次无效果 / REPEAT_NOEFFECT / UNGROUNDED"; Detail = 'original'; Region = $null }
+    }
+    return $no
+}
+function Request-VisionInspect($a) {
+    # vision_inspect / inspect(mode=vision) 的执行体：只登记请求，不改变界面；下一轮观察时附带标注截图
+    if ($NoVision) { throw '已使用 -NoVision，视觉通道关闭，不能 vision_inspect；请改用 inspect / ocr。' }
+    if (-not (Test-VisionReady)) { throw "视觉通道当前不可用（连续失败 3 次，或本任务已用满 $($script:VisionMaxTurns) 轮视觉）；请改用 inspect / ocr / 控件编号。" }
+    $detail = ConvertTo-VisionDetail $a.detail
+    $reg = $null
+    $rg = $a.region
+    if ($null -ne $rg -and (Test-NumValue $rg.x) -and (Test-NumValue $rg.y) -and (Test-NumValue $rg.w) -and (Test-NumValue $rg.h)) {
+        $reg = [pscustomobject]@{ x = [int][double]"$($rg.x)"; y = [int][double]"$($rg.y)"; w = [int][double]"$($rg.w)"; h = [int][double]"$($rg.h)" }
+    }
+    $script:VisionRequest = [pscustomobject]@{ Detail = $detail; Region = $reg }
+    $rt = if ($reg) { " region=($($reg.x),$($reg.y) $($reg.w)x$($reg.h))" } else { '' }
+    return "已请求视觉观察（detail=$detail$rt）：下一轮观察会附带 SoM 标注截图，由 $VisionModel 看图后决策（本动作没有改变界面）"
+}
+function ConvertTo-VisionPhysical($ctx, [double]$ix, [double]$iy) {
+    # 图像坐标 → 物理屏幕坐标： offset + x / scale
+    return @([int][Math]::Round([double]$ctx.OffsetX + $ix / [double]$ctx.ScaleX), [int][Math]::Round([double]$ctx.OffsetY + $iy / [double]$ctx.ScaleY))
+}
+function ConvertTo-VisionImage($ctx, [double]$px, [double]$py) {
+    # 物理屏幕坐标 → 图像坐标： (p - offset) * scale
+    return @([int][Math]::Round(($px - [double]$ctx.OffsetX) * [double]$ctx.ScaleX), [int][Math]::Round(($py - [double]$ctx.OffsetY) * [double]$ctx.ScaleY))
+}
+function ConvertTo-VisionText([string]$text, $ctx) {
+    # 视觉轮次里，文本观察中所有 @(x,y)（物理像素）改写为「当前图像坐标」，保证模型看到和输出的坐标在同一坐标系
+    if ([string]::IsNullOrEmpty($text)) { return '' }
+    $sb = [System.Text.StringBuilder]::new()
+    $last = 0
+    foreach ($m in [regex]::Matches($text, '@\((-?\d+),(-?\d+)\)')) {
+        [void]$sb.Append($text, $last, $m.Index - $last)
+        $p = ConvertTo-VisionImage $ctx ([double]$m.Groups[1].Value) ([double]$m.Groups[2].Value)
+        [void]$sb.Append("@($($p[0]),$($p[1]))")
+        $last = $m.Index + $m.Length
+    }
+    [void]$sb.Append($text, $last, $text.Length - $last)
+    return $sb.ToString()
+}
+function Test-PointInVisionRect($ctx, [int]$x, [int]$y) {
+    $r = $ctx.Rect
+    return ($x -ge $r[0] -and $x -le $r[2] -and $y -ge $r[1] -and $y -le $r[3])
+}
+function Convert-VisionActionCoords($a, $ctx) {
+    # 把模型在视觉轮次里给出的图像坐标就地还原为物理屏幕坐标；落在截图窗口内的点登记为 vision_grounded
+    # 返回：@{ Converted = 是否含坐标；Grounded = 全部点都在窗口内 }
+    $kind = "$($a.action)".ToLower().Trim()
+    $converted = $false; $allIn = $true
+    foreach ($pair in @(@('x', 'y'), @('from_x', 'from_y'), @('to_x', 'to_y'))) {
+        $kx = $pair[0]; $ky = $pair[1]
+        if (-not ((Test-NumValue $a.$kx) -and (Test-NumValue $a.$ky))) { continue }
+        $pp = ConvertTo-VisionPhysical $ctx ([double]"$($a.$kx)") ([double]"$($a.$ky)")
+        $a.$kx = $pp[0]; $a.$ky = $pp[1]
+        $converted = $true
+        if (Test-PointInVisionRect $ctx $pp[0] $pp[1]) {
+            if ($null -eq $script:Grounded) { $script:Grounded = [System.Collections.Generic.List[object]]::new() }
+            $script:Grounded.Add([pscustomobject]@{ L = ($pp[0] - 10); T = ($pp[1] - 10); W = 20; H = 20 })
+        }
+        else { $allIn = $false }
+    }
+    if ($kind -eq 'ocr' -and (Test-NumValue $a.w) -and (Test-NumValue $a.h)) {
+        $a.w = [int][Math]::Round([double]"$($a.w)" / [double]$ctx.ScaleX); $a.h = [int][Math]::Round([double]"$($a.h)" / [double]$ctx.ScaleY)
+    }
+    if ($kind -eq 'inspect' -and (Test-NumValue $a.r)) { $a.r = [int][Math]::Round([double]"$($a.r)" / [double]$ctx.ScaleX) }
+    $rg = $a.region
+    if ($null -ne $rg -and (Test-NumValue $rg.x) -and (Test-NumValue $rg.y) -and (Test-NumValue $rg.w) -and (Test-NumValue $rg.h)) {
+        $p0 = ConvertTo-VisionPhysical $ctx ([double]"$($rg.x)") ([double]"$($rg.y)")
+        $a.region = [pscustomobject]@{ x = $p0[0]; y = $p0[1]; w = [int][Math]::Round([double]"$($rg.w)" / [double]$ctx.ScaleX); h = [int][Math]::Round([double]"$($rg.h)" / [double]$ctx.ScaleY) }
+        $converted = $true
+    }
+    if ($converted -and $allIn) { $a | Add-Member -NotePropertyName vision_grounded -NotePropertyValue $true -Force }
+    return [pscustomobject]@{ Converted = $converted; Grounded = ($converted -and $allIn) }
+}
+function New-SomAnnotatedScreenshot {
+    # 采集前台窗口（或指定区域 / 虚拟桌面）→ 等比缩放 → 叠加 SoM 编号框 + 坐标标尺网格 → JPEG Base64
+    # 返回的 OffsetX/OffsetY（窗口左上角物理坐标）与 ScaleX/ScaleY（图像像素 / 物理像素）用于把图像坐标还原为物理坐标
+    param(
+        [IntPtr]$Hwnd = [IntPtr]::Zero,
+        [string]$Detail = 'original',
+        $Region = $null,
+        $Items = $null,
+        [int]$MaxEdge = 0,
+        [int]$Quality = 0,
+        [int[]]$Rect = $null,
+        [switch]$NoMarks
+    )
+    $swSom = [System.Diagnostics.Stopwatch]::StartNew()
+    $Detail = ConvertTo-VisionDetail $Detail
+    if ($MaxEdge -le 0) { $MaxEdge = $VisionMaxEdge }
+    if ($Quality -le 0) { $Quality = $VisionJpegQuality }
+    $MaxEdge = [Math]::Max(200, $MaxEdge)
+    $Quality = [Math]::Min(100, [Math]::Max(30, $Quality))
+    if ($null -eq $Items) { $Items = $script:Elements }
+    # ---- 1. 采集矩形（物理像素，已 Per-Monitor DPI 感知）----
+    $sl = [int][DsNative61]::VirtX(); $st = [int][DsNative61]::VirtY()
+    $sr = $sl + [int][DsNative61]::VirtW(); $sb = $st + [int][DsNative61]::VirtH()
+    $cap = $null
+    if ($null -ne $Rect -and $Rect.Count -ge 4) { $cap = @([int]$Rect[0], [int]$Rect[1], [int]$Rect[2], [int]$Rect[3]) }
+    elseif ($null -ne $Region) {
+        $rx0 = [int]$Region.x; $ry0 = [int]$Region.y; $rw0 = [Math]::Max(192, [int]$Region.w); $rh0 = [Math]::Max(192, [int]$Region.h)
+        if ([int]$Region.w -lt 192) { $rx0 = [int]($Region.x + $Region.w / 2 - $rw0 / 2) }
+        if ([int]$Region.h -lt 192) { $ry0 = [int]($Region.y + $Region.h / 2 - $rh0 / 2) }
+        $cap = @($rx0, $ry0, ($rx0 + $rw0), ($ry0 + $rh0))
+    }
+    elseif ($Hwnd -ne [IntPtr]::Zero -and [DsNative61]::IsWindow($Hwnd)) {
+        $wr = [DsNative61]::WinRect($Hwnd)
+        $cap = @([int]$wr[0], [int]$wr[1], [int]$wr[2], [int]$wr[3])
+    }
+    if ($null -eq $cap) { $cap = @($sl, $st, $sr, $sb) }
+    $capL = [Math]::Max($cap[0], $sl); $capT = [Math]::Max($cap[1], $st)
+    $capR = [Math]::Min($cap[2], $sr); $capB = [Math]::Min($cap[3], $sb)
+    if (($capR - $capL) -lt 48 -or ($capB - $capT) -lt 48) { $capL = $sl; $capT = $st; $capR = $sr; $capB = $sb }   # 窗口最小化 / 在屏幕外 → 退回整个虚拟桌面
+    $capW = $capR - $capL; $capH = $capB - $capT
+    # ---- 2. 自适应分辨率：长边 <= MaxEdge；总像素 <= ~1.7MP（服务端会把图缩到约 1300x1300 量级，多传的像素白白浪费上传时间）----
+    $long = [double][Math]::Max($capW, $capH)
+    $sc = 1.0
+    $edgeCap = [double]$MaxEdge
+    if ($Detail -eq 'low') { $edgeCap = [Math]::Min($edgeCap, 512.0) }   # low：服务端本来就会缩到 512x512，预先缩好既省上传又保证模型看到的坐标系就是我们标注的坐标系
+    if ($long -gt $edgeCap) { $sc = $edgeCap / $long }
+    if (([double]$capW * $capH * $sc * $sc) -gt 1700000.0) { $sc = [Math]::Sqrt(1700000.0 / ([double]$capW * $capH)) }
+    if ($null -ne $Region -and $long -lt 512.0) { $sc = [Math]::Min(4.0, 512.0 / $long) }   # 小区域放大看
+    $outW = [int][Math]::Max(1, [Math]::Round($capW * $sc)); $outH = [int][Math]::Max(1, [Math]::Round($capH * $sc))
+    $scX = $outW / [double]$capW; $scY = $outH / [double]$capH
+    $bmpSrc = $null; $bmpOut = $null; $g = $null; $ms = $null
+    $fonts = [System.Collections.Generic.List[object]]::new()
+    $pens = [System.Collections.Generic.List[object]]::new()
+    $brushes = [System.Collections.Generic.List[object]]::new()
+    $marked = 0
+    try {
+        $fmt = [System.Drawing.Imaging.PixelFormat]::Format24bppRgb
+        $bmpSrc = [System.Drawing.Bitmap]::new($capW, $capH, $fmt)
+        $g0 = [System.Drawing.Graphics]::FromImage($bmpSrc)
+        try { $g0.CopyFromScreen($capL, $capT, 0, 0, [System.Drawing.Size]::new($capW, $capH)) } finally { $g0.Dispose() }
+        $bmpOut = [System.Drawing.Bitmap]::new($outW, $outH, $fmt)
+        $g = [System.Drawing.Graphics]::FromImage($bmpOut)
+        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+        if ($outW -eq $capW -and $outH -eq $capH) { $g.DrawImageUnscaled($bmpSrc, 0, 0) }
+        else { $g.DrawImage($bmpSrc, [System.Drawing.Rectangle]::new(0, 0, $outW, $outH), 0, 0, $capW, $capH, [System.Drawing.GraphicsUnit]::Pixel) }
+        if (-not $NoMarks) {
+            $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+            $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+            $fBold = [System.Drawing.Font]::new('Segoe UI', 11.0, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel); $fonts.Add($fBold)
+            $fRule = [System.Drawing.Font]::new('Segoe UI', 10.0, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel); $fonts.Add($fRule)
+            # ---- 3a. 坐标网格（图像坐标系，淡色虚线：深浅各画一条，在白底 / 黑底上都看得见）----
+            $step = if ([Math]::Max($outW, $outH) -le 700) { 100 } else { 200 }
+            $penDark = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(60, 0, 0, 0), 1.0); $penDark.DashStyle = [System.Drawing.Drawing2D.DashStyle]::Dash; $pens.Add($penDark)
+            $penLite = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(70, 255, 255, 255), 1.0); $penLite.DashStyle = [System.Drawing.Drawing2D.DashStyle]::Dash; $pens.Add($penLite)
+            for ($gx = $step; $gx -lt $outW; $gx += $step) { $g.DrawLine($penDark, $gx, 0, $gx, $outH); $g.DrawLine($penLite, ($gx + 1), 0, ($gx + 1), $outH) }
+            for ($gy = $step; $gy -lt $outH; $gy += $step) { $g.DrawLine($penDark, 0, $gy, $outW, $gy); $g.DrawLine($penLite, 0, ($gy + 1), $outW, ($gy + 1)) }
+            # ---- 3b. 边缘标尺（顶部 / 左侧，数字 = 图像像素坐标；刻度每 step/5）----
+            $bgRule = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(150, 0, 0, 0)); $brushes.Add($bgRule)
+            $fgRule = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(255, 255, 255, 255)); $brushes.Add($fgRule)
+            $penTick = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(220, 255, 255, 255), 1.0); $pens.Add($penTick)
+            $g.FillRectangle($bgRule, 0, 0, $outW, 13)
+            $g.FillRectangle($bgRule, 0, 0, 30, $outH)
+            $minor = [Math]::Max(10, [int]($step / 5))
+            for ($tx = 0; $tx -lt $outW; $tx += $minor) { $th = if (($tx % $step) -eq 0) { 13 } else { 5 }; $g.DrawLine($penTick, $tx, 0, $tx, $th) }
+            for ($ty = 0; $ty -lt $outH; $ty += $minor) { $tw = if (($ty % $step) -eq 0) { 30 } else { 8 }; $g.DrawLine($penTick, 0, $ty, $tw, $ty) }
+            for ($tx = $step; $tx -lt $outW; $tx += $step) { $g.DrawString("$tx", $fRule, $fgRule, [single]($tx + 2), [single]0) }
+            for ($ty = $step; $ty -lt $outH; $ty += $step) { $g.DrawString("$ty", $fRule, $fgRule, [single]1, [single]($ty + 1)) }
+            # ---- 3c. SoM：与观察列表同编号的可交互控件框 + [id] 角标 ----
+            $palPen = @(); $palFill = @()
+            foreach ($pc in $script:SomPalette) {
+                $pp1 = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(235, $pc[0], $pc[1], $pc[2]), 2.0); $pens.Add($pp1); $palPen += $pp1
+                $pb1 = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(30, $pc[0], $pc[1], $pc[2])); $brushes.Add($pb1); $palFill += $pb1
+            }
+            $palBadge = @()
+            foreach ($pc in $script:SomPalette) { $pb2 = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(240, $pc[0], $pc[1], $pc[2])); $brushes.Add($pb2); $palBadge += $pb2 }
+            $capArea = [double]$capW * $capH
+            if ($null -ne $Items) {
+                foreach ($kv in @($Items.GetEnumerator() | Sort-Object { [int]$_.Key })) {
+                    if ($marked -ge 120) { break }
+                    $it = $kv.Value
+                    if ($null -eq $it -or $it.Off -or $it.Type -eq 'Text') { continue }
+                    $x0 = [Math]::Max([double]$it.L, [double]$capL); $y0 = [Math]::Max([double]$it.T, [double]$capT)
+                    $x1 = [Math]::Min([double]$it.L + [double]$it.W, [double]$capR); $y1 = [Math]::Min([double]$it.T + [double]$it.H, [double]$capB)
+                    if (($x1 - $x0) -lt 2 -or ($y1 - $y0) -lt 2) { continue }
+                    if ((($x1 - $x0) * ($y1 - $y0)) -gt (0.5 * $capArea)) { continue }   # 整块容器不画
+                    $bx = [single](($x0 - $capL) * $scX); $by = [single](($y0 - $capT) * $scY)
+                    $bw = [single](($x1 - $x0) * $scX); $bh = [single](($y1 - $y0) * $scY)
+                    $ci = ([int]$kv.Key) % $script:SomPalette.Count
+                    $g.FillRectangle($palFill[$ci], $bx, $by, $bw, $bh)
+                    $g.DrawRectangle($palPen[$ci], $bx, $by, $bw, $bh)
+                    $lab = "[$([int]$kv.Key)]"
+                    $lsz = $g.MeasureString($lab, $fBold)
+                    $lw = [single]($lsz.Width * 0.9 + 3); $lh = [single]14
+                    $lx = $bx; if (($lx + $lw) -gt $outW) { $lx = [single]($outW - $lw) }
+                    $ly = [single]($by - $lh); if ($ly -lt 13) { $ly = $by }
+                    $g.FillRectangle($palBadge[$ci], $lx, $ly, $lw, $lh)
+                    $g.DrawString($lab, $fBold, $fgRule, [single]($lx + 1), [single]($ly - 1))
+                    $marked++
+                }
+            }
+        }
+        # ---- 4. JPEG 编码 ----
+        $codec = $null
+        foreach ($cd in [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders()) { if ($cd.MimeType -eq 'image/jpeg') { $codec = $cd; break } }
+        $ep = [System.Drawing.Imaging.EncoderParameters]::new(1)
+        try {
+            $ep.Param[0] = [System.Drawing.Imaging.EncoderParameter]::new([System.Drawing.Imaging.Encoder]::Quality, [long]$Quality)
+            $ms = [System.IO.MemoryStream]::new()
+            $bmpOut.Save($ms, $codec, $ep)
+        }
+        finally { $ep.Dispose() }
+        $data = $ms.ToArray()
+        return [pscustomobject]@{
+            Base64 = [Convert]::ToBase64String($data); Data = $data; Bytes = $data.Length; KB = [Math]::Round($data.Length / 1024.0, 1)
+            Width = $outW; Height = $outH; CapW = $capW; CapH = $capH
+            OffsetX = $capL; OffsetY = $capT; ScaleX = $scX; ScaleY = $scY; ScaleFactor = $scX
+            Rect = @($capL, $capT, $capR, $capB); Detail = $Detail; Marked = $marked; Ms = [int]$swSom.ElapsedMilliseconds
+        }
+    }
+    finally {
+        foreach ($o in @($ms, $g, $bmpOut, $bmpSrc)) { if ($o) { try { $o.Dispose() } catch { } } }
+        foreach ($o in $fonts) { try { $o.Dispose() } catch { } }
+        foreach ($o in $pens) { try { $o.Dispose() } catch { } }
+        foreach ($o in $brushes) { try { $o.Dispose() } catch { } }
+    }
+}
+function Assert-ChatPayloadSafe($payload) {
+    # DeepSeek 官方限制：图片只能出现在 user / system / tool 消息；assistant 消息带图会 400。本脚本更严格：图片只允许出现在 user。
+    foreach ($m in @($payload.messages)) {
+        if ($m.role -notin 'system', 'user') { throw "消息角色 '$($m.role)' 不允许出现（本脚本每轮只发 system + user，历史以文本摘要放进 user）" }
+        if ($m.content -isnot [string] -and $m.role -ne 'user') { throw "图片只允许出现在 user 消息里（当前: $($m.role)）" }
+    }
+}
+function New-ChatPayload([string]$systemText, [string]$userContent, $userParts, [string]$modelName, [int]$maxTok, [bool]$jsonMode = $true) {
+    $uc = $userContent
+    if ($null -ne $userParts) { $uc = @($userParts) }   # OpenAI 兼容多模态：content 为 [{type:text},{type:image_url}] 数组
+    $messages = @(
+        [ordered]@{ role = 'system'; content = $systemText }
+        [ordered]@{ role = 'user'; content = $uc }
+    )
+    $payload = [ordered]@{ model = $modelName; messages = $messages; temperature = 0; max_tokens = $maxTok }
+    if ($jsonMode -and $modelName -notlike '*reasoner*') { $payload['response_format'] = @{ type = 'json_object' } }
+    Assert-ChatPayloadSafe $payload
+    return $payload
+}
+function Invoke-DeepSeekVisionStep([string]$userContent, $obs, $esc, [int]$step = 0) {
+    # 视觉决策：截图 + SoM 标注 → deepseek-flash（OpenAI 兼容 content 数组）→ 返回原始 JSON 文本与坐标还原上下文
+    $shot = New-SomAnnotatedScreenshot -Hwnd $obs.Foreground.Handle -Detail $esc.Detail -Region $esc.Region
+    if ($SaveScreenshots -and $script:RunDir) {
+        try { [System.IO.File]::WriteAllBytes((Join-Path $script:RunDir ("task{0:D2}-step{1:D2}-som.jpg" -f $script:TaskNo, $step)), $shot.Data) } catch { }
+    }
+    $text = ConvertTo-VisionText $userContent $shot
+    $regionNote = if ($esc.Region) { "（已按你请求的 region 裁剪放大）" } else { '' }
+    $head = @"
+
+
+【视觉轮次 · 感知通道=Vision($VisionModel) · 触发原因=$($esc.Why) · detail=$($shot.Detail)】
+附图是前台窗口的截图$regionNote：图像 $($shot.Width)x$($shot.Height) 像素，左上角为原点；已叠加两种提示：
+ ① SoM 编号框：带 [n] 角标的彩色框 = 上面观察列表里的控件 [n]。能对应上的目标，优先用 {"id":n}（最稳，走 UIA）。
+ ② 坐标标尺与网格：图像顶部 / 左侧的数字与虚线网格 = 图像像素坐标。
+坐标规则：本轮文本里所有 @(x,y) 已改写为【图像坐标】；你输出的 x,y / from_x,from_y / to_x,to_y / region 也一律使用图像坐标，系统自动换算为物理屏幕坐标。点目标的中心，不要点边缘。
+画布 / 游戏 / 自绘界面里没有 SoM 框的目标：直接输出图像坐标 (x,y)。文本里其他位置出现的坐标（inspect 矩形、历史记录）仍是物理像素，不要直接当 x,y 用。
+看不清时输出 {"action":"vision_inspect","detail":"original","region":{"x":0,"y":0,"w":400,"h":300},"reason":"想放大看哪里"}（region 为图像坐标）。detail=low 仅用于确认整体状态，需要点准坐标请用 original。
+仍然只输出一个 JSON 对象。
+"@
+    $parts = @(
+        [ordered]@{ type = 'text'; text = ($text + $head) }
+        [ordered]@{ type = 'image_url'; image_url = [ordered]@{ url = ('data:image/jpeg;base64,' + $shot.Base64); detail = $shot.Detail } }
+    )
+    $raw = $null
+    try { $raw = Invoke-DeepSeek '' '' 0 $parts $VisionModel $true }
+    catch {
+        if ($_.Exception.Message -like '触发保护*') { throw }
+        # 个别模型 / 网关不支持 response_format：只重试一次，去掉 JSON 模式（解析器本来就能从文本里抽 JSON）
+        if ($_.Exception.Message -match 'response_format|json_object') { $raw = Invoke-DeepSeek '' '' 0 $parts $VisionModel $false }
+        else { throw }
+    }
+    $script:LastVision = $shot
+    return [pscustomobject]@{ Raw = $raw; Ctx = $shot }
 }
 #endregion
 #region ---------- DeepSeek ----------
@@ -3758,6 +4141,7 @@ B) 批量动作： {"thought":"一句话判断","step":1,"expect":"…","actions
 - {"action":"run_process","file":"python","args":"C:\\x.py","cwd":"","timeout":300}   以子进程运行（.ps1/.py/.js/.bat 自动选解释器；gcc/cl/cargo/nvcc/node/npm 也可直接当 file）。返回退出码和输出；超时会杀掉整个进程树
 - {"action":"inspect","id":12} 或 {"action":"inspect","x":1770,"y":850,"r":80}   钻取一个点（不改变界面）：返回该点的无障碍祖先链（类型/名字/foc/inv/tog 状态/矩形）、区域鲜艳颜色占比、区域 OCR 文字；不给参数则检查键盘焦点
 - {"action":"ocr"} 或 {"action":"ocr","x":0,"y":0,"w":800,"h":600}   用 Windows 自带 OCR 读前台窗口（或指定区域）的文字和中心坐标：无障碍树看不到的软件（游戏、画布、远程桌面、自绘界面）用它
+- {"action":"vision_inspect","detail":"original","region":{"x":0,"y":0,"w":400,"h":300},"reason":"…"}   看图：无障碍树几乎为空（画布 / 游戏 / 自绘界面）、控件对不上、或连续多次点击无效时，请求下一轮附带「前台窗口截图」（已叠加与控件列表同编号的 [id] 彩色框 + 坐标网格标尺）。detail=low 只确认整体状态（省时省钱），original 用于点准坐标；region 可选，放大看某块区域；也可写成 {"action":"inspect","mode":"vision"}。必须单独输出，它不改变界面
 - {"action":"replan","reason":"原计划为何不对","steps":[{"act":"…","how":"…","verify":"…"}],"done_when":["…"]}   证据表明计划不对时重新规划（单独输出）
 - {"action":"done","summary":"完成情况"}             当前任务已完成
 - {"action":"fail","reason":"原因"}                  确认无法完成
@@ -3793,12 +4177,13 @@ B) 批量动作： {"thought":"一句话判断","step":1,"expect":"…","actions
 26. 无名的可交互容器以 Group / Image / Custom 列出：{foc}=可获得键盘焦点（网页可点击元素常见），≈「…」是它内部或紧邻的文字（例如点赞按钮常显示为 Group ≈「41.1万」或 Group "41.1万"：点它的编号，而不是猜它上方的坐标）。
 27. 前台被本控制台占据时，系统会自动切回上一个目标窗口并在观察开头说明，不需要你 focus_window。done 的 summary 里要写出你在最新观察中看到的完成证据（对应计划的「完成证据」）。
 28. 【人类化输入 v6】浏览器窗口里的 click / double_click / right_click / hover / drag / scroll / type 是「真实鼠标键盘的人类化操作」：光标沿曲线真实移到目标（约 0.15~0.9 秒）、到位后重新核对目标位置与遮挡、悬停片刻、再按下抬起；结果写「人类化物理输入」即这些步骤都已完成，光标会停在目标上（hover 后菜单保持展开）；文字按人类节奏逐字输入。所以一个动作大约要 1 秒，不要连发相同动作，也不要为了「更快」换别的方式；结果提示「你正在使用鼠标…让出控制权」时先 wait 再重试。
+29. 【视觉兜底 v6.2】系统会在三种情况下自动给你「标注截图」并改用视觉模型：前台窗口可交互控件 < 6（盲区）、连续 2 次动作无效 / UNGROUNDED、或你输出了 vision_inspect。视觉轮次里：带 [n] 角标的彩色框就是观察列表里的控件 [n]，优先 {"id":n}；没有框的目标直接给坐标 x,y；该轮所有坐标（包括文本里的 @(x,y)）都是「图像坐标」，系统自动换算为物理屏幕坐标，落在截图窗口内的坐标自动视为有依据（不会再报 UNGROUNDED）。每个任务的视觉轮数有上限，能用控件编号就不要靠看图；图片不会保留到下一轮，需要记住的信息请写进 thought。
 '@
 $PlannerPrompt = @'
 你是 Windows 电脑操作代理的「规划器」。在执行任何动作之前，根据【任务】和【当前观察】制定一份完整、可验证、不重复的执行计划。
 观察格式：[编号] 控件类型 "名称" ≈「附近文字」 {可用模式} @(中心x,中心y)；inv=可调用 val=可写值 tog=开关 sel=可选中 exp=可展开 foc=可获得焦点。
 执行器可用的动作：click / double_click / right_click / hover / drag / type / key / scroll / select_rows / check / uncheck / launch / focus_window / wait /
-inspect（查看某点的无障碍祖先链、颜色、OCR） / ocr（读屏幕文字和坐标） / run_powershell / write_file / run_process。
+inspect（查看某点的无障碍祖先链、颜色、OCR） / ocr（读屏幕文字和坐标） / vision_inspect（无障碍盲区时看标注截图） / run_powershell / write_file / run_process。
 只输出一个 JSON 对象（不要 markdown）：
 {"goal":"一句话目标",
  "done_when":["完成时在观察里能看到的客观证据：标题 / 控件 / value / 勾选汇总 / inspect 的颜色占比等，1~3 条"],
@@ -3828,41 +4213,97 @@ function Get-RetryDelayMs([int]$attempt, [double]$retryAfterSec = 0, [int]$seed 
     if ($retryAfterSec -gt 0) { return [int][Math]::Min(60000.0, $retryAfterSec * 1000.0 + $jit) }
     return [int][Math]::Min(30000.0, 1000.0 * [Math]::Pow(2.0, [Math]::Max(0, $attempt - 1)) + $jit)
 }
-function Invoke-DeepSeek([string]$userContent, [string]$systemText = '', [int]$maxTok = 0) {
+function Get-DsHttpClient {
+    # v6.2：全任务复用一个 HttpClient（连接池 + keep-alive + 压缩）。Invoke-RestMethod 每次调用都新建客户端、重新 TCP+TLS 握手，
+    # 一个任务 20 步就是 20 次握手（国内网络每次约 0.2~0.6 秒）。复用连接后，握手只在会话的第一次发生。
+    if ($null -eq $script:Http) {
+        $hd = [System.Net.Http.SocketsHttpHandler]::new()
+        $hd.PooledConnectionLifetime = [TimeSpan]::FromMinutes(10)
+        $hd.PooledConnectionIdleTimeout = [TimeSpan]::FromMinutes(5)
+        $hd.ConnectTimeout = [TimeSpan]::FromSeconds(20)
+        $hd.AutomaticDecompression = [System.Net.DecompressionMethods]::GZip -bor [System.Net.DecompressionMethods]::Deflate -bor [System.Net.DecompressionMethods]::Brotli
+        $script:Http = [System.Net.Http.HttpClient]::new($hd, $true)
+        $script:Http.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan   # 超时由每次请求的 CancellationToken 控制
+    }
+    return $script:Http
+}
+function Start-ApiWarmup {
+    # 提前建立到 API 的 TLS 连接（不阻塞）：第一次真正的请求直接复用池里的连接
+    $cli = Get-DsHttpClient
+    $rq = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, "$($BaseUrl.TrimEnd('/'))/models")
+    [void]$rq.Headers.TryAddWithoutValidation('Authorization', "Bearer $ApiKey")
+    $script:WarmTask = $cli.SendAsync($rq)
+}
+function Get-InnerMessage($ex) {
+    $e = $ex
+    while ($null -ne $e.InnerException -and ($e -is [System.Management.Automation.MethodInvocationException] -or $e -is [System.AggregateException] -or $e -is [System.Management.Automation.RuntimeException])) { $e = $e.InnerException }
+    if ($e -is [System.Threading.Tasks.TaskCanceledException]) { return '请求超时（已取消）' }
+    $msg = "$($e.Message)"
+    if ($null -ne $e.InnerException -and $e.InnerException.Message -and $msg -notlike "*$($e.InnerException.Message)*") { $msg += ' → ' + $e.InnerException.Message }
+    return $msg
+}
+function Invoke-DsHttpPost([string]$uri, [byte[]]$bytes, [int]$timeoutSec = 120) {
+    $cli = Get-DsHttpClient
+    $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Post, $uri)
+    $cts = [System.Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($timeoutSec))
+    $resp = $null
+    try {
+        [void]$req.Headers.TryAddWithoutValidation('Authorization', "Bearer $ApiKey")
+        $req.Content = [System.Net.Http.ByteArrayContent]::new($bytes)
+        $req.Content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::new('application/json')
+        $req.Content.Headers.ContentType.CharSet = 'utf-8'
+        $task = $cli.SendAsync($req, [System.Net.Http.HttpCompletionOption]::ResponseContentRead, $cts.Token)
+        # 等待期间每 80ms 检查一次紧急停止（Ctrl+Alt+Q / 鼠标甩到左上角）：v6.1 的 Invoke-RestMethod 在等待的 1~120 秒里完全无法中断
+        while ($true) {
+            $done = $false
+            try { $done = $task.Wait(80) } catch { $done = $true }
+            if ($done) { break }
+            Test-Abort
+        }
+        $resp = $task.GetAwaiter().GetResult()
+        $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        $ra = 0.0
+        try { $rah = $resp.Headers.RetryAfter; if ($rah -and $rah.Delta) { $ra = $rah.Delta.TotalSeconds } } catch { }
+        return [pscustomobject]@{ Status = [int]$resp.StatusCode; Body = $body; RetryAfter = $ra }
+    }
+    finally {
+        try { $cts.Cancel() } catch { }
+        if ($resp) { try { $resp.Dispose() } catch { } }
+        try { $req.Dispose() } catch { }
+        try { $cts.Dispose() } catch { }
+    }
+}
+function Invoke-DeepSeek([string]$userContent, [string]$systemText = '', [int]$maxTok = 0, $userParts = $null, [string]$useModel = '', [bool]$jsonMode = $true) {
+    # v6.2：$userParts 非空时 user 消息改用多模态 content 数组（视觉轮次）；$useModel 默认 $Model（视觉轮次传 $VisionModel）
     if ([string]::IsNullOrEmpty($systemText)) { $systemText = $SystemPrompt }
     if ($maxTok -le 0) { $maxTok = $MaxTokens }
-    $messages = @(
-        [ordered]@{ role = 'system'; content = $systemText }
-        [ordered]@{ role = 'user'; content = $userContent }
-    )
-    $payload = [ordered]@{ model = $Model; messages = $messages; temperature = 0; max_tokens = $maxTok }
-    if ($Model -notlike '*reasoner*') { $payload['response_format'] = @{ type = 'json_object' } }
+    if ([string]::IsNullOrEmpty($useModel)) { $useModel = $Model }
+    $payload = New-ChatPayload $systemText $userContent $userParts $useModel $maxTok $jsonMode
     $json = $payload | ConvertTo-Json -Depth 10 -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $uri = "$($BaseUrl.TrimEnd('/'))/chat/completions"
     $lastErr = ''
+    $swApi = [System.Diagnostics.Stopwatch]::StartNew()
     foreach ($attempt in 1..5) {
+        $httpStatus = $null; $retryAfter = 0.0
         try {
-            $resp = Invoke-RestMethod -Uri "$($BaseUrl.TrimEnd('/'))/chat/completions" -Method Post `
-                -Headers @{ Authorization = "Bearer $ApiKey" } `
-                -ContentType 'application/json; charset=utf-8' -Body $bytes -TimeoutSec 120
-            $content = [string]$resp.choices[0].message.content
-            $script:LastFinish = [string]$resp.choices[0].finish_reason
-            if ([string]::IsNullOrWhiteSpace($content)) { throw 'API 返回了空内容' }
-            return $content
+            $r = Invoke-DsHttpPost $uri $bytes 120
+            if ($r.Status -ge 200 -and $r.Status -lt 300) {
+                $obj = $r.Body | ConvertFrom-Json
+                $content = [string]$obj.choices[0].message.content
+                $script:LastFinish = [string]$obj.choices[0].finish_reason
+                if ([string]::IsNullOrWhiteSpace($content)) { throw 'API 返回了空内容' }
+                $script:LastApiMs = [int]$swApi.ElapsedMilliseconds
+                return $content
+            }
+            $httpStatus = $r.Status; $retryAfter = $r.RetryAfter
+            throw ("HTTP $($r.Status) | " + (Limit-Text $r.Body 300))
         }
         catch {
-            $detail = $_.Exception.Message
-            if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $detail += " | " + (Limit-Text $_.ErrorDetails.Message 300) }
+            if ($_.Exception.Message -like '触发保护*') { throw }
+            $detail = Get-InnerMessage $_.Exception
             $lastErr = $detail
             Write-Host "  API 调用失败（第 $attempt 次）: $detail" -ForegroundColor DarkYellow
-            $httpStatus = $null; $retryAfter = 0.0
-            try {
-                if ($_.Exception.Response) {
-                    $httpStatus = [int]$_.Exception.Response.StatusCode
-                    $rah = $_.Exception.Response.Headers.RetryAfter
-                    if ($rah -and $rah.Delta) { $retryAfter = $rah.Delta.TotalSeconds }
-                }
-            } catch { }
             if (-not (Test-ApiRetryable $httpStatus $detail)) { Write-Host "  （状态码 $httpStatus 属于请求本身的问题，重试不会有不同结果，已停止重试）" -ForegroundColor DarkYellow; break }
             if ($attempt -ge 5) { break }
             Wait-Safe (Get-RetryDelayMs $attempt $retryAfter)
@@ -3919,6 +4360,7 @@ function Invoke-AgentTask([string]$TaskText) {
     $script:RepeatOverride = @{}
     $script:Plan = $null; $script:PlanCur = 0; $script:Replans = 0
     $script:OcrCache = $null
+    Reset-VisionTaskState   # v6.2：每个任务独立的视觉轮数 / 熔断 / 受阻计数
     $stepRounds = @{}
     $planTried = $false
     if ($script:TaskQty -gt 0 -and -not $NoSafety) { Write-Host "  （安全联锁：识别到任务数量 N=$($script:TaskQty)；删除/归档前会核对已勾选行数必须等于 N）" -ForegroundColor DarkGray }
@@ -3944,6 +4386,7 @@ function Invoke-AgentTask([string]$TaskText) {
             try {
             Test-Abort
             Write-Host "── 第 $step 步 ──" -ForegroundColor Cyan
+            $swStep = [System.Diagnostics.Stopwatch]::StartNew()
             $resumeNote = Resume-TargetWindow   # v5：前台被控制台占据时由系统切回目标窗口
             if ($resumeNote) { Write-Host "  $resumeNote" -ForegroundColor DarkGray }
             $obs = Get-Observation
@@ -3956,6 +4399,7 @@ function Invoke-AgentTask([string]$TaskText) {
                 $sig = Get-ObsSig $obs
             }
             $lastActed = $false
+            $obsMs = [int]$swStep.ElapsedMilliseconds
             Update-LedgerFromObservation $obs   # v5：用这一轮观察核实上一轮动作的效果
             if ($SaveScreenshots -and $script:RunDir) {
                 try { Save-Screenshot (Join-Path $script:RunDir ("task{0:D2}-step{1:D2}.png" -f $script:TaskNo, $step)) }
@@ -4015,7 +4459,35 @@ function Invoke-AgentTask([string]$TaskText) {
             }
             $userContent = "${memNote}【当前任务】: $TaskText$planNote`n`n$shellNote 单轮最多 $MaxBatch 个动作（click_many 的 ids 另算，最多 20 个）。`n`n当前任务已执行的操作历史:`n$hist$ledgerNote`n`n当前观察:$resumeLine`n$($obs.Text)$changeNote$stuckNote$repeatNote$expectNote`n`n请输出下一步的 JSON（只输出一个 JSON 对象）。"
             $repeatNote = ''
-            $raw = Invoke-DeepSeek $userContent
+            # v6.2：感知通道路由——UIA 永远先行；盲区 / 受阻 / 显式请求时升级为「SoM 标注截图 + 视觉模型」
+            $visionCtx = $null
+            $raw = $null
+            $esc = Test-ShouldEscalateToVision $obs
+            if ($esc.Use) {
+                try {
+                    $vr = Invoke-DeepSeekVisionStep $userContent $obs $esc $step
+                    $raw = $vr.Raw; $visionCtx = $vr.Ctx
+                    $script:VisionTurns++; $script:VisionFails = 0
+                    $vc = $visionCtx
+                    Write-Host ("  [Perception: Vision($VisionModel)] {0}；图 {1} KB（{2}x{3}，截取 {4}x{5} @({6},{7})，scale {8}，detail={9}，SoM 标注 {10} 个，截图编码 {11}ms）" -f $esc.Why, $vc.KB, $vc.Width, $vc.Height, $vc.CapW, $vc.CapH, $vc.OffsetX, $vc.OffsetY, ([Math]::Round($vc.ScaleX, 3)), $vc.Detail, $vc.Marked, $vc.Ms) -ForegroundColor Magenta
+                    Write-Log @{ type = 'perception'; step = $step; channel = 'vision'; model = $VisionModel; reason = $esc.Reason; kb = $vc.KB; width = $vc.Width; height = $vc.Height; scale = $vc.ScaleX; detail = $vc.Detail; marked = $vc.Marked }
+                }
+                catch {
+                    if ($_.Exception.Message -like '触发保护*') { throw }
+                    $script:VisionFails++
+                    $raw = $null; $visionCtx = $null
+                    Write-Host "  视觉通道失败（第 $($script:VisionFails) 次），本步降级为 UIA$(if (-not $NoOcr -and $esc.Reason -eq 'UIA_BLIND') { ' + OCR' }): $(Limit-Text $_.Exception.Message 160)" -ForegroundColor DarkYellow
+                    if ($esc.Reason -eq 'UIA_BLIND' -and -not $NoOcr -and $obs.Foreground.Handle -ne [IntPtr]::Zero) {
+                        try { $ob2 = Get-WindowOcrBlock $obs.Foreground.Handle $obs.Pix; if ($ob2) { $userContent += "`n$ob2" } } catch { }
+                    }
+                }
+            }
+            if ($null -eq $raw) {
+                Write-Host "  [Perception: UIA] 可交互控件 $($obs.Inter) 个" -ForegroundColor DarkGray
+                Write-Log @{ type = 'perception'; step = $step; channel = 'uia'; inter = $obs.Inter }
+                $raw = Invoke-DeepSeek $userContent
+            }
+            Write-Host "  耗时: 感知 ${obsMs}ms · 决策 $($script:LastApiMs)ms（$(if ($visionCtx) { $VisionModel } else { $Model })）" -ForegroundColor DarkGray
             # 观察 → 模型返回之间用户可能切换了窗口，这里不更新 ObsHwnd；执行前由 Assert-KeyboardReady / Assert-PhysicalReady 核对
             try { $parsed = ConvertFrom-ModelJson $raw }
             catch {
@@ -4033,6 +4505,7 @@ function Invoke-AgentTask([string]$TaskText) {
             }
             if ($parsed.expect) { Write-Host "  预期: $(Limit-Text "$($parsed.expect)" 120)" -ForegroundColor DarkGray }
             $ptag = ''
+            if ($visionCtx) { $ptagV = "[视觉:$VisionModel $($visionCtx.KB)KB]" } else { $ptagV = '' }
             if ($script:Plan -and $script:PlanCur -gt 0) { $ptag = "（计划第$($script:PlanCur)步）" }
             $list = @()
             if ($parsed.actions) { $list = @(@($parsed.actions) | Select-Object -First ([Math]::Max(1, $MaxBatch))) }
@@ -4042,6 +4515,12 @@ function Invoke-AgentTask([string]$TaskText) {
                 $failCount++
                 if ($failCount -ge 4) { throw '模型连续没有给出有效动作，已终止当前任务。' }
                 continue
+            }
+            # v6.2：视觉轮次里模型给的是图像坐标 → 还原为物理屏幕坐标（offset + x/scale），窗口内的点自动 vision_grounded
+            if ($visionCtx) {
+                foreach ($vact in $list) {
+                    try { [void](Convert-VisionActionCoords $vact $visionCtx) } catch { Write-Host "  视觉坐标换算失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+                }
             }
             # ---- 发送前校验：整批先过 Schema，任何一个不合法就一个都不执行 ----
             $bad = $null
@@ -4134,16 +4613,18 @@ function Invoke-AgentTask([string]$TaskText) {
                     $result = Invoke-Action $action
                     Add-LedgerEntry $probe $step $desc $script:LastEffect
                     Write-Host "  结果: $result" -ForegroundColor Green
-                    $history.Add("第${step}步${ptag}: $desc → $result")
+                    $history.Add("第${step}步${ptag}${ptagV}: $desc → $result")
                     $failCount = 0
                     $errStreak = 0
-                    if ($kind -notin 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr') { $lastActed = $true; $pendingExpect = "$($parsed.expect)" }
+                    $script:BlockErrStreak = 0
+                    if ($kind -notin 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect') { $lastActed = $true; $pendingExpect = "$($parsed.expect)" }
                 }
                 catch {
                     if ($_.Exception.Message -like '触发保护*') { throw }
                     $msg = $_.Exception.Message
                     Write-Host "  执行出错: $msg" -ForegroundColor Red
                     $ei = Get-ErrorInfo $msg
+                    if ($ei.Code -in 'REPEAT_NOEFFECT', 'UNGROUNDED') { $script:BlockErrStreak++ }   # v6.2：受阻计数 → 视觉兜底触发条件之一
                     $ek = "$kind|$($ei.Code)|$(Limit-Text $desc 60)"
                     $errCount[$ek] = 1 + [int]$errCount[$ek]
                     $errStreak++
@@ -4168,7 +4649,8 @@ function Invoke-AgentTask([string]$TaskText) {
                 $finished = $true
                 break
             }
-            Wait-Safe $StepDelayMs
+            # v6.2：动作后 Invoke-Action 已经等过「界面稳定」，步间固定等待收紧到 80ms；没有动作的步（wait / inspect / 解析失败）保持原值
+            Wait-Safe $(if ($lastActed) { [Math]::Min($StepDelayMs, 80) } else { $StepDelayMs })
             }
             catch {
                 # v5.1：脚本自身的意外异常（例如 PowerShell 的 @() 缺陷）不再直接杀掉整个任务：记录位置，跳过本步，让模型重新观察；连续 3 次才终止
@@ -4380,6 +4862,74 @@ function Invoke-SelfTest {
         $lintMsg = "源码中残留 New-Object List[object] 共 $lintBad 处"
     }
     & $rec 'v5.1 回归哨兵（@() 作用于 List[object]/计划步骤必须可用；源码中不得再出现 New-Object List[object]）' ($canary -and ($lintBad -eq 0)) "$canaryMsg；$lintMsg"
+    # ---- v6.2 纯逻辑自检（不碰鼠标键盘、不联网）：视觉熔断触发器 / 坐标还原 / 请求体合规 / Schema ----
+    $NoVision = $false   # 本函数内的局部覆盖：即使用户带了 -NoVision 运行 -SelfTest，下面的路由逻辑测试也要在「视觉开启」下进行
+    $svVR = $script:VisionRequest; $svBE = $script:BlockErrStreak; $svVT = $script:VisionTurns; $svVF = $script:VisionFails; $svGr = $script:Grounded
+    $script:VisionRequest = $null; $script:BlockErrStreak = 0; $script:VisionTurns = 0; $script:VisionFails = 0
+    $script:Grounded = [System.Collections.Generic.List[object]]::new()
+    $vzFg = [pscustomobject]@{ Handle = [IntPtr]12345; Title = 't'; Process = 'x'; Class = 'c' }
+    $vzObs = { param($n, $con) [pscustomobject]@{ Foreground = $vzFg; Inter = $n; IsConsole = $con } }
+    $vzNo = { [pscustomobject]@{ Outcome = 'nochange' } }
+    $vzYes = { [pscustomobject]@{ Outcome = 'changed' } }
+    $vzA = Test-ShouldEscalateToVision (& $vzObs 3 $false) @()
+    $vzB = Test-ShouldEscalateToVision (& $vzObs 30 $false) @((& $vzNo), (& $vzNo))
+    $vzC = Test-ShouldEscalateToVision (& $vzObs 30 $false) @((& $vzNo))
+    $vzD = Test-ShouldEscalateToVision (& $vzObs 30 $false) @((& $vzNo), (& $vzYes), (& $vzNo))
+    $script:BlockErrStreak = 1
+    $vzE = Test-ShouldEscalateToVision (& $vzObs 30 $false) @((& $vzNo))
+    $script:BlockErrStreak = 0
+    $vzF = Test-ShouldEscalateToVision (& $vzObs 2 $true) @()
+    $script:VisionRequest = [pscustomobject]@{ Detail = 'low'; Region = $null }
+    $vzG = Test-ShouldEscalateToVision (& $vzObs 30 $false) @()
+    $vzGconsumed = ($null -eq $script:VisionRequest)
+    $script:VisionTurns = [int]$script:VisionMaxTurns
+    $vzH = Test-ShouldEscalateToVision (& $vzObs 3 $false) @()
+    $script:VisionTurns = 0
+    $NoVision = $true
+    $vzI = Test-ShouldEscalateToVision (& $vzObs 3 $false) @()
+    $NoVision = $false
+    & $rec 'v6.2 视觉熔断触发器：UIA 盲区(<6) / 连续 2 次无效 / 无效+UNGROUNDED 混合 / 显式请求 → 升级；其余不升级' (($vzA.Use -and $vzA.Reason -eq 'UIA_BLIND') -and ($vzB.Use -and $vzB.Reason -eq 'BLOCKED') -and (-not $vzC.Use) -and (-not $vzD.Use) -and ($vzE.Use -and $vzE.Reason -eq 'BLOCKED') -and (-not $vzF.Use) -and ($vzG.Use -and $vzG.Reason -eq 'EXPLICIT' -and $vzG.Detail -eq 'low' -and $vzGconsumed)) "盲区=$($vzA.Reason) 连续无效=$($vzB.Reason) 仅1次=$($vzC.Use) 中间有效=$($vzD.Use) 混合=$($vzE.Reason) 控制台=$($vzF.Use) 显式=$($vzG.Reason)/$($vzG.Detail)"
+    & $rec 'v6.2 视觉预算与开关（-NoVision 关闭 / 单任务轮数上限 / 熔断后不再升级）' ((-not $vzH.Use) -and (-not $vzI.Use)) "超预算=$($vzH.Use) NoVision=$($vzI.Use)"
+    $vzCtx = [pscustomobject]@{ OffsetX = 120; OffsetY = 80; ScaleX = 0.6; ScaleY = 0.6; Rect = @(120, 80, 1320, 880) }
+    $vzMax = 0.0
+    foreach ($qx in 120, 333, 777, 1319) {
+        foreach ($qy in 80, 401, 879) {
+            $qi = ConvertTo-VisionImage $vzCtx $qx $qy
+            $qb = ConvertTo-VisionPhysical $vzCtx $qi[0] $qi[1]
+            $vzMax = [Math]::Max($vzMax, [Math]::Max([Math]::Abs($qb[0] - $qx), [Math]::Abs($qb[1] - $qy)))
+        }
+    }
+    $vzP = ConvertTo-VisionPhysical $vzCtx 300 150
+    $acClick = [pscustomobject]@{ action = 'click'; x = 300; y = 150 }
+    $rcClick = Convert-VisionActionCoords $acClick $vzCtx
+    $acFar = [pscustomobject]@{ action = 'click'; x = 5000; y = 5000 }
+    $rcFar = Convert-VisionActionCoords $acFar $vzCtx
+    $acOcr = [pscustomobject]@{ action = 'ocr'; x = 0; y = 0; w = 300; h = 150 }
+    [void](Convert-VisionActionCoords $acOcr $vzCtx)
+    $acVi = [pscustomobject]@{ action = 'vision_inspect'; detail = 'original'; region = [pscustomobject]@{ x = 60; y = 30; w = 300; h = 150 } }
+    [void](Convert-VisionActionCoords $acVi $vzCtx)
+    $vzTxt = ConvertTo-VisionText '[1] Button "OK" @(620,330) 真实鼠标位置: (620,330)' $vzCtx
+    & $rec 'v6.2 坐标还原（offset + x/scale）：往返误差 <= 2px；(300,150)→(620,330)；ocr/region 同步换算' (($vzMax -le 2.0) -and ($vzP[0] -eq 620) -and ($vzP[1] -eq 330) -and ($acClick.x -eq 620) -and ($acClick.y -eq 330) -and ($acOcr.w -eq 500) -and ($acOcr.h -eq 250) -and ($acVi.region.x -eq 220) -and ($acVi.region.y -eq 130) -and ($acVi.region.w -eq 500) -and ($acVi.region.h -eq 250)) "往返最大误差=${vzMax}px 点=($($vzP[0]),$($vzP[1])) ocr=$($acOcr.w)x$($acOcr.h) region=$($acVi.region.x),$($acVi.region.y)"
+    & $rec 'v6.2 vision_grounded（窗口内坐标自动落账通过 UNGROUNDED；窗口外不放行）+ 文本坐标改写' ($rcClick.Grounded -and ($acClick.vision_grounded -eq $true) -and ($script:Grounded.Count -ge 1) -and (-not $rcFar.Grounded) -and ($null -eq $acFar.vision_grounded) -and ($vzTxt -match '@\(300,150\)') -and ($vzTxt -match '位置: \(620,330\)')) "窗口内=$($rcClick.Grounded) 窗口外=$($rcFar.Grounded) 文本=[$vzTxt]"
+    $vzParts = @(
+        [ordered]@{ type = 'text'; text = 'hi' }
+        [ordered]@{ type = 'image_url'; image_url = [ordered]@{ url = 'data:image/jpeg;base64,AAAA'; detail = 'low' } }
+    )
+    $vzPl = New-ChatPayload 'sys' '' $vzParts 'deepseek-flash' 100 $true
+    $vzJs = $vzPl | ConvertTo-Json -Depth 10 -Compress
+    $vzGuard = ''
+    try { Assert-ChatPayloadSafe @{ messages = @(@{ role = 'assistant'; content = @(@{ type = 'image_url' }) }) } } catch { $vzGuard = $_.Exception.Message }
+    $vzTextPl = New-ChatPayload 'sys' 'hello' $null 'deepseek-chat' 100 $true
+    & $rec 'v6.2 请求体合规（content 数组 text+image_url / detail / 仅 user 带图 / assistant 带图被拦 / 文本轮次不变）' (($vzPl.model -eq 'deepseek-flash') -and (@($vzPl.messages).Count -eq 2) -and ($vzPl.messages[0].role -eq 'system') -and ($vzPl.messages[1].role -eq 'user') -and (@($vzPl.messages[1].content).Count -eq 2) -and ($vzPl.messages[1].content[0].type -eq 'text') -and ($vzPl.messages[1].content[1].image_url.url -like 'data:image/jpeg;base64,*') -and ($vzJs -match '"detail":"low"') -and ($vzJs -notmatch 'assistant') -and ($vzGuard -ne '') -and ($vzTextPl.messages[1].content -is [string]) -and ($vzTextPl.model -eq 'deepseek-chat')) "model=$($vzPl.model) guard=[$(Limit-Text $vzGuard 40)]"
+    $vs1 = Test-ActionSchema ([pscustomobject]@{ action = 'vision_inspect'; detail = 'original'; region = [pscustomobject]@{ x = 1; y = 2; w = 300; h = 200 } }) 1
+    $vs2 = Test-ActionSchema ([pscustomobject]@{ action = 'vision_inspect'; detail = 'ultra' }) 1
+    $vs3 = Test-ActionSchema ([pscustomobject]@{ action = 'vision_inspect'; region = [pscustomobject]@{ x = 1; y = 2 } }) 1
+    $vs4 = Test-ActionSchema ([pscustomobject]@{ action = 'vision_inspect' }) 2
+    $vs5 = Test-ActionSchema ([pscustomobject]@{ action = 'inspect'; mode = 'vision' }) 1
+    $vs6 = Test-ActionSchema ([pscustomobject]@{ action = 'vision_inspect'; detail = 'low' }) 1
+    & $rec 'v6.2 Schema：vision_inspect / inspect(mode=vision) 合法；非法 detail / 残缺 region / 排在批量后面被拒' ((-not $vs1) -and $vs2 -and $vs3 -and $vs4 -and (-not $vs5) -and (-not $vs6)) "合法=[$vs1] 非法detail=[$(Limit-Text $vs2 20)] 残缺region=[$(Limit-Text $vs3 20)] 批量=[$(Limit-Text $vs4 20)]"
+    $script:VisionRequest = $svVR; $script:BlockErrStreak = $svBE; $script:VisionTurns = $svVT; $script:VisionFails = $svVF; $script:Grounded = $svGr
+    Remove-Variable -Name NoVision -Scope Local -ErrorAction SilentlyContinue
     $sbn = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
     $cpOld = [DsNative61]::CursorPos()
     $vx = [DsNative61]::VirtX(); $vy = [DsNative61]::VirtY(); $vw = [DsNative61]::VirtW(); $vh = [DsNative61]::VirtH()
@@ -4560,6 +5110,59 @@ function Invoke-SelfTest {
             $fxNo = Complete-EffectProbe
             & $rec 'v5 局部视觉证据（真实屏幕：内容改变=变了；不动=无变化）' (($null -ne $fxOn) -and ($fxOn.Verdict -eq 'changed') -and ($null -ne $fxNo) -and ($fxNo.Verdict -eq 'nochange')) "改变=[$(if ($fxOn) { $fxOn.Verdict })] 不动=[$(if ($fxNo) { $fxNo.Verdict })] $(if ($fxOn) { Limit-Text $fxOn.Text 50 })"
         }
+            # I. v6.2 SoM 标注截图（真实屏幕 + 自检靶窗口 DsTestTarget61）：JPEG Base64 / [id] 框 / 缩放前后坐标换算 <= 2px
+            $somOk = $false; $somMsg = ''
+            $dispose = [System.Collections.Generic.List[object]]::new()
+            try {
+                $script:ObsHwnd = $tt.Parent
+                Set-Elements @(Get-UiElements $tt.Parent | Sort-Object cy, cx)
+                $somCid = 0; $somEid = 0
+                foreach ($kv in $script:Elements.GetEnumerator()) {
+                    if ($kv.Value.Type -eq 'CheckBox') { $somCid = [int]$kv.Key }
+                    if ($kv.Value.Type -eq 'Edit') { $somEid = [int]$kv.Key }
+                }
+                $shPlain = New-SomAnnotatedScreenshot -Hwnd $tt.Parent -Detail original -MaxEdge 1600 -NoMarks
+                $shFull = New-SomAnnotatedScreenshot -Hwnd $tt.Parent -Detail original -MaxEdge 1600
+                $shSmall = New-SomAnnotatedScreenshot -Hwnd $tt.Parent -Detail original -MaxEdge 200
+                $jb = [Convert]::FromBase64String($shFull.Base64)
+                $isJpeg = ($jb.Length -gt 300 -and $jb[0] -eq 0xFF -and $jb[1] -eq 0xD8 -and $jb[2] -eq 0xFF)
+                $msF = [System.IO.MemoryStream]::new($jb); $dispose.Add($msF)
+                $bmF = [System.Drawing.Bitmap]::new($msF); $dispose.Add($bmF)
+                $msP = [System.IO.MemoryStream]::new([Convert]::FromBase64String($shPlain.Base64)); $dispose.Add($msP)
+                $bmP = [System.Drawing.Bitmap]::new($msP); $dispose.Add($bmP)
+                $decOk = ($bmF.Width -eq $shFull.Width -and $bmF.Height -eq $shFull.Height)
+                $twr2 = [DsNative61]::WinRect($tt.Parent)
+                $capOk = ($shFull.CapW -eq ($twr2[2] - $twr2[0]) -and $shFull.CapH -eq ($twr2[3] - $twr2[1]) -and $shFull.OffsetX -eq $twr2[0] -and $shFull.OffsetY -eq $twr2[1])
+                # [id] 框确实画在了正确位置：沿复选框上边框取 3 点，标注图与未标注图的像素差必须明显
+                $hit = 0
+                if ($somCid -gt 0) {
+                    $ci2 = $script:Elements[$somCid]
+                    $iy = [int][Math]::Round(($ci2.T - $shFull.OffsetY) * $shFull.ScaleY)
+                    foreach ($fr in 0.35, 0.55, 0.8) {
+                        $ix = [int][Math]::Round(($ci2.L + $ci2.W * $fr - $shFull.OffsetX) * $shFull.ScaleX)
+                        if ($ix -ge 0 -and $ix -lt $bmF.Width -and $iy -ge 0 -and $iy -lt $bmF.Height) {
+                            $pa = $bmF.GetPixel($ix, $iy); $pb = $bmP.GetPixel($ix, $iy)
+                            if (([Math]::Abs($pa.R - $pb.R) + [Math]::Abs($pa.G - $pb.G) + [Math]::Abs($pa.B - $pb.B)) -ge 60) { $hit++ }
+                        }
+                    }
+                }
+                # 缩放前后坐标换算误差：控件中心 物理 → 图像 → 物理
+                $rtMax = 0.0
+                foreach ($sh in @($shFull, $shSmall)) {
+                    foreach ($eid2 in @($somCid, $somEid)) {
+                        if ($eid2 -le 0) { continue }
+                        $e2 = $script:Elements[$eid2]
+                        $im2 = ConvertTo-VisionImage $sh $e2.cx $e2.cy
+                        $bk2 = ConvertTo-VisionPhysical $sh $im2[0] $im2[1]
+                        $rtMax = [Math]::Max($rtMax, [Math]::Max([Math]::Abs($bk2[0] - $e2.cx), [Math]::Abs($bk2[1] - $e2.cy)))
+                    }
+                }
+                $somOk = ($isJpeg -and $decOk -and $capOk -and ($shFull.Marked -ge 2) -and ($hit -ge 2) -and ($rtMax -le 2.0) -and ($shSmall.ScaleX -lt 1.0) -and ($shSmall.Width -le 200) -and ($shFull.KB -gt 0.3))
+                $somMsg = "JPEG=$isJpeg 解码尺寸一致=$decOk 采集矩形/偏移=$capOk 标注框=$($shFull.Marked)个 边框像素命中=$hit/3 往返误差=${rtMax}px 缩放=$([Math]::Round($shSmall.ScaleX, 3)) 原图 $($shFull.KB)KB→缩小 $($shSmall.KB)KB 耗时 $($shFull.Ms)ms"
+            }
+            catch { $somMsg = "异常: $($_.Exception.Message)" }
+            finally { foreach ($o in $dispose) { try { $o.Dispose() } catch { } } }
+            & $rec 'v6.2 SoM 标注截图（靶窗口：JPEG Base64 + [id] 框 + 缩放前后坐标换算 <= 2px）' $somOk $somMsg
         # E. Schema
         $okId = if ($cid -gt 0) { $cid } else { 1 }
         $okEd = if ($eid -gt 0) { $eid } else { 1 }
@@ -4617,6 +5220,7 @@ if ([string]::IsNullOrWhiteSpace($ApiKey)) {
 }
 if ([string]::IsNullOrWhiteSpace($ApiKey)) { throw '缺少 API Key：请设置环境变量 DEEPSEEK_API_KEY 或使用 -ApiKey 参数。' }
 $ApiKey = $ApiKey.Trim()
+try { Start-ApiWarmup } catch { }   # v6.2：提前建立 TLS 连接，第一次请求直接复用
 $RunId = Get-Date -Format 'yyyyMMdd-HHmmss'
 $script:RunDir = $null
 $script:LogFile = $null
@@ -4649,6 +5253,7 @@ function Show-Help {
     Write-Host '  log                打印日志目录路径'
     Write-Host '  mode <名称>        切换输入模式：auto / uia / message / physical（当前: 见横幅）'
     Write-Host 'v5：每个任务先规划再执行；切换类动作（点赞/收藏/勾选）不会被重复执行；看不清的地方模型会先 inspect / ocr。' -ForegroundColor DarkGray
+    Write-Host 'v6.2：UIA 盲区 / 连续无效 / vision_inspect 时自动附带 SoM 标注截图并改用视觉模型看图（-NoVision 关闭）；每步标注 [Perception: UIA|Vision(...)]。' -ForegroundColor DarkGray
     Write-Host '  cls                清屏'
     Write-Host '  exit / quit / 退出  结束程序'
     Write-Host '执行任务期间的紧急停止（只终止当前任务，回到本提示符）:' -ForegroundColor Yellow
@@ -4657,11 +5262,12 @@ function Show-Help {
 }
 function Show-Banner {
     Write-Host ''
-    Write-Host '=== DeepSeek Computer Use v6.1（人类化输入 + 按下前守卫 + 操作回执 + 预期核对 + 按状态码重试；保留 v5.1 / v6.0 全部能力）===' -ForegroundColor Cyan
+    Write-Host '=== DeepSeek Computer Use v6.2（视觉兜底 + 连接复用 + 人类化输入 + 按下前守卫 + 操作回执 + 预期核对 + 按状态码重试；保留 v5.1 / v6.0 全部能力）===' -ForegroundColor Cyan
     Write-Host "模型    : $Model    每任务最大步数: $MaxSteps    批量动作上限: $MaxBatch"
     Write-Host "模式    : $(if ($DryRun) { '仅预演(DryRun)' } elseif ($script:Auto) { '全自动（无需确认）' } else { '逐步确认' })    Shell: $(if ($NoShell) { '禁止' } else { '允许' })    管理员: $(if ($script:IsAdmin) { '是' } else { '否（加 -RunAsAdmin 可操作高权限窗口）' })    会话记忆: $(if ($MemoryLimit -gt 0) { "最近 $MemoryLimit 个任务" } else { '关闭' })"
     Write-Host "输入    : $($script:Mode)（Auto=UIA→消息→物理借用归位）    虚拟鼠标: $(if ($script:Cur) { '已启用' } else { '未启用' })    让位阈值: ${IdleMs}ms"
     Write-Host "v5      : 规划 $(if ($NoPlan) { '关' } else { '开' })    防重复 $(if ($NoRepeatGuard) { '关' } else { '开' })    OCR $(if ($NoOcr) { '关' } else { '开' })    控制台让位 $(if ($NoConsoleYield) { '关' } else { '开' })"
+    Write-Host "v6.2    : 视觉兜底 $(if ($NoVision) { '关（-NoVision）' } else { "开（$VisionModel；UIA 盲区<6 / 连续2次无效 / vision_inspect 时触发；长边≤${VisionMaxEdge}px，JPEG q${VisionJpegQuality}；单任务最多 $($script:VisionMaxTurns) 轮）" })    HTTP 连接复用：开    步间等待：自适应"
     Write-Host "v6 : 人类化输入 $(if ($NoHuman) { '关（-NoHuman）' } else { "开（浏览器内：曲线移动→悬停→按压；速度 ${HumanSpeed}x，打字 ${TypeCps} 字/秒；用户一动鼠标立即让出）" })"
     Write-Host "日志    : $(if ($script:RunDir) { $script:RunDir } else { '（未启用）' })"
     Write-Host '紧急停止: 鼠标甩到左上角 / Ctrl+Alt+Q（终止当前任务）；Ctrl+C（退出程序）' -ForegroundColor Yellow
@@ -4669,7 +5275,7 @@ function Show-Banner {
 }
 Initialize-Runtime
 Show-Banner
-Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '6.1'; human = [bool][DsNative61]::Humanize }
+Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '6.2'; vision = (-not $NoVision); visionModel = $VisionModel; human = [bool][DsNative61]::Humanize }
 $pending = $Task
 try {
     while ($true) {
