@@ -1,10 +1,13 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v5.0 —— 在 v4.3 已验证可用的功能上继续做「更深」而不是「更大」：先规划后执行、绝不重复切换类动作、看清再点。
+  DeepSeek Computer Use v5.1 —— 在 v4.3 已验证可用的功能上继续做「更深」而不是「更大」：先规划后执行、绝不重复切换类动作、看清再点。
 .DESCRIPTION
   DeepSeek 官方 API 是纯文本模型，所以「眼睛」仍是 Windows UI Automation 无障碍树（思路同 vercel-labs/agent-desktop：每个可操作元素一个编号，
   操作后重新观察核实），v5 再补两只「辅助眼」：动作前后的局部像素/颜色证据、Windows 自带 OCR。C# 原生层 DsNative4 逐字未改。
+  v5.1 修复（运行日志任务1/2 的致命错误 "Argument types do not match"）：PowerShell 7 对 New-Object 创建的 List[object] 执行 @() 会抛出该异常，
+    而 v5 在规划完成后第一次执行 @($script:Plan.Steps) 就触发了它，导致每个任务在第 1 步就被终止。已全部改为 [List[T]]::new()；
+    并为每一步加上内部异常保护（记录行号、跳过本步、让模型重新观察，连续 3 次才终止）；-SelfTest 新增回归哨兵。
   v5.0 相对 v4.3（全部来自运行日志任务6「给这个视频点赞」45 步未完成）：
     1. 【先规划后执行】任务开始先调用一次规划器，产出 目标 / 完成证据 / 步骤(方法+核实方式) / 只能执行一次的动作；之后每轮按计划推进，
        计划被证据否定时用 replan 重新规划，而不是原地试错。
@@ -110,7 +113,7 @@ function Test-IsAdmin {
 $script:IsAdmin = Test-IsAdmin
 if ($RunAsAdmin -and -not $script:IsAdmin) {
     if (-not $PSCommandPath) { throw '-RunAsAdmin 需要先把脚本保存为 .ps1 文件再运行。' }
-    $argList = New-Object System.Collections.Generic.List[string]
+    $argList = [System.Collections.Generic.List[string]]::new()
     foreach ($x in @('-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $PSCommandPath + '"'))) { $argList.Add($x) }
     foreach ($k in $PSBoundParameters.Keys) {
         if ($k -eq 'RunAsAdmin') { continue }
@@ -816,7 +819,7 @@ function Get-ObservationDiff($prevKeys, $curKeys, [string]$prevTitle, [string]$c
     if ($null -eq $prevKeys) { return '' }
     $added = @($curKeys | Where-Object { -not $prevKeys.Contains($_) })
     $removed = @($prevKeys | Where-Object { -not $curKeys.Contains($_) })
-    $parts = New-Object System.Collections.Generic.List[string]
+    $parts = [System.Collections.Generic.List[string]]::new()
     if ($prevTitle -ne $curTitle) { $parts.Add("前台窗口标题: [$(Limit-Text $prevTitle 40)] → [$(Limit-Text $curTitle 40)]") }
     if ($added.Count -eq 0 -and $removed.Count -eq 0) {
         if ($parts.Count -eq 0) { $parts.Add('控件列表与上一轮完全相同（上一步可能没有生效，或页面仍在加载）') }
@@ -905,7 +908,7 @@ function Send-KeyCombo([string]$combo) {
     $parts = @($combo.ToLower().Split('+') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     if ($parts.Count -eq 0) { throw 'keys 不能为空' }
     $codes = @($parts | ForEach-Object { Resolve-VK $_ })
-    $down = New-Object System.Collections.Generic.List[int]
+    $down = [System.Collections.Generic.List[int]]::new()
     try {
         foreach ($c in $codes) {
             [DsNative4]::Key([int]$c, $false, [bool]($script:ExtendedVK -contains [int]$c))
@@ -988,7 +991,7 @@ function New-UiaCondition([string[]]$typeNames) {
     return [System.Windows.Automation.AndCondition]::new($typeCond, $off)
 }
 function Get-UiElements([IntPtr]$hwnd) {
-    $result = New-Object System.Collections.Generic.List[object]
+    $result = [System.Collections.Generic.List[object]]::new()
     if ($hwnd -eq [IntPtr]::Zero) { return @() }
     $AE = [System.Windows.Automation.AutomationElement]
     try { $root = $AE::FromHandle($hwnd) } catch { return @() }
@@ -1177,7 +1180,7 @@ function Get-Observation {
     if (@($all | Where-Object { $_.Type -eq 'CheckBox' }).Count -ge 2) { try { $model = Get-RowModel $fg.Handle } catch { $model = $null } }
     $rowParts = [System.Collections.Generic.HashSet[string]]::new()
     $masterKeys = [System.Collections.Generic.HashSet[string]]::new()
-    $rowRects = New-Object System.Collections.Generic.List[object]
+    $rowRects = [System.Collections.Generic.List[object]]::new()
     if ($model) {
         foreach ($row in $model.Rows) {
             [void]$rowParts.Add((Get-GeoKey $row.Cb)); [void]$rowParts.Add((Get-GeoKey $row.Row))
@@ -1186,7 +1189,7 @@ function Get-Observation {
         foreach ($mc in $model.Master) { [void]$masterKeys.Add((Get-GeoKey $mc)) }
     }
     # v4.2：先按屏幕位置排序、再按预算截断（v4.1 在 UIA 文档顺序里截断：Gmail 左侧栏/工具栏占满 100 个名额，模型只看到 6 行邮件）
-    $general = New-Object System.Collections.Generic.List[object]
+    $general = [System.Collections.Generic.List[object]]::new()
     $inter = 0; $txt = 0
     foreach ($it in $all) {
         $gk = Get-GeoKey $it
@@ -1198,11 +1201,11 @@ function Get-Observation {
         $general.Add($it)
     }
     $script:Elements = @{}
-    $lines = New-Object System.Collections.Generic.List[string]
-    $baseKeys = New-Object System.Collections.Generic.List[string]
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $baseKeys = [System.Collections.Generic.List[string]]::new()
     $id = 0
     $cbTotal = 0
-    $cbOnIds = New-Object System.Collections.Generic.List[int]
+    $cbOnIds = [System.Collections.Generic.List[int]]::new()
     foreach ($it in $general) {
         $id++
         $script:Elements[$id] = $it
@@ -1221,8 +1224,8 @@ function Get-Observation {
     }
     $rowBlock = ''
     if ($model -and @($model.Rows).Count -gt 0) {
-        $rl = New-Object System.Collections.Generic.List[string]
-        $onIdx = New-Object System.Collections.Generic.List[int]
+        $rl = [System.Collections.Generic.List[string]]::new()
+        $onIdx = [System.Collections.Generic.List[int]]::new()
         $shown = 0
         foreach ($row in $model.Rows) {
             $id++; $cbId = $id; $script:Elements[$id] = (ConvertTo-RowCbItem $row)
@@ -1405,7 +1408,7 @@ function Test-InAnyRect($o, $rects) {
 function Add-OrdinalKeys([string[]]$base) {
     # 同名控件加序号：v4.1 用 HashSet 去重，10 个同名复选框会塌成 1~2 个键，「多勾了 1 个」会被误判为「完全相同」
     $seen = @{}
-    $out = New-Object System.Collections.Generic.List[string]
+    $out = [System.Collections.Generic.List[string]]::new()
     foreach ($b in $base) { $seen[$b] = 1 + [int]$seen[$b]; $out.Add("$b#$($seen[$b])") }
     return , $out.ToArray()
 }
@@ -1464,7 +1467,7 @@ function ConvertTo-RowList([string]$spec, [int]$max) {
 function Format-RowRanges($idx) {
     $arr = @($idx | ForEach-Object { [int]$_ } | Sort-Object -Unique)
     if ($arr.Count -eq 0) { return '无' }
-    $out = New-Object System.Collections.Generic.List[string]
+    $out = [System.Collections.Generic.List[string]]::new()
     $s0 = $arr[0]; $p0 = $arr[0]
     for ($i = 1; $i -le $arr.Count; $i++) {
         if ($i -lt $arr.Count -and $arr[$i] -eq ($p0 + 1)) { $p0 = $arr[$i]; continue }
@@ -1478,7 +1481,7 @@ function Join-RowCheckboxes($rows, $cbs) {
     # 所以在「高度像一行」的候选里取最宽的（= 整行而不是单元格）；都不像一行时取面积最小的。同一行取最左边的复选框。
     # 然后做表格一致性过滤：宽度 / 左边界偏离中位数的「行」（例如工具栏里的项）剔除，其复选框归入 Master（通常是「全选」框）。
     $map = @{}
-    $master = New-Object System.Collections.Generic.List[object]
+    $master = [System.Collections.Generic.List[object]]::new()
     foreach ($cb in $cbs) {
         $cx = [double]$cb.L + [double]$cb.W / 2.0; $cy = [double]$cb.T + [double]$cb.H / 2.0
         $hMax = [Math]::Max(4.0 * [double]$cb.H, 120.0)
@@ -1499,12 +1502,12 @@ function Join-RowCheckboxes($rows, $cbs) {
         }
         else { $master.Add($cb) }
     }
-    $list = New-Object System.Collections.Generic.List[object]
+    $list = [System.Collections.Generic.List[object]]::new()
     foreach ($key in @($map.Keys)) { $list.Add([pscustomobject]@{ Row = $rows[[int]$key]; Cb = $map[$key]; Text = ''; Index = 0; Key = '' }) }
     if ($list.Count -ge 3) {
         $ws = @($list | ForEach-Object { [double]$_.Row.W } | Sort-Object); $ls = @($list | ForEach-Object { [double]$_.Row.L } | Sort-Object)
         $mw = $ws[[int][Math]::Floor($ws.Count / 2)]; $ml = $ls[[int][Math]::Floor($ls.Count / 2)]
-        $keep = New-Object System.Collections.Generic.List[object]
+        $keep = [System.Collections.Generic.List[object]]::new()
         foreach ($e in $list) {
             if ([Math]::Abs([double]$e.Row.W - $mw) -le (0.15 * $mw) -and [Math]::Abs([double]$e.Row.L - $ml) -le 24) { $keep.Add($e) } else { $master.Add($e.Cb) }
         }
@@ -1552,7 +1555,7 @@ function Get-RowTexts($rows) {
     catch { $col = $null }
     finally { if ($act) { $act.Dispose() } }
     if ($null -eq $col) { return @() }
-    $out = New-Object System.Collections.Generic.List[object]
+    $out = [System.Collections.Generic.List[object]]::new()
     $k = 0
     foreach ($el in $col) {
         $k++; if ($k -gt 4000) { break }
@@ -1592,8 +1595,8 @@ function Get-RowModel([IntPtr]$hwnd) {
     finally { if ($act) { $act.Dispose() } }
     if ($null -eq $col) { return $empty }
     $wr = [DsNative4]::WinRect($hwnd)
-    $rows = New-Object System.Collections.Generic.List[object]
-    $cbs = New-Object System.Collections.Generic.List[object]
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $cbs = [System.Collections.Generic.List[object]]::new()
     $k = 0
     foreach ($el in $col) {
         $k++; if ($k -gt $script:ScanCap) { break }
@@ -1641,7 +1644,7 @@ function Get-RowModel([IntPtr]$hwnd) {
             foreach ($rw in $j.Rows) {
                 $rr = $rw.Row
                 if ($tx.cx -ge $rr.L -and $tx.cx -le ($rr.L + $rr.W) -and $tx.cy -ge $rr.T -and $tx.cy -le ($rr.T + $rr.H)) {
-                    if (-not $buckets.ContainsKey($rw.Index)) { $buckets[$rw.Index] = New-Object System.Collections.Generic.List[object] }
+                    if (-not $buckets.ContainsKey($rw.Index)) { $buckets[$rw.Index] = [System.Collections.Generic.List[object]]::new() }
                     $buckets[$rw.Index].Add($tx)
                     break
                 }
@@ -1649,7 +1652,7 @@ function Get-RowModel([IntPtr]$hwnd) {
         }
         foreach ($rw in $j.Rows) {
             if (-not [string]::IsNullOrWhiteSpace($rw.Row.Name)) { $rw.Text = Limit-Text $rw.Row.Name 120; continue }
-            $names = New-Object System.Collections.Generic.List[string]
+            $names = [System.Collections.Generic.List[string]]::new()
             if ($buckets.ContainsKey($rw.Index)) {
                 foreach ($tx in @($buckets[$rw.Index] | Sort-Object -Property L)) { if (-not $names.Contains($tx.Name)) { $names.Add($tx.Name) } }
             }
@@ -1682,7 +1685,7 @@ function ConvertTo-RowItem($row) {
 }
 function Get-PrecisePoint($item, $r) {
     # 物理点击的落点：TryGetClickablePoint + 矩形内若干候选点，逐个做「严格命中测试」（实时命中的必须是目标本身或其后代）
-    $cands = New-Object System.Collections.Generic.List[object]
+    $cands = [System.Collections.Generic.List[object]]::new()
     try {
         $pt = [System.Windows.Point]::new(0, 0)
         if ($item.El.TryGetClickablePoint([ref]$pt)) { $cands.Add(@([int][Math]::Round($pt.X), [int][Math]::Round($pt.Y))) }
@@ -1762,7 +1765,7 @@ function Set-CheckState($item, [bool]$on, [string]$label) {
     if ($s0 -eq $want) {
         return [pscustomobject]@{ Ok = $true; Changed = $false; State = $s0; Via = '已是目标状态，未操作' }
     }
-    $via = New-Object System.Collections.Generic.List[string]
+    $via = [System.Collections.Generic.List[string]]::new()
     try {
         $lc = $item.El.Current
         if (-not [bool]$lc.IsOffscreen) { $lr = $lc.BoundingRectangle; if (-not $lr.IsEmpty) { Move-VirtualCursor ([int]($lr.Left + $lr.Width / 2)) ([int]($lr.Top + $lr.Height / 2)) } }
@@ -1801,7 +1804,7 @@ function Invoke-CheckAction($a, [bool]$on) {
     $ids = @()
     if ($null -ne $a.ids) { $ids = @($a.ids) } elseif (Test-IdValue $a.id) { $ids = @($a.id) }
     $want = if ($on) { 'on' } else { 'off' }
-    $parts = New-Object System.Collections.Generic.List[string]
+    $parts = [System.Collections.Generic.List[string]]::new()
     $bad = 0
     foreach ($i in $ids) {
         Test-Abort
@@ -1928,7 +1931,7 @@ function Find-ItemAt([int]$x, [int]$y) {
 function Assert-BulkInterlock($a, [string]$kind) {
     # 只在「任务有明确数量」且目标看起来是 删除/归档/全选 时才额外扫描一次列表；-NoSafety 可关闭
     if ($NoSafety -or $script:TaskQty -le 0) { return }
-    $targets = New-Object System.Collections.Generic.List[object]
+    $targets = [System.Collections.Generic.List[object]]::new()
     if ($kind -in 'click', 'double_click', 'check', 'click_many') {
         $idList = @()
         if ($null -ne $a.ids) { $idList = @($a.ids) } elseif (Test-IdValue $a.id) { $idList = @($a.id) }
@@ -2000,7 +2003,7 @@ function Test-TargetInRow($t, $modelRows) {
     # 把工具栏的「刪除」误判成行内按钮，连续拒绝 58 步。现在：只看视口内的行 + UIA 祖先链核验。
     if ($null -eq $t -or [double]$t.W -le 0) { return 0 }
     $cx = [double]$t.L + [double]$t.W / 2.0; $cy = [double]$t.T + [double]$t.H / 2.0
-    $hit = New-Object System.Collections.Generic.List[object]
+    $hit = [System.Collections.Generic.List[object]]::new()
     foreach ($rw in $modelRows) {
         $q = $rw.Row
         if ($q.Off) { continue }
@@ -2166,8 +2169,8 @@ $script:LastEffect = $null
 $script:OcrCache = $null
 $script:OcrHelper = $null
 $script:OcrUnavailable = ''
-$script:Grounded = New-Object System.Collections.Generic.List[object]
-$script:Ledger = New-Object System.Collections.Generic.List[object]
+$script:Grounded = [System.Collections.Generic.List[object]]::new()
+$script:Ledger = [System.Collections.Generic.List[object]]::new()
 $script:RepeatOverride = @{}
 $script:Plan = $null
 $script:PlanCur = 0
@@ -2280,7 +2283,7 @@ function Get-ColorStats($smp) {
 }
 function Format-ColorShift($before, $after) {
     $names = @(@($before.Keys) + @($after.Keys) | Select-Object -Unique)
-    $parts = New-Object System.Collections.Generic.List[string]
+    $parts = [System.Collections.Generic.List[string]]::new()
     foreach ($nm in $names) {
         $x = [double]$before[$nm]; $y = [double]$after[$nm]
         if ([Math]::Abs($y - $x) -ge 3) { $parts.Add("$nm $x%→$y%") }
@@ -2470,7 +2473,7 @@ function Format-Ledger {
 
 # ---------- ⑤ 先规划后执行 ----------
 function ConvertTo-PlanObject($pl) {
-    $steps = New-Object System.Collections.Generic.List[object]
+    $steps = [System.Collections.Generic.List[object]]::new()
     $i = 0
     foreach ($s in @($pl.steps)) {
         if ($null -eq $s) { continue }
@@ -2490,7 +2493,7 @@ function ConvertTo-PlanObject($pl) {
 function Format-Plan {
     $p = $script:Plan
     if ($null -eq $p) { return '' }
-    $ls = New-Object System.Collections.Generic.List[string]
+    $ls = [System.Collections.Generic.List[string]]::new()
     $ls.Add('【执行计划】（动手之前由规划器制定。每轮 JSON 用 "step":n 标明正在执行第几步，用 "expect" 写出预期变化；证据表明计划不对时单独输出 {"action":"replan",...}）')
     if ($p.Goal) { $ls.Add("  目标: $($p.Goal)") }
     if (@($p.DoneWhen).Count -gt 0) { $ls.Add("  完成证据: $(@($p.DoneWhen) -join '；')") }
@@ -2562,7 +2565,7 @@ function Optimize-OcrText([string]$s) {
 function New-OcrResult([bool]$ok, [string]$err, $lines) { return [pscustomobject]@{ Ok = $ok; Err = $err; Lines = @($lines) } }
 function Invoke-Ocr([int]$rx, [int]$ry, [int]$rw, [int]$rh) {
     # 返回 @{ Ok; Err; Lines = @( @{ Text; L; T; W; H; cx; cy } ) }，坐标为屏幕物理像素；识别出的文字框自动成为坐标点击的「依据」
-    $none = New-Object System.Collections.Generic.List[object]
+    $none = [System.Collections.Generic.List[object]]::new()
     if ($NoOcr) { return (New-OcrResult $false '已用 -NoOcr 关闭 OCR' $none) }
     if ($script:OcrUnavailable) { return (New-OcrResult $false $script:OcrUnavailable $none) }
     $ps5 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -2619,7 +2622,7 @@ function Invoke-Ocr([int]$rx, [int]$ry, [int]$rw, [int]$rh) {
         return (New-OcrResult $false "OCR 子进程失败: $(Limit-Text $_.Exception.Message 100)" $none)
     }
     finally { Remove-Item -LiteralPath $png -Force -ErrorAction SilentlyContinue }
-    $lines = New-Object System.Collections.Generic.List[object]
+    $lines = [System.Collections.Generic.List[object]]::new()
     $err = ''
     foreach ($rawLine in ($outText -split "`r?`n")) {
         $ln = $rawLine.Trim().TrimStart([char]0xFEFF)
@@ -2696,7 +2699,7 @@ function Invoke-InspectAction($a) {
     }
     $rad = [int][Math]::Max(40, [Math]::Min(160, 70 * [DsNative4]::DpiScale()))
     if (Test-NumValue $a.r) { $rad = [int][Math]::Min([Math]::Max([double]"$($a.r)", 20), 400) }
-    $out = New-Object System.Collections.Generic.List[string]
+    $out = [System.Collections.Generic.List[string]]::new()
     $out.Add("inspect $label 中心 ($x,$y) 半径 ${rad}px:")
     $maxA = [Math]::Pow(320.0 * [DsNative4]::DpiScale(), 2)
     try {
@@ -2709,7 +2712,7 @@ function Invoke-InspectAction($a) {
             $c = $cur.Current
             $r = $c.BoundingRectangle
             $tp = ($c.ControlType.ProgrammaticName -replace '^ControlType\.', '')
-            $fl = New-Object System.Collections.Generic.List[string]
+            $fl = [System.Collections.Generic.List[string]]::new()
             try { if ($c.IsKeyboardFocusable) { $fl.Add('foc') } } catch { }
             try { if ($cur.GetCurrentPropertyValue($AE::IsInvokePatternAvailableProperty) -eq $true) { $fl.Add('inv') } } catch { }
             try {
@@ -3153,7 +3156,7 @@ function Invoke-PointerAction([string]$kind, $a) {
 function Invoke-ClickMany($a) {
     # 一次点击/勾选多个控件。每个控件执行前都会实时核对（名称/位置/可见/可用）；任一失败即中止，并报告已完成的部分（不会回滚）。
     $ids = @($a.ids)
-    $done = New-Object System.Collections.Generic.List[string]
+    $done = [System.Collections.Generic.List[string]]::new()
     foreach ($i in $ids) {
         Test-Abort
         try {
@@ -3563,15 +3566,15 @@ function Invoke-AgentTask([string]$TaskText) {
     $script:SelectMemo = $null
     $script:PixPrev = $null
     # v5：每个任务独立的计划 / 账本 / 坐标依据
-    $script:Ledger = New-Object System.Collections.Generic.List[object]
-    $script:Grounded = New-Object System.Collections.Generic.List[object]
+    $script:Ledger = [System.Collections.Generic.List[object]]::new()
+    $script:Grounded = [System.Collections.Generic.List[object]]::new()
     $script:RepeatOverride = @{}
     $script:Plan = $null; $script:PlanCur = 0; $script:Replans = 0
     $script:OcrCache = $null
     $stepRounds = @{}
     $planTried = $false
     if ($script:TaskQty -gt 0 -and -not $NoSafety) { Write-Host "  （安全联锁：识别到任务数量 N=$($script:TaskQty)；删除/归档前会核对已勾选行数必须等于 N）" -ForegroundColor DarkGray }
-    $history = New-Object System.Collections.Generic.List[string]
+    $history = [System.Collections.Generic.List[string]]::new()
     $descCount = @{}
     $repeatNote = ''
     $lastActed = $false
@@ -3583,11 +3586,13 @@ function Invoke-AgentTask([string]$TaskText) {
     $sameCount = 0
     $errCount = @{}
     $errStreak = 0
+    $internalFaults = 0
     $script:LastFinish = ''
     $taskStart = Get-Date
     Write-Log @{ type = 'task_start'; task = $TaskText; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; qty = $script:TaskQty }
     try {
         for ($step = 1; $step -le $MaxSteps; $step++) {
+            try {
             Test-Abort
             Write-Host "── 第 $step 步 ──" -ForegroundColor Cyan
             $resumeNote = Resume-TargetWindow   # v5：前台被控制台占据时由系统切回目标窗口
@@ -3806,6 +3811,19 @@ function Invoke-AgentTask([string]$TaskText) {
                 break
             }
             Wait-Safe $StepDelayMs
+            }
+            catch {
+                # v5.1：脚本自身的意外异常（例如 PowerShell 的 @() 缺陷）不再直接杀掉整个任务：记录位置，跳过本步，让模型重新观察；连续 3 次才终止
+                $em = $_.Exception.Message
+                if ($em -like '触发保护*') { throw }
+                $ew = "行 $($_.InvocationInfo.ScriptLineNumber): $(Limit-Text $_.InvocationInfo.Line 100)"
+                Write-Host "  内部错误（已记录，自动重新观察）: $em  [$ew]" -ForegroundColor Red
+                $history.Add("第${step}步: 脚本内部异常（不是你的动作的问题，本步作废，请重新观察后用同样的意图再试）: $em")
+                Write-Log @{ type = 'internal_error'; step = $step; message = $em; where = $ew; stack = "$($_.ScriptStackTrace)" }
+                $internalFaults++
+                if ($internalFaults -ge 3) { throw "脚本内部异常连续 $internalFaults 次，已终止当前任务: $em [$ew]" }
+                continue
+            }
         }
         if (-not $finished) {
             $summary = "已达到最大步数 $MaxSteps，任务未确认完成"
@@ -3818,6 +3836,7 @@ function Invoke-AgentTask([string]$TaskText) {
         else { $outcome = 'error' }
         $summary = $msg
         Write-Host "已停止当前任务: $msg" -ForegroundColor Red
+        if ($outcome -eq 'error') { Write-Host "  位置: 行 $($_.InvocationInfo.ScriptLineNumber) $(Limit-Text $_.InvocationInfo.Line 100)" -ForegroundColor DarkRed }
         Write-Log @{ type = 'abort'; message = $msg }
     }
     $elapsed = [int]((Get-Date) - $taskStart).TotalSeconds
@@ -3827,7 +3846,7 @@ function Invoke-AgentTask([string]$TaskText) {
 #endregion
 #region ---------- 内置自检（-SelfTest） ----------
 function Invoke-SelfTest {
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = [System.Collections.Generic.List[object]]::new()
     $rec = {
         param($name, $ok, $detail)
         $rows.Add([pscustomobject]@{ Name = $name; Ok = [bool]$ok; Detail = "$detail" })
@@ -3864,8 +3883,8 @@ function Invoke-SelfTest {
     $rs2 = (ConvertTo-RowList '1,3，5-7' 50) -join ','
     $rsErr = ''; try { [void](ConvertTo-RowList '1-60' 50) } catch { $rsErr = $_.Exception.Message }
     & $rec 'v4.2 行号解析（1-10 / 1,3，5-7 / 超出列表行数报错）' (($rs1 -eq '1,2,3,4,5,6,7,8,9,10') -and ($rs2 -eq '1,3,5,6,7') -and ($rsErr -match '没有第')) "[$rs1] [$rs2] [$(Limit-Text $rsErr 30)]"
-    $synRows = New-Object System.Collections.Generic.List[object]
-    $synCbs = New-Object System.Collections.Generic.List[object]
+    $synRows = [System.Collections.Generic.List[object]]::new()
+    $synCbs = [System.Collections.Generic.List[object]]::new()
     for ($i = 11; $i -ge 0; $i--) {
         $synRows.Add([pscustomobject]@{ L = 100; T = 200 + 40 * $i; W = 900; H = 40; Name = "邮件$($i + 1)" })
         $synCbs.Add([pscustomobject]@{ L = 110; T = 210 + 40 * $i; W = 20; H = 20; Name = '' })
@@ -3887,7 +3906,7 @@ function Invoke-SelfTest {
     $tl1 = Get-DriftTolerance ([pscustomobject]@{ W = 20; H = 20 }); $tl2 = Get-DriftTolerance ([pscustomobject]@{ W = 300; H = 40 }); $tl3 = Get-DriftTolerance ([pscustomobject]@{ W = 4; H = 4 })
     & $rec 'v4.2 漂移容差随尺寸收紧（20px 复选框不会认成相邻 40px 行的那个）' (($tl1 -eq 10) -and ($tl2 -eq 20) -and ($tl3 -eq 8)) "20px→$tl1 高40→$tl2 4px→$tl3"
     # ---- v4.3 纯逻辑自检（日志任务1 / 任务3 的真实故障样本；不碰鼠标键盘）----
-    $tOff = New-Object System.Collections.Generic.List[object]
+    $tOff = [System.Collections.Generic.List[object]]::new()
     for ($i = 0; $i -lt 12; $i++) {
         $isOff = ($i -lt 8)
         $tOff.Add([pscustomobject]@{ Index = ($i + 1); Row = [pscustomobject]@{ L = 100; T = (200 + 40 * $i); W = 900; H = 40; Off = $isOff; El = $null } })
@@ -3935,7 +3954,7 @@ function Invoke-SelfTest {
     # ---- v5 纯逻辑自检（日志任务6「给视频点赞」的真实故障样本；不碰鼠标键盘）----
     $svLedger = $script:Ledger; $svEl = $script:Elements; $svGr = $script:Grounded; $svOv = $script:RepeatOverride
     try {
-        $script:Ledger = New-Object System.Collections.Generic.List[object]; $script:RepeatOverride = @{}; $script:Elements = @{}
+        $script:Ledger = [System.Collections.Generic.List[object]]::new(); $script:RepeatOverride = @{}; $script:Elements = @{}
         $kz = [pscustomobject]@{ action = 'key'; keys = 'z' }
         $g1 = Assert-RepeatGuard $kz 'key'; Add-LedgerEntry $g1 21 'action=key keys=z' $null
         Update-LedgerFromObservation ([pscustomobject]@{ Changes = '屏幕像素: 前台窗口约 35% 的区块发生了变化' })
@@ -3954,7 +3973,7 @@ function Invoke-SelfTest {
         try { for ($i = 0; $i -lt 3; $i++) { $pe = Assert-RepeatGuard ([pscustomobject]@{ action = 'key'; keys = 'escape' }) 'key'; if ($null -ne $pe) { $esc = $false } } } catch { $esc = $false }
         & $rec 'v5 动作账本重放日志任务6（z 第2次被拦 / 同点两次无效后第3次被拦 / 已生效的点赞不会被撤销 / Esc 不受限）' (($z2 -match 'REPEAT_UNVERIFIED') -and ($c3 -match 'REPEAT_NOEFFECT') -and ($l2 -match 'REPEAT_EFFECT') -and ($null -ne $l3) -and $esc) "z#2=[$(Limit-Text $z2 18)] 点#3=[$(Limit-Text $c3 16)] 赞#2=[$(Limit-Text $l2 14)] 赞#2+repeat=$($null -ne $l3) Esc=$esc"
         $script:Elements = @{ 1 = [pscustomobject]@{ Type = 'Text'; Name = '41.1万'; L = 1750; T = 875; W = 42; H = 24; cx = 1771; cy = 887 } }
-        $script:Grounded = New-Object System.Collections.Generic.List[object]
+        $script:Grounded = [System.Collections.Generic.List[object]]::new()
         $gA = Test-Grounded 1770 887; $gB = Test-Grounded 1770 840
         $script:Grounded.Add([pscustomobject]@{ L = 1752; T = 828; W = 36; H = 30 })
         $gC = Test-Grounded 1770 840
@@ -3990,6 +4009,19 @@ function Invoke-SelfTest {
     $sv5 = Test-ActionSchema ([pscustomobject]@{ action = 'ocr' }) 1
     $sv6 = Test-ActionSchema ([pscustomobject]@{ action = 'ocr'; x = 1 }) 1
     & $rec 'v5 OCR 中文去空格 / 新错误码 / replan·inspect·ocr 的 Schema' (($otx -eq '润魂学 1-5 合集 | 纯享版') -and ($ecs[0] -eq 'REPEAT_EFFECT') -and ($ecs[1] -eq 'UNGROUNDED') -and ($ecs[2] -eq 'no') -and (-not $sv1) -and [bool]$sv2 -and [bool]$sv3 -and (-not $sv4) -and (-not $sv5) -and [bool]$sv6) "OCR=[$otx] 码=[$($ecs -join ',')]"
+    $canary = $false; $canaryMsg = ''
+    try {
+        $cl = [System.Collections.Generic.List[object]]::new(); $cl.Add([pscustomobject]@{ N = 1 })
+        $cp = ConvertTo-PlanObject ([pscustomobject]@{ goal = 'g'; steps = @([pscustomobject]@{ act = 'a' }, [pscustomobject]@{ act = 'b' }) })
+        $canary = ((@($cl).Count -eq 1) -and (@($cp.Steps).Count -eq 2))
+        $canaryMsg = "@(List[object])=$(@($cl).Count) @(Plan.Steps)=$(@($cp.Steps).Count)"
+    } catch { $canaryMsg = $_.Exception.Message }
+    $lintBad = 0; $lintMsg = '（以粘贴方式运行，跳过源码扫描）'
+    if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) {
+        $lintBad = @(Select-String -LiteralPath $PSCommandPath -Pattern 'New-Object\s+System\.Collections\.Generic\.List\[object\]' -SimpleMatch:$false | Where-Object { $_.Line -notmatch 'Select-String|lintBad' }).Count
+        $lintMsg = "源码中残留 New-Object List[object] 共 $lintBad 处"
+    }
+    & $rec 'v5.1 回归哨兵（@() 作用于 List[object]/计划步骤必须可用；源码中不得再出现 New-Object List[object]）' ($canary -and ($lintBad -eq 0)) "$canaryMsg；$lintMsg"
     $sbn = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
     $cpOld = [DsNative4]::CursorPos()
     $vx = [DsNative4]::VirtX(); $vy = [DsNative4]::VirtY(); $vw = [DsNative4]::VirtW(); $vh = [DsNative4]::VirtH()
@@ -4175,7 +4207,7 @@ foreach ($root in $candidates) {
     catch { Write-Host "  无法使用日志目录 $root : $($_.Exception.Message)" -ForegroundColor DarkYellow }
 }
 if (-not $script:RunDir) { Write-Host '  警告：没有可写的日志目录，本次运行不写日志。' -ForegroundColor Yellow }
-$script:Session = New-Object System.Collections.Generic.List[string]
+$script:Session = [System.Collections.Generic.List[string]]::new()
 $script:Stats = @{ done = 0; fail = 0; other = 0 }
 function Show-Help {
     Write-Host ''
@@ -4194,7 +4226,7 @@ function Show-Help {
 }
 function Show-Banner {
     Write-Host ''
-    Write-Host '=== DeepSeek Computer Use v5.0（先规划后执行 + 动作账本防重复 + 局部视觉证据 + inspect/OCR + 控制台让位；保留 v4.3 全部能力）===' -ForegroundColor Cyan
+    Write-Host '=== DeepSeek Computer Use v5.1（先规划后执行 + 动作账本防重复 + 局部视觉证据 + inspect/OCR + 控制台让位；保留 v4.3 全部能力）===' -ForegroundColor Cyan
     Write-Host "模型    : $Model    每任务最大步数: $MaxSteps    批量动作上限: $MaxBatch"
     Write-Host "模式    : $(if ($DryRun) { '仅预演(DryRun)' } elseif ($script:Auto) { '全自动（无需确认）' } else { '逐步确认' })    Shell: $(if ($NoShell) { '禁止' } else { '允许' })    管理员: $(if ($script:IsAdmin) { '是' } else { '否（加 -RunAsAdmin 可操作高权限窗口）' })    会话记忆: $(if ($MemoryLimit -gt 0) { "最近 $MemoryLimit 个任务" } else { '关闭' })"
     Write-Host "输入    : $($script:Mode)（Auto=UIA→消息→物理借用归位）    虚拟鼠标: $(if ($script:Cur) { '已启用' } else { '未启用' })    让位阈值: ${IdleMs}ms"
@@ -4205,7 +4237,7 @@ function Show-Banner {
 }
 Initialize-Runtime
 Show-Banner
-Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '5.0' }
+Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '5.1' }
 $pending = $Task
 try {
     while ($true) {
