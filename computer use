@@ -1,0 +1,2393 @@
+#Requires -Version 7.0
+<#
+.SYNOPSIS
+  DeepSeek Computer Use v4.1 —— 在 v4 已验证可用的「虚拟鼠标 + 分层精确执行」之上，只修复运行日志中暴露的真实问题，并让模型「看得更准、做得更稳」。
+.DESCRIPTION
+  DeepSeek 官方 API 是纯文本模型，所以仍用 Windows UI Automation 把前台窗口读成文本，模型返回 JSON 动作。
+  v4.1 相对 v4 的改动（全部来自运行日志的实证；v4 的参数、命令、急停方式、C# 原生层全部保留）：
+    1. 【JSON 解析】日志里任务1第1、2步失败：模型一次输出了两个 JSON 对象，旧解析器取「第一个{到最后一个}」导致整段非法。
+       现改为「字符串感知的括号配对」，只取第一个完整对象；括号出现在字符串里也不会误判。
+    2. 【批量里允许 id】日志里任务6约 10 次被拒：「批量动作中只有第一个动作可以使用 id」，白白浪费步数。
+       现允许批量中使用 id（每个动作执行前仍会按「名称+位置+可见+可用」实时重新核对，不符立即中止其余动作），
+       并新增 click_many（一次勾选/点击最多 20 个控件）。
+    3. 【状态读回】控件的开关状态 / 输入框值 / 选中状态改由 CacheRequest 一次取回（不再受 45 个的限制）；
+       点击复选框后立即读回 ToggleState 写进结果；观察里附「复选框汇总：共 N 个，已勾选 M 个」。（日志里删 10 封只删了 8 封，就是数错了。）
+    4. 【界面变化对比】每轮观察会对比上一轮：窗口标题变化、新增/消失的控件。模型能直接看到「操作是否生效」，
+       不再靠猜（日志任务3：点击其实生效了，但弹窗晚到，模型误判为未生效又多点 3 次；任务4：连按 4 次 down 才确认）。
+    5. 【延迟生效自动复查】操作后若界面完全没变，先自动等 0.9 秒再观察一次，再交给模型。
+    6. 【UIA 重试 + 重新定位】UIA 首次失败后，先重新按「名称+类型+就近位置」找回控件再试一次，而不是直接降级到物理点击
+       （日志任务6第7步：UIA 失败 → 降级物理点击 → 被误判「被遮挡」）。物理层的命中核对改为：跨窗口遮挡严格拦截，同窗口内仅拦截菜单/弹出窗口。
+    7. 【坐标点击自动吸附】模型给 x,y 时，如果该点实时命中的正是某个有 UIA 模式的已观察控件，则自动改走 UIA（不占用真实鼠标）。
+    8. 【done / fail 必须单独输出】批量里 done 放在其他动作之后属于「没看到结果就宣布完成」，整批拒绝。
+    9. 【launch 更可靠】记录启动前的窗口集合，启动后等待新窗口或前台变化，必要时主动激活新窗口；chrome / msedge 自动补 --force-renderer-accessibility。
+   10. 【防循环】同一动作在同一任务里重复 ≥3 次，会在下一轮提示模型它可能无效。
+   11. 【自检扩充】-SelfTest 新增：日志中的双 JSON 样本、括号在字符串里、界面对比、click_many、坐标吸附、状态读回、done 位置校验。
+  紧急停止（只终止当前任务）：鼠标甩到屏幕左上角 (0,0) / Ctrl+Alt+Q ；Ctrl+C 退出整个程序。
+  使用：保存为 UTF-8 的 DeepSeekComputerUse.ps1，然后运行（不要粘贴进控制台）：
+      pwsh -ExecutionPolicy Bypass -File .\DeepSeekComputerUse.ps1
+.PARAMETER InputMode
+  Auto（默认，UIA → 消息 → 物理）/ Uia（只用无障碍，不行就报错）/ Message / Physical（只用物理输入，借用后归位）。
+.PARAMETER NoOverlay
+  不显示虚拟鼠标覆盖层（动作仍按分层方式执行）。
+.PARAMETER CursorSpeed
+  虚拟鼠标速度倍率，默认 1.0（2.0 = 快一倍）。
+.PARAMETER IdleMs
+  物理输入 / 键盘输入前要求你已停手多少毫秒，默认 400。
+.PARAMETER SelfTest
+  运行内置自检后退出（请自检期间不要碰鼠标键盘）。
+.NOTES
+  Task / ApiKey / Model / Once / StepConfirm / ConsoleConfirm / NoShell / NoSafety / RunAsAdmin / MaxBatch /
+  MemoryLimit / DryRun / ObserveOnly / SaveScreenshots 等参数与 v3 / v4 完全相同。MaxBatch 默认值由 4 提高到 6。
+.EXAMPLE
+  pwsh -ExecutionPolicy Bypass -File .\DeepSeekComputerUse.ps1
+.EXAMPLE
+  .\DeepSeekComputerUse.ps1 -SelfTest
+.EXAMPLE
+  .\DeepSeekComputerUse.ps1 -Task "打开记事本，输入：你好" -InputMode Auto -RunAsAdmin
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    [string]$Task,
+    [string]$ApiKey = $env:DEEPSEEK_API_KEY,
+    [string]$BaseUrl = 'https://api.deepseek.com',
+    [string]$Model = 'deepseek-chat',
+    [int]$MaxSteps = 60,
+    [int]$StepDelayMs = 300,
+    [int]$MaxElements = 100,
+    [int]$HistoryLimit = 14,
+    [int]$MaxBatch = 6,
+    [int]$MemoryLimit = 6,
+    [int]$ShellTimeoutSec = 60,
+    [ValidateSet('Auto', 'Uia', 'Message', 'Physical')]
+    [string]$InputMode = 'Auto',
+    [double]$CursorSpeed = 1.0,
+    [int]$IdleMs = 400,
+    [switch]$NoOverlay,
+    [switch]$SelfTest,
+    [switch]$Once,
+    [switch]$StepConfirm,
+    [switch]$ConsoleConfirm,
+    [switch]$AutoApprove,   # 兼容旧版：无影响
+    [switch]$AllowShell,    # 兼容旧版：无影响
+    [switch]$NoShell,
+    [switch]$NoSafety,
+    [switch]$RunAsAdmin,
+    [switch]$DryRun,
+    [switch]$ObserveOnly,
+    [switch]$SaveScreenshots,
+    [string]$LogDir
+)
+$ErrorActionPreference = 'Stop'
+if (-not $IsWindows) { throw '本脚本只能在 Windows 上运行。' }
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$script:Started = Get-Date
+$script:Mode = $InputMode
+if ($CursorSpeed -le 0.1) { $CursorSpeed = 0.1 }
+#region ---------- 管理员提权 ----------
+function Test-IsAdmin {
+    try {
+        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+        return ([Security.Principal.WindowsPrincipal]::new($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+    catch { return $false }
+}
+$script:IsAdmin = Test-IsAdmin
+if ($RunAsAdmin -and -not $script:IsAdmin) {
+    if (-not $PSCommandPath) { throw '-RunAsAdmin 需要先把脚本保存为 .ps1 文件再运行。' }
+    $argList = New-Object System.Collections.Generic.List[string]
+    foreach ($x in @('-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $PSCommandPath + '"'))) { $argList.Add($x) }
+    foreach ($k in $PSBoundParameters.Keys) {
+        if ($k -eq 'RunAsAdmin') { continue }
+        $v = $PSBoundParameters[$k]
+        if ($v -is [switch]) {
+            if ($v.IsPresent) { $argList.Add("-$k") }
+        }
+        else {
+            $argList.Add("-$k")
+            $sv = if ($v -is [double]) { $v.ToString([System.Globalization.CultureInfo]::InvariantCulture) } else { "$v" }
+            $argList.Add('"' + ($sv -replace '"', '\"') + '"')
+        }
+    }
+    $pwshPath = (Get-Process -Id $PID).Path
+    Write-Host '正在以管理员身份重新启动（请在 UAC 弹窗中点「是」）...' -ForegroundColor Yellow
+    Start-Process -FilePath $pwshPath -ArgumentList $argList.ToArray() -Verb RunAs
+    return
+}
+#endregion
+#region ---------- 原生层（C#，经 Add-Type 编译；纯 P/Invoke，不依赖 WinForms） ----------
+# 类名带版本号，避免和同一控制台里旧版本冲突。
+# v4.1 没有改动 C# 层（日志证明它工作正常），所以沿用 DsNative4，同一控制台里先跑过 v4 也不会冲突。
+if (-not ('DsNative4' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+public static class DsNative4 {
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+    [StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx; public int dy; public int mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Explicit)] struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+    [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public INPUTUNION U; }
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
+    [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint mapType);
+    [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO p);
+    [DllImport("kernel32.dll")] static extern uint GetTickCount();
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
+    [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr h);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int max);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] static extern int GetWindowLong(IntPtr h, int idx);
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+    [DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr h, ref POINT p);
+    [DllImport("user32.dll")] static extern IntPtr ChildWindowFromPointEx(IntPtr h, POINT p, uint flags);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p, IntPtr l);
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
+    [DllImport("user32.dll")] static extern uint GetDpiForSystem();
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int val, int size);
+    static uint ownTick = 0;
+    public static void InitDpi() {
+        try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { }
+        try { SetProcessDPIAware(); } catch { }
+    }
+    public static double DpiScale() { try { return GetDpiForSystem() / 96.0; } catch { return 1.0; } }
+    public static int PrimaryW() { return GetSystemMetrics(0); }
+    public static int PrimaryH() { return GetSystemMetrics(1); }
+    public static int VirtX() { return GetSystemMetrics(76); }
+    public static int VirtY() { return GetSystemMetrics(77); }
+    public static int VirtW() { return GetSystemMetrics(78); }
+    public static int VirtH() { return GetSystemMetrics(79); }
+    public static int[] CursorPos() { POINT p = new POINT(); GetCursorPos(out p); return new int[] { p.X, p.Y }; }
+    public static void SetCursor(int x, int y) { SetCursorPos(x, y); }
+    // 距离「用户」最后一次输入的毫秒数；本进程自己 SendInput 产生的输入不计入
+    public static int UserIdleMs() {
+        LASTINPUTINFO li = new LASTINPUTINFO();
+        li.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO));
+        if (!GetLastInputInfo(ref li)) return 99999;
+        uint now = GetTickCount();
+        if (ownTick != 0) {
+            int diff = unchecked((int)(ownTick - li.dwTime));
+            if (diff >= 0 && diff < 150) return 99999;
+        }
+        uint idle = unchecked(now - li.dwTime);
+        return (int)Math.Min(99999u, idle);
+    }
+    static void Send(INPUT[] a) {
+        if (a.Length == 0) return;
+        SendInput((uint)a.Length, a, Marshal.SizeOf(typeof(INPUT)));
+        ownTick = GetTickCount();
+    }
+    static INPUT Mouse(uint flags, int data) {
+        INPUT i = new INPUT(); i.type = 0; i.U.mi.dwFlags = flags; i.U.mi.mouseData = data; return i;
+    }
+    static INPUT KeyIn(int vk, bool up, bool ext) {
+        INPUT i = new INPUT(); i.type = 1;
+        i.U.ki.wVk = (ushort)vk;
+        i.U.ki.wScan = (ushort)MapVirtualKey((uint)vk, 0);
+        i.U.ki.dwFlags = (up ? 2u : 0u) | (ext ? 1u : 0u);
+        return i;
+    }
+    static INPUT UniIn(char c, bool up) {
+        INPUT i = new INPUT(); i.type = 1;
+        i.U.ki.wVk = 0; i.U.ki.wScan = (ushort)c;
+        i.U.ki.dwFlags = 0x4u | (up ? 2u : 0u);
+        return i;
+    }
+    static uint BtnDown(int b) { return b == 1 ? 0x08u : (b == 2 ? 0x20u : 0x02u); }
+    static uint BtnUp(int b) { return b == 1 ? 0x10u : (b == 2 ? 0x40u : 0x04u); }
+    public static void Key(int vk, bool up, bool ext) { Send(new INPUT[] { KeyIn(vk, up, ext) }); }
+    public static void UnicodeText(string s) {
+        List<INPUT> list = new List<INPUT>();
+        for (int i = 0; i < s.Length; i++) {
+            char c = s[i];
+            if (c == '\r') {
+                if (i + 1 < s.Length && s[i + 1] == '\n') continue;
+                list.Add(KeyIn(0x0D, false, false)); list.Add(KeyIn(0x0D, true, false)); continue;
+            }
+            if (c == '\n') { list.Add(KeyIn(0x0D, false, false)); list.Add(KeyIn(0x0D, true, false)); continue; }
+            if (c == '\t') { list.Add(KeyIn(0x09, false, false)); list.Add(KeyIn(0x09, true, false)); continue; }
+            list.Add(UniIn(c, false)); list.Add(UniIn(c, true));
+            if (list.Count >= 200) { Send(list.ToArray()); list.Clear(); Thread.Sleep(4); }
+        }
+        if (list.Count > 0) Send(list.ToArray());
+    }
+    static void Restore(POINT old, int lastX, int lastY) {
+        POINT now = new POINT(); GetCursorPos(out now);
+        // 只有指针仍停在我们放的位置才归位；用户中途动了鼠标就不抢
+        if (Math.Abs(now.X - lastX) <= 3 && Math.Abs(now.Y - lastY) <= 3) SetCursorPos(old.X, old.Y);
+    }
+    public static void PhysicalClick(int x, int y, int button, int count, bool restore) {
+        POINT old = new POINT(); GetCursorPos(out old);
+        SetCursorPos(x, y); Thread.Sleep(25);
+        for (int i = 0; i < count; i++) {
+            Send(new INPUT[] { Mouse(BtnDown(button), 0) }); Thread.Sleep(25);
+            Send(new INPUT[] { Mouse(BtnUp(button), 0) });
+            Thread.Sleep(i + 1 < count ? 45 : 15);
+        }
+        if (restore) Restore(old, x, y);
+    }
+    public static void PhysicalHover(int x, int y, int ms) {
+        POINT old = new POINT(); GetCursorPos(out old);
+        SetCursorPos(x, y); Thread.Sleep(ms);
+        Restore(old, x, y);
+    }
+    public static void PhysicalDrag(int x1, int y1, int x2, int y2, int steps) {
+        POINT old = new POINT(); GetCursorPos(out old);
+        SetCursorPos(x1, y1); Thread.Sleep(30);
+        Send(new INPUT[] { Mouse(0x02u, 0) }); Thread.Sleep(40);
+        for (int i = 1; i <= steps; i++) {
+            double t = (double)i / steps; t = t * t * (3 - 2 * t);
+            SetCursorPos((int)Math.Round(x1 + (x2 - x1) * t), (int)Math.Round(y1 + (y2 - y1) * t));
+            Thread.Sleep(8);
+        }
+        SetCursorPos(x2, y2); Thread.Sleep(40);
+        Send(new INPUT[] { Mouse(0x04u, 0) });
+        Thread.Sleep(15);
+        Restore(old, x2, y2);
+    }
+    public static void PhysicalWheel(int x, int y, int notches, bool restore) {
+        POINT old = new POINT(); GetCursorPos(out old);
+        SetCursorPos(x, y); Thread.Sleep(30);
+        int dir = notches >= 0 ? 1 : -1;
+        for (int i = 0; i < Math.Abs(notches); i++) { Send(new INPUT[] { Mouse(0x0800u, 120 * dir) }); Thread.Sleep(25); }
+        Thread.Sleep(15);
+        if (restore) Restore(old, x, y);
+    }
+    // ---- 窗口查询 ----
+    public static string WinText(IntPtr h) { StringBuilder sb = new StringBuilder(512); GetWindowText(h, sb, 512); return sb.ToString(); }
+    public static string WinClass(IntPtr h) { StringBuilder sb = new StringBuilder(256); GetClassName(h, sb, 256); return sb.ToString(); }
+    public static uint WinPid(IntPtr h) { uint p = 0; GetWindowThreadProcessId(h, out p); return p; }
+    public static int[] WinRect(IntPtr h) { RECT r = new RECT(); GetWindowRect(h, out r); return new int[] { r.Left, r.Top, r.Right, r.Bottom }; }
+    public static IntPtr Root(IntPtr h) { if (h == IntPtr.Zero) return h; return GetAncestor(h, 2); }
+    public static IntPtr RootAt(int x, int y) {
+        POINT p = new POINT(); p.X = x; p.Y = y;
+        IntPtr h = WindowFromPoint(p);
+        if (h == IntPtr.Zero) return h;
+        return GetAncestor(h, 2);
+    }
+    public static IntPtr DeepChildAt(IntPtr top, int sx, int sy) {
+        IntPtr cur = top;
+        for (int i = 0; i < 12; i++) {
+            POINT p = new POINT(); p.X = sx; p.Y = sy;
+            if (!ScreenToClient(cur, ref p)) break;
+            IntPtr c = ChildWindowFromPointEx(cur, p, 0x7u);
+            if (c == IntPtr.Zero || c == cur) break;
+            cur = c;
+        }
+        return cur;
+    }
+    public static bool PostClick(IntPtr h, int sx, int sy, int button, int count) {
+        POINT p = new POINT(); p.X = sx; p.Y = sy;
+        if (!ScreenToClient(h, ref p)) return false;
+        IntPtr l = new IntPtr(((p.Y & 0xFFFF) << 16) | (p.X & 0xFFFF));
+        uint down = button == 1 ? 0x0204u : (button == 2 ? 0x0207u : 0x0201u);
+        uint up = button == 1 ? 0x0205u : (button == 2 ? 0x0208u : 0x0202u);
+        uint dbl = button == 1 ? 0x0206u : (button == 2 ? 0x0209u : 0x0203u);
+        IntPtr mk = new IntPtr(button == 1 ? 0x0002 : (button == 2 ? 0x0010 : 0x0001));
+        PostMessage(h, 0x0200u, IntPtr.Zero, l);
+        Thread.Sleep(15);
+        for (int i = 0; i < count; i++) {
+            PostMessage(h, (i == 0) ? down : dbl, mk, l); Thread.Sleep(20);
+            PostMessage(h, up, IntPtr.Zero, l); Thread.Sleep(30);
+        }
+        return true;
+    }
+    // 可见的顶层窗口，Z 序从上到下；每项 "hwnd|pid|title"
+    public static string[] TopWindows(uint skipPid, int max) {
+        List<string> list = new List<string>();
+        EnumProc cb = delegate (IntPtr h, IntPtr l) {
+            if (list.Count >= max) return false;
+            if (!IsWindowVisible(h)) return true;
+            if (GetWindowTextLength(h) == 0) return true;
+            int ex = GetWindowLong(h, -20);
+            if ((ex & 0x80) != 0 && (ex & 0x40000) == 0) return true;
+            int cloaked = 0;
+            try { DwmGetWindowAttribute(h, 14, out cloaked, 4); } catch { }
+            if (cloaked != 0) return true;
+            uint pid = 0; GetWindowThreadProcessId(h, out pid);
+            if (pid == skipPid) return true;
+            list.Add(h.ToInt64().ToString() + "|" + pid.ToString() + "|" + WinText(h));
+            return true;
+        };
+        EnumWindows(cb, IntPtr.Zero);
+        GC.KeepAlive(cb);
+        return list.ToArray();
+    }
+    // 把窗口切到前台：AttachThreadInput 绕过前台锁，失败再轻按 Alt 重试；返回是否真的成功
+    public static bool Activate(IntPtr h) {
+        if (h == IntPtr.Zero || !IsWindow(h)) return false;
+        if (IsIconic(h)) ShowWindow(h, 9);
+        for (int attempt = 0; attempt < 2; attempt++) {
+            IntPtr fg = GetForegroundWindow();
+            uint dummy = 0;
+            uint fgT = GetWindowThreadProcessId(fg, out dummy);
+            uint me = GetCurrentThreadId();
+            bool att = (fgT != 0 && fgT != me) && AttachThreadInput(me, fgT, true);
+            SetForegroundWindow(h); BringWindowToTop(h);
+            if (att) AttachThreadInput(me, fgT, false);
+            Thread.Sleep(80);
+            if (GetForegroundWindow() == h) return true;
+            Key(0x12, false, false); Key(0x12, true, false);
+        }
+        return GetForegroundWindow() == h;
+    }
+}
+// ============================================================
+// 虚拟鼠标：分层、点击穿透、不抢焦点的覆盖窗口；专用线程渲染；DwmFlush 垂直同步
+// ============================================================
+public sealed class DsOverlay {
+    [StructLayout(LayoutKind.Sequential)] struct POINT { public int X; public int Y; }
+    [StructLayout(LayoutKind.Sequential)] struct SIZE { public int cx; public int cy; }
+    [StructLayout(LayoutKind.Sequential)] struct BLENDFUNCTION { public byte BlendOp; public byte BlendFlags; public byte SourceConstantAlpha; public byte AlphaFormat; }
+    [StructLayout(LayoutKind.Sequential)] struct BITMAPINFOHEADER { public uint biSize; public int biWidth; public int biHeight; public ushort biPlanes; public ushort biBitCount; public uint biCompression; public uint biSizeImage; public int biXPelsPerMeter; public int biYPelsPerMeter; public uint biClrUsed; public uint biClrImportant; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public POINT pt; }
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int c);
+    [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, uint crKey, ref BLENDFUNCTION pblend, uint flags);
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateDIBSection(IntPtr dc, ref BITMAPINFOHEADER bmi, uint usage, out IntPtr bits, IntPtr section, uint offset);
+    [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
+    [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+    [DllImport("user32.dll")] static extern bool PeekMessage(out MSG m, IntPtr h, uint min, uint max, uint remove);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr h, uint a);
+    [DllImport("dwmapi.dll")] static extern int DwmFlush();
+    [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint ms);
+    [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint ms);
+    public IntPtr Hwnd = IntPtr.Zero;
+    public string Error = "";
+    public bool Ok = false;
+    public int Frames = 0;
+    public double MaxGapMs = 0;
+    Thread th;
+    volatile bool quit = false;
+    volatile bool moving = false;
+    ManualResetEvent ready = new ManualResetEvent(false);
+    readonly object gate = new object();
+    Stopwatch sw = Stopwatch.StartNew();
+    double scale = 1.0;
+    int half, size;
+    int[] sprite, frame;
+    double curX, curY, x0, y0, x1, y1, c1x, c1y, c2x, c2y, t0, dur, flip = 1;
+    double rippleStart = -100000, lastActivity = 0;
+    int rippleKind = 0;
+    bool pressed = false, wantVisible = false;
+    const double RippleDur = 380.0;
+    public double X { get { return curX; } }
+    public double Y { get { return curY; } }
+    public bool Start(double dpiScale, double startX, double startY) {
+        scale = Math.Max(1.0, Math.Min(4.0, dpiScale));
+        curX = startX; curY = startY; x1 = startX; y1 = startY;
+        th = new Thread(Run);
+        th.IsBackground = true;
+        th.Name = "DsOverlay";
+        th.Start();
+        ready.WaitOne(6000);
+        return Ok;
+    }
+    public void Stop() {
+        quit = true;
+        if (th != null) { try { th.Join(2000); } catch { } }
+    }
+    public void ResetStats() { Frames = 0; MaxGapMs = 0; }
+    public void MoveTo(double x, double y, int durationMs) {
+        lock (gate) {
+            double now = sw.Elapsed.TotalMilliseconds;
+            x0 = curX; y0 = curY; x1 = x; y1 = y;
+            double dx = x1 - x0, dy = y1 - y0;
+            double d = Math.Sqrt(dx * dx + dy * dy);
+            if (d < 1.0 || durationMs <= 0) {
+                curX = x; curY = y; moving = false;
+            } else {
+                double nx = -dy / d, ny = dx / d;
+                flip = -flip;
+                double off = Math.Min(60.0 * scale, d * 0.10) * flip;
+                c1x = x0 + dx * 0.30 + nx * off; c1y = y0 + dy * 0.30 + ny * off;
+                c2x = x0 + dx * 0.72 + nx * off * 0.5; c2y = y0 + dy * 0.72 + ny * off * 0.5;
+                t0 = now; dur = durationMs; moving = true;
+            }
+            wantVisible = true; lastActivity = now;
+        }
+    }
+    public bool WaitIdle(int timeoutMs) {
+        double end = sw.Elapsed.TotalMilliseconds + timeoutMs;
+        while (moving) {
+            if (sw.Elapsed.TotalMilliseconds > end) return false;
+            Thread.Sleep(2);
+        }
+        return true;
+    }
+    public void Pulse(int kind) {
+        lock (gate) { rippleStart = sw.Elapsed.TotalMilliseconds; rippleKind = kind; wantVisible = true; lastActivity = rippleStart; }
+    }
+    public void SetPressed(bool p) {
+        lock (gate) { pressed = p; wantVisible = true; lastActivity = sw.Elapsed.TotalMilliseconds; }
+    }
+    static double Clamp(double v, double lo, double hi) { return v < lo ? lo : (v > hi ? hi : v); }
+    static int Pack(double a, double r, double g, double b) {
+        int A = (int)(Clamp(a, 0, 1) * 255 + 0.5);
+        int R = (int)(Clamp(r, 0, 1) * 255 + 0.5);
+        int G = (int)(Clamp(g, 0, 1) * 255 + 0.5);
+        int B = (int)(Clamp(b, 0, 1) * 255 + 0.5);
+        return (A << 24) | (R << 16) | (G << 8) | B;
+    }
+    static double SignedDist(double[] px, double[] py, double x, double y) {
+        int n = px.Length; double best = double.MaxValue; bool inside = false;
+        for (int i = 0, j = n - 1; i < n; j = i++) {
+            double ax = px[j], ay = py[j], bx = px[i], by = py[i];
+            if (((ay > y) != (by > y)) && (x < (bx - ax) * (y - ay) / (by - ay) + ax)) inside = !inside;
+            double vx = bx - ax, vy = by - ay, wx = x - ax, wy = y - ay;
+            double len2 = vx * vx + vy * vy;
+            double t = len2 > 0 ? (wx * vx + wy * vy) / len2 : 0;
+            t = Clamp(t, 0, 1);
+            double ex = x - (ax + t * vx), ey = y - (ay + t * vy);
+            double dd = Math.Sqrt(ex * ex + ey * ey);
+            if (dd < best) best = dd;
+        }
+        return inside ? -best : best;
+    }
+    // 箭头精灵：有符号距离场做解析抗锯齿；蓝色主体 + 白色描边 + 柔和阴影（和真实指针一眼可分辨）
+    void BuildSprite() {
+        sprite = new int[size * size];
+        double k = scale * 1.15;
+        double[] ax = { 0, 0, 4.2, 7.3, 10.2, 7.4, 12.8 };
+        double[] ay = { 0, 18.0, 14.0, 20.8, 19.5, 12.6, 12.6 };
+        for (int i = 0; i < ax.Length; i++) { ax[i] *= k; ay[i] *= k; }
+        double bw = 1.5 * scale, blur = 3.2 * scale, sx = 1.2 * scale, sy = 2.2 * scale;
+        double cr = 47.0 / 255.0, cg = 123.0 / 255.0, cb = 1.0;
+        for (int iy = 0; iy < size; iy++) {
+            for (int ix = 0; ix < size; ix++) {
+                double x = ix + 0.5 - half, y = iy + 0.5 - half;
+                if (x < -8 * scale || y < -8 * scale || x > 28 * scale || y > 34 * scale) continue;
+                double dd = SignedDist(ax, ay, x, y);
+                double outer = Clamp(0.5 - (dd - bw), 0, 1);
+                double inner = Clamp(0.5 - dd, 0, 1);
+                double f = outer > 0.0001 ? Math.Min(1.0, inner / outer) : 0;
+                double ds = SignedDist(ax, ay, x - sx, y - sy);
+                double c = Clamp(1.0 - (ds - bw) / blur, 0, 1);
+                double sh = 0.40 * c * c;
+                double r = cr * f + (1 - f), g = cg * f + (1 - f), b = cb * f + (1 - f);
+                double outA = outer + sh * (1 - outer);
+                sprite[iy * size + ix] = Pack(outA, r * outer, g * outer, b * outer);
+            }
+        }
+    }
+    void DrawRing(int[] f, double radius, double ringW, double alpha, double glow, double cr, double cg, double cb) {
+        int lim = (int)Math.Ceiling(radius + ringW + 2);
+        for (int dy = -lim; dy < lim; dy++) {
+            for (int dx = -lim; dx < lim; dx++) {
+                int px = half + dx, py = half + dy;
+                if (px < 0 || py < 0 || px >= size || py >= size) continue;
+                double rx = dx + 0.5, ry = dy + 0.5;
+                double r = Math.Sqrt(rx * rx + ry * ry);
+                double a = alpha * Clamp(1.0 - Math.Abs(r - radius) / ringW, 0, 1);
+                if (r < radius) a += glow * (1.0 - r / radius);
+                if (a <= 0.002) continue;
+                if (a > 1) a = 1;
+                int idx = py * size + px; int d = f[idx];
+                double da = ((d >> 24) & 255) / 255.0, dr = ((d >> 16) & 255) / 255.0, dg = ((d >> 8) & 255) / 255.0, db = (d & 255) / 255.0;
+                double ia = 1 - a;
+                f[idx] = Pack(a + da * ia, cr * a + dr * ia, cg * a + dg * ia, cb * a + db * ia);
+            }
+        }
+    }
+    void Run() {
+        IntPtr screenDc = IntPtr.Zero, memDc = IntPtr.Zero, bmp = IntPtr.Zero, oldObj = IntPtr.Zero, bits = IntPtr.Zero;
+        bool timer = false;
+        try {
+            try { timeBeginPeriod(1); timer = true; } catch { }
+            half = (int)Math.Round(46 * scale); size = half * 2;
+            BuildSprite();
+            frame = new int[size * size];
+            // WS_EX_LAYERED | TRANSPARENT | TOPMOST | NOACTIVATE | TOOLWINDOW ；WS_POPUP ；借用系统 STATIC 类，无需自定义 WndProc
+            Hwnd = CreateWindowEx(0x080800A8u, "STATIC", "DeepSeekVirtualCursor", 0x80000000u, 0, 0, size, size, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            if (Hwnd == IntPtr.Zero) { Error = "CreateWindowEx 失败: " + Marshal.GetLastWin32Error(); return; }
+            try { SetWindowDisplayAffinity(Hwnd, 0x11u); } catch { }   // 不出现在截图里
+            BITMAPINFOHEADER bi = new BITMAPINFOHEADER();
+            bi.biSize = 40; bi.biWidth = size; bi.biHeight = -size; bi.biPlanes = 1; bi.biBitCount = 32; bi.biCompression = 0;
+            screenDc = GetDC(IntPtr.Zero);
+            memDc = CreateCompatibleDC(screenDc);
+            bmp = CreateDIBSection(memDc, ref bi, 0, out bits, IntPtr.Zero, 0);
+            if (bmp == IntPtr.Zero || bits == IntPtr.Zero) { Error = "CreateDIBSection 失败"; return; }
+            oldObj = SelectObject(memDc, bmp);
+            ShowWindow(Hwnd, 4);
+            Ok = true; ready.Set();
+            double opacity = 0, lastLoop = sw.Elapsed.TotalMilliseconds, lastTop = lastLoop, lastRender = lastLoop;
+            int lastOx = int.MinValue, lastOy = int.MinValue, lastOpa = -1;
+            bool bitsHaveFx = false, firstFrame = true, lastMoving = false;
+            while (!quit) {
+                MSG m = new MSG();
+                while (PeekMessage(out m, IntPtr.Zero, 0, 0, 1)) { TranslateMessage(ref m); DispatchMessage(ref m); }
+                double now = sw.Elapsed.TotalMilliseconds;
+                double dt = now - lastLoop; lastLoop = now;
+                double px, py, rs; int rk; bool pr, vis, mv;
+                lock (gate) {
+                    if (moving) {
+                        double t = (now - t0) / dur;
+                        if (t >= 1.0) { moving = false; curX = x1; curY = y1; }
+                        else {
+                            double s = t * t * t * (10.0 + t * (-15.0 + 6.0 * t));   // 最小加加速度
+                            double u = 1 - s;
+                            curX = u * u * u * x0 + 3 * u * u * s * c1x + 3 * u * s * s * c2x + s * s * s * x1;
+                            curY = u * u * u * y0 + 3 * u * u * s * c1y + 3 * u * s * s * c2y + s * s * s * y1;
+                        }
+                    }
+                    px = curX; py = curY; rs = rippleStart; rk = rippleKind; pr = pressed; mv = moving;
+                    if (wantVisible && !moving && !pressed && now - lastActivity > 3500 && now - rs > 600) wantVisible = false;
+                    vis = wantVisible;
+                }
+                double target = vis ? 255.0 : 0.0;
+                if (Math.Abs(target - opacity) > 0.5) {
+                    double kf = 1 - Math.Exp(-dt / 70.0);
+                    opacity += (target - opacity) * kf;
+                    if (Math.Abs(target - opacity) < 1.0) opacity = target;
+                }
+                int opa = (int)Math.Round(opacity);
+                double age = now - rs;
+                bool rippleActive = age >= 0 && age < RippleDur;
+                bool fx = rippleActive || pr;
+                bool animating = mv || fx || opa != (int)target;
+                if (opa > 0 || lastOpa > 0) {
+                    bool contentChange = fx || bitsHaveFx;
+                    if (contentChange) {
+                        Array.Copy(sprite, frame, sprite.Length);
+                        if (rippleActive) {
+                            double tt = age / RippleDur;
+                            double e = 1 - Math.Pow(1 - tt, 3);
+                            double cr = 47.0 / 255.0, cg = 123.0 / 255.0, cb = 1.0;
+                            if (rk == 1) { cr = 1.0; cg = 150.0 / 255.0; cb = 40.0 / 255.0; }
+                            else if (rk == 2) { cr = 50.0 / 255.0; cg = 200.0 / 255.0; cb = 120.0 / 255.0; }
+                            DrawRing(frame, (8 + 30 * e) * scale, 2.4 * scale, 0.9 * (1 - tt), 0.22 * (1 - tt), cr, cg, cb);
+                        }
+                        if (pr) DrawRing(frame, 10 * scale, 2.0 * scale, 0.75, 0.15, 47.0 / 255.0, 123.0 / 255.0, 1.0);
+                        Marshal.Copy(frame, 0, bits, frame.Length);
+                        bitsHaveFx = fx;
+                    } else if (firstFrame) {
+                        Marshal.Copy(sprite, 0, bits, sprite.Length);
+                    }
+                    int ox = (int)Math.Round(px) - half, oy = (int)Math.Round(py) - half;
+                    if (contentChange || firstFrame || ox != lastOx || oy != lastOy || opa != lastOpa) {
+                        POINT dst = new POINT(); dst.X = ox; dst.Y = oy;
+                        SIZE sz = new SIZE(); sz.cx = size; sz.cy = size;
+                        POINT src = new POINT();
+                        BLENDFUNCTION bf = new BLENDFUNCTION(); bf.BlendOp = 0; bf.BlendFlags = 0; bf.SourceConstantAlpha = (byte)opa; bf.AlphaFormat = 1;
+                        UpdateLayeredWindow(Hwnd, IntPtr.Zero, ref dst, ref sz, memDc, ref src, 0, ref bf, 2u);
+                        lastOx = ox; lastOy = oy; lastOpa = opa; firstFrame = false;
+                        Frames++;
+                        if (mv && lastMoving) { double gap = now - lastRender; if (gap > MaxGapMs) MaxGapMs = gap; }
+                        lastRender = now;
+                    }
+                } else { lastOpa = opa; }
+                lastMoving = mv;
+                if (now - lastTop > 600) { lastTop = now; SetWindowPos(Hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x13u); }
+                if (animating) {
+                    int hr = 1;
+                    try { hr = DwmFlush(); } catch { hr = 1; }
+                    if (hr != 0) Thread.Sleep(6);
+                } else { Thread.Sleep(10); }
+            }
+        } catch (Exception ex) { Error = ex.Message; }
+        finally {
+            try { if (Hwnd != IntPtr.Zero) DestroyWindow(Hwnd); } catch { }
+            try { if (oldObj != IntPtr.Zero) SelectObject(memDc, oldObj); } catch { }
+            try { if (bmp != IntPtr.Zero) DeleteObject(bmp); } catch { }
+            try { if (memDc != IntPtr.Zero) DeleteDC(memDc); } catch { }
+            try { if (screenDc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, screenDc); } catch { }
+            if (timer) { try { timeEndPeriod(1); } catch { } }
+            ready.Set();
+        }
+    }
+}
+// ============================================================
+// 自检用目标窗口：真实的 Win32 窗口 + 复选框 + 编辑框，状态可由外部读回
+// ============================================================
+public sealed class DsTestTarget {
+    [StructLayout(LayoutKind.Sequential)] struct POINT { public int X; public int Y; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public POINT pt; }
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
+    [DllImport("user32.dll")] static extern bool PeekMessage(out MSG m, IntPtr h, uint min, uint max, uint remove);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
+    public IntPtr Parent = IntPtr.Zero, Check = IntPtr.Zero, Edit = IntPtr.Zero;
+    Thread th;
+    volatile bool quit = false;
+    ManualResetEvent ready = new ManualResetEvent(false);
+    int px, py;
+    public bool Start(int x, int y) {
+        px = x; py = y;
+        th = new Thread(Run);
+        th.IsBackground = true;
+        try { th.SetApartmentState(ApartmentState.STA); } catch { }
+        th.Start();
+        ready.WaitOne(5000);
+        return Parent != IntPtr.Zero && Check != IntPtr.Zero && Edit != IntPtr.Zero;
+    }
+    public void Stop() { quit = true; if (th != null) { try { th.Join(2000); } catch { } } }
+    public int GetCheck() { return (int)SendMessage(Check, 0x00F0u, IntPtr.Zero, IntPtr.Zero); }
+    public void SetCheck(int v) { SendMessage(Check, 0x00F1u, new IntPtr(v), IntPtr.Zero); }
+    public string GetText() { StringBuilder sb = new StringBuilder(1024); GetWindowText(Edit, sb, 1024); return sb.ToString(); }
+    void Run() {
+        try {
+            Parent = CreateWindowEx(0x8u, "STATIC", "DsSelfTest", 0x90800000u, px, py, 320, 150, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            if (Parent != IntPtr.Zero) {
+                Check = CreateWindowEx(0, "BUTTON", "自检复选框", 0x50010003u, 16, 16, 260, 32, Parent, new IntPtr(101), IntPtr.Zero, IntPtr.Zero);
+                Edit = CreateWindowEx(0, "EDIT", "", 0x50800080u, 16, 70, 280, 30, Parent, new IntPtr(102), IntPtr.Zero, IntPtr.Zero);
+            }
+            ready.Set();
+            while (!quit) {
+                MSG m = new MSG();
+                while (PeekMessage(out m, IntPtr.Zero, 0, 0, 1)) { TranslateMessage(ref m); DispatchMessage(ref m); }
+                Thread.Sleep(4);
+            }
+            if (Parent != IntPtr.Zero) DestroyWindow(Parent);
+        } finally { ready.Set(); }
+    }
+}
+'@
+}
+# 必须先于任何窗口 / 屏幕坐标查询，保证高分屏下坐标一致
+[DsNative4]::InitDpi()
+try {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+}
+catch {
+    throw "加载 Windows UI 组件失败：$($_.Exception.Message)。请确认在 Windows 上使用 PowerShell 7 (pwsh) 运行。"
+}
+$script:ConsoleHwnd = [DsNative4]::GetForegroundWindow()
+$script:ObsHwnd = [IntPtr]::Zero
+$script:Cur = $null
+$script:Pool = $null
+$script:LastClickState = ''
+$script:BaseKeys = $null
+$script:BaseTitle = ''
+#endregion
+#region ---------- 工具函数 ----------
+function Limit-Text([string]$s, [int]$n) {
+    if ([string]::IsNullOrEmpty($s)) { return '' }
+    $s = ($s -replace '[\r\n\t]+', ' ').Trim()
+    if ($s.Length -gt $n) { return $s.Substring(0, $n) + '…' }
+    return $s
+}
+function Test-True($v) {
+    if ($v -is [bool]) { return $v }
+    return ("$v" -match '^(?i:true|1|yes)$')
+}
+function Write-Log([hashtable]$entry) {
+    if ($ObserveOnly -or -not $script:LogFile) { return }
+    try {
+        $entry['time'] = (Get-Date).ToString('o')
+        $entry['taskNo'] = $script:TaskNo
+        $line = $entry | ConvertTo-Json -Compress -Depth 6
+        Add-Content -Path $script:LogFile -Value $line -Encoding UTF8
+    }
+    catch { }
+}
+function Save-Screenshot([string]$path) {
+    $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    try {
+        $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+        $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+    }
+    finally { $g.Dispose(); $bmp.Dispose() }
+}
+function Test-Abort {
+    $p = [DsNative4]::CursorPos()
+    if ($p[0] -le 0 -and $p[1] -le 0) { throw '触发保护：鼠标位于屏幕左上角，已紧急停止当前任务。' }
+    $ctrl = [DsNative4]::GetAsyncKeyState(0x11) -band 0x8000
+    $alt = [DsNative4]::GetAsyncKeyState(0x12) -band 0x8000
+    $q = [DsNative4]::GetAsyncKeyState(0x51) -band 0x8000
+    if ($ctrl -and $alt -and $q) { throw '触发保护：检测到 Ctrl+Alt+Q，已紧急停止当前任务。' }
+}
+function Wait-Safe([int]$ms) {
+    $end = (Get-Date).AddMilliseconds($ms)
+    while ((Get-Date) -lt $end) {
+        Test-Abort
+        $remain = [int](($end - (Get-Date)).TotalMilliseconds)
+        Start-Sleep -Milliseconds ([Math]::Min(100, [Math]::Max(1, $remain)))
+    }
+}
+function Reset-AbortState {
+    try {
+        $w = [DsNative4]::PrimaryW(); $h = [DsNative4]::PrimaryH()
+        $pos = [DsNative4]::CursorPos()
+        if ($pos[0] -le 5 -and $pos[1] -le 5) { [DsNative4]::SetCursor([int]($w / 2), [int]($h / 2)) }
+        $end = (Get-Date).AddSeconds(4)
+        while ((Get-Date) -lt $end) {
+            $ctrl = [DsNative4]::GetAsyncKeyState(0x11) -band 0x8000
+            $alt = [DsNative4]::GetAsyncKeyState(0x12) -band 0x8000
+            $q = [DsNative4]::GetAsyncKeyState(0x51) -band 0x8000
+            if (-not ($ctrl -and $alt -and $q)) { break }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+    catch { }
+}
+function Restore-Console {
+    if ($script:ConsoleHwnd -eq [IntPtr]::Zero) { return }
+    try { [void][DsNative4]::Activate($script:ConsoleHwnd) } catch { }
+}
+function Wait-UserIdle {
+    # 用户正在用键鼠时让出控制权：避免我们的物理输入和你的操作交错
+    $end = (Get-Date).AddSeconds(8)
+    while ([DsNative4]::UserIdleMs() -lt $IdleMs) {
+        Test-Abort
+        if ((Get-Date) -gt $end) { throw '你正在使用键盘/鼠标，为避免冲突已让出控制权（本次物理输入未发送）；请稍后让模型重试。' }
+        Start-Sleep -Milliseconds 40
+    }
+}
+function Test-IsConsoleWindow([IntPtr]$h) {
+    if ($script:ConsoleHwnd -eq [IntPtr]::Zero -or $h -eq [IntPtr]::Zero) { return $false }
+    return ([DsNative4]::Root($h) -eq [DsNative4]::Root($script:ConsoleHwnd))
+}
+function Wait-UiSettled([int]$minMs = 150, [int]$maxMs = 1200) {
+    # 操作之后等界面「稳定」：前台窗口与标题连续两次采样一致即返回（页面/弹窗仍在加载时多等一会儿）
+    $end = (Get-Date).AddMilliseconds($maxMs)
+    Start-Sleep -Milliseconds $minMs
+    $fg = [DsNative4]::GetForegroundWindow()
+    $last = "$fg|$([DsNative4]::WinText($fg))"
+    while ((Get-Date) -lt $end) {
+        Test-Abort
+        Start-Sleep -Milliseconds 150
+        $fg = [DsNative4]::GetForegroundWindow()
+        $now = "$fg|$([DsNative4]::WinText($fg))"
+        if ($now -eq $last) { break }
+        $last = $now
+    }
+}
+function New-KeySet($arr) {
+    $h = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($k in $arr) { [void]$h.Add([string]$k) }
+    return , $h
+}
+function Get-ObservationDiff($prevKeys, $curKeys, [string]$prevTitle, [string]$curTitle) {
+    # 对比两轮观察：标题变化 + 新增/消失的控件（控件键 = 类型|名称|状态，所以勾选/取消勾选也会体现）
+    if ($null -eq $prevKeys) { return '' }
+    $added = @($curKeys | Where-Object { -not $prevKeys.Contains($_) })
+    $removed = @($prevKeys | Where-Object { -not $curKeys.Contains($_) })
+    $parts = New-Object System.Collections.Generic.List[string]
+    if ($prevTitle -ne $curTitle) { $parts.Add("前台窗口标题: [$(Limit-Text $prevTitle 40)] → [$(Limit-Text $curTitle 40)]") }
+    if ($added.Count -eq 0 -and $removed.Count -eq 0) {
+        if ($parts.Count -eq 0) { $parts.Add('控件列表与上一轮完全相同（上一步可能没有生效，或页面仍在加载）') }
+        else { $parts.Add('控件列表与上一轮相同') }
+    }
+    else {
+        if ($added.Count -gt 0) {
+            $ex = ($added | Select-Object -First 5 | ForEach-Object { Limit-Text ($_ -replace '\|', ' ') 45 }) -join ' ； '
+            $parts.Add("新增 $($added.Count) 个: $ex")
+        }
+        if ($removed.Count -gt 0) {
+            $ex = ($removed | Select-Object -First 5 | ForEach-Object { Limit-Text ($_ -replace '\|', ' ') 45 }) -join ' ； '
+            $parts.Add("消失 $($removed.Count) 个: $ex")
+        }
+    }
+    return ($parts -join "`n  ")
+}
+#endregion
+#region ---------- 虚拟鼠标（C# 覆盖层的 PowerShell 封装） ----------
+function Initialize-Runtime {
+    if ($null -eq $script:Pool) {
+        $script:Pool = [runspacefactory]::CreateRunspacePool(1, 4)
+        $script:Pool.Open()
+    }
+    if (-not $NoOverlay -and $null -eq $script:Cur) {
+        try {
+            $o = [DsOverlay]::new()
+            $p = [DsNative4]::CursorPos()
+            if ($o.Start([DsNative4]::DpiScale(), $p[0], $p[1])) { $script:Cur = $o }
+            else { Write-Host "  虚拟鼠标启动失败（动作仍可执行，只是没有可视光标）: $($o.Error)" -ForegroundColor DarkYellow }
+        }
+        catch { Write-Host "  虚拟鼠标启动失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+    }
+}
+function Stop-Runtime {
+    try { if ($script:Cur) { $script:Cur.Stop(); $script:Cur = $null } } catch { }
+    try { if ($script:Pool) { $script:Pool.Close(); $script:Pool.Dispose(); $script:Pool = $null } } catch { }
+}
+function Move-VirtualCursor([int]$x, [int]$y) {
+    $c = $script:Cur
+    if ($null -eq $c) { return }
+    $dx = $x - $c.X; $dy = $y - $c.Y
+    $d = [Math]::Sqrt($dx * $dx + $dy * $dy)
+    # Fitts 定律形态：时间随距离对数增长
+    $ms = if ($d -lt 2) { 0 } else { [int]([Math]::Min(700.0, [Math]::Max(150.0, 110.0 + 120.0 * [Math]::Log2(1.0 + $d / 50.0))) / $CursorSpeed) }
+    $c.MoveTo([double]$x, [double]$y, $ms)
+    while (-not $c.WaitIdle(40)) { Test-Abort }
+}
+function Set-CursorPulse([int]$kind) { if ($script:Cur) { $script:Cur.Pulse($kind) } }
+function Invoke-Worker([scriptblock]$Script, $Arg, [int]$TimeoutMs) {
+    # 在预热的运行空间池里执行可能阻塞的 UIA 调用（例如会弹模态框的 Invoke）；超时返回 $false，不卡住主流程
+    $ps = [powershell]::Create()
+    $ps.RunspacePool = $script:Pool
+    [void]$ps.AddScript('param($f, $x) $ErrorActionPreference = "Stop"; & ([scriptblock]::Create($f)) $x').AddArgument($Script.ToString()).AddArgument($Arg)
+    $ar = $ps.BeginInvoke()
+    if ($ar.AsyncWaitHandle.WaitOne($TimeoutMs)) {
+        try { [void]$ps.EndInvoke($ar) } finally { $ps.Dispose() }
+        return $true
+    }
+    return $false
+}
+#endregion
+#region ---------- 键盘（SendInput） ----------
+$script:VK = @{
+    ctrl = 0x11; control = 0x11; alt = 0x12; shift = 0x10; win = 0x5B; windows = 0x5B; cmd = 0x5B; lwin = 0x5B
+    enter = 0x0D; return = 0x0D; tab = 0x09; esc = 0x1B; escape = 0x1B; space = 0x20
+    backspace = 0x08; delete = 0x2E; del = 0x2E; insert = 0x2D
+    up = 0x26; down = 0x28; left = 0x25; right = 0x27
+    home = 0x24; end = 0x23; pageup = 0x21; pagedown = 0x22
+    apps = 0x5D; printscreen = 0x2C; capslock = 0x14
+    '-' = 0xBD; '=' = 0xBB; ',' = 0xBC; '.' = 0xBE; '/' = 0xBF; ';' = 0xBA; "'" = 0xDE
+    '[' = 0xDB; ']' = 0xDD; '\' = 0xDC; '`' = 0xC0
+}
+$script:ExtendedVK = @(0x26, 0x28, 0x25, 0x27, 0x24, 0x23, 0x21, 0x22, 0x2D, 0x2E, 0x5B, 0x5D)
+function Resolve-VK([string]$name) {
+    $name = $name.Trim().ToLower()
+    if ($script:VK.ContainsKey($name)) { return [byte]$script:VK[$name] }
+    if ($name -match '^f([1-9]|1[0-2])$') { return [byte](0x6F + [int]$Matches[1]) }
+    if ($name.Length -eq 1) {
+        $code = [int][char]$name.ToUpper()
+        if (($code -ge 65 -and $code -le 90) -or ($code -ge 48 -and $code -le 57)) { return [byte]$code }
+    }
+    throw "不支持的按键: '$name'"
+}
+function Send-KeyCombo([string]$combo) {
+    $parts = @($combo.ToLower().Split('+') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($parts.Count -eq 0) { throw 'keys 不能为空' }
+    $codes = @($parts | ForEach-Object { Resolve-VK $_ })
+    $down = New-Object System.Collections.Generic.List[int]
+    try {
+        foreach ($c in $codes) {
+            [DsNative4]::Key([int]$c, $false, [bool]($script:ExtendedVK -contains [int]$c))
+            $down.Add([int]$c)
+            Start-Sleep -Milliseconds 12
+        }
+    }
+    finally {
+        # 无论中途是否出错，都倒序松开，绝不留下「卡住的修饰键」
+        for ($i = $down.Count - 1; $i -ge 0; $i--) {
+            [DsNative4]::Key($down[$i], $true, [bool]($script:ExtendedVK -contains $down[$i]))
+            Start-Sleep -Milliseconds 12
+        }
+    }
+}
+function Send-KeySequence([string]$seq) {
+    $norm = ($seq -replace '\s*\+\s*', '+').Trim()
+    $items = @($norm -split '\s+' | Where-Object { $_ })
+    if ($items.Count -eq 0) { throw 'keys 不能为空' }
+    foreach ($it in $items) { Send-KeyCombo $it; Start-Sleep -Milliseconds 40 }
+}
+function Send-Text([string]$text) {
+    if ($text.Length -le 400) {
+        [DsNative4]::UnicodeText($text)   # Unicode 直输：不动剪贴板，中文 / Emoji 均可
+        Start-Sleep -Milliseconds ([Math]::Min(500, 40 + $text.Length))
+        return
+    }
+    $old = $null
+    try { $old = Get-Clipboard -Raw -ErrorAction SilentlyContinue } catch { $old = $null }
+    Set-Clipboard -Value $text
+    Start-Sleep -Milliseconds 60
+    Send-KeyCombo 'ctrl+v'
+    Start-Sleep -Milliseconds 400
+    if ($null -ne $old -and $old -ne '') { try { Set-Clipboard -Value $old } catch { } }
+}
+function Assert-KeyboardReady {
+    $fg = [DsNative4]::GetForegroundWindow()
+    if (Test-IsConsoleWindow $fg) { throw '前台窗口是运行本脚本的控制台，已拒绝发送按键/文本（防止输入到自己）。请先 launch / focus_window 切换到目标程序。' }
+    if ($script:ObsHwnd -ne [IntPtr]::Zero -and $fg -ne $script:ObsHwnd) {
+        throw "前台窗口已变化（观察时 [$([DsNative4]::WinText($script:ObsHwnd))]，现在 [$([DsNative4]::WinText($fg))]），为避免输入到错误窗口已取消，请重新观察。"
+    }
+    Wait-UserIdle
+}
+#endregion
+#region ---------- 窗口 / UI Automation 观察 ----------
+$script:Elements = @{}
+function Get-ForegroundInfo {
+    $hwnd = [DsNative4]::GetForegroundWindow()
+    $wpid = [DsNative4]::WinPid($hwnd)
+    $pname = ''
+    try { $pname = [System.Diagnostics.Process]::GetProcessById([int]$wpid).ProcessName } catch { }
+    [pscustomobject]@{ Handle = $hwnd; Title = [DsNative4]::WinText($hwnd); Process = $pname; Class = [DsNative4]::WinClass($hwnd) }
+}
+function Get-TopWindowList([int]$max = 40) {
+    foreach ($line in [DsNative4]::TopWindows([uint32]$PID, $max)) {
+        $p = $line.Split('|', 3)
+        $pn = ''
+        try { $pn = [System.Diagnostics.Process]::GetProcessById([int]$p[1]).ProcessName } catch { }
+        [pscustomobject]@{ Handle = [IntPtr][int64]$p[0]; Pid = [int]$p[1]; Process = $pn; Title = $p[2] }
+    }
+}
+function Get-TopHandles {
+    $h = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($line in [DsNative4]::TopWindows([uint32]$PID, 100)) { [void]$h.Add($line.Split('|', 3)[0]) }
+    return , $h
+}
+function New-UiaCondition([string[]]$typeNames) {
+    $AE = [System.Windows.Automation.AutomationElement]
+    $conds = @(foreach ($n in $typeNames) {
+            [System.Windows.Automation.PropertyCondition]::new($AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::$n)
+        })
+    if ($conds.Count -eq 0) { throw 'New-UiaCondition 需要至少一个控件类型' }
+    if ($conds.Count -eq 1) { $typeCond = $conds[0] }
+    else { $typeCond = [System.Windows.Automation.OrCondition]::new([System.Windows.Automation.Condition[]]$conds) }
+    $off = [System.Windows.Automation.PropertyCondition]::new($AE::IsOffscreenProperty, $false)
+    return [System.Windows.Automation.AndCondition]::new($typeCond, $off)
+}
+function Get-UiElements([IntPtr]$hwnd) {
+    $result = New-Object System.Collections.Generic.List[object]
+    if ($hwnd -eq [IntPtr]::Zero) { return @() }
+    $AE = [System.Windows.Automation.AutomationElement]
+    try { $root = $AE::FromHandle($hwnd) } catch { return @() }
+    $interactive = @('Button', 'Edit', 'MenuItem', 'ListItem', 'TabItem', 'CheckBox', 'RadioButton',
+        'ComboBox', 'Hyperlink', 'TreeItem', 'SplitButton', 'Slider', 'DataItem')
+    $cond = New-UiaCondition ($interactive + @('Text'))
+    $patProps = [ordered]@{
+        inv = $AE::IsInvokePatternAvailableProperty
+        val = $AE::IsValuePatternAvailableProperty
+        tog = $AE::IsTogglePatternAvailableProperty
+        sel = $AE::IsSelectionItemPatternAvailableProperty
+        exp = $AE::IsExpandCollapsePatternAvailableProperty
+        scr = $AE::IsScrollPatternAvailableProperty
+    }
+    # v4.1：开关状态 / 值 / 选中状态也随 CacheRequest 一次取回（不再受「最多 45 次实时读取」限制）
+    $TogP = [System.Windows.Automation.TogglePattern]::ToggleStateProperty
+    $ValP = [System.Windows.Automation.ValuePattern]::ValueProperty
+    $SelP = [System.Windows.Automation.SelectionItemPattern]::IsSelectedProperty
+    $useCache = $true
+    $act = $null
+    try {
+        $cr = [System.Windows.Automation.CacheRequest]::new()
+        foreach ($p in @($AE::NameProperty, $AE::AutomationIdProperty, $AE::ControlTypeProperty,
+                $AE::BoundingRectangleProperty, $AE::IsEnabledProperty, $AE::NativeWindowHandleProperty,
+                $AE::HasKeyboardFocusProperty, $TogP, $ValP, $SelP)) { $cr.Add($p) }
+        foreach ($p in $patProps.Values) { $cr.Add($p) }
+        $act = $cr.Activate()
+    }
+    catch { $useCache = $false; $act = $null }
+    $col = $null
+    try { $col = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond) }
+    catch { $col = $null }
+    finally { if ($act) { $act.Dispose() } }
+    if ($null -eq $col) { return @() }
+    $interCount = 0
+    $textCount = 0
+    $liveReads = 0
+    foreach ($el in $col) {
+        if ($interCount -ge $MaxElements -and $textCount -ge 40) { break }
+        try {
+            $c = if ($useCache) { $el.Cached } else { $el.Current }
+            $r = $c.BoundingRectangle
+            if ($r.IsEmpty -or $r.Width -lt 2 -or $r.Height -lt 2) { continue }
+            $type = ($c.ControlType.ProgrammaticName -replace '^ControlType\.', '')
+            $isText = ($type -eq 'Text')
+            if ($isText) { if ($textCount -ge 40) { continue } }
+            elseif ($interCount -ge $MaxElements) { continue }
+            $name = $c.Name
+            if ([string]::IsNullOrWhiteSpace($name) -and -not $isText) { $name = $c.AutomationId }
+            if ($isText -and [string]::IsNullOrWhiteSpace($name)) { continue }
+            $pats = @()
+            if (-not $isText) {
+                foreach ($k in $patProps.Keys) {
+                    try {
+                        $pv = if ($useCache) { $el.GetCachedPropertyValue($patProps[$k]) } else { $el.GetCurrentPropertyValue($patProps[$k]) }
+                        if ($pv -eq $true) { $pats += $k }
+                    }
+                    catch { }
+                }
+            }
+            $value = ''
+            $state = ''
+            if (-not $isText) {
+                if ($useCache) {
+                    try {
+                        if ($type -eq 'Edit' -or $type -eq 'ComboBox' -or $pats -contains 'val') {
+                            $vv = $el.GetCachedPropertyValue($ValP)
+                            if ($vv -is [string]) { $value = $vv }
+                        }
+                        if ($pats -contains 'tog') {
+                            $tv = $el.GetCachedPropertyValue($TogP)
+                            if ($tv -is [System.Windows.Automation.ToggleState]) { $state = "$tv".ToLower() }
+                        }
+                        elseif ($pats -contains 'sel') {
+                            $sv = $el.GetCachedPropertyValue($SelP)
+                            if ($sv -is [bool]) { $state = if ($sv) { 'selected' } else { '' } }
+                        }
+                    }
+                    catch { }
+                }
+                elseif ($liveReads -lt 45) {
+                    # 缓存不可用时的退路（与 v4 相同的实时读取）
+                    if ($type -eq 'Edit' -or $type -eq 'ComboBox') {
+                        try {
+                            $pat = $null
+                            if ($el.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pat)) { $value = $pat.Current.Value }
+                        }
+                        catch { }
+                        $liveReads++
+                    }
+                    elseif ($pats -contains 'tog') {
+                        try {
+                            $pat = $null
+                            if ($el.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pat)) { $state = "$($pat.Current.ToggleState)".ToLower() }
+                        }
+                        catch { }
+                        $liveReads++
+                    }
+                    elseif ($pats -contains 'sel') {
+                        try {
+                            $pat = $null
+                            if ($el.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pat)) { $state = if ($pat.Current.IsSelected) { 'selected' } else { '' } }
+                        }
+                        catch { }
+                        $liveReads++
+                    }
+                }
+            }
+            if ($isText) { $textCount++ } else { $interCount++ }
+            $full = "$name"
+            if ($full.Length -gt 300) { $full = $full.Substring(0, 300) }
+            $focus = $false
+            try { $focus = [bool]$c.HasKeyboardFocus } catch { }
+            $result.Add([pscustomobject]@{
+                    Type = $type
+                    Name = (Limit-Text $name 80)
+                    FullName = $full
+                    Value = (Limit-Text $value 80)
+                    State = $state
+                    Enabled = [bool]$c.IsEnabled
+                    Focus = $focus
+                    Hwnd = [int]$c.NativeWindowHandle
+                    Pat = $pats
+                    El = $el
+                    cx = [int]($r.Left + $r.Width / 2)
+                    cy = [int]($r.Top + $r.Height / 2)
+                    L = [int]$r.Left
+                    T = [int]$r.Top
+                    W = [int]$r.Width
+                    H = [int]$r.Height
+                })
+        }
+        catch { continue }
+    }
+    return $result.ToArray()
+}
+function Set-Elements($items) {
+    $script:Elements = @{}
+    $id = 0
+    foreach ($it in @($items)) { $id++; $script:Elements[$id] = $it }
+}
+function Get-Observation {
+    Test-Abort
+    $fg = Get-ForegroundInfo
+    $script:ObsHwnd = $fg.Handle
+    $sw = [DsNative4]::PrimaryW(); $sh = [DsNative4]::PrimaryH()
+    $cursor = [DsNative4]::CursorPos()
+    $windows = @(Get-TopWindowList 15 | ForEach-Object { "  - $($_.Process): $(Limit-Text $_.Title 60)" })
+    $items = @(Get-UiElements $fg.Handle | Sort-Object cy, cx)
+    Set-Elements $items
+    $lines = New-Object System.Collections.Generic.List[string]
+    $keys = New-Object System.Collections.Generic.List[string]
+    $id = 0
+    $cbTotal = 0
+    $cbOnIds = New-Object System.Collections.Generic.List[int]
+    foreach ($it in $items) {
+        $id++
+        $line = "[$id] $($it.Type) `"$($it.Name)`""
+        if ($it.Value) { $line += " value=`"$($it.Value)`"" }
+        if ($it.State) { $line += " state=$($it.State)" }
+        if (-not $it.Enabled) { $line += ' (disabled)' }
+        if ($it.Focus) { $line += ' ★焦点' }
+        if ($it.Pat.Count -gt 0) { $line += ' {' + ($it.Pat -join ',') + '}' }
+        $line += " @($($it.cx),$($it.cy))"
+        $lines.Add($line)
+        $keys.Add("$($it.Type)|$($it.Name)|$($it.State)")
+        if ($it.Type -eq 'CheckBox') { $cbTotal++; if ($it.State -eq 'on') { $cbOnIds.Add($id) } }
+    }
+    $focusLine = ''
+    try {
+        $fe = [System.Windows.Automation.AutomationElement]::FocusedElement
+        if ($null -ne $fe) {
+            $fc = $fe.Current
+            $focusLine = "当前键盘焦点: $($fc.ControlType.ProgrammaticName -replace '^ControlType\.', '') `"$(Limit-Text $fc.Name 50)`""
+        }
+    }
+    catch { }
+    $cbLine = ''
+    if ($cbTotal -gt 0) {
+        $cbLine = "复选框汇总: 可见共 $cbTotal 个，已勾选 $($cbOnIds.Count) 个" + $(if ($cbOnIds.Count -gt 0) { "（编号 $($cbOnIds -join ',')）" } else { '' })
+    }
+    $consoleHint = ''
+    $isConsole = (Test-IsConsoleWindow $fg.Handle) -or ($fg.Process -in @('pwsh', 'powershell', 'WindowsTerminal', 'conhost', 'OpenConsole'))
+    if ($isConsole) { $consoleHint = '（注意：当前前台是运行本脚本的控制台，请先 launch 或 focus_window 切换到目标程序）' }
+    $text = @(
+        "屏幕分辨率: ${sw}x${sh}  真实鼠标位置: ($($cursor[0]),$($cursor[1]))（虚拟鼠标不会移动它）"
+        "前台窗口: [$($fg.Process)] $(Limit-Text $fg.Title 100) $consoleHint"
+        $focusLine
+        '已打开的窗口:'
+        ($windows -join "`n")
+        "前台窗口控件（共 $($items.Count) 个，按从上到下、从左到右排序；{...} 为可用的无障碍模式 inv=可调用 val=可写值 tog=开关 sel=可选中 exp=可展开 scr=可滚动）:"
+        ($lines -join "`n")
+        $cbLine
+    ) | Where-Object { $_ -ne '' } | ForEach-Object { $_ }
+    $text = $text -join "`n"
+    $curSet = New-KeySet $keys
+    $changes = Get-ObservationDiff $script:BaseKeys $curSet $script:BaseTitle $fg.Title
+    return [pscustomobject]@{ Text = $text; Foreground = $fg; Keys = $curSet; Changes = $changes }
+}
+#endregion
+#region ---------- 安全检查（仅拦截灾难性命令，-NoSafety 可关闭） ----------
+$script:DangerPatterns = @(
+    'Format-Volume', 'Clear-Disk', 'Remove-Partition', 'Initialize-Disk', 'diskpart', 'format\s+[a-z]:',
+    'bcdedit', 'vssadmin\s+delete', 'cipher\s+/w', 'reg\s+delete\s+HKLM\\(SYSTEM|SOFTWARE)',
+    'Remove-Item\s+.*-Recurse.*[''"]?[a-z]:\\?[''"]?\s*($|[;|])',
+    'Remove-Item\s+.*-Recurse.*(\\Windows|System32|\\Users\\?[''"]?\s*($|[;|]))',
+    'rd\s+/s\s+.*(\\Windows|System32)', 'rm\s+-r[f]?\s+/\s*$',
+    'Stop-Computer', 'Restart-Computer', '\bshutdown(\.exe)?\b',
+    'Set-MpPreference\s+.*Disable', 'New-LocalUser', 'net\s+user\s+\S+\s+\S+\s+/add'
+)
+function Test-DangerousCommand([string]$cmd) {
+    foreach ($p in $script:DangerPatterns) { if ($cmd -match $p) { return $p } }
+    return $null
+}
+$script:Auto = -not [bool]$StepConfirm
+function Confirm-ActionConsole([string]$desc) {
+    Write-Host "  即将执行: $desc" -ForegroundColor Yellow
+    $ans = Read-Host '  确认? [Enter=执行 / n=跳过 / a=之后全部自动 / q=退出当前任务]'
+    switch ("$ans".Trim().ToLower()) {
+        '' { return 'y' }
+        'y' { return 'y' }
+        'n' { return 'n' }
+        'a' { return 'a' }
+        'q' { return 'q' }
+        default { return 'n' }
+    }
+}
+function Confirm-ActionDialog([string]$desc) {
+    [System.Windows.Forms.Application]::EnableVisualStyles()
+    $form = New-Object System.Windows.Forms.Form
+    try {
+        $form.Text = 'DeepSeek Computer Use - 操作确认'
+        $form.TopMost = $true
+        $form.ShowInTaskbar = $true
+        $form.FormBorderStyle = 'FixedDialog'
+        $form.MaximizeBox = $false
+        $form.MinimizeBox = $false
+        $form.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
+        $form.AutoScaleMode = 'Dpi'
+        $form.ClientSize = New-Object System.Drawing.Size(540, 170)
+        $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9.5)
+        $form.StartPosition = 'Manual'
+        $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+        $form.Location = New-Object System.Drawing.Point(([Math]::Max(0, $wa.Right - $form.Width - 20)), ([Math]::Max(0, $wa.Bottom - $form.Height - 20)))
+        $lbl = New-Object System.Windows.Forms.Label
+        $lbl.Text = "即将执行:`r`n$desc"
+        $lbl.Location = New-Object System.Drawing.Point(14, 12)
+        $lbl.Size = New-Object System.Drawing.Size(512, 100)
+        $form.Controls.Add($lbl)
+        $defs = @(
+            @{ Text = '执行 (Enter)'; Result = [System.Windows.Forms.DialogResult]::Yes },
+            @{ Text = '跳过 (Esc)'; Result = [System.Windows.Forms.DialogResult]::No },
+            @{ Text = '之后全自动'; Result = [System.Windows.Forms.DialogResult]::Ignore },
+            @{ Text = '退出任务'; Result = [System.Windows.Forms.DialogResult]::Abort }
+        )
+        $x = 14
+        foreach ($d in $defs) {
+            $b = New-Object System.Windows.Forms.Button
+            $b.Text = $d.Text
+            $b.DialogResult = $d.Result
+            $b.Location = New-Object System.Drawing.Point($x, 122)
+            $b.Size = New-Object System.Drawing.Size(121, 34)
+            $form.Controls.Add($b)
+            if ($d.Result -eq [System.Windows.Forms.DialogResult]::Yes) { $form.AcceptButton = $b }
+            if ($d.Result -eq [System.Windows.Forms.DialogResult]::No) { $form.CancelButton = $b }
+            $x += 128
+        }
+        $res = $form.ShowDialog()
+    }
+    finally { $form.Dispose() }
+    Start-Sleep -Milliseconds 250
+    switch ($res) {
+        ([System.Windows.Forms.DialogResult]::Yes) { return 'y' }
+        ([System.Windows.Forms.DialogResult]::Ignore) { return 'a' }
+        ([System.Windows.Forms.DialogResult]::Abort) { return 'q' }
+        default { return 'n' }
+    }
+}
+function Confirm-Action([string]$desc) {
+    if ($script:Auto) { return 'y' }
+    if ($ConsoleConfirm) { $ans = Confirm-ActionConsole $desc }
+    else {
+        try { $ans = Confirm-ActionDialog $desc }
+        catch {
+            Write-Host "  弹窗失败，改用控制台确认: $($_.Exception.Message)" -ForegroundColor DarkYellow
+            $ans = Confirm-ActionConsole $desc
+        }
+    }
+    if ($ans -eq 'a') { $script:Auto = $true; return 'y' }
+    return $ans
+}
+#endregion
+#region ---------- 发送前校验（Schema） ----------
+$script:ActionNames = @('click', 'click_many', 'double_click', 'right_click', 'middle_click', 'hover', 'drag', 'type', 'key', 'hotkey',
+    'scroll', 'launch', 'focus_window', 'wait', 'run_powershell', 'done', 'fail')
+function Test-IdValue($v) { return ($null -ne $v -and "$v" -match '^\d+$') }
+function Test-NumValue($v) { return ($null -ne $v -and "$v" -ne '' -and $null -ne ("$v" -as [double])) }
+function Test-ActionUsesId($a) {
+    return [bool]((Test-IdValue $a.id) -or ($null -ne $a.ids) -or (Test-IdValue $a.from_id) -or (Test-IdValue $a.to_id))
+}
+function Test-ActionSchema($a, [int]$index) {
+    # 返回 $null 表示合法，否则返回原因。任何一个动作不合法，整批都不执行。
+    # v4.1：批量里允许使用 id（执行每个动作前都会实时重新核对控件：名称 + 位置 + 可见 + 可用，不符就中止其余动作）。
+    $k = "$($a.action)".ToLower().Trim()
+    if ($k -notin $script:ActionNames) { return "未知动作 '$($a.action)'" }
+    if (($k -in 'done', 'fail') -and $index -gt 1) {
+        return "$k 必须单独输出（放在其他动作之后等于没看到结果就宣布结束）；请先执行动作，下一轮看到结果后再 $k"
+    }
+    switch ($k) {
+        { $_ -in 'click', 'double_click', 'right_click', 'middle_click', 'hover' } {
+            if (Test-IdValue $a.id) {
+                if (-not $script:Elements.ContainsKey([int]"$($a.id)")) { return "元素编号 $($a.id) 不存在" }
+            }
+            elseif (-not ((Test-NumValue $a.x) -and (Test-NumValue $a.y))) { return '需要 id，或同时提供 x 和 y' }
+        }
+        'click_many' {
+            $ids = @($a.ids)
+            if ($ids.Count -lt 1 -or $ids.Count -gt 20) { return 'click_many 需要 1~20 个 ids' }
+            foreach ($i in $ids) {
+                if (-not (Test-IdValue $i)) { return "click_many 的 ids 里有非法编号 '$i'" }
+                if (-not $script:Elements.ContainsKey([int]"$i")) { return "元素编号 $i 不存在" }
+            }
+        }
+        'drag' {
+            foreach ($end in @(@('from_id', 'from_x', 'from_y'), @('to_id', 'to_x', 'to_y'))) {
+                $hasId = Test-IdValue $a.($end[0])
+                if ($hasId) {
+                    if (-not $script:Elements.ContainsKey([int]"$($a.($end[0]))")) { return "元素编号 $($a.($end[0])) 不存在" }
+                }
+                elseif (-not ((Test-NumValue $a.($end[1])) -and (Test-NumValue $a.($end[2])))) { return "drag 需要 $($end[0]) 或 $($end[1])+$($end[2])" }
+            }
+        }
+        'type' {
+            if ([string]::IsNullOrEmpty("$($a.text)")) { return 'type 需要非空 text' }
+            if ("$($a.text)".Length -gt 20000) { return 'type 的 text 过长（>20000）' }
+            if ($null -ne $a.id -and "$($a.id)" -ne '') {
+                if (-not (Test-IdValue $a.id)) { return 'id 必须是数字' }
+                if (-not $script:Elements.ContainsKey([int]"$($a.id)")) { return "元素编号 $($a.id) 不存在" }
+            }
+        }
+        { $_ -in 'key', 'hotkey' } {
+            $seq = ("$($a.keys)" -replace '\s*\+\s*', '+').Trim()
+            if ($seq -eq '') { return 'key 需要 keys' }
+            foreach ($tok in @($seq -split '\s+' | Where-Object { $_ })) {
+                foreach ($part in @($tok.Split('+') | Where-Object { $_ })) {
+                    try { [void](Resolve-VK $part) } catch { return $_.Exception.Message }
+                }
+            }
+        }
+        'scroll' {
+            if ("$($a.direction)".ToLower() -notin 'up', 'down') { return "scroll 的 direction 只能是 up 或 down" }
+            if (Test-IdValue $a.id) {
+                if (-not $script:Elements.ContainsKey([int]"$($a.id)")) { return "元素编号 $($a.id) 不存在" }
+            }
+        }
+        'launch' { if ([string]::IsNullOrWhiteSpace("$($a.target)")) { return 'launch 需要 target' } }
+        'focus_window' { if ([string]::IsNullOrWhiteSpace("$($a.title)")) { return 'focus_window 需要 title' } }
+        'run_powershell' {
+            if ($NoShell) { return '已使用 -NoShell，禁止 run_powershell' }
+            if ([string]::IsNullOrWhiteSpace("$($a.command)")) { return 'run_powershell 需要 command' }
+        }
+        'wait' { if ($null -ne $a.seconds -and "$($a.seconds)" -ne '' -and -not (Test-NumValue $a.seconds)) { return 'wait 的 seconds 必须是数字' } }
+    }
+    return $null
+}
+#endregion
+#region ---------- 动作执行（分层精确） ----------
+function Test-HitTarget($item, [int]$x, [int]$y, [switch]$Strict) {
+    # 目标点处「实际」的 UIA 元素必须是目标本身、其后代，或其近亲祖先。
+    # -Strict（坐标吸附用）：只接受「命中元素本身或其后代」。
+    # 非 Strict（物理点击前核对）：跨窗口遮挡已由 RootAt 严格拦截；同窗口内只拦截菜单 / 弹出窗口类遮挡，避免 Chrome 页面里的误判。
+    try {
+        $AE = [System.Windows.Automation.AutomationElement]
+        $hit = $AE::FromPoint([System.Windows.Point]::new([double]$x, [double]$y))
+        if ($null -eq $hit) { return (-not $Strict) }
+        $w = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+        $cur = $hit
+        for ($i = 0; $i -lt 10 -and $null -ne $cur; $i++) {
+            if ([System.Windows.Automation.Automation]::Compare($cur, $item.El)) { return $true }
+            $cur = $w.GetParent($cur)
+        }
+        if ($Strict) { return $false }
+        $cur = $item.El
+        for ($i = 0; $i -lt 3 -and $null -ne $cur; $i++) {
+            $cur = $w.GetParent($cur)
+            if ($null -ne $cur -and [System.Windows.Automation.Automation]::Compare($cur, $hit)) { return $true }
+        }
+        $ht = ($hit.Current.ControlType.ProgrammaticName -replace '^ControlType\.', '')
+        if ($ht -in @('Menu', 'MenuItem', 'Window')) { return $false }
+        return $true
+    }
+    catch { return $true }   # 无法核验时不误杀
+}
+function Find-ElementAtPoint([int]$x, [int]$y) {
+    # 坐标 → 已观察控件：点必须落在某个带 UIA 模式的控件矩形内，且「实时」命中的确实是它（Strict），取面积最小者
+    if ($script:Mode -notin 'Auto', 'Uia') { return $null }
+    try {
+        $best = $null; $bestId = 0; $bestArea = [double]::MaxValue
+        foreach ($kv in $script:Elements.GetEnumerator()) {
+            $it = $kv.Value
+            if ($it.Type -eq 'Text' -or $it.Pat.Count -eq 0) { continue }
+            if ($x -ge $it.L -and $x -le ($it.L + $it.W) -and $y -ge $it.T -and $y -le ($it.T + $it.H)) {
+                $area = [double]$it.W * [double]$it.H
+                if ($area -lt $bestArea) { $best = $it; $bestId = [int]$kv.Key; $bestArea = $area }
+            }
+        }
+        if ($null -ne $best -and (Test-HitTarget $best $x $y -Strict)) { return @{ Id = $bestId; Item = $best } }
+    }
+    catch { }
+    return $null
+}
+function Resolve-Target($a) {
+    $vx = [DsNative4]::VirtX(); $vy = [DsNative4]::VirtY(); $vw = [DsNative4]::VirtW(); $vh = [DsNative4]::VirtH()
+    if (Test-IdValue $a.id) {
+        $n = [int]"$($a.id)"
+        if (-not $script:Elements.ContainsKey($n)) { throw "元素编号 $n 不存在（当前只有 $($script:Elements.Count) 个元素）" }
+        $item = $script:Elements[$n]
+        # 发送前重新核对：控件还在、没被隐藏、没被禁用、名称没变、位置没有大幅漂移 —— 并使用「此刻」的精确坐标
+        $liveName = ''; $r = $null; $enabled = $true; $offscreen = $false
+        try {
+            $cur = $item.El.Current
+            $r = $cur.BoundingRectangle
+            $enabled = [bool]$cur.IsEnabled
+            $offscreen = [bool]$cur.IsOffscreen
+            $liveName = $cur.Name
+            if ([string]::IsNullOrWhiteSpace($liveName) -and $item.Type -ne 'Text') { $liveName = $cur.AutomationId }
+        }
+        catch {
+            # v4.1：元素引用失效（网页重绘常见）时，先按名称+类型+就近位置重新找回，再核对
+            if (Update-ItemElement $item) {
+                try {
+                    $cur = $item.El.Current
+                    $r = $cur.BoundingRectangle
+                    $enabled = [bool]$cur.IsEnabled
+                    $offscreen = [bool]$cur.IsOffscreen
+                    $liveName = $cur.Name
+                    if ([string]::IsNullOrWhiteSpace($liveName) -and $item.Type -ne 'Text') { $liveName = $cur.AutomationId }
+                }
+                catch { throw "控件 [$n] $($item.Type) `"$($item.Name)`" 已不存在（界面已变化），请重新观察后再操作" }
+            }
+            else { throw "控件 [$n] $($item.Type) `"$($item.Name)`" 已不存在（界面已变化），请重新观察后再操作" }
+        }
+        if ($r.IsEmpty -or $offscreen) { throw "控件 [$n] `"$($item.Name)`" 已不可见，请重新观察" }
+        if (-not $enabled) { throw "控件 [$n] `"$($item.Name)`" 当前被禁用，点击不会有效果" }
+        if ($item.Name -and (Limit-Text $liveName 80) -ne $item.Name) { throw "控件 [$n] 的名称已由 `"$($item.Name)`" 变为 `"$(Limit-Text $liveName 40)`"，界面已变化，请重新观察" }
+        $lx = [int]($r.Left + $r.Width / 2); $ly = [int]($r.Top + $r.Height / 2)
+        $drift = [Math]::Sqrt([Math]::Pow($lx - $item.cx, 2) + [Math]::Pow($ly - $item.cy, 2))
+        if ($drift -gt 40) { throw "控件 [$n] 位置已偏移 $([int]$drift) 像素，界面已变化，请重新观察" }
+        if ($lx -le 1 -and $ly -le 1) { throw '目标坐标位于屏幕左上角保护区，拒绝操作。' }
+        return @{ x = $lx; y = $ly; label = "[$n] $($item.Type) $($item.Name)"; item = $item }
+    }
+    if ((Test-NumValue $a.x) -and (Test-NumValue $a.y)) {
+        $px = [Math]::Min([Math]::Max([int]$a.x, $vx + 2), $vx + $vw - 3)
+        $py = [Math]::Min([Math]::Max([int]$a.y, $vy + 2), $vy + $vh - 3)
+        if ($px -le 1 -and $py -le 1) { throw '目标坐标位于屏幕左上角保护区，拒绝操作。' }
+        $snap = Find-ElementAtPoint $px $py
+        if ($snap) {
+            return @{ x = $px; y = $py; label = "($px,$py) ≈ [$($snap.Id)] $($snap.Item.Type) $($snap.Item.Name)"; item = $snap.Item }
+        }
+        return @{ x = $px; y = $py; label = "($px,$py)"; item = $null }
+    }
+    throw '需要提供 id，或者 x 和 y 坐标'
+}
+function Update-ItemElement($item) {
+    # 重新定位控件：同名同类型的候选里取离原位置最近的，且必须在 80 像素以内
+    if ([string]::IsNullOrWhiteSpace($item.FullName)) { return $false }
+    try {
+        $AE = [System.Windows.Automation.AutomationElement]
+        $root = $AE::FromHandle($script:ObsHwnd)
+        $c1 = [System.Windows.Automation.PropertyCondition]::new($AE::NameProperty, [string]$item.FullName)
+        $ctName = [string]$item.Type
+        $c2 = [System.Windows.Automation.PropertyCondition]::new($AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::$ctName)
+        $cond = [System.Windows.Automation.AndCondition]::new($c1, $c2)
+        $col = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
+        $best = $null; $bestD = [double]::MaxValue
+        foreach ($el in $col) {
+            try {
+                $r = $el.Current.BoundingRectangle
+                if ($r.IsEmpty) { continue }
+                $d = [Math]::Sqrt([Math]::Pow(($r.Left + $r.Width / 2) - $item.cx, 2) + [Math]::Pow(($r.Top + $r.Height / 2) - $item.cy, 2))
+                if ($d -lt $bestD) { $bestD = $d; $best = $el }
+            }
+            catch { continue }
+        }
+        if ($null -ne $best -and $bestD -le 80) { $item.El = $best; return $true }
+    }
+    catch { }
+    return $false
+}
+function Test-HasTarget($a) { return ((Test-IdValue $a.id) -or ((Test-NumValue $a.x) -and (Test-NumValue $a.y))) }
+function Assert-PhysicalReady($t) {
+    Wait-UserIdle
+    $hit = [DsNative4]::RootAt($t.x, $t.y)
+    if ($script:Cur -and $hit -eq $script:Cur.Hwnd) { return }
+    if ($hit -ne [IntPtr]::Zero -and (Test-IsConsoleWindow $hit)) { throw '目标点位于运行本脚本的控制台窗口上，已取消（避免误点自己）。' }
+    if ($t.item) {
+        $expect = [DsNative4]::Root($script:ObsHwnd)
+        if ($hit -ne $expect) {
+            throw "目标点 ($($t.x),$($t.y)) 当前被其他窗口遮挡 [$([DsNative4]::WinClass($hit)) / $(Limit-Text ([DsNative4]::WinText($hit)) 30)]，已取消点击（未发送任何输入）。"
+        }
+        if (-not (Test-HitTarget $t.item $t.x $t.y)) { throw "目标点 ($($t.x),$($t.y)) 处被菜单 / 弹出层遮挡，实际不是 $($t.label)，已取消点击。" }
+    }
+}
+function Test-MessageFriendly([int]$hwnd) {
+    # 排除已知会忽略 PostMessage 鼠标消息的框架
+    if ($hwnd -eq 0) { return $false }
+    $root = [DsNative4]::Root([IntPtr]$hwnd)
+    $cls = [DsNative4]::WinClass($root)
+    return ($cls -notmatch '^(Chrome_|MozillaWindowClass|ApplicationFrameWindow|Windows\.UI\.|WinUIDesktop|Qt\d*QWindow|SunAwt|ConsoleWindowClass|CASCADIA|Shell_TrayWnd|XamlExplorerHostIslandWindow)')
+}
+function Invoke-UiaClickOnce($item) {
+    $el = $item.El
+    $order = @(switch ($item.Type) {
+            'CheckBox' { 'tog', 'sel', 'inv' }
+            'RadioButton' { 'sel', 'inv', 'tog' }
+            { $_ -in 'ListItem', 'TabItem', 'DataItem', 'TreeItem' } { 'sel', 'inv', 'exp' }
+            'ComboBox' { 'exp', 'inv' }
+            'Edit' { 'focus' }
+            default { 'inv', 'tog', 'sel', 'exp' }
+        })
+    foreach ($o in $order) {
+        if ($o -eq 'focus') {
+            try { $el.SetFocus(); return 'UIA 聚焦' } catch { continue }
+        }
+        if ($item.Pat -notcontains $o) { continue }
+        try {
+            switch ($o) {
+                'inv' {
+                    $p = $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+                    if (Invoke-Worker { param($p) $p.Invoke() } $p 1500) { return 'UIA Invoke' }
+                    return 'UIA Invoke（1.5 秒内未返回，可能弹出了对话框）'
+                }
+                'tog' {
+                    $p = $el.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+                    $was = "$($p.Current.ToggleState)".ToLower()
+                    $p.Toggle()
+                    Start-Sleep -Milliseconds 50
+                    $now = "$($p.Current.ToggleState)".ToLower()
+                    $script:LastClickState = $now
+                    return "UIA Toggle：$was → 读回 $now"
+                }
+                'sel' {
+                    $p = $el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+                    $p.Select()
+                    $script:LastClickState = 'selected'
+                    return 'UIA Select'
+                }
+                'exp' {
+                    $p = $el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                    if ("$($p.Current.ExpandCollapseState)" -eq 'Expanded') { $p.Collapse() } else { $p.Expand() }
+                    return 'UIA ExpandCollapse'
+                }
+            }
+        }
+        catch { continue }
+    }
+    return $null
+}
+function Invoke-UiaClick($item) {
+    # v4.1：失败后先重新定位控件再试一次（网页重绘会让旧的元素引用失效），两次都失败才交给下一层
+    $script:LastClickState = ''
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $m = Invoke-UiaClickOnce $item
+        if ($m) { return $m }
+        if ($attempt -eq 1) { Start-Sleep -Milliseconds 120; [void](Update-ItemElement $item) }
+    }
+    return $null
+}
+function Invoke-PointerAction([string]$kind, $a) {
+    $t = Resolve-Target $a
+    Move-VirtualCursor $t.x $t.y
+    $item = $t.item
+    if ($kind -eq 'hover') {
+        Assert-PhysicalReady $t
+        Set-CursorPulse 2
+        [DsNative4]::PhysicalHover($t.x, $t.y, 450)
+        return "已悬停 $($t.label)（真实鼠标仅借用 0.45 秒后已归位）"
+    }
+    $btn = switch ($kind) { 'right_click' { 1 } 'middle_click' { 2 } default { 0 } }
+    $n = if ($kind -eq 'double_click') { 2 } else { 1 }
+    $fallback = ''
+    # ---- 第 1 层：UIA 模式（不动鼠标、不用键盘）----
+    $script:LastClickState = ''
+    if ($script:Mode -in 'Auto', 'Uia') {
+        if ($item -and $kind -eq 'click') {
+            $m = Invoke-UiaClick $item
+            if ($m) {
+                Set-CursorPulse 0
+                Start-Sleep -Milliseconds 80
+                return "已点击 $($t.label)（$m；真实鼠标未被占用）"
+            }
+            $fallback = '（UIA 两次尝试均失败，已降级）'
+        }
+        if ($script:Mode -eq 'Uia') { throw "-InputMode Uia：$kind $($t.label) 无法通过无障碍接口完成" }
+    }
+    # ---- 第 2 层：窗口消息（仅限有独立 HWND 的经典控件）----
+    $msgHwnd = [IntPtr]::Zero
+    if ($script:Mode -eq 'Message') {
+        if ($item -and $item.Hwnd -ne 0) { $msgHwnd = [IntPtr]$item.Hwnd }
+        else { $msgHwnd = [DsNative4]::DeepChildAt([DsNative4]::RootAt($t.x, $t.y), $t.x, $t.y) }
+        if ($msgHwnd -eq [IntPtr]::Zero) { throw "找不到 ($($t.x),$($t.y)) 处的窗口句柄，无法发送窗口消息" }
+    }
+    elseif ($script:Mode -eq 'Auto' -and $item -and $item.Hwnd -ne 0 -and (Test-MessageFriendly $item.Hwnd)) {
+        $msgHwnd = [IntPtr]$item.Hwnd
+    }
+    if ($msgHwnd -ne [IntPtr]::Zero) {
+        if (Test-IsConsoleWindow $msgHwnd) { throw '目标是运行本脚本的控制台，已取消。' }
+        if ([DsNative4]::PostClick($msgHwnd, $t.x, $t.y, $btn, $n)) {
+            Set-CursorPulse $(if ($btn -eq 1) { 1 } else { 0 })
+            Start-Sleep -Milliseconds 80
+            return "已发送窗口消息 $kind $($t.label)（真实鼠标未被占用；消息方式无法确认生效，请以下一步观察为准）$fallback"
+        }
+        if ($script:Mode -eq 'Message') { throw '窗口消息发送失败' }
+    }
+    # ---- 第 3 层：物理输入（先让位、再校验、借用后归位）----
+    Assert-PhysicalReady $t
+    Set-CursorPulse $(if ($btn -eq 1) { 1 } else { 0 })
+    if ($n -eq 2) { Start-Sleep -Milliseconds 90; Set-CursorPulse 0 }
+    [DsNative4]::PhysicalClick($t.x, $t.y, $btn, $n, $true)
+    return "已执行 $kind $($t.label)（物理输入；真实鼠标瞬时借用并已归位；页面弹窗可能稍后才出现，以下一轮的『界面变化』为准）$fallback"
+}
+function Invoke-ClickMany($a) {
+    # 一次点击/勾选多个控件。每个控件执行前都会实时核对（名称/位置/可见/可用）；任一失败即中止，并报告已完成的部分（不会回滚）。
+    $ids = @($a.ids)
+    $done = New-Object System.Collections.Generic.List[string]
+    foreach ($i in $ids) {
+        Test-Abort
+        try {
+            $r = Invoke-PointerAction 'click' ([pscustomobject]@{ id = $i })
+            $st = if ($script:LastClickState) { "→$($script:LastClickState)" } else { '' }
+            $done.Add("[$i]$st")
+        }
+        catch {
+            if ($_.Exception.Message -like '触发保护*') { throw }
+            $prog = if ($done.Count -gt 0) { "已完成 $($done.Count)/$($ids.Count) 个（$($done -join ' ')）；" } else { '' }
+            throw "${prog}第 [$i] 个失败并中止其余: $($_.Exception.Message)"
+        }
+        Start-Sleep -Milliseconds 60
+    }
+    return "已依次点击 $($ids.Count) 个控件: $($done -join ' ')（状态为 UIA 读回值；请以下一轮观察的『复选框汇总』核对）"
+}
+function Invoke-DragAction($a) {
+    $s = Resolve-Target ([pscustomobject]@{ id = $a.from_id; x = $a.from_x; y = $a.from_y })
+    $d = Resolve-Target ([pscustomobject]@{ id = $a.to_id; x = $a.to_x; y = $a.to_y })
+    Move-VirtualCursor $s.x $s.y
+    Assert-PhysicalReady $s
+    if ($script:Cur) { $script:Cur.SetPressed($true); $script:Cur.MoveTo([double]$d.x, [double]$d.y, 320) }
+    try { [DsNative4]::PhysicalDrag($s.x, $s.y, $d.x, $d.y, 28) }
+    finally {
+        if ($script:Cur) { [void]$script:Cur.WaitIdle(1500); $script:Cur.SetPressed($false) }
+    }
+    return "已拖拽 $($s.label) → $($d.label)（物理输入；真实鼠标已归位）"
+}
+function Invoke-TypeAction($a) {
+    $text = "$($a.text)"
+    $clear = Test-True $a.clear
+    $enter = Test-True $a.enter
+    $item = $null
+    $label = ''
+    if (Test-HasTarget $a) {
+        $t = Resolve-Target $a
+        $item = $t.item
+        $label = " 到 $($t.label)"
+        Move-VirtualCursor $t.x $t.y
+        Set-CursorPulse 2
+    }
+    $done = $false
+    $note = ''
+    # ---- 第 1 层：ValuePattern 直接写值（不用键盘、不动鼠标）----
+    if ($item -and $script:Mode -ne 'Physical' -and $script:Mode -ne 'Message') {
+        try { $item.El.SetFocus() } catch { }
+        if ($item.Pat -contains 'val') {
+            try {
+                $vp = $item.El.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+                if (-not $vp.Current.IsReadOnly) {
+                    $old = "$($vp.Current.Value)"
+                    $new = if ($clear) { $text } else { $old + $text }
+                    $vp.SetValue($new)
+                    Start-Sleep -Milliseconds 80
+                    $back = "$($vp.Current.Value)"
+                    if ($back -eq $new) { $done = $true; $note = "（UIA 直接写入；读回值=$(Limit-Text $back 60)）" }
+                    else { try { $vp.SetValue($old) } catch { } }   # 控件改写了内容：还原，改走键盘
+                }
+            }
+            catch { }
+        }
+        if ($script:Mode -eq 'Uia' -and -not $done) { throw "-InputMode Uia：控件 $($item.Name) 不支持 ValuePattern 写值" }
+    }
+    # ---- 第 3 层：键盘（SendInput）----
+    if (-not $done) {
+        if ($item) {
+            $focused = $false
+            try { $focused = [bool]$item.El.Current.HasKeyboardFocus } catch { }
+            if (-not $focused) {
+                $t2 = Resolve-Target $a
+                Assert-PhysicalReady $t2
+                [DsNative4]::PhysicalClick($t2.x, $t2.y, 0, 1, $true)
+                Start-Sleep -Milliseconds 120
+            }
+        }
+        Assert-KeyboardReady
+        if ($clear) { Send-KeyCombo 'ctrl+a'; Start-Sleep -Milliseconds 40; Send-KeyCombo 'backspace'; Start-Sleep -Milliseconds 40 }
+        Send-Text $text
+        $note = '（键盘输入）'
+        if ($item -and $item.Pat -contains 'val') {
+            try {
+                $back = "$($item.El.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value)"
+                $tail = if ($text.Length -gt 20) { $text.Substring($text.Length - 20) } else { $text }
+                $note = if ($back.Contains($tail)) { "（键盘输入；读回值包含所输入文本 ✓）" } else { "（键盘输入；读回值=$(Limit-Text $back 60)，与预期不符，请核对）" }
+            }
+            catch { }
+        }
+    }
+    if ($enter) { Assert-KeyboardReady; Start-Sleep -Milliseconds 100; Send-KeyCombo 'enter' }
+    return "已输入文本$label$note"
+}
+function Find-ScrollPattern($el) {
+    $AE = [System.Windows.Automation.AutomationElement]
+    $w = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $cur = $el
+    for ($i = 0; $i -lt 8 -and $null -ne $cur; $i++) {
+        try {
+            if ($cur.GetCurrentPropertyValue($AE::IsScrollPatternAvailableProperty) -eq $true) {
+                $sp = $cur.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+                if ($sp.Current.VerticallyScrollable) { return $sp }
+            }
+        }
+        catch { }
+        try { $cur = $w.GetParent($cur) } catch { $cur = $null }
+    }
+    return $null
+}
+function Invoke-ScrollAction($a) {
+    $dir = if ("$($a.direction)".ToLower() -eq 'up') { 1 } else { -1 }
+    $amount = if ($a.amount) { [int]$a.amount } else { 3 }
+    $amount = [Math]::Min([Math]::Max($amount, 1), 30)
+    if (Test-HasTarget $a) { $t = Resolve-Target $a }
+    else {
+        $r = [DsNative4]::WinRect($script:ObsHwnd)
+        $t = @{ x = [int](($r[0] + $r[2]) / 2); y = [int](($r[1] + $r[3]) / 2); label = '窗口中心'; item = $null }
+    }
+    Move-VirtualCursor $t.x $t.y
+    if ($t.item -and $script:Mode -in 'Auto', 'Uia') {
+        $sp = Find-ScrollPattern $t.item.El
+        if ($sp) {
+            $amt = if ($dir -lt 0) { [System.Windows.Automation.ScrollAmount]::SmallIncrement } else { [System.Windows.Automation.ScrollAmount]::SmallDecrement }
+            for ($i = 0; $i -lt ($amount * 3); $i++) { $sp.Scroll([System.Windows.Automation.ScrollAmount]::NoAmount, $amt) }
+            return "已滚动 $($a.direction) x$amount（UIA ScrollPattern；真实鼠标未被占用）"
+        }
+        if ($script:Mode -eq 'Uia') { throw '-InputMode Uia：该区域没有可用的 ScrollPattern' }
+    }
+    Assert-PhysicalReady $t
+    [DsNative4]::PhysicalWheel($t.x, $t.y, $dir * $amount, $true)
+    return "已滚动 $($a.direction) x$amount（物理滚轮；真实鼠标已归位）"
+}
+function Focus-WindowByTitle([string]$keyword) {
+    if ([string]::IsNullOrWhiteSpace($keyword)) { throw 'focus_window 需要 title（窗口标题或进程名关键字）' }
+    $all = @(Get-TopWindowList 80)
+    $p = $all | Where-Object { $_.Title -like "*$keyword*" } | Select-Object -First 1
+    if (-not $p) { $p = $all | Where-Object { $_.Process -like "*$keyword*" } | Select-Object -First 1 }
+    if (-not $p) { throw "找不到标题或进程名包含 '$keyword' 的窗口" }
+    if (-not [DsNative4]::Activate($p.Handle)) { throw "无法把窗口 [$($p.Title)] 切到前台（可能被系统前台锁阻止，或目标权限更高：请用 -RunAsAdmin）" }
+    $script:ObsHwnd = [DsNative4]::GetForegroundWindow()
+    return "已切换到窗口: $($p.Title)"
+}
+function Describe-Action($a) {
+    $parts = @("action=$($a.action)")
+    foreach ($k in 'id', 'ids', 'x', 'y', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id') {
+        $v = "$($a.$k)"
+        if ($null -ne $a.$k -and $v -ne '') { $parts += ("{0}={1}" -f $k, (Limit-Text $v 80)) }
+    }
+    return ($parts -join ' ')
+}
+function Invoke-ShellCommand([string]$cmd) {
+    if (-not $NoSafety) {
+        $hit = Test-DangerousCommand $cmd
+        if ($hit) { throw "命令命中灾难性命令黑名单 ($hit)，已拒绝（如确需执行请使用 -NoSafety）" }
+    }
+    $sb = [scriptblock]::Create($cmd)
+    $job = $null
+    if (Get-Command Start-ThreadJob -ErrorAction SilentlyContinue) { $job = Start-ThreadJob -ScriptBlock $sb }
+    else { $job = Start-Job -ScriptBlock $sb }
+    try {
+        if (-not (Wait-Job $job -Timeout $ShellTimeoutSec)) {
+            Stop-Job $job -ErrorAction SilentlyContinue
+            throw "命令超过 $ShellTimeoutSec 秒未完成，已终止"
+        }
+        $out = & { $ErrorActionPreference = 'Continue'; Receive-Job $job 2>&1 | Out-String }
+        return "命令输出: $(Limit-Text $out 1800)"
+    }
+    finally { Remove-Job $job -Force -ErrorAction SilentlyContinue }
+}
+function Invoke-Launch($a) {
+    $target = "$($a.target)"
+    $before = [DsNative4]::GetForegroundWindow()
+    $known = Get-TopHandles
+    $argStr = "$($a.args)"
+    # Chrome / Edge：自动打开渲染器无障碍，网页内容才会出现在控件列表里
+    if ($target -match '(?i)(^|[\\/])(chrome|msedge)(\.exe)?$' -and $argStr -notmatch 'force-renderer-accessibility') {
+        $argStr = ('--force-renderer-accessibility ' + $argStr).Trim()
+    }
+    if ($argStr) { Start-Process -FilePath $target -ArgumentList $argStr }
+    else { Start-Process -FilePath $target }
+    # 等待：前台窗口变化，或出现新的顶层窗口（最多 5 秒）
+    $end = (Get-Date).AddSeconds(5)
+    $newHandle = [IntPtr]::Zero
+    while ((Get-Date) -lt $end) {
+        Test-Abort
+        Start-Sleep -Milliseconds 120
+        if ([DsNative4]::GetForegroundWindow() -ne $before) { break }
+        foreach ($line in [DsNative4]::TopWindows([uint32]$PID, 100)) {
+            $hs = $line.Split('|', 3)[0]
+            if (-not $known.Contains($hs)) { $newHandle = [IntPtr][int64]$hs; break }
+        }
+        if ($newHandle -ne [IntPtr]::Zero) { break }
+    }
+    if ($newHandle -ne [IntPtr]::Zero -and [DsNative4]::GetForegroundWindow() -ne $newHandle) { [void][DsNative4]::Activate($newHandle) }
+    Start-Sleep -Milliseconds 450
+    $now = [DsNative4]::GetForegroundWindow()
+    $script:ObsHwnd = $now
+    $tail = if ($now -eq $before) { '；前台窗口未变化（程序可能已在运行或在后台打开，必要时用 focus_window）' } else { "；前台窗口: [$(Limit-Text ([DsNative4]::WinText($now)) 50)]" }
+    return "已启动 $target$tail"
+}
+function Invoke-ActionCore($a, [string]$kind) {
+    switch ($kind) {
+        { $_ -in 'click', 'double_click', 'right_click', 'middle_click', 'hover' } { return (Invoke-PointerAction $kind $a) }
+        'click_many' { return (Invoke-ClickMany $a) }
+        'drag' { return (Invoke-DragAction $a) }
+        'type' { return (Invoke-TypeAction $a) }
+        { $_ -in 'key', 'hotkey' } {
+            Assert-KeyboardReady
+            Send-KeySequence "$($a.keys)"
+            return "已按键 $($a.keys)"
+        }
+        'scroll' { return (Invoke-ScrollAction $a) }
+        'launch' { return (Invoke-Launch $a) }
+        'focus_window' { return (Focus-WindowByTitle "$($a.title)") }
+        'wait' {
+            $s = if ($a.seconds) { [double]$a.seconds } else { 1 }
+            $s = [Math]::Min([Math]::Max($s, 0.2), 30)
+            Wait-Safe ([int]($s * 1000))
+            return "已等待 $s 秒"
+        }
+        'run_powershell' { return (Invoke-ShellCommand "$($a.command)") }
+        default { throw "未知动作: '$($a.action)'" }
+    }
+}
+function Invoke-Action($a) {
+    $kind = "$($a.action)".ToLower().Trim()
+    $before = [DsNative4]::GetForegroundWindow()
+    $r = Invoke-ActionCore $a $kind
+    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell') {
+        Start-Sleep -Milliseconds 60
+        Wait-UiSettled
+        $after = [DsNative4]::GetForegroundWindow()
+        if ($after -ne $before) { $r += "；前台窗口已变为 [$(Limit-Text ([DsNative4]::WinText($after)) 50)]" }
+    }
+    return $r
+}
+#endregion
+#region ---------- DeepSeek ----------
+$SystemPrompt = @'
+你是一个全权操作 Windows 电脑的自动化代理（Computer Use Agent），目标是又快又准地完成任务。你看不到图片，你的「眼睛」是系统提供的文本观察：
+屏幕分辨率、前台窗口、键盘焦点、已打开的窗口，以及前台窗口的控件列表，每行格式为：
+  [编号] 控件类型 "名称" value="当前值" state=on/off/selected ★焦点 {可用模式} @(中心x,中心y)
+{可用模式}：inv=可调用 val=可直接写值 tog=开关 sel=可选中 exp=可展开 scr=可滚动。带这些标记的控件会被「无障碍接口」直接操作，不占用用户的真实鼠标键盘，最可靠。
+观察末尾可能有「复选框汇总」（可见共几个、已勾选几个及其编号），请据此计数，不要靠记忆。
+每轮提示里还有「相对上一轮的界面变化」：标题变化、新增/消失的控件。这是判断「上一步是否生效」的第一证据。
+你必须只输出【一个】JSON 对象（不要 markdown、不要多余文字、不要输出第二个 JSON）。有两种格式：
+A) 单个动作： {"thought":"一句话判断","action":"动作名", ...参数}
+B) 批量动作： {"thought":"一句话判断","actions":[{"action":...},{"action":...}]}   （按顺序执行，任一步出错则中止其余）
+可用动作：
+- {"action":"click","id":12}                       单击控件（必须优先用 id；只有观察里确实没有该控件时才用 x,y）
+- {"action":"click_many","ids":[3,7,12]}           依次点击/勾选多个控件（最多 20 个）；适合「勾选前 N 封邮件 / 多个复选框」，一步完成，结果会回报每个控件的读回状态
+- {"action":"double_click","id":12} / right_click / middle_click / hover
+- {"action":"drag","from_id":3,"to_id":8}          拖拽（也可用 from_x,from_y,to_x,to_y）
+- {"action":"type","id":5,"text":"内容","clear":true,"enter":false}
+                                                   对输入框写入文本；clear=true 先清空；enter=true 输入后回车。有 val 标记的输入框会被直接写值并读回验证。省略 id 则输入到当前焦点。
+- {"action":"key","keys":"ctrl+l"}                 按键/组合键；也支持序列，如 "tab tab enter"、"ctrl+a ctrl+c"
+- {"action":"scroll","direction":"down","amount":5}  可带 id 指定要滚动的区域
+- {"action":"launch","target":"notepad","args":""} 启动程序/网址/文件（notepad、calc、chrome、msedge、https://www.bing.com）
+- {"action":"focus_window","title":"记事本"}         按标题或进程名切换窗口
+- {"action":"wait","seconds":2}
+- {"action":"run_powershell","command":"Get-Date"} 执行 PowerShell（仅当系统提示允许时可用；约 60 秒超时，不要运行会常驻/交互的命令）
+- {"action":"done","summary":"完成情况"}             当前任务已完成
+- {"action":"fail","reason":"原因"}                  确认无法完成
+规则：
+1. 追求速度：能用 run_powershell 一步完成的事（读写文件、查询信息、打开路径、启动带参数的程序）就不要去点界面。
+2. 批量动作可以包含多个带 id 的动作（每个动作执行前系统都会实时核对控件，不符即中止）。但：点击后会导致页面/布局大变的动作（打开链接、提交、切换标签页、删除等）应放在批量的最后一个。同类的多个勾选请优先用 click_many。
+3. 控件编号只对「当前这一轮」观察有效，每轮重新编号。系统在执行前会核对控件仍是观察时的那个（名称+位置），否则报「界面已变化」，此时只需重新观察。
+4. 浏览器：地址栏用 ctrl+l 后 type 网址并 enter 最稳。网页内容是否可见取决于无障碍；系统会在启动 chrome / msedge 时自动打开渲染器无障碍。
+5. 输入文本后，根据执行结果里的「读回值」和下一轮观察里的 value 确认是否成功。
+6. 如果「界面变化」写着「控件列表与上一轮完全相同」，说明上一步可能没生效或页面仍在加载：先 wait 1~2 秒再判断，仍无变化就必须换方法（换控件、换快捷键、用 run_powershell）。不要重复同一个动作。
+7. 不要做不可逆的破坏（格式化磁盘、清空系统目录、关机重启等）。遇到登录、验证码、支付，直接 fail 并说明。
+8. 任务完成后必须输出 done，并给出简短结果摘要（如果任务要求读取信息，把信息写进 summary）。done / fail 必须单独输出，不能放在批量动作里；
+   宣布 done 之前，必须在【最新一轮观察】里看到完成的证据（标题、控件、复选框汇总、value 等），看不到就先 wait 并重新观察，不要凭想象。
+9. 「桌面」路径可能被 OneDrive 重定向，请用 [Environment]::GetFolderPath('Desktop')，不要写死 $env:USERPROFILE\Desktop。
+10. 这是连续会话：「本会话之前的任务」只是背景参考。你只需完成【当前任务】，完成后立刻 done。
+11. 如果只是要「打开某个文件/程序」，用 launch 或 Start-Process 打开后，确认前台窗口已出现即可 done。
+12. 如果动作结果提示「你正在使用键盘/鼠标，已让出控制权」，先 wait 2~3 秒再重试同一动作，不要换方法。
+13. 如果结果提示「被其他窗口遮挡」或「前台窗口已变化」，先 focus_window 回到目标窗口再操作。
+14. 结果里写明「未被占用」的是无障碍/消息方式，已生效；写明「消息方式无法确认生效」或「物理输入…稍后才出现」的，必须以下一轮的「界面变化」核实。
+15. 「勾选 N 个」类任务：先看「复选框汇总」里已勾选几个，再用 click_many 补足差额；执行完以下一轮的汇总为准，数量对了再点删除/归档等按钮；删除后重新计数，不够再补。
+16. 短视频 / 信息流类网页：下一个视频用 key 的 down（或 scroll），然后看「界面变化」里的标题/文案是否更换；换了就不要再按。
+'@
+function Invoke-DeepSeek([string]$userContent) {
+    $messages = @(
+        [ordered]@{ role = 'system'; content = $SystemPrompt }
+        [ordered]@{ role = 'user'; content = $userContent }
+    )
+    $payload = [ordered]@{ model = $Model; messages = $messages; temperature = 0; max_tokens = 2500 }
+    if ($Model -notlike '*reasoner*') { $payload['response_format'] = @{ type = 'json_object' } }
+    $json = $payload | ConvertTo-Json -Depth 10 -Compress
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $lastErr = ''
+    foreach ($attempt in 1..4) {
+        try {
+            $resp = Invoke-RestMethod -Uri "$($BaseUrl.TrimEnd('/'))/chat/completions" -Method Post `
+                -Headers @{ Authorization = "Bearer $ApiKey" } `
+                -ContentType 'application/json; charset=utf-8' -Body $bytes -TimeoutSec 120
+            $content = [string]$resp.choices[0].message.content
+            if ([string]::IsNullOrWhiteSpace($content)) { throw 'API 返回了空内容' }
+            return $content
+        }
+        catch {
+            $detail = $_.Exception.Message
+            if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $detail += " | " + (Limit-Text $_.ErrorDetails.Message 300) }
+            $lastErr = $detail
+            Write-Host "  API 调用失败（第 $attempt 次）: $detail" -ForegroundColor DarkYellow
+            if ($detail -match '\b401\b|\b402\b|Authentication|invalid.*key|Insufficient') { break }
+            Wait-Safe ([Math]::Min(8, 2 * $attempt) * 1000)
+        }
+    }
+    throw "DeepSeek API 调用失败: $lastErr"
+}
+function Get-FirstJsonObject([string]$t) {
+    # 字符串感知的括号配对：返回文本里「第一个完整的 JSON 对象」；括号出现在字符串里不会干扰；没有完整对象返回 $null
+    $s = $t.IndexOf('{')
+    if ($s -lt 0) { return $null }
+    $depth = 0; $inStr = $false; $esc = $false
+    for ($i = $s; $i -lt $t.Length; $i++) {
+        $ch = $t[$i]
+        if ($inStr) {
+            if ($esc) { $esc = $false }
+            elseif ($ch -eq '\') { $esc = $true }
+            elseif ($ch -eq '"') { $inStr = $false }
+            continue
+        }
+        if ($ch -eq '"') { $inStr = $true; continue }
+        if ($ch -eq '{') { $depth++ }
+        elseif ($ch -eq '}') {
+            $depth--
+            if ($depth -eq 0) { return $t.Substring($s, $i - $s + 1) }
+        }
+    }
+    return $null
+}
+function ConvertFrom-ModelJson([string]$text) {
+    # v4 的做法是取「第一个 { 到最后一个 }」——模型输出两个对象时整段非法（日志任务1第1、2步）。
+    $first = Get-FirstJsonObject $text
+    if ($null -eq $first) { throw "模型输出里没有完整的 JSON 对象: $(Limit-Text $text 200)" }
+    $rest = $text.Substring($text.IndexOf($first) + $first.Length)
+    if ($rest.IndexOf('{') -ge 0) { Write-Host '  （模型输出了多个 JSON 对象，只执行第一个；其余已忽略）' -ForegroundColor DarkYellow }
+    return ($first | ConvertFrom-Json)
+}
+#endregion
+#region ---------- 单个任务的「观察 → 思考 → 操作」循环 ----------
+function Invoke-AgentTask([string]$TaskText) {
+    $script:Auto = -not [bool]$StepConfirm
+    $script:BaseKeys = $null
+    $script:BaseTitle = ''
+    $history = New-Object System.Collections.Generic.List[string]
+    $descCount = @{}
+    $repeatNote = ''
+    $lastActed = $false
+    $outcome = 'maxsteps'
+    $summary = ''
+    $finished = $false
+    $failCount = 0
+    $lastSig = $null
+    $sameCount = 0
+    $taskStart = Get-Date
+    Write-Log @{ type = 'task_start'; task = $TaskText; model = $Model; admin = $script:IsAdmin; mode = $script:Mode }
+    try {
+        for ($step = 1; $step -le $MaxSteps; $step++) {
+            Test-Abort
+            Write-Host "── 第 $step 步 ──" -ForegroundColor Cyan
+            $obs = Get-Observation
+            $sig = ($obs.Text -replace '真实鼠标位置: \(\d+,\d+\)', '')
+            # 刚操作完界面却完全没变：很可能是页面/弹窗延迟生效（日志任务3），先自动等一下再观察一次，再交给模型
+            if ($lastActed -and $null -ne $lastSig -and $sig -eq $lastSig) {
+                Write-Host '  界面暂无变化，稍候重新观察一次（页面可能仍在加载）...' -ForegroundColor DarkGray
+                Wait-Safe 900
+                $obs = Get-Observation
+                $sig = ($obs.Text -replace '真实鼠标位置: \(\d+,\d+\)', '')
+            }
+            $lastActed = $false
+            if ($SaveScreenshots -and $script:RunDir) {
+                try { Save-Screenshot (Join-Path $script:RunDir ("task{0:D2}-step{1:D2}.png" -f $script:TaskNo, $step)) }
+                catch { Write-Host "  截图失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+            }
+            if ($null -ne $lastSig -and $sig -eq $lastSig) { $sameCount++ } else { $sameCount = 0 }
+            $lastSig = $sig
+            $stuckNote = ''
+            if ($sameCount -ge 1) { $stuckNote = "`n【提示】上一步之后界面没有任何变化（已连续 $sameCount 次），请换一种方法。" }
+            $changeNote = ''
+            if ($obs.Changes) { $changeNote = "`n`n相对上一轮的界面变化:`n  $($obs.Changes)" }
+            # 记录「这一轮模型看到的」基线，下一轮才能做对比
+            $script:BaseKeys = $obs.Keys
+            $script:BaseTitle = $obs.Foreground.Title
+            $hist = if ($history.Count -gt 0) { ($history | Select-Object -Last $HistoryLimit) -join "`n" } else { '（还没有操作）' }
+            $shellNote = if ($NoShell) { '禁止使用 run_powershell。' } else { '允许使用 run_powershell。' }
+            $memNote = ''
+            if ($MemoryLimit -gt 0 -and $script:Session.Count -gt 0) {
+                $memNote = "本会话之前的任务（仅供参考）:`n" + (($script:Session | Select-Object -Last $MemoryLimit) -join "`n") + "`n`n"
+            }
+            $userContent = "${memNote}【当前任务】: $TaskText`n`n$shellNote 单轮最多 $MaxBatch 个动作（click_many 的 ids 另算，最多 20 个）。`n`n当前任务已执行的操作历史:`n$hist`n`n当前观察:`n$($obs.Text)$changeNote$stuckNote$repeatNote`n`n请输出下一步的 JSON（只输出一个 JSON 对象）。"
+            $repeatNote = ''
+            $raw = Invoke-DeepSeek $userContent
+            # 观察 → 模型返回之间用户可能切换了窗口，这里不更新 ObsHwnd；执行前由 Assert-KeyboardReady / Assert-PhysicalReady 核对
+            try { $parsed = ConvertFrom-ModelJson $raw }
+            catch {
+                Write-Host "  解析失败: $($_.Exception.Message)" -ForegroundColor Red
+                $history.Add("第${step}步: 模型输出不是合法 JSON，已忽略（必须只输出一个 JSON 对象；多个动作请放进 actions 数组）")
+                $failCount++
+                if ($failCount -ge 4) { throw '模型连续输出非法 JSON，已终止当前任务。' }
+                continue
+            }
+            if ($parsed.thought) { Write-Host "  思考: $($parsed.thought)" -ForegroundColor DarkGray }
+            $list = @()
+            if ($parsed.actions) { $list = @(@($parsed.actions) | Select-Object -First ([Math]::Max(1, $MaxBatch))) }
+            else { $list = @($parsed) }
+            if ($list.Count -eq 0 -or -not $list[0].action) {
+                $history.Add("第${step}步: 模型没有给出 action，已忽略")
+                $failCount++
+                if ($failCount -ge 4) { throw '模型连续没有给出有效动作，已终止当前任务。' }
+                continue
+            }
+            # ---- 发送前校验：整批先过 Schema，任何一个不合法就一个都不执行 ----
+            $bad = $null
+            $vi = 0
+            foreach ($act in $list) {
+                $vi++
+                $why = Test-ActionSchema $act $vi
+                if ($why) { $bad = "动作 ${vi} ($(Describe-Action $act)): $why"; break }
+            }
+            if ($bad) {
+                Write-Host "  动作未通过校验，未执行任何动作: $bad" -ForegroundColor Red
+                $history.Add("第${step}步: 动作未通过校验（未执行任何动作）: $bad")
+                Write-Log @{ type = 'invalid'; step = $step; message = $bad }
+                $failCount++
+                if ($failCount -ge 5) { throw '模型连续给出无效动作，已终止当前任务。' }
+                continue
+            }
+            $idx = 0
+            foreach ($action in $list) {
+                $idx++
+                $desc = Describe-Action $action
+                $tag = if ($list.Count -gt 1) { "动作 $idx/$($list.Count)" } else { '动作' }
+                Write-Host "  ${tag}: $desc" -ForegroundColor White
+                Write-Log @{ type = 'action'; step = $step; thought = "$($parsed.thought)"; action = $action }
+                $kind = "$($action.action)".ToLower().Trim()
+                if ($kind -eq 'done') {
+                    $summary = "$($action.summary)"
+                    Write-Host "✔ 完成: $summary" -ForegroundColor Green
+                    Write-Log @{ type = 'done'; summary = $summary }
+                    $outcome = 'done'
+                    $finished = $true
+                    break
+                }
+                if ($kind -eq 'fail') {
+                    $summary = "$($action.reason)"
+                    Write-Host "✘ 失败: $summary" -ForegroundColor Red
+                    Write-Log @{ type = 'fail'; reason = $summary }
+                    $outcome = 'fail'
+                    $finished = $true
+                    break
+                }
+                if ($DryRun) {
+                    $history.Add("第${step}步: $desc → (DryRun 未执行)")
+                    continue
+                }
+                # 批量中后续的 id 动作：如果前一个动作已经把前台窗口换掉，旧编号作废，中止其余
+                if ($idx -gt 1 -and (Test-ActionUsesId $action) -and [DsNative4]::GetForegroundWindow() -ne $obs.Foreground.Handle) {
+                    $history.Add("第${step}步: $desc → 未执行：前台窗口已变化，批量中后续的控件编号作废，请重新观察")
+                    Write-Host '  前台窗口已变化，批量中后续动作作废。' -ForegroundColor DarkYellow
+                    break
+                }
+                $decision = Confirm-Action $desc
+                if ($decision -eq 'q') {
+                    Write-Host '已由用户结束当前任务。' -ForegroundColor Yellow
+                    $outcome = 'quit'
+                    $summary = '用户中途结束了任务'
+                    $finished = $true
+                    break
+                }
+                if ($decision -eq 'n') {
+                    $history.Add("第${step}步: $desc → 用户拒绝执行，请换一种方式")
+                    break
+                }
+                $descCount[$desc] = 1 + [int]$descCount[$desc]
+                if ($descCount[$desc] -ge 3) {
+                    $repeatNote = "`n【提示】动作「$(Limit-Text $desc 60)」在本任务中已重复执行 $($descCount[$desc]) 次，请确认它是否真的有效果（看「界面变化」），否则换一种方法。"
+                }
+                try {
+                    $result = Invoke-Action $action
+                    Write-Host "  结果: $result" -ForegroundColor Green
+                    $history.Add("第${step}步: $desc → $result")
+                    $failCount = 0
+                    if ($kind -notin 'wait', 'run_powershell') { $lastActed = $true }
+                }
+                catch {
+                    if ($_.Exception.Message -like '触发保护*') { throw }
+                    $msg = $_.Exception.Message
+                    Write-Host "  执行出错: $msg" -ForegroundColor Red
+                    $history.Add("第${step}步: $desc → 出错（已完成的部分不会回滚，请重新观察核对）: $msg")
+                    Write-Log @{ type = 'error'; step = $step; message = $msg }
+                    break   # 批量动作中途出错：中止其余动作，重新观察
+                }
+                if ($idx -lt $list.Count) { Wait-Safe 150 }
+            }
+            if ($finished) { break }
+            if ($DryRun) {
+                Write-Host '  (DryRun) 不执行，仅演示一步后结束当前任务。' -ForegroundColor DarkYellow
+                $outcome = 'dryrun'
+                $summary = 'DryRun 仅预演'
+                $finished = $true
+                break
+            }
+            Wait-Safe $StepDelayMs
+        }
+        if (-not $finished) {
+            $summary = "已达到最大步数 $MaxSteps，任务未确认完成"
+            Write-Host $summary -ForegroundColor Yellow
+        }
+    }
+    catch {
+        $msg = $_.Exception.Message
+        if ($msg -like '触发保护*') { $outcome = 'aborted'; Reset-AbortState }
+        else { $outcome = 'error' }
+        $summary = $msg
+        Write-Host "已停止当前任务: $msg" -ForegroundColor Red
+        Write-Log @{ type = 'abort'; message = $msg }
+    }
+    $elapsed = [int]((Get-Date) - $taskStart).TotalSeconds
+    Write-Host "本任务耗时: ${elapsed} 秒" -ForegroundColor DarkGray
+    return [pscustomobject]@{ Outcome = $outcome; Summary = $summary }
+}
+#endregion
+#region ---------- 内置自检（-SelfTest） ----------
+function Invoke-SelfTest {
+    $rows = New-Object System.Collections.Generic.List[object]
+    $rec = {
+        param($name, $ok, $detail)
+        $rows.Add([pscustomobject]@{ Name = $name; Ok = [bool]$ok; Detail = "$detail" })
+        $color = if ($ok) { 'Green' } else { 'Red' }
+        $mark = if ($ok) { 'PASS' } else { 'FAIL' }
+        Write-Host ("  [{0}] {1}  {2}" -f $mark, $name, $detail) -ForegroundColor $color
+    }
+    Write-Host '自检开始：请不要触碰鼠标键盘（约 20 秒）...' -ForegroundColor Cyan
+    $w = [DsNative4]::PrimaryW(); $h = [DsNative4]::PrimaryH()
+    & $rec 'Native 层编译 / DPI' $true ("缩放 {0:N2}x，主屏 {1}x{2}，管理员={3}" -f [DsNative4]::DpiScale(), $w, $h, $script:IsAdmin)
+    & $rec '运行空间池（后台 UIA 调用）' ($null -ne $script:Pool) ''
+    # ---- 纯逻辑自检（不碰鼠标键盘）：日志里出现过的真实故障样本 ----
+    $two = '{"thought":"a","action":"wait","seconds":1}' + "`n" + '{"thought":"b","action":"done","summary":"x"}'
+    $pj = $null; $pjErr = ''
+    try { $pj = ConvertFrom-ModelJson $two } catch { $pjErr = $_.Exception.Message }
+    & $rec 'JSON：日志任务1的「双对象」输出取第一个' ($null -ne $pj -and "$($pj.action)" -eq 'wait') "解析结果 action=[$($pj.action)] $pjErr"
+    $tricky = '```json' + "`n" + '{"thought":"含}花括号{和\"引号","action":"wait"}' + "`n" + '```'
+    $pj2 = $null; $pj2Err = ''
+    try { $pj2 = ConvertFrom-ModelJson $tricky } catch { $pj2Err = $_.Exception.Message }
+    & $rec 'JSON：括号出现在字符串里 + markdown 围栏' ($null -ne $pj2 -and "$($pj2.action)" -eq 'wait') "解析结果 action=[$($pj2.action)] $pj2Err"
+    $truncated = $null
+    try { $truncated = Get-FirstJsonObject '{"thought":"被截断","action":"cli' } catch { }
+    & $rec 'JSON：被截断的输出返回空（不会误解析）' ($null -eq $truncated) ''
+    $kPrev = New-KeySet @('Button|A|', 'CheckBox|邮件1|off', 'Text|T|')
+    $kCur = New-KeySet @('Button|A|', 'CheckBox|邮件1|on', 'Text|T|', 'Text|新弹窗|')
+    $d1 = Get-ObservationDiff $kPrev $kCur 'A - Chrome' 'B - Chrome'
+    $d2 = Get-ObservationDiff $kPrev $kPrev 'A' 'A'
+    & $rec '界面对比：勾选变化 / 新增控件 / 标题变化可见' (($d1 -match '邮件1 on') -and ($d1 -match '新弹窗') -and ($d1 -match '标题') -and ($d2 -match '完全相同')) (($d1 -replace '\s+', ' '))
+    $real0 = [DsNative4]::CursorPos()
+    if ($script:Cur) {
+        $script:Cur.ResetStats()
+        $pts = @(@(200, 200), @(($w - 200), 200), @(($w - 200), ($h - 200)), @(200, ($h - 200)), @([int]($w / 2), [int]($h / 2)))
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        foreach ($p in $pts) { Move-VirtualCursor ([int]$p[0]) ([int]$p[1]) }
+        $sec = [Math]::Max(0.001, $stopwatch.Elapsed.TotalSeconds)
+        $fps = $script:Cur.Frames / $sec
+        $gap = $script:Cur.MaxGapMs
+        & $rec '虚拟鼠标平滑度' ($fps -ge 50 -and $gap -lt 80) ("平均 {0:N0} fps，最大帧间隔 {1:N1} ms（共 {2} 帧 / {3:N2} 秒）" -f $fps, $gap, $script:Cur.Frames, $sec)
+        $endOk = ([Math]::Abs($script:Cur.X - [int]($w / 2)) -lt 0.5) -and ([Math]::Abs($script:Cur.Y - [int]($h / 2)) -lt 0.5)
+        & $rec '虚拟鼠标终点精确（亚像素误差 < 0.5px）' $endOk ("终点 ({0:N2},{1:N2})" -f $script:Cur.X, $script:Cur.Y)
+        $real1 = [DsNative4]::CursorPos()
+        & $rec '真实鼠标未被占用' (($real0[0] -eq $real1[0]) -and ($real0[1] -eq $real1[1])) ("前 ($($real0[0]),$($real0[1])) 后 ($($real1[0]),$($real1[1]))")
+    }
+    else { & $rec '虚拟鼠标覆盖层启动' $false '未启动（-NoOverlay 或创建失败）' }
+    $tt = [DsTestTarget]::new()
+    $savedMode = $script:Mode
+    $cid = 0; $eid = 0
+    try {
+        if (-not $tt.Start([int]($w / 2 - 160), [int]($h / 2 - 75))) { & $rec '创建自检目标窗口' $false '失败'; return $rows }
+        Start-Sleep -Milliseconds 500
+        $script:ObsHwnd = $tt.Parent
+        $items = @(Get-UiElements $tt.Parent | Sort-Object cy, cx)
+        Set-Elements $items
+        foreach ($kv in $script:Elements.GetEnumerator()) {
+            if ($kv.Value.Type -eq 'CheckBox') { $cid = [int]$kv.Key }
+            if ($kv.Value.Type -eq 'Edit') { $eid = [int]$kv.Key }
+        }
+        & $rec 'UIA 观察到自检控件' (($cid -gt 0) -and ($eid -gt 0)) ("复选框 id=$cid（模式 $(if ($cid) { $script:Elements[$cid].Pat -join ',' })），编辑框 id=$eid")
+        if ($cid -gt 0 -and $eid -gt 0) {
+            # 0. 状态读回（CacheRequest）
+            $tt.SetCheck(1); Start-Sleep -Milliseconds 120
+            $o1 = @(Get-UiElements $tt.Parent | Where-Object { $_.Type -eq 'CheckBox' } | Select-Object -First 1)
+            $tt.SetCheck(0); Start-Sleep -Milliseconds 120
+            $o0 = @(Get-UiElements $tt.Parent | Where-Object { $_.Type -eq 'CheckBox' } | Select-Object -First 1)
+            & $rec '观察：复选框状态由缓存一次读回（on / off）' ($o1.Count -gt 0 -and $o0.Count -gt 0 -and $o1[0].State -eq 'on' -and $o0[0].State -eq 'off') "勾选后=[$($o1[0].State)] 取消后=[$($o0[0].State)]"
+            # A. UIA
+            $script:Mode = 'Uia'
+            $tt.SetCheck(0)
+            $r0 = [DsNative4]::CursorPos()
+            try { $msg = Invoke-Action ([pscustomobject]@{ action = 'click'; id = $cid }) } catch { $msg = "异常: $($_.Exception.Message)" }
+            $r1 = [DsNative4]::CursorPos()
+            & $rec '第1层 UIA 点击（勾选复选框）并读回状态' ($tt.GetCheck() -eq 1 -and $r0[0] -eq $r1[0] -and $r0[1] -eq $r1[1] -and $msg -match '读回 on') $msg
+            # A2. click_many
+            $tt.SetCheck(0)
+            try { $msg = Invoke-Action ([pscustomobject]@{ action = 'click_many'; ids = @($cid) }) } catch { $msg = "异常: $($_.Exception.Message)" }
+            & $rec 'click_many 批量点击' ($tt.GetCheck() -eq 1 -and $msg -match '已依次点击 1') $msg
+            # A3. 坐标吸附
+            $tt.SetCheck(0)
+            $cx0 = $script:Elements[$cid].cx; $cy0 = $script:Elements[$cid].cy
+            try { $msg = Invoke-Action ([pscustomobject]@{ action = 'click'; x = $cx0; y = $cy0 }) } catch { $msg = "异常: $($_.Exception.Message)" }
+            & $rec '坐标点击自动吸附到控件并走 UIA（Uia 模式下也成功）' ($tt.GetCheck() -eq 1 -and $msg -match 'UIA') $msg
+            # B. 写值
+            $want = '你好 DeepSeek 123'
+            try { $msg = Invoke-Action ([pscustomobject]@{ action = 'type'; id = $eid; text = $want; clear = $true }) } catch { $msg = "异常: $($_.Exception.Message)" }
+            & $rec '第1层 UIA 写值并读回' ($tt.GetText() -eq $want) "读回=[$($tt.GetText())]"
+            # C. 消息
+            $script:Mode = 'Message'
+            $tt.SetCheck(0)
+            try { $msg = Invoke-Action ([pscustomobject]@{ action = 'click'; id = $cid }) } catch { $msg = "异常: $($_.Exception.Message)" }
+            $r2 = [DsNative4]::CursorPos()
+            & $rec '第2层 窗口消息点击' ($tt.GetCheck() -eq 1 -and $r0[0] -eq $r2[0] -and $r0[1] -eq $r2[1]) $msg
+            # D. 物理
+            $script:Mode = 'Physical'
+            $tt.SetCheck(0)
+            Start-Sleep -Milliseconds ($IdleMs + 100)
+            try { $msg = Invoke-Action ([pscustomobject]@{ action = 'click'; id = $cid }) } catch { $msg = "异常: $($_.Exception.Message)" }
+            Start-Sleep -Milliseconds 100
+            $r3 = [DsNative4]::CursorPos()
+            & $rec '第3层 物理点击并归位真实鼠标' ($tt.GetCheck() -eq 1 -and $r0[0] -eq $r3[0] -and $r0[1] -eq $r3[1]) "$msg ；归位后 ($($r3[0]),$($r3[1]))"
+        }
+        # E. Schema
+        $okId = if ($cid -gt 0) { $cid } else { 1 }
+        $okEd = if ($eid -gt 0) { $eid } else { 1 }
+        $s1 = Test-ActionSchema ([pscustomobject]@{ action = 'click' }) 1
+        $s2 = Test-ActionSchema ([pscustomobject]@{ action = 'key'; keys = 'ctrl+foo' }) 1
+        $s3 = Test-ActionSchema ([pscustomobject]@{ action = 'wait'; seconds = 1 }) 1
+        $s4 = Test-ActionSchema ([pscustomobject]@{ action = 'done'; summary = 'x' }) 2
+        $s5 = Test-ActionSchema ([pscustomobject]@{ action = 'rm_rf' }) 1
+        $s6 = Test-ActionSchema ([pscustomobject]@{ action = 'click_many'; ids = @() }) 1
+        $s7 = Test-ActionSchema ([pscustomobject]@{ action = 'click_many'; ids = @($okId) }) 1
+        $s8 = Test-ActionSchema ([pscustomobject]@{ action = 'type'; text = 'x'; id = $okEd }) 2
+        & $rec 'Schema：拒绝非法动作（含 done 排在批量后面）' ($s1 -and $s2 -and $s4 -and $s5 -and $s6 -and (-not $s3)) ("缺目标=[$s1] 非法键=[$s2] 批量中done=[$s4] 未知动作=[$s5]")
+        & $rec 'Schema：批量中后续动作可以使用 id（v4 会误拒）、click_many 合法' ((-not $s7) -and (-not $s8)) "click_many=[$s7] 批量type id=[$s8]"
+        # F. 过期控件
+        $tt.Stop()
+        Start-Sleep -Milliseconds 400
+        $threw = $false; $why = ''
+        if ($cid -gt 0) {
+            try { [void](Resolve-Target ([pscustomobject]@{ id = $cid })) } catch { $threw = $true; $why = $_.Exception.Message }
+        }
+        & $rec '过期控件被拒绝（不会点到错误位置）' $threw $why
+    }
+    finally {
+        $script:Mode = $savedMode
+        try { $tt.Stop() } catch { }
+    }
+    return $rows
+}
+#endregion
+#region ---------- 主流程 ----------
+if ($ObserveOnly) {
+    Write-Host '3 秒后读取前台窗口，请切换到你想观察的窗口...' -ForegroundColor Cyan
+    Start-Sleep -Seconds 3
+    $swatch = [System.Diagnostics.Stopwatch]::StartNew()
+    (Get-Observation).Text
+    Write-Host "（观察耗时 $([int]$swatch.ElapsedMilliseconds) ms）" -ForegroundColor DarkGray
+    return
+}
+if ($SelfTest) {
+    Initialize-Runtime
+    try {
+        $rows = Invoke-SelfTest
+        $pass = @($rows | Where-Object { $_.Ok }).Count
+        $total = @($rows).Count
+        Write-Host ''
+        $c = if ($pass -eq $total) { 'Green' } else { 'Yellow' }
+        Write-Host "自检结果: $pass / $total 通过" -ForegroundColor $c
+        if ($pass -ne $total) { Write-Host '失败项请截图 / 复制上面的输出，按「Detail」定位（常见原因：目标程序权限更高→加 -RunAsAdmin；你在自检时动了鼠标）。' -ForegroundColor Yellow }
+    }
+    finally { Stop-Runtime }
+    return
+}
+if ([string]::IsNullOrWhiteSpace($ApiKey)) {
+    $ApiKey = Read-Host '请输入 DeepSeek API Key（输入时不显示）' -MaskInput
+}
+if ([string]::IsNullOrWhiteSpace($ApiKey)) { throw '缺少 API Key：请设置环境变量 DEEPSEEK_API_KEY 或使用 -ApiKey 参数。' }
+$ApiKey = $ApiKey.Trim()
+$RunId = Get-Date -Format 'yyyyMMdd-HHmmss'
+$script:RunDir = $null
+$script:LogFile = $null
+$script:TaskNo = 0
+$candidates = @()
+if (-not [string]::IsNullOrWhiteSpace($LogDir)) { $candidates += $LogDir }
+else {
+    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'DeepSeekComputerUse\logs') }
+    $candidates += (Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse\logs')
+}
+foreach ($root in $candidates) {
+    try {
+        $dir = Join-Path $root $RunId
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $script:RunDir = $dir
+        $script:LogFile = Join-Path $dir 'run.jsonl'
+        break
+    }
+    catch { Write-Host "  无法使用日志目录 $root : $($_.Exception.Message)" -ForegroundColor DarkYellow }
+}
+if (-not $script:RunDir) { Write-Host '  警告：没有可写的日志目录，本次运行不写日志。' -ForegroundColor Yellow }
+$script:Session = New-Object System.Collections.Generic.List[string]
+$script:Stats = @{ done = 0; fail = 0; other = 0 }
+function Show-Help {
+    Write-Host ''
+    Write-Host '可用命令（在「请输入任务」提示符下输入）:' -ForegroundColor Cyan
+    Write-Host '  <任意文字>         作为新任务交给 DeepSeek 执行'
+    Write-Host '  help               显示本帮助'
+    Write-Host '  history            查看本会话已执行过的任务'
+    Write-Host '  log                打印日志目录路径'
+    Write-Host '  mode <名称>        切换输入模式：auto / uia / message / physical（当前: 见横幅）'
+    Write-Host '  cls                清屏'
+    Write-Host '  exit / quit / 退出  结束程序'
+    Write-Host '执行任务期间的紧急停止（只终止当前任务，回到本提示符）:' -ForegroundColor Yellow
+    Write-Host '  鼠标甩到屏幕左上角，或同时按 Ctrl+Alt+Q；Ctrl+C 则直接退出整个程序'
+    Write-Host ''
+}
+function Show-Banner {
+    Write-Host ''
+    Write-Host '=== DeepSeek Computer Use v4.1（虚拟鼠标 + 分层精确执行 + 变化感知）===' -ForegroundColor Cyan
+    Write-Host "模型    : $Model    每任务最大步数: $MaxSteps    批量动作上限: $MaxBatch"
+    Write-Host "模式    : $(if ($DryRun) { '仅预演(DryRun)' } elseif ($script:Auto) { '全自动（无需确认）' } else { '逐步确认' })    Shell: $(if ($NoShell) { '禁止' } else { '允许' })    管理员: $(if ($script:IsAdmin) { '是' } else { '否（加 -RunAsAdmin 可操作高权限窗口）' })    会话记忆: $(if ($MemoryLimit -gt 0) { "最近 $MemoryLimit 个任务" } else { '关闭' })"
+    Write-Host "输入    : $($script:Mode)（Auto=UIA→消息→物理借用归位）    虚拟鼠标: $(if ($script:Cur) { '已启用' } else { '未启用' })    让位阈值: ${IdleMs}ms"
+    Write-Host "日志    : $(if ($script:RunDir) { $script:RunDir } else { '（未启用）' })"
+    Write-Host '紧急停止: 鼠标甩到左上角 / Ctrl+Alt+Q（终止当前任务）；Ctrl+C（退出程序）' -ForegroundColor Yellow
+    Write-Host '输入 help 查看命令，输入 exit 退出；首次使用建议先运行  -SelfTest  验证本机环境。' -ForegroundColor DarkGray
+}
+Initialize-Runtime
+Show-Banner
+Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '4.1' }
+$pending = $Task
+try {
+    while ($true) {
+        if (-not [string]::IsNullOrWhiteSpace($pending)) {
+            $current = $pending.Trim()
+            $pending = $null
+            Write-Host ''
+            Write-Host "任务    : $current" -ForegroundColor White
+        }
+        else {
+            Restore-Console
+            Write-Host ''
+            $line = Read-Host '请输入任务（help 帮助 / exit 退出）'
+            if ($null -eq $line) { break }
+            $current = $line.Trim()
+            if ($current -eq '') { continue }
+            switch -Regex ($current.ToLower()) {
+                '^(exit|quit|q|退出|结束)$' { $current = $null }
+                '^(help|\?|帮助)$' { Show-Help; $current = '' }
+                '^(cls|clear|清屏)$' { Clear-Host; $current = '' }
+                '^log$' { Write-Host "日志目录: $(if ($script:RunDir) { $script:RunDir } else { '（未启用）' })" -ForegroundColor DarkGray; $current = '' }
+                '^mode\s+(auto|uia|message|physical)$' {
+                    $script:Mode = (Get-Culture).TextInfo.ToTitleCase($Matches[1])
+                    Write-Host "输入模式已切换为: $($script:Mode)" -ForegroundColor DarkGray
+                    $current = ''
+                }
+                '^(history|历史)$' {
+                    if ($script:Session.Count -eq 0) { Write-Host '（本会话还没有执行过任务）' -ForegroundColor DarkGray }
+                    else { $script:Session | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+                    $current = ''
+                }
+            }
+            if ($null -eq $current) { break }
+            if ($current -eq '') { continue }
+        }
+        $script:TaskNo++
+        Write-Host ''
+        Write-Host "╭─ 任务 #$($script:TaskNo) ─────────────────────────" -ForegroundColor Cyan
+        Reset-AbortState
+        $res = Invoke-AgentTask $current
+        switch ($res.Outcome) {
+            'done' { $script:Stats.done++ }
+            'fail' { $script:Stats.fail++ }
+            default { $script:Stats.other++ }
+        }
+        $script:Session.Add("任务$($script:TaskNo): $(Limit-Text $current 100) → [$($res.Outcome)] $(Limit-Text $res.Summary 160)")
+        while ($script:Session.Count -gt 50) { $script:Session.RemoveAt(0) }
+        Write-Host "╰─ 任务 #$($script:TaskNo) 结束（$($res.Outcome)）──────────" -ForegroundColor Cyan
+        if ($Once) { break }
+    }
+}
+finally {
+    Stop-Runtime
+    $elapsed = [int]((Get-Date) - $script:Started).TotalSeconds
+    Write-Host ''
+    Write-Host "会话结束：共 $($script:TaskNo) 个任务（完成 $($script:Stats.done) / 失败 $($script:Stats.fail) / 其他 $($script:Stats.other)），总耗时 ${elapsed} 秒" -ForegroundColor DarkGray
+    if ($script:RunDir) { Write-Host "日志目录: $($script:RunDir)" -ForegroundColor DarkGray }
+    Write-Log @{ type = 'session_end'; tasks = $script:TaskNo }
+}
+#endregion
