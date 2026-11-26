@@ -1,9 +1,18 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v6.0 —— 在 v5.1 已验证的全部能力上继续做「更深」而不是「更大」：浏览器里的每一次鼠标 / 键盘操作都和真人一样。
+  DeepSeek Computer Use v6.1 —— 在 v5.1 已验证的全部能力上继续做「更深」而不是「更大」：浏览器里的每一次鼠标 / 键盘操作都和真人一样。
 .DESCRIPTION
-  v6.0（人类化输入）：v5.1 的规划 / 账本 / 联锁 / UIA / OCR 全部原样保留；C# 层只改物理输入，类名升级为 DsNative6 / DsOverlay6 以免和旧版同控制台冲突。
+  v6.1（只加深、不加大：给「每一次操作都精准、都有反馈、再进下一步」补上 6 个缺口；其余 v6.0 逻辑逐字保留）：
+    1. 【按下前守卫 PressGuard】光标到位并悬停之后、鼠标按下之前再读回一次 GetCursorPos：偏差>6px = 你动了鼠标 → 让出控制权、不点击；1~6px = 微调回目标再点；
+       点完再读回一次，偏差写进回执。双击的第二下、拖拽的起点与终点同样守卫。（v6.0 只核对「遮挡」，没有核对「光标是否还在目标上」。）
+    2. 【操作回执】每次点击的结果末尾追加：按下前偏差 / 释放后偏差 / 落点修正次数。模型和日志都能看到「这一下到底落在哪」。
+    3. 【预期核对】模型每轮写的 expect 过去只被打印、从未使用。现在下一轮观察会附上「你预期 X；系统实测：界面变化 / 局部视觉 / 是否整体无变化」，要求先判断预期是否达成再推进。
+    4. 【API 重试按状态码】过去 400/422 这类「请求本身有错」也会白等 4 次；429 不看 Retry-After。现在：408/409/425/429/5xx/超时 → 指数退避 + 抖动（Retry-After 优先，上限 60s）；
+       400/401/402/403/404/422 → 立即停止并给出原因。最多 5 次。
+    5. 【错误码】新增 CURSOR_FIX（按下前无法把光标校正到目标）；用户抢鼠标仍归 USER_ACTIVE。
+    6. 【自检】-SelfTest 新增：API 重试策略、退避上限、PressGuard / 回执字段存在性。类名升级为 DsNative61 / DsOverlay61 / DsTestTarget61，避免和同一控制台里的 v6.0 冲突。
+  v6.0（人类化输入）：v5.1 的规划 / 账本 / 联锁 / UIA / OCR 全部原样保留；C# 层只改物理输入，类名升级为 DsNative61 / DsOverlay61 以免和旧版同控制台冲突。
     1. 真实光标不再瞬移：SendInput 绝对坐标（MOUSEEVENTF_ABSOLUTE|VIRTUALDESK）沿「Fitts 时长 + 最小加加速度钟形速度 + 弧线 + 远距离过冲修正 + 生理震颤」
        的轨迹以约 125Hz 移动；覆盖层的蓝色光标跟随真实光标（v5.1 里两者是分开的）。
     2. 到位后闭环：读回光标坐标（有偏差立即纠正）→ 重读目标矩形（页面在移动期间发生布局位移就追加修正）→ 核对遮挡；之后悬停 90~210ms，
@@ -14,7 +23,7 @@
        用户一动鼠标立即让出；Ctrl+Alt+Q / 左上角急停在移动、打字中途同样有效。
     5. -NoHuman 一键回到 v5.1 行为；-HumanSpeed / -TypeCps 调速；-SelfTest 新增轨迹算法统计检验与真实光标回读。
   DeepSeek 官方 API 是纯文本模型，所以「眼睛」仍是 Windows UI Automation 无障碍树（思路同 vercel-labs/agent-desktop：每个可操作元素一个编号，
-  操作后重新观察核实），v5 再补两只「辅助眼」：动作前后的局部像素/颜色证据、Windows 自带 OCR。C# 原生层 DsNative6 逐字未改。
+  操作后重新观察核实），v5 再补两只「辅助眼」：动作前后的局部像素/颜色证据、Windows 自带 OCR。C# 原生层 DsNative61 逐字未改。
   v5.1 修复（运行日志任务1/2 的致命错误 "Argument types do not match"）：PowerShell 7 对 New-Object 创建的 List[object] 执行 @() 会抛出该异常，
     而 v5 在规划完成后第一次执行 @($script:Plan.Steps) 就触发了它，导致每个任务在第 1 步就被终止。已全部改为 [List[T]]::new()；
     并为每一步加上内部异常保护（记录行号、跳过本步、让模型重新观察，连续 3 次才终止）；-SelfTest 新增回归哨兵。
@@ -148,8 +157,8 @@ if ($RunAsAdmin -and -not $script:IsAdmin) {
 #endregion
 #region ---------- 原生层（C#，经 Add-Type 编译；纯 P/Invoke，不依赖 WinForms） ----------
 # 类名带版本号，避免和同一控制台里旧版本冲突。
-# v6.0 在 v5.1 的 C# 层之上只增加了人类化输入；类名带版本号（DsNative6），避免和同一控制台里的旧版冲突。
-if (-not ('DsNative6' -as [type])) {
+# v6.0 在 v5.1 的 C# 层之上只增加了人类化输入；类名带版本号（DsNative61），避免和同一控制台里的旧版冲突。
+if (-not ('DsNative61' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -157,7 +166,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-public static class DsNative6 {
+public static class DsNative61 {
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
     [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
@@ -317,10 +326,13 @@ public static class DsNative6 {
     public static double HumanSpeed = 1.0;
     public static double TypeCps = 14.0;
     public static int TargetW = 40;
-    public static DsOverlay6 Follower = null;
+    public static DsOverlay61 Follower = null;
     public static IntPtr ExpectRoot = IntPtr.Zero;
     public static bool RecordTrace = false;
     public static int Fixups = 0;
+    public static int LastPressDev = 0;      // v6.1：按下前光标与目标的偏差（像素，已修正前）
+    public static int LastReleaseDev = 0;    // v6.1：释放后光标与目标的偏差
+    public static int PressGuardFixes = 0;   // v6.1：按下前微调次数
     static List<double[]> trace = new List<double[]>();
     static Random rng = new Random();
     [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint ms);
@@ -437,6 +449,24 @@ public static class DsNative6 {
             Settle(tx, ty);
         } finally { if (tm) { try { timeEndPeriod(1); } catch { } } }
     }
+    // v6.1 按下前守卫：悬停结束后、按键按下前再读回一次光标。>6px = 用户动了鼠标（让出控制权，不点击）；1~6px = 微调回目标；仍不一致 = 放弃点击
+    static void PressGuard(int x, int y) {
+        x = ClampX(x); y = ClampY(y);
+        POINT a = new POINT(); GetCursorPos(out a);
+        int dev = Math.Max(Math.Abs(a.X - x), Math.Abs(a.Y - y));
+        LastPressDev = dev;
+        if (dev > 6) {
+            if (a.X <= 0 && a.Y <= 0) throw new InvalidOperationException("触发保护：鼠标位于屏幕左上角，已紧急停止当前任务。");
+            throw new InvalidOperationException("你正在使用鼠标，已让出控制权（按下前发现光标偏离目标 " + dev + "px，未点击）。");
+        }
+        if (dev > 0) {
+            PressGuardFixes++; Fixups++;
+            MoveAbs(x, y); Thread.Sleep(2); GetCursorPos(out a);
+            if (a.X != x || a.Y != y) { SetCursorPos(x, y); Thread.Sleep(1); GetCursorPos(out a); }
+            if (a.X != x || a.Y != y) throw new InvalidOperationException("光标定位失败（按下前）：目标 (" + x + "," + y + ")，实际 (" + a.X + "," + a.Y + ")，已取消点击。");
+        }
+        if (Follower != null) Follower.Follow(x, y);
+    }
     static void CheckExpect(int x, int y) {
         if (ExpectRoot == IntPtr.Zero) return;
         IntPtr r = RootAt(x, y);
@@ -451,20 +481,21 @@ public static class DsNative6 {
         if (Follower != null) { Follower.SetPressed(true); Follower.Pulse(button == 1 ? 1 : (button == 2 ? 2 : 0)); }
         try {
             for (int i = 0; i < count; i++) {
-                CheckStop();
+                CheckStop(); PressGuard(x, y);
                 Send1(Mouse(BtnDown(button), 0)); Thread.Sleep(Rnd(52, 104));
                 Send1(Mouse(BtnUp(button), 0));
                 if (i + 1 < count) Thread.Sleep(Rnd(65, 130));
             }
         } finally { if (Follower != null) Follower.SetPressed(false); }
+        { POINT rl = new POINT(); GetCursorPos(out rl); LastReleaseDev = Math.Max(Math.Abs(rl.X - ClampX(x)), Math.Abs(rl.Y - ClampY(y))); }
         Thread.Sleep(Rnd(25, 60));
     }
     static void HumanHover(int x, int y, int ms) { HumanMoveTo(x, y); CheckExpect(x, y); Thread.Sleep(ms); }
     static void HumanDrag(int x1, int y1, int x2, int y2) {
-        HumanMoveTo(x1, y1); CheckExpect(x1, y1); Thread.Sleep(Rnd(90, 170));
+        HumanMoveTo(x1, y1); CheckExpect(x1, y1); Thread.Sleep(Rnd(90, 170)); PressGuard(x1, y1);
         if (Follower != null) Follower.SetPressed(true);
         Send1(Mouse(BtnDown(0), 0));
-        try { Thread.Sleep(Rnd(90, 160)); HumanMoveTo(x2, y2); Thread.Sleep(Rnd(70, 130)); }
+        try { Thread.Sleep(Rnd(90, 160)); HumanMoveTo(x2, y2); Thread.Sleep(Rnd(70, 130)); PressGuard(x2, y2); }
         finally { Send1(Mouse(BtnUp(0), 0)); if (Follower != null) Follower.SetPressed(false); }
         Thread.Sleep(Rnd(25, 60));
     }
@@ -584,7 +615,7 @@ public static class DsNative6 {
 // ============================================================
 // 虚拟鼠标：分层、点击穿透、不抢焦点的覆盖窗口；专用线程渲染；DwmFlush 垂直同步
 // ============================================================
-public sealed class DsOverlay6 {
+public sealed class DsOverlay61 {
     [StructLayout(LayoutKind.Sequential)] struct POINT { public int X; public int Y; }
     [StructLayout(LayoutKind.Sequential)] struct SIZE { public int cx; public int cy; }
     [StructLayout(LayoutKind.Sequential)] struct BLENDFUNCTION { public byte BlendOp; public byte BlendFlags; public byte SourceConstantAlpha; public byte AlphaFormat; }
@@ -635,7 +666,7 @@ public sealed class DsOverlay6 {
         curX = startX; curY = startY; x1 = startX; y1 = startY;
         th = new Thread(Run);
         th.IsBackground = true;
-        th.Name = "DsOverlay6";
+        th.Name = "DsOverlay61";
         th.Start();
         ready.WaitOne(6000);
         return Ok;
@@ -859,7 +890,7 @@ public sealed class DsOverlay6 {
 // ============================================================
 // 自检用目标窗口：真实的 Win32 窗口 + 复选框 + 编辑框，状态可由外部读回
 // ============================================================
-public sealed class DsTestTarget6 {
+public sealed class DsTestTarget61 {
     [StructLayout(LayoutKind.Sequential)] struct POINT { public int X; public int Y; }
     [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public POINT pt; }
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
@@ -907,10 +938,10 @@ public sealed class DsTestTarget6 {
 '@
 }
 # 必须先于任何窗口 / 屏幕坐标查询，保证高分屏下坐标一致
-[DsNative6]::InitDpi()
-[DsNative6]::Humanize = (-not $NoHuman)
-[DsNative6]::HumanSpeed = [Math]::Min(4.0, [Math]::Max(0.3, $HumanSpeed))
-[DsNative6]::TypeCps = [Math]::Min(40.0, [Math]::Max(4.0, $TypeCps))
+[DsNative61]::InitDpi()
+[DsNative61]::Humanize = (-not $NoHuman)
+[DsNative61]::HumanSpeed = [Math]::Min(4.0, [Math]::Max(0.3, $HumanSpeed))
+[DsNative61]::TypeCps = [Math]::Min(40.0, [Math]::Max(4.0, $TypeCps))
 try {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -920,7 +951,7 @@ try {
 catch {
     throw "加载 Windows UI 组件失败：$($_.Exception.Message)。请确认在 Windows 上使用 PowerShell 7 (pwsh) 运行。"
 }
-$script:ConsoleHwnd = [DsNative6]::GetForegroundWindow()
+$script:ConsoleHwnd = [DsNative61]::GetForegroundWindow()
 $script:ObsHwnd = [IntPtr]::Zero
 $script:Cur = $null
 $script:Pool = $null
@@ -960,11 +991,11 @@ function Save-Screenshot([string]$path) {
     finally { $g.Dispose(); $bmp.Dispose() }
 }
 function Test-Abort {
-    $p = [DsNative6]::CursorPos()
+    $p = [DsNative61]::CursorPos()
     if ($p[0] -le 0 -and $p[1] -le 0) { throw '触发保护：鼠标位于屏幕左上角，已紧急停止当前任务。' }
-    $ctrl = [DsNative6]::GetAsyncKeyState(0x11) -band 0x8000
-    $alt = [DsNative6]::GetAsyncKeyState(0x12) -band 0x8000
-    $q = [DsNative6]::GetAsyncKeyState(0x51) -band 0x8000
+    $ctrl = [DsNative61]::GetAsyncKeyState(0x11) -band 0x8000
+    $alt = [DsNative61]::GetAsyncKeyState(0x12) -band 0x8000
+    $q = [DsNative61]::GetAsyncKeyState(0x51) -band 0x8000
     if ($ctrl -and $alt -and $q) { throw '触发保护：检测到 Ctrl+Alt+Q，已紧急停止当前任务。' }
 }
 function Wait-Safe([int]$ms) {
@@ -977,14 +1008,14 @@ function Wait-Safe([int]$ms) {
 }
 function Reset-AbortState {
     try {
-        $w = [DsNative6]::PrimaryW(); $h = [DsNative6]::PrimaryH()
-        $pos = [DsNative6]::CursorPos()
-        if ($pos[0] -le 5 -and $pos[1] -le 5) { [DsNative6]::SetCursor([int]($w / 2), [int]($h / 2)) }
+        $w = [DsNative61]::PrimaryW(); $h = [DsNative61]::PrimaryH()
+        $pos = [DsNative61]::CursorPos()
+        if ($pos[0] -le 5 -and $pos[1] -le 5) { [DsNative61]::SetCursor([int]($w / 2), [int]($h / 2)) }
         $end = (Get-Date).AddSeconds(4)
         while ((Get-Date) -lt $end) {
-            $ctrl = [DsNative6]::GetAsyncKeyState(0x11) -band 0x8000
-            $alt = [DsNative6]::GetAsyncKeyState(0x12) -band 0x8000
-            $q = [DsNative6]::GetAsyncKeyState(0x51) -band 0x8000
+            $ctrl = [DsNative61]::GetAsyncKeyState(0x11) -band 0x8000
+            $alt = [DsNative61]::GetAsyncKeyState(0x12) -band 0x8000
+            $q = [DsNative61]::GetAsyncKeyState(0x51) -band 0x8000
             if (-not ($ctrl -and $alt -and $q)) { break }
             Start-Sleep -Milliseconds 100
         }
@@ -993,12 +1024,12 @@ function Reset-AbortState {
 }
 function Restore-Console {
     if ($script:ConsoleHwnd -eq [IntPtr]::Zero) { return }
-    try { [void][DsNative6]::Activate($script:ConsoleHwnd) } catch { }
+    try { [void][DsNative61]::Activate($script:ConsoleHwnd) } catch { }
 }
 function Wait-UserIdle {
     # 用户正在用键鼠时让出控制权：避免我们的物理输入和你的操作交错
     $end = (Get-Date).AddSeconds(8)
-    while ([DsNative6]::UserIdleMs() -lt $IdleMs) {
+    while ([DsNative61]::UserIdleMs() -lt $IdleMs) {
         Test-Abort
         if ((Get-Date) -gt $end) { throw '你正在使用键盘/鼠标，为避免冲突已让出控制权（本次物理输入未发送）；请稍后让模型重试。' }
         Start-Sleep -Milliseconds 40
@@ -1006,19 +1037,19 @@ function Wait-UserIdle {
 }
 function Test-IsConsoleWindow([IntPtr]$h) {
     if ($script:ConsoleHwnd -eq [IntPtr]::Zero -or $h -eq [IntPtr]::Zero) { return $false }
-    return ([DsNative6]::Root($h) -eq [DsNative6]::Root($script:ConsoleHwnd))
+    return ([DsNative61]::Root($h) -eq [DsNative61]::Root($script:ConsoleHwnd))
 }
 function Wait-UiSettled([int]$minMs = 150, [int]$maxMs = 1200) {
     # 操作之后等界面「稳定」：前台窗口与标题连续两次采样一致即返回（页面/弹窗仍在加载时多等一会儿）
     $end = (Get-Date).AddMilliseconds($maxMs)
     Start-Sleep -Milliseconds $minMs
-    $fg = [DsNative6]::GetForegroundWindow()
-    $last = "$fg|$([DsNative6]::WinText($fg))"
+    $fg = [DsNative61]::GetForegroundWindow()
+    $last = "$fg|$([DsNative61]::WinText($fg))"
     while ((Get-Date) -lt $end) {
         Test-Abort
         Start-Sleep -Milliseconds 150
-        $fg = [DsNative6]::GetForegroundWindow()
-        $now = "$fg|$([DsNative6]::WinText($fg))"
+        $fg = [DsNative61]::GetForegroundWindow()
+        $now = "$fg|$([DsNative61]::WinText($fg))"
         if ($now -eq $last) { break }
         $last = $now
     }
@@ -1060,16 +1091,16 @@ function Initialize-Runtime {
     }
     if (-not $NoOverlay -and $null -eq $script:Cur) {
         try {
-            $o = [DsOverlay6]::new()
-            $p = [DsNative6]::CursorPos()
-            if ($o.Start([DsNative6]::DpiScale(), $p[0], $p[1])) { $script:Cur = $o; [DsNative6]::Follower = $o }
+            $o = [DsOverlay61]::new()
+            $p = [DsNative61]::CursorPos()
+            if ($o.Start([DsNative61]::DpiScale(), $p[0], $p[1])) { $script:Cur = $o; [DsNative61]::Follower = $o }
             else { Write-Host "  虚拟鼠标启动失败（动作仍可执行，只是没有可视光标）: $($o.Error)" -ForegroundColor DarkYellow }
         }
         catch { Write-Host "  虚拟鼠标启动失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
     }
 }
 function Stop-Runtime {
-    try { [DsNative6]::Follower = $null; if ($script:Cur) { $script:Cur.Stop(); $script:Cur = $null } } catch { }
+    try { [DsNative61]::Follower = $null; if ($script:Cur) { $script:Cur.Stop(); $script:Cur = $null } } catch { }
     try { if ($script:Pool) { $script:Pool.Close(); $script:Pool.Dispose(); $script:Pool = $null } } catch { }
 }
 function Move-VirtualCursor([int]$x, [int]$y) {
@@ -1094,7 +1125,7 @@ $script:PidName = @{}
 function Test-BrowserWindow([IntPtr]$h) {
     if ($h -eq [IntPtr]::Zero) { return $false }
     try {
-        $p = [int][DsNative6]::WinPid([DsNative6]::Root($h))
+        $p = [int][DsNative61]::WinPid([DsNative61]::Root($h))
         if (-not $script:PidName.ContainsKey($p)) { $script:PidName[$p] = [System.Diagnostics.Process]::GetProcessById($p).ProcessName.ToLower() }
         return ($script:BrowserNames -contains $script:PidName[$p])
     }
@@ -1102,24 +1133,24 @@ function Test-BrowserWindow([IntPtr]$h) {
 }
 function Test-HumanTarget {
     # 人类化物理输入的适用范围：浏览器窗口（网页只认真实的指针事件序列）；Physical 模式下任何窗口
-    if (-not [DsNative6]::Humanize) { return $false }
+    if (-not [DsNative61]::Humanize) { return $false }
     if ($script:Mode -eq 'Physical') { return $true }
     if ($script:Mode -ne 'Auto') { return $false }
     $h = $script:ObsHwnd
-    if ($h -eq [IntPtr]::Zero) { $h = [DsNative6]::GetForegroundWindow() }
+    if ($h -eq [IntPtr]::Zero) { $h = [DsNative61]::GetForegroundWindow() }
     return (Test-BrowserWindow $h)
 }
 function Set-ExpectRoot($t) {
     $r = [IntPtr]::Zero
-    if ($t.item -and $script:ObsHwnd -ne [IntPtr]::Zero) { $r = [DsNative6]::Root($script:ObsHwnd) }
-    [DsNative6]::ExpectRoot = $r
+    if ($t.item -and $script:ObsHwnd -ne [IntPtr]::Zero) { $r = [DsNative61]::Root($script:ObsHwnd) }
+    [DsNative61]::ExpectRoot = $r
 }
 function Invoke-HumanApproach($t, $item) {
     # 像人一样「先移过去，再看一眼目标还在不在原地」：光标到位后重读目标矩形，移动期间页面发生布局位移就追加一次短修正（最多 2 次）
     $w = 40
     if ($item) { try { $w = [int][Math]::Max(8.0, [Math]::Min([double]$item.W, [double]$item.H)) } catch { $w = 40 } }
-    [DsNative6]::TargetW = $w
-    try { [DsNative6]::HumanMoveTo([int]$t.x, [int]$t.y) } catch { throw (Get-NativeError $_) }
+    [DsNative61]::TargetW = $w
+    try { [DsNative61]::HumanMoveTo([int]$t.x, [int]$t.y) } catch { throw (Get-NativeError $_) }
     if ($item -and $t.byId) {
         for ($k = 0; $k -lt 2; $k++) {
             try {
@@ -1128,7 +1159,7 @@ function Invoke-HumanApproach($t, $item) {
                 $pp = Get-PrecisePoint $item $lr
                 if ([Math]::Abs([int]$pp.x - [int]$t.x) -le 2 -and [Math]::Abs([int]$pp.y - [int]$t.y) -le 2) { break }
                 $t.x = $pp.x; $t.y = $pp.y
-                [DsNative6]::HumanMoveTo([int]$t.x, [int]$t.y)
+                [DsNative61]::HumanMoveTo([int]$t.x, [int]$t.y)
             }
             catch { if ("$($_.Exception.Message)" -match '触发保护|让出控制权') { throw (Get-NativeError $_) }; break }
         }
@@ -1176,17 +1207,17 @@ function Send-KeyCombo([string]$combo) {
     $down = [System.Collections.Generic.List[int]]::new()
     try {
         foreach ($c in $codes) {
-            [DsNative6]::Key([int]$c, $false, [bool]($script:ExtendedVK -contains [int]$c))
+            [DsNative61]::Key([int]$c, $false, [bool]($script:ExtendedVK -contains [int]$c))
             $down.Add([int]$c)
-            Start-Sleep -Milliseconds $(if ([DsNative6]::Humanize) { Get-Random -Minimum 18 -Maximum 43 } else { 12 })
+            Start-Sleep -Milliseconds $(if ([DsNative61]::Humanize) { Get-Random -Minimum 18 -Maximum 43 } else { 12 })
         }
     }
     finally {
         # 无论中途是否出错，都倒序松开，绝不留下「卡住的修饰键」
-        if ([DsNative6]::Humanize) { Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 96) }   # 人按键有「按住」的时长
+        if ([DsNative61]::Humanize) { Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 96) }   # 人按键有「按住」的时长
         for ($i = $down.Count - 1; $i -ge 0; $i--) {
-            [DsNative6]::Key($down[$i], $true, [bool]($script:ExtendedVK -contains $down[$i]))
-            Start-Sleep -Milliseconds $(if ([DsNative6]::Humanize) { Get-Random -Minimum 12 -Maximum 31 } else { 12 })
+            [DsNative61]::Key($down[$i], $true, [bool]($script:ExtendedVK -contains $down[$i]))
+            Start-Sleep -Milliseconds $(if ([DsNative61]::Humanize) { Get-Random -Minimum 12 -Maximum 31 } else { 12 })
         }
     }
 }
@@ -1194,11 +1225,11 @@ function Send-KeySequence([string]$seq) {
     $norm = ($seq -replace '\s*\+\s*', '+').Trim()
     $items = @($norm -split '\s+' | Where-Object { $_ })
     if ($items.Count -eq 0) { throw 'keys 不能为空' }
-    foreach ($it in $items) { Send-KeyCombo $it; Start-Sleep -Milliseconds $(if ([DsNative6]::Humanize) { Get-Random -Minimum 90 -Maximum 211 } else { 40 }) }
+    foreach ($it in $items) { Send-KeyCombo $it; Start-Sleep -Milliseconds $(if ([DsNative61]::Humanize) { Get-Random -Minimum 90 -Maximum 211 } else { 40 }) }
 }
 function Send-Text([string]$text) {
     if ($text.Length -le 400) {
-        [DsNative6]::UnicodeText($text)   # Unicode 直输：不动剪贴板，中文 / Emoji 均可
+        [DsNative61]::UnicodeText($text)   # Unicode 直输：不动剪贴板，中文 / Emoji 均可
         Start-Sleep -Milliseconds ([Math]::Min(500, 40 + $text.Length))
         return
     }
@@ -1211,14 +1242,14 @@ function Send-Text([string]$text) {
     if ($null -ne $old -and $old -ne '') { try { Set-Clipboard -Value $old } catch { } }
 }
 function Assert-KeyboardReady {
-    $fg = [DsNative6]::GetForegroundWindow()
+    $fg = [DsNative61]::GetForegroundWindow()
     # v5：前台被本控制台占据、而观察的目标窗口仍在：先自动切回，再做后面的核对
-    if (-not $NoConsoleYield -and (Test-IsConsoleWindow $fg) -and $script:ObsHwnd -ne [IntPtr]::Zero -and -not (Test-IsConsoleWindow $script:ObsHwnd) -and [DsNative6]::IsWindow($script:ObsHwnd)) {
-        [void][DsNative6]::Activate($script:ObsHwnd); Start-Sleep -Milliseconds 120; $fg = [DsNative6]::GetForegroundWindow()
+    if (-not $NoConsoleYield -and (Test-IsConsoleWindow $fg) -and $script:ObsHwnd -ne [IntPtr]::Zero -and -not (Test-IsConsoleWindow $script:ObsHwnd) -and [DsNative61]::IsWindow($script:ObsHwnd)) {
+        [void][DsNative61]::Activate($script:ObsHwnd); Start-Sleep -Milliseconds 120; $fg = [DsNative61]::GetForegroundWindow()
     }
     if (Test-IsConsoleWindow $fg) { throw '前台窗口是运行本脚本的控制台，已拒绝发送按键/文本（防止输入到自己）。请先 launch / focus_window 切换到目标程序。' }
     if ($script:ObsHwnd -ne [IntPtr]::Zero -and $fg -ne $script:ObsHwnd) {
-        throw "前台窗口已变化（观察时 [$([DsNative6]::WinText($script:ObsHwnd))]，现在 [$([DsNative6]::WinText($fg))]），为避免输入到错误窗口已取消，请重新观察。"
+        throw "前台窗口已变化（观察时 [$([DsNative61]::WinText($script:ObsHwnd))]，现在 [$([DsNative61]::WinText($fg))]），为避免输入到错误窗口已取消，请重新观察。"
     }
     Wait-UserIdle
 }
@@ -1226,14 +1257,14 @@ function Assert-KeyboardReady {
 #region ---------- 窗口 / UI Automation 观察 ----------
 $script:Elements = @{}
 function Get-ForegroundInfo {
-    $hwnd = [DsNative6]::GetForegroundWindow()
-    $wpid = [DsNative6]::WinPid($hwnd)
+    $hwnd = [DsNative61]::GetForegroundWindow()
+    $wpid = [DsNative61]::WinPid($hwnd)
     $pname = ''
     try { $pname = [System.Diagnostics.Process]::GetProcessById([int]$wpid).ProcessName } catch { }
-    [pscustomobject]@{ Handle = $hwnd; Title = [DsNative6]::WinText($hwnd); Process = $pname; Class = [DsNative6]::WinClass($hwnd) }
+    [pscustomobject]@{ Handle = $hwnd; Title = [DsNative61]::WinText($hwnd); Process = $pname; Class = [DsNative61]::WinClass($hwnd) }
 }
 function Get-TopWindowList([int]$max = 40) {
-    foreach ($line in [DsNative6]::TopWindows([uint32]$PID, $max)) {
+    foreach ($line in [DsNative61]::TopWindows([uint32]$PID, $max)) {
         $p = $line.Split('|', 3)
         $pn = ''
         try { $pn = [System.Diagnostics.Process]::GetProcessById([int]$p[1]).ProcessName } catch { }
@@ -1242,7 +1273,7 @@ function Get-TopWindowList([int]$max = 40) {
 }
 function Get-TopHandles {
     $h = [System.Collections.Generic.HashSet[string]]::new()
-    foreach ($line in [DsNative6]::TopWindows([uint32]$PID, 100)) { [void]$h.Add($line.Split('|', 3)[0]) }
+    foreach ($line in [DsNative61]::TopWindows([uint32]$PID, 100)) { [void]$h.Add($line.Split('|', 3)[0]) }
     return , $h
 }
 function New-UiaCondition([string[]]$typeNames) {
@@ -1436,8 +1467,8 @@ function Get-Observation {
     Test-Abort
     $fg = Get-ForegroundInfo
     $script:ObsHwnd = $fg.Handle
-    $sw = [DsNative6]::PrimaryW(); $sh = [DsNative6]::PrimaryH()
-    $cursor = [DsNative6]::CursorPos()
+    $sw = [DsNative61]::PrimaryW(); $sh = [DsNative61]::PrimaryH()
+    $cursor = [DsNative61]::CursorPos()
     $windows = @(Get-TopWindowList 15 | ForEach-Object { "  - $($_.Process): $(Limit-Text $_.Title 60)" })
     $all = @(Get-UiElements $fg.Handle | Sort-Object cy, cx)
     try { Add-NearLabels $all } catch { }   # v5：无名可点击容器带上内部 / 紧邻文字
@@ -1860,7 +1891,7 @@ function Get-RowModel([IntPtr]$hwnd) {
     catch { $col = $null }
     finally { if ($act) { $act.Dispose() } }
     if ($null -eq $col) { return $empty }
-    $wr = [DsNative6]::WinRect($hwnd)
+    $wr = [DsNative61]::WinRect($hwnd)
     $rows = [System.Collections.Generic.List[object]]::new()
     $cbs = [System.Collections.Generic.List[object]]::new()
     $k = 0
@@ -2018,11 +2049,11 @@ function Invoke-PhysicalOnItem($item, [string]$label) {
     }
     $pp = Get-PrecisePoint $item $rc
     $t = @{ x = $pp.x; y = $pp.y; label = $label; item = $item; byId = $true }
-    if (-not [DsNative6]::Humanize) { Move-VirtualCursor $t.x $t.y }
+    if (-not [DsNative61]::Humanize) { Move-VirtualCursor $t.x $t.y }
     Assert-PhysicalReady $t
     Set-ExpectRoot $t
-    if ([DsNative6]::Humanize) { Invoke-HumanApproach $t $item } else { Set-CursorPulse 0 }
-    try { [DsNative6]::PhysicalClick($t.x, $t.y, 0, 1, $true) } catch { throw (Get-NativeError $_) }
+    if ([DsNative61]::Humanize) { Invoke-HumanApproach $t $item } else { Set-CursorPulse 0 }
+    try { [DsNative61]::PhysicalClick($t.x, $t.y, 0, 1, $true) } catch { throw (Get-NativeError $_) }
     return [bool]$pp.verified
 }
 function Set-CheckState($item, [bool]$on, [string]$label) {
@@ -2055,7 +2086,7 @@ function Set-CheckState($item, [bool]$on, [string]$label) {
             if ($script:Mode -eq 'Message') {
                 if ($item.Hwnd -eq 0 -or -not (Test-MessageFriendly $item.Hwnd)) { throw "$label 无法用窗口消息操作（请改用 mode auto）" }
                 $mr = $item.El.Current.BoundingRectangle
-                [void][DsNative6]::PostClick([IntPtr]$item.Hwnd, [int]($mr.Left + $mr.Width / 2), [int]($mr.Top + $mr.Height / 2), 0, 1)
+                [void][DsNative61]::PostClick([IntPtr]$item.Hwnd, [int]($mr.Left + $mr.Width / 2), [int]($mr.Top + $mr.Height / 2), 0, 1)
                 $via.Add('窗口消息')
             }
             else {
@@ -2230,12 +2261,12 @@ function Assert-BulkInterlock($a, [string]$kind) {
 #region ---------- v4.3：精确可见区 / 错误码熔断 / 像素证据 / 长任务通道 ----------
 function Get-ViewBounds {
     # 控件可见区的边界：前台窗口矩形、虚拟桌面（物理像素）。返回 @{ Win; Screen }，各为 [l,t,r,b]
-    $vx = [DsNative6]::VirtX(); $vy = [DsNative6]::VirtY(); $vw = [DsNative6]::VirtW(); $vh = [DsNative6]::VirtH()
+    $vx = [DsNative61]::VirtX(); $vy = [DsNative61]::VirtY(); $vw = [DsNative61]::VirtW(); $vh = [DsNative61]::VirtH()
     $scr = @([double]$vx, [double]$vy, [double]($vx + $vw), [double]($vy + $vh))
     $win = $null
     try {
-        if ($script:ObsHwnd -ne [IntPtr]::Zero -and [DsNative6]::IsWindow($script:ObsHwnd)) {
-            $w = [DsNative6]::WinRect($script:ObsHwnd)
+        if ($script:ObsHwnd -ne [IntPtr]::Zero -and [DsNative61]::IsWindow($script:ObsHwnd)) {
+            $w = [DsNative61]::WinRect($script:ObsHwnd)
             $win = @([double]$w[0], [double]$w[1], [double]$w[2], [double]$w[3])
         }
     }
@@ -2259,8 +2290,8 @@ function Get-ClipRect($r, $vb) {
 function Get-CoordLine([IntPtr]$hwnd) {
     try {
         $mons = (@([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)@($($_.Bounds.X),$($_.Bounds.Y))" + $(if ($_.Primary) { '主' } else { '' }) })) -join ' '
-        $wr = [DsNative6]::WinRect($hwnd)
-        return "坐标系: 物理像素（已 Per-Monitor DPI 感知，系统缩放 $(([DsNative6]::DpiScale()).ToString('0.00'))x），原点=主屏左上角，副屏可为负数；虚拟桌面 ($([DsNative6]::VirtX()),$([DsNative6]::VirtY())) $([DsNative6]::VirtW())x$([DsNative6]::VirtH())；显示器: $mons；前台窗口矩形 ($($wr[0]),$($wr[1]))-($($wr[2]),$($wr[3]))；控件 @(x,y) 是其「可见部分」的中心"
+        $wr = [DsNative61]::WinRect($hwnd)
+        return "坐标系: 物理像素（已 Per-Monitor DPI 感知，系统缩放 $(([DsNative61]::DpiScale()).ToString('0.00'))x），原点=主屏左上角，副屏可为负数；虚拟桌面 ($([DsNative61]::VirtX()),$([DsNative61]::VirtY())) $([DsNative61]::VirtW())x$([DsNative61]::VirtH())；显示器: $mons；前台窗口矩形 ($($wr[0]),$($wr[1]))-($($wr[2]),$($wr[3]))；控件 @(x,y) 是其「可见部分」的中心"
     }
     catch { return '' }
 }
@@ -2301,6 +2332,7 @@ function Get-ErrorInfo([string]$msg) {
     elseif ($m -match '黑名单|禁止写入|已使用 -NoShell') { $code = 'BLOCKED'; $retry = 'no' }
     elseif ($m -match '超过 \d+ 秒') { $code = 'TIMEOUT'; $retry = 'no_same_command' }
     elseif ($m -match '让出控制权|正在使用键盘|正在使用鼠标') { $code = 'USER_ACTIVE'; $retry = 'safe_after_wait' }
+    elseif ($m -match '光标定位失败') { $code = 'CURSOR_FIX'; $retry = 'after_observe' }
     elseif ($m -match '遮挡|前台窗口已变化') { $code = 'OCCLUDED'; $retry = 'after_focus_window' }
     elseif ($m -match '已不存在|界面已变化|位置已偏移|名称已由|已不可见|不存在（当前|滚动后仍不可见') { $code = 'STALE_REF'; $retry = 'after_observe' }
     elseif ($m -match '被禁用') { $code = 'DISABLED'; $retry = 'no' }
@@ -2422,7 +2454,7 @@ function Invoke-ProcessAction($a) {
 #   ② z 键按了 4 次、(1770,840) 点了 7 次——切换类动作在「效果无法验证」时被反复执行，点赞会被来回撤销；
 #   ③ 落点靠「图标大概在数字上方 40px」猜；第 2 步的坐标还被吸附到整页大小的 Hyperlink 上并 Invoke 了它；
 #   ④ 全程没有任何一步核实「心形是否变红」。
-# v5 每一项都只针对其中一个根因，并且都能在 -SelfTest 里复现。DsNative6（C#）仍逐字未改。
+# v5 每一项都只针对其中一个根因，并且都能在 -SelfTest 里复现。DsNative61（C#）仍逐字未改。
 if (-not ('DsWin5.U' -as [type])) {
     Add-Type -Namespace DsWin5 -Name U -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
@@ -2456,7 +2488,7 @@ function Invoke-ConsoleYield {
         Start-Sleep -Milliseconds 150
         $tgt = $script:LastTarget
         if ($script:ObsHwnd -ne [IntPtr]::Zero -and -not (Test-IsConsoleWindow $script:ObsHwnd)) { $tgt = $script:ObsHwnd }
-        if ($tgt -ne [IntPtr]::Zero -and [DsNative6]::IsWindow($tgt)) { [void][DsNative6]::Activate($tgt) }
+        if ($tgt -ne [IntPtr]::Zero -and [DsNative61]::IsWindow($tgt)) { [void][DsNative61]::Activate($tgt) }
         Start-Sleep -Milliseconds 120
         # 让位前的像素基线里是控制台，必须重新采样，否则会把「控制台消失」误判成「点击生效」
         if ($script:EffectProbe) { $ep = $script:EffectProbe; Start-EffectProbe $ep.X $ep.Y $ep.Rad }
@@ -2466,14 +2498,14 @@ function Invoke-ConsoleYield {
 }
 function Resume-TargetWindow {
     # 每轮观察前：前台若是本控制台，由系统自动切回上一个目标窗口（不再让模型花一步 focus_window）
-    $fg = [DsNative6]::GetForegroundWindow()
+    $fg = [DsNative61]::GetForegroundWindow()
     if ($fg -ne [IntPtr]::Zero -and -not (Test-IsConsoleWindow $fg)) { $script:LastTarget = $fg; return '' }
     if ($NoConsoleYield) { return '' }
     $t = $script:LastTarget
-    if ($t -eq [IntPtr]::Zero -or -not [DsNative6]::IsWindow($t) -or (Test-IsConsoleWindow $t)) { return '' }
-    if ([DsNative6]::Activate($t)) {
+    if ($t -eq [IntPtr]::Zero -or -not [DsNative61]::IsWindow($t) -or (Test-IsConsoleWindow $t)) { return '' }
+    if ([DsNative61]::Activate($t)) {
         Start-Sleep -Milliseconds 150
-        return "前台原本是运行本脚本的控制台，系统已自动切回上一个目标窗口 [$(Limit-Text ([DsNative6]::WinText($t)) 50)]，不需要再 focus_window；任务若需要别的程序请 launch / focus_window。"
+        return "前台原本是运行本脚本的控制台，系统已自动切回上一个目标窗口 [$(Limit-Text ([DsNative61]::WinText($t)) 50)]，不需要再 focus_window；任务若需要别的程序请 launch / focus_window。"
     }
     return ''
 }
@@ -2561,7 +2593,7 @@ function Start-EffectProbe([int]$x, [int]$y, [int]$rad = 0) {
     # 动作前在目标点周围采样两次（间隔 110ms）：第二次作为基线，两次之差作为「静止噪声」（视频 / 动画）
     $script:EffectProbe = $null
     try {
-        if ($rad -le 0) { $rad = [int][Math]::Max(40, [Math]::Min(160, 56 * [DsNative6]::DpiScale())) }
+        if ($rad -le 0) { $rad = [int][Math]::Max(40, [Math]::Min(160, 56 * [DsNative61]::DpiScale())) }
         $a1 = Get-RegionSample $x $y $rad
         Start-Sleep -Milliseconds 110
         $a2 = Get-RegionSample $x $y $rad
@@ -2606,7 +2638,7 @@ function Test-UiaActionable($item) {
 function Test-Grounded([int]$x, [int]$y) {
     # 坐标点击的依据：落在当前观察某个「小」控件的矩形内（大容器不算），或落在 inspect / ocr 给出的区域内
     if ($null -eq $script:Elements -or $script:Elements.Count -eq 0) { return $true }
-    $maxA = [Math]::Pow(320.0 * [DsNative6]::DpiScale(), 2)
+    $maxA = [Math]::Pow(320.0 * [DsNative61]::DpiScale(), 2)
     foreach ($kv in $script:Elements.GetEnumerator()) {
         $it = $kv.Value
         if ($it.Off) { continue }
@@ -2659,7 +2691,7 @@ function New-LedgerProbe($a, [string]$kind) {
     $pt = Get-ActionPoint $a
     if (($kind -in @('click', 'double_click', 'right_click', 'middle_click')) -and ($null -eq $pt)) { return $null }
     $title = ''
-    try { $title = [DsNative6]::WinText([DsNative6]::GetForegroundWindow()) } catch { }
+    try { $title = [DsNative61]::WinText([DsNative61]::GetForegroundWindow()) } catch { }
     $txt = ''
     if ($kind -eq 'type') { $txt = "$($a.text)" }
     return [pscustomobject]@{ Kind = $kind; Keys = $keys; Text = $txt; Pt = $pt; Title = $title }
@@ -2916,7 +2948,7 @@ function Get-WindowOcrBlock([IntPtr]$hwnd, $pix) {
         $dd = Get-PixelDiff $c.Pix $pix
         if ($null -ne $dd -and $dd -lt 0.5) { foreach ($gr in @($c.Rects)) { $script:Grounded.Add($gr) }; return $c.Block }
     }
-    $wr = [DsNative6]::WinRect($hwnd)
+    $wr = [DsNative61]::WinRect($hwnd)
     $res = Invoke-Ocr $wr[0] $wr[1] ($wr[2] - $wr[0]) ($wr[3] - $wr[1])
     if (-not $res.Ok) {
         $fb = "OCR（该窗口无障碍控件很少，尝试读屏幕文字）: 不可用 - $($res.Err)"
@@ -2934,7 +2966,7 @@ function Invoke-OcrAction($a) {
         $res = Invoke-Ocr ([int][double]"$($a.x)") ([int][double]"$($a.y)") ([int][double]"$($a.w)") ([int][double]"$($a.h)")
     }
     else {
-        $wr = [DsNative6]::WinRect($script:ObsHwnd)
+        $wr = [DsNative61]::WinRect($script:ObsHwnd)
         $res = Invoke-Ocr $wr[0] $wr[1] ($wr[2] - $wr[0]) ($wr[3] - $wr[1])
     }
     if (-not $res.Ok) { throw "OCR 不可用: $($res.Err)" }
@@ -2964,11 +2996,11 @@ function Invoke-InspectAction($a) {
         if ($fr.IsEmpty) { throw '键盘焦点元素没有位置信息，请给 id 或 x,y' }
         $x = [int]($fr.Left + $fr.Width / 2); $y = [int]($fr.Top + $fr.Height / 2); $label = '键盘焦点'
     }
-    $rad = [int][Math]::Max(40, [Math]::Min(160, 70 * [DsNative6]::DpiScale()))
+    $rad = [int][Math]::Max(40, [Math]::Min(160, 70 * [DsNative61]::DpiScale()))
     if (Test-NumValue $a.r) { $rad = [int][Math]::Min([Math]::Max([double]"$($a.r)", 20), 400) }
     $out = [System.Collections.Generic.List[string]]::new()
     $out.Add("inspect $label 中心 ($x,$y) 半径 ${rad}px:")
-    $maxA = [Math]::Pow(320.0 * [DsNative6]::DpiScale(), 2)
+    $maxA = [Math]::Pow(320.0 * [DsNative61]::DpiScale(), 2)
     try {
         $AE = [System.Windows.Automation.AutomationElement]
         $hit = $AE::FromPoint([System.Windows.Point]::new([double]$x, [double]$y))
@@ -3162,7 +3194,7 @@ function Find-ElementAtPoint([int]$x, [int]$y) {
     if ($script:Mode -notin 'Auto', 'Uia') { return $null }
     try {
         $best = $null; $bestId = 0; $bestArea = [double]::MaxValue
-        $snapMax = [Math]::Pow(320.0 * [DsNative6]::DpiScale(), 2)   # v5：日志任务6第2步坐标被吸附到整页大小的 Hyperlink 并 Invoke 了它
+        $snapMax = [Math]::Pow(320.0 * [DsNative61]::DpiScale(), 2)   # v5：日志任务6第2步坐标被吸附到整页大小的 Hyperlink 并 Invoke 了它
         foreach ($kv in $script:Elements.GetEnumerator()) {
             $it = $kv.Value
             if ($it.Type -eq 'Text' -or $it.Pat.Count -eq 0 -or $it.Off) { continue }
@@ -3178,7 +3210,7 @@ function Find-ElementAtPoint([int]$x, [int]$y) {
     return $null
 }
 function Resolve-Target($a) {
-    $vx = [DsNative6]::VirtX(); $vy = [DsNative6]::VirtY(); $vw = [DsNative6]::VirtW(); $vh = [DsNative6]::VirtH()
+    $vx = [DsNative61]::VirtX(); $vy = [DsNative61]::VirtY(); $vw = [DsNative61]::VirtW(); $vh = [DsNative61]::VirtH()
     if (Test-IdValue $a.id) {
         $n = [int]"$($a.id)"
         if (-not $script:Elements.ContainsKey($n)) { throw "元素编号 $n 不存在（当前只有 $($script:Elements.Count) 个元素）" }
@@ -3263,17 +3295,17 @@ function Update-ItemElement($item) {
 function Test-HasTarget($a) { return ((Test-IdValue $a.id) -or ((Test-NumValue $a.x) -and (Test-NumValue $a.y))) }
 function Assert-PhysicalReady($t) {
     Wait-UserIdle
-    $hit = [DsNative6]::RootAt($t.x, $t.y)
+    $hit = [DsNative61]::RootAt($t.x, $t.y)
     if ($script:Cur -and $hit -eq $script:Cur.Hwnd) { return }
     if ($hit -ne [IntPtr]::Zero -and (Test-IsConsoleWindow $hit)) {
         # v5：日志任务6里 8 次因此失败。先把控制台最小化让位、切回目标窗口，再核对一次
-        if (Invoke-ConsoleYield) { $hit = [DsNative6]::RootAt($t.x, $t.y) }
+        if (Invoke-ConsoleYield) { $hit = [DsNative61]::RootAt($t.x, $t.y) }
         if ($hit -ne [IntPtr]::Zero -and (Test-IsConsoleWindow $hit)) { throw '目标点位于运行本脚本的控制台窗口上，已取消（避免误点自己）。' }
     }
     if ($t.item) {
-        $expect = [DsNative6]::Root($script:ObsHwnd)
+        $expect = [DsNative61]::Root($script:ObsHwnd)
         if ($hit -ne $expect) {
-            throw "目标点 ($($t.x),$($t.y)) 当前被其他窗口遮挡 [$([DsNative6]::WinClass($hit)) / $(Limit-Text ([DsNative6]::WinText($hit)) 30)]，已取消点击（未发送任何输入）。"
+            throw "目标点 ($($t.x),$($t.y)) 当前被其他窗口遮挡 [$([DsNative61]::WinClass($hit)) / $(Limit-Text ([DsNative61]::WinText($hit)) 30)]，已取消点击（未发送任何输入）。"
         }
         if (-not (Test-HitTarget $t.item $t.x $t.y)) { throw "目标点 ($($t.x),$($t.y)) 处被菜单 / 弹出层遮挡，实际不是 $($t.label)，已取消点击。" }
     }
@@ -3281,8 +3313,8 @@ function Assert-PhysicalReady($t) {
 function Test-MessageFriendly([int]$hwnd) {
     # 排除已知会忽略 PostMessage 鼠标消息的框架
     if ($hwnd -eq 0) { return $false }
-    $root = [DsNative6]::Root([IntPtr]$hwnd)
-    $cls = [DsNative6]::WinClass($root)
+    $root = [DsNative61]::Root([IntPtr]$hwnd)
+    $cls = [DsNative61]::WinClass($root)
     return ($cls -notmatch '^(Chrome_|MozillaWindowClass|ApplicationFrameWindow|Windows\.UI\.|WinUIDesktop|Qt\d*QWindow|SunAwt|ConsoleWindowClass|CASCADIA|Shell_TrayWnd|XamlExplorerHostIslandWindow)')
 }
 function Invoke-UiaClickOnce($item) {
@@ -3361,9 +3393,9 @@ function Invoke-PointerAction([string]$kind, $a) {
     if ($kind -eq 'hover') {
         Assert-PhysicalReady $t
         Set-ExpectRoot $t
-        if ([DsNative6]::Humanize) { Invoke-HumanApproach $t $item } else { Set-CursorPulse 2 }
-        try { [DsNative6]::PhysicalHover($t.x, $t.y, 450) } catch { throw (Get-NativeError $_) }
-        return "已悬停 $($t.label)（$(if ([DsNative6]::Humanize) { '人类化物理输入：光标沿曲线移到目标并停留在那里，悬停菜单保持展开' } else { '真实鼠标仅借用 0.45 秒后已归位' })）"
+        if ([DsNative61]::Humanize) { Invoke-HumanApproach $t $item } else { Set-CursorPulse 2 }
+        try { [DsNative61]::PhysicalHover($t.x, $t.y, 450) } catch { throw (Get-NativeError $_) }
+        return "已悬停 $($t.label)（$(if ([DsNative61]::Humanize) { '人类化物理输入：光标沿曲线移到目标并停留在那里，悬停菜单保持展开' } else { '真实鼠标仅借用 0.45 秒后已归位' })）"
     }
     $btn = switch ($kind) { 'right_click' { 1 } 'middle_click' { 2 } default { 0 } }
     $n = if ($kind -eq 'double_click') { 2 } else { 1 }
@@ -3386,7 +3418,7 @@ function Invoke-PointerAction([string]$kind, $a) {
     $msgHwnd = [IntPtr]::Zero
     if ($script:Mode -eq 'Message') {
         if ($item -and $item.Hwnd -ne 0) { $msgHwnd = [IntPtr]$item.Hwnd }
-        else { $msgHwnd = [DsNative6]::DeepChildAt([DsNative6]::RootAt($t.x, $t.y), $t.x, $t.y) }
+        else { $msgHwnd = [DsNative61]::DeepChildAt([DsNative61]::RootAt($t.x, $t.y), $t.x, $t.y) }
         if ($msgHwnd -eq [IntPtr]::Zero) { throw "找不到 ($($t.x),$($t.y)) 处的窗口句柄，无法发送窗口消息" }
     }
     elseif ($script:Mode -eq 'Auto' -and -not $human -and $item -and $item.Hwnd -ne 0 -and (Test-MessageFriendly $item.Hwnd)) {
@@ -3394,7 +3426,7 @@ function Invoke-PointerAction([string]$kind, $a) {
     }
     if ($msgHwnd -ne [IntPtr]::Zero) {
         if (Test-IsConsoleWindow $msgHwnd) { throw '目标是运行本脚本的控制台，已取消。' }
-        if ([DsNative6]::PostClick($msgHwnd, $t.x, $t.y, $btn, $n)) {
+        if ([DsNative61]::PostClick($msgHwnd, $t.x, $t.y, $btn, $n)) {
             Set-CursorPulse $(if ($btn -eq 1) { 1 } else { 0 })
             Start-Sleep -Milliseconds 80
             return "已发送窗口消息 $kind $($t.label)（真实鼠标未被占用；消息方式无法确认生效，请以下一步观察为准）$fallback"
@@ -3411,21 +3443,24 @@ function Invoke-PointerAction([string]$kind, $a) {
                 $pp = Get-PrecisePoint $item $lr
                 $t.x = $pp.x; $t.y = $pp.y
                 $hitNote = if ($pp.verified) { '；落点已核验命中目标' } else { '；落点未能核验' }
-                if (-not [DsNative6]::Humanize) { Move-VirtualCursor $t.x $t.y }
+                if (-not [DsNative61]::Humanize) { Move-VirtualCursor $t.x $t.y }
             }
         }
         catch { }
     }
     Assert-PhysicalReady $t
     Set-ExpectRoot $t
-    if ([DsNative6]::Humanize) { Invoke-HumanApproach $t $item }
+    [DsNative61]::Fixups = 0; [DsNative61]::PressGuardFixes = 0; [DsNative61]::LastPressDev = 0; [DsNative61]::LastReleaseDev = 0
+    if ([DsNative61]::Humanize) { Invoke-HumanApproach $t $item }
     else {
         Set-CursorPulse $(if ($btn -eq 1) { 1 } else { 0 })
         if ($n -eq 2) { Start-Sleep -Milliseconds 90; Set-CursorPulse 0 }
     }
-    try { [DsNative6]::PhysicalClick($t.x, $t.y, $btn, $n, $true) } catch { throw (Get-NativeError $_) }
-    $how = if ([DsNative6]::Humanize) { "人类化物理输入：光标沿曲线移到目标→核对位置与遮挡→悬停→按下抬起，光标停在目标上$hitNote" } else { "物理输入$hitNote；真实鼠标瞬时借用并已归位" }
-    return "已执行 $kind $($t.label)（$how；页面弹窗可能稍后才出现，以下一轮的『界面变化』为准）$fallback"
+    try { [DsNative61]::PhysicalClick($t.x, $t.y, $btn, $n, $true) } catch { throw (Get-NativeError $_) }
+    $rcpt = ''
+    if ([DsNative61]::Humanize) { $rcpt = "；回执：按下前光标偏差 $([DsNative61]::LastPressDev)px、释放后偏差 $([DsNative61]::LastReleaseDev)px、落点修正 $([DsNative61]::Fixups) 次" }
+    $how = if ([DsNative61]::Humanize) { "人类化物理输入：光标沿曲线移到目标→核对位置与遮挡→悬停→按下抬起，光标停在目标上$hitNote" } else { "物理输入$hitNote；真实鼠标瞬时借用并已归位" }
+    return "已执行 $kind $($t.label)（$how；页面弹窗可能稍后才出现，以下一轮的『界面变化』为准）$fallback$rcpt"
 }
 function Invoke-ClickMany($a) {
     # 一次点击/勾选多个控件。每个控件执行前都会实时核对（名称/位置/可见/可用）；任一失败即中止，并报告已完成的部分（不会回滚）。
@@ -3450,16 +3485,16 @@ function Invoke-ClickMany($a) {
 function Invoke-DragAction($a) {
     $s = Resolve-Target ([pscustomobject]@{ id = $a.from_id; x = $a.from_x; y = $a.from_y })
     $d = Resolve-Target ([pscustomobject]@{ id = $a.to_id; x = $a.to_x; y = $a.to_y })
-    if ([DsNative6]::Humanize) {
+    if ([DsNative61]::Humanize) {
         Assert-PhysicalReady $s
         Set-ExpectRoot $s
-        try { [DsNative6]::PhysicalDrag($s.x, $s.y, $d.x, $d.y, 28) } catch { throw (Get-NativeError $_) }
+        try { [DsNative61]::PhysicalDrag($s.x, $s.y, $d.x, $d.y, 28) } catch { throw (Get-NativeError $_) }
         return "已拖拽 $($s.label) → $($d.label)（人类化物理输入：移到起点→按住→沿曲线拖到终点→停顿→松开；光标停在终点）"
     }
     Move-VirtualCursor $s.x $s.y
     Assert-PhysicalReady $s
     if ($script:Cur) { $script:Cur.SetPressed($true); $script:Cur.MoveTo([double]$d.x, [double]$d.y, 320) }
-    try { [DsNative6]::PhysicalDrag($s.x, $s.y, $d.x, $d.y, 28) }
+    try { [DsNative61]::PhysicalDrag($s.x, $s.y, $d.x, $d.y, 28) }
     finally {
         if ($script:Cur) { [void]$script:Cur.WaitIdle(1500); $script:Cur.SetPressed($false) }
     }
@@ -3510,8 +3545,8 @@ function Invoke-TypeAction($a) {
                 $t2 = Resolve-Target $a
                 Assert-PhysicalReady $t2
                 Set-ExpectRoot $t2
-                if ([DsNative6]::Humanize) { Invoke-HumanApproach $t2 $item }
-                try { [DsNative6]::PhysicalClick($t2.x, $t2.y, 0, 1, $true) } catch { throw (Get-NativeError $_) }
+                if ([DsNative61]::Humanize) { Invoke-HumanApproach $t2 $item }
+                try { [DsNative61]::PhysicalClick($t2.x, $t2.y, 0, 1, $true) } catch { throw (Get-NativeError $_) }
                 Start-Sleep -Milliseconds 120
             }
         }
@@ -3553,7 +3588,7 @@ function Invoke-ScrollAction($a) {
     $amount = [Math]::Min([Math]::Max($amount, 1), 30)
     if (Test-HasTarget $a) { $t = Resolve-Target $a }
     else {
-        $r = [DsNative6]::WinRect($script:ObsHwnd)
+        $r = [DsNative61]::WinRect($script:ObsHwnd)
         $t = @{ x = [int](($r[0] + $r[2]) / 2); y = [int](($r[1] + $r[3]) / 2); label = '窗口中心'; item = $null }
     }
     $hs = Test-HumanTarget
@@ -3569,9 +3604,9 @@ function Invoke-ScrollAction($a) {
     }
     Assert-PhysicalReady $t
     Set-ExpectRoot $t
-    try { [DsNative6]::PhysicalWheel($t.x, $t.y, $dir * $amount, $true) } catch { throw (Get-NativeError $_) }
-    if ([DsNative6]::Humanize) { Start-Sleep -Milliseconds 260 }   # 网页的平滑滚动需要时间落定，之后的观察才是稳定画面
-    return "已滚动 $($a.direction) x$amount（$(if ([DsNative6]::Humanize) { '人类化物理滚轮：光标移到滚动区域→停顿→逐格滚动，光标停在原处' } else { '物理滚轮；真实鼠标已归位' })）"
+    try { [DsNative61]::PhysicalWheel($t.x, $t.y, $dir * $amount, $true) } catch { throw (Get-NativeError $_) }
+    if ([DsNative61]::Humanize) { Start-Sleep -Milliseconds 260 }   # 网页的平滑滚动需要时间落定，之后的观察才是稳定画面
+    return "已滚动 $($a.direction) x$amount（$(if ([DsNative61]::Humanize) { '人类化物理滚轮：光标移到滚动区域→停顿→逐格滚动，光标停在原处' } else { '物理滚轮；真实鼠标已归位' })）"
 }
 function Focus-WindowByTitle([string]$keyword) {
     if ([string]::IsNullOrWhiteSpace($keyword)) { throw 'focus_window 需要 title（窗口标题或进程名关键字）' }
@@ -3579,8 +3614,8 @@ function Focus-WindowByTitle([string]$keyword) {
     $p = $all | Where-Object { $_.Title -like "*$keyword*" } | Select-Object -First 1
     if (-not $p) { $p = $all | Where-Object { $_.Process -like "*$keyword*" } | Select-Object -First 1 }
     if (-not $p) { throw "找不到标题或进程名包含 '$keyword' 的窗口" }
-    if (-not [DsNative6]::Activate($p.Handle)) { throw "无法把窗口 [$($p.Title)] 切到前台（可能被系统前台锁阻止，或目标权限更高：请用 -RunAsAdmin）" }
-    $script:ObsHwnd = [DsNative6]::GetForegroundWindow()
+    if (-not [DsNative61]::Activate($p.Handle)) { throw "无法把窗口 [$($p.Title)] 切到前台（可能被系统前台锁阻止，或目标权限更高：请用 -RunAsAdmin）" }
+    $script:ObsHwnd = [DsNative61]::GetForegroundWindow()
     return "已切换到窗口: $($p.Title)"
 }
 function Describe-Action($a) {
@@ -3613,7 +3648,7 @@ function Invoke-ShellCommand([string]$cmd, [int]$timeoutSec = 0) {
 }
 function Invoke-Launch($a) {
     $target = "$($a.target)"
-    $before = [DsNative6]::GetForegroundWindow()
+    $before = [DsNative61]::GetForegroundWindow()
     $known = Get-TopHandles
     $argStr = "$($a.args)"
     # Chrome / Edge：自动打开渲染器无障碍，网页内容才会出现在控件列表里
@@ -3628,18 +3663,18 @@ function Invoke-Launch($a) {
     while ((Get-Date) -lt $end) {
         Test-Abort
         Start-Sleep -Milliseconds 120
-        if ([DsNative6]::GetForegroundWindow() -ne $before) { break }
-        foreach ($line in [DsNative6]::TopWindows([uint32]$PID, 100)) {
+        if ([DsNative61]::GetForegroundWindow() -ne $before) { break }
+        foreach ($line in [DsNative61]::TopWindows([uint32]$PID, 100)) {
             $hs = $line.Split('|', 3)[0]
             if (-not $known.Contains($hs)) { $newHandle = [IntPtr][int64]$hs; break }
         }
         if ($newHandle -ne [IntPtr]::Zero) { break }
     }
-    if ($newHandle -ne [IntPtr]::Zero -and [DsNative6]::GetForegroundWindow() -ne $newHandle) { [void][DsNative6]::Activate($newHandle) }
+    if ($newHandle -ne [IntPtr]::Zero -and [DsNative61]::GetForegroundWindow() -ne $newHandle) { [void][DsNative61]::Activate($newHandle) }
     Start-Sleep -Milliseconds 450
-    $now = [DsNative6]::GetForegroundWindow()
+    $now = [DsNative61]::GetForegroundWindow()
     $script:ObsHwnd = $now
-    $tail = if ($now -eq $before) { '；前台窗口未变化（程序可能已在运行或在后台打开，必要时用 focus_window）' } else { "；前台窗口: [$(Limit-Text ([DsNative6]::WinText($now)) 50)]" }
+    $tail = if ($now -eq $before) { '；前台窗口未变化（程序可能已在运行或在后台打开，必要时用 focus_window）' } else { "；前台窗口: [$(Limit-Text ([DsNative61]::WinText($now)) 50)]" }
     return "已启动 $target$tail"
 }
 function Invoke-ActionCore($a, [string]$kind) {
@@ -3676,15 +3711,15 @@ function Invoke-ActionCore($a, [string]$kind) {
 function Invoke-Action($a) {
     $kind = "$($a.action)".ToLower().Trim()
     $script:EffectProbe = $null; $script:LastEffect = $null
-    [DsNative6]::ExpectRoot = [IntPtr]::Zero
+    [DsNative61]::ExpectRoot = [IntPtr]::Zero
     Assert-BulkInterlock $a $kind   # v4.2：数量联锁（删除/归档/全选前核对已勾选行数）
-    $before = [DsNative6]::GetForegroundWindow()
+    $before = [DsNative61]::GetForegroundWindow()
     $r = Invoke-ActionCore $a $kind
     if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr') {
         Start-Sleep -Milliseconds 60
         Wait-UiSettled
-        $after = [DsNative6]::GetForegroundWindow()
-        if ($after -ne $before) { $r += "；前台窗口已变为 [$(Limit-Text ([DsNative6]::WinText($after)) 50)]" }
+        $after = [DsNative61]::GetForegroundWindow()
+        if ($after -ne $before) { $r += "；前台窗口已变为 [$(Limit-Text ([DsNative61]::WinText($after)) 50)]" }
         $fx = Complete-EffectProbe   # v5：局部视觉证据
         if ($fx) { $script:LastEffect = $fx; $r += "；$($fx.Text)" }
     }
@@ -3777,6 +3812,22 @@ inspect（查看某点的无障碍祖先链、颜色、OCR） / ocr（读屏幕�
 4. 切换类动作（点赞 / 收藏 / 勾选 / 播放暂停）只执行一次，执行后用局部视觉证据或 inspect（颜色、tog 状态）核实，绝不连按。
 5. 当前前台若是运行本脚本的控制台，第一步应切换到目标程序（launch 或 focus_window）。
 '@
+function Test-ApiRetryable($status, [string]$detail) {
+    # v6.1：按 HTTP 状态码决定是否值得重试；无状态码 = 网络 / 超时 / 连接重置，重试
+    if ($null -ne $status -and "$status" -match '^\d+$') {
+        $c = [int]$status
+        if ($c -in 408, 409, 425, 429) { return $true }
+        return ($c -ge 500)
+    }
+    if ("$detail" -match '\b401\b|\b402\b|Authentication|invalid.*key|Insufficient') { return $false }
+    return $true
+}
+function Get-RetryDelayMs([int]$attempt, [double]$retryAfterSec = 0, [int]$seed = -1) {
+    # v6.1：Retry-After 优先（上限 60s）；否则 1s·2^(n-1) 指数退避（上限 30s）；叠加 0~400ms 抖动避免同时重试
+    $jit = if ($seed -ge 0) { [Random]::new($seed).Next(0, 401) } else { Get-Random -Minimum 0 -Maximum 401 }
+    if ($retryAfterSec -gt 0) { return [int][Math]::Min(60000.0, $retryAfterSec * 1000.0 + $jit) }
+    return [int][Math]::Min(30000.0, 1000.0 * [Math]::Pow(2.0, [Math]::Max(0, $attempt - 1)) + $jit)
+}
 function Invoke-DeepSeek([string]$userContent, [string]$systemText = '', [int]$maxTok = 0) {
     if ([string]::IsNullOrEmpty($systemText)) { $systemText = $SystemPrompt }
     if ($maxTok -le 0) { $maxTok = $MaxTokens }
@@ -3789,7 +3840,7 @@ function Invoke-DeepSeek([string]$userContent, [string]$systemText = '', [int]$m
     $json = $payload | ConvertTo-Json -Depth 10 -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
     $lastErr = ''
-    foreach ($attempt in 1..4) {
+    foreach ($attempt in 1..5) {
         try {
             $resp = Invoke-RestMethod -Uri "$($BaseUrl.TrimEnd('/'))/chat/completions" -Method Post `
                 -Headers @{ Authorization = "Bearer $ApiKey" } `
@@ -3804,8 +3855,17 @@ function Invoke-DeepSeek([string]$userContent, [string]$systemText = '', [int]$m
             if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $detail += " | " + (Limit-Text $_.ErrorDetails.Message 300) }
             $lastErr = $detail
             Write-Host "  API 调用失败（第 $attempt 次）: $detail" -ForegroundColor DarkYellow
-            if ($detail -match '\b401\b|\b402\b|Authentication|invalid.*key|Insufficient') { break }
-            Wait-Safe ([Math]::Min(8, 2 * $attempt) * 1000)
+            $httpStatus = $null; $retryAfter = 0.0
+            try {
+                if ($_.Exception.Response) {
+                    $httpStatus = [int]$_.Exception.Response.StatusCode
+                    $rah = $_.Exception.Response.Headers.RetryAfter
+                    if ($rah -and $rah.Delta) { $retryAfter = $rah.Delta.TotalSeconds }
+                }
+            } catch { }
+            if (-not (Test-ApiRetryable $httpStatus $detail)) { Write-Host "  （状态码 $httpStatus 属于请求本身的问题，重试不会有不同结果，已停止重试）" -ForegroundColor DarkYellow; break }
+            if ($attempt -ge 5) { break }
+            Wait-Safe (Get-RetryDelayMs $attempt $retryAfter)
         }
     }
     throw "DeepSeek API 调用失败: $lastErr"
@@ -3866,6 +3926,7 @@ function Invoke-AgentTask([string]$TaskText) {
     $descCount = @{}
     $repeatNote = ''
     $lastActed = $false
+    $pendingExpect = ''
     $outcome = 'maxsteps'
     $summary = ''
     $finished = $false
@@ -3943,7 +4004,16 @@ function Invoke-AgentTask([string]$TaskText) {
             if ($ledgerNote) { $ledgerNote = "`n`n$ledgerNote" }
             $resumeLine = ''
             if ($resumeNote) { $resumeLine = "`n（$resumeNote）" }
-            $userContent = "${memNote}【当前任务】: $TaskText$planNote`n`n$shellNote 单轮最多 $MaxBatch 个动作（click_many 的 ids 另算，最多 20 个）。`n`n当前任务已执行的操作历史:`n$hist$ledgerNote`n`n当前观察:$resumeLine`n$($obs.Text)$changeNote$stuckNote$repeatNote`n`n请输出下一步的 JSON（只输出一个 JSON 对象）。"
+            $expectNote = ''
+            if ($pendingExpect) {
+                # v6.1：把模型上一轮写的 expect 与系统实测并排给它，要求先判定预期是否达成再推进
+                $fxText = if ($script:LastEffect) { "$($script:LastEffect.Text)" } else { '无局部视觉数据' }
+                $chgText = if ($obs.Changes) { Limit-Text "$($obs.Changes)" 200 } else { '无' }
+                $whole = if ($sameCount -ge 1) { '整体界面无变化' } else { '整体界面有变化' }
+                $expectNote = "`n`n【上一步预期核对】你预期：「$(Limit-Text $pendingExpect 120)」。系统实测：界面变化=$chgText；局部视觉=$(Limit-Text $fxText 120)；$whole。请先判断预期是否达成：达成才推进计划，未达成就换方法，不要重复同一动作。"
+                $pendingExpect = ''
+            }
+            $userContent = "${memNote}【当前任务】: $TaskText$planNote`n`n$shellNote 单轮最多 $MaxBatch 个动作（click_many 的 ids 另算，最多 20 个）。`n`n当前任务已执行的操作历史:`n$hist$ledgerNote`n`n当前观察:$resumeLine`n$($obs.Text)$changeNote$stuckNote$repeatNote$expectNote`n`n请输出下一步的 JSON（只输出一个 JSON 对象）。"
             $repeatNote = ''
             $raw = Invoke-DeepSeek $userContent
             # 观察 → 模型返回之间用户可能切换了窗口，这里不更新 ObsHwnd；执行前由 Assert-KeyboardReady / Assert-PhysicalReady 核对
@@ -4038,7 +4108,7 @@ function Invoke-AgentTask([string]$TaskText) {
                     continue
                 }
                 # 批量中后续的 id 动作：如果前一个动作已经把前台窗口换掉，旧编号作废，中止其余
-                if ($idx -gt 1 -and (Test-ActionUsesId $action) -and [DsNative6]::GetForegroundWindow() -ne $obs.Foreground.Handle) {
+                if ($idx -gt 1 -and (Test-ActionUsesId $action) -and [DsNative61]::GetForegroundWindow() -ne $obs.Foreground.Handle) {
                     $history.Add("第${step}步: $desc → 未执行：前台窗口已变化，批量中后续的控件编号作废，请重新观察")
                     Write-Host '  前台窗口已变化，批量中后续动作作废。' -ForegroundColor DarkYellow
                     break
@@ -4067,7 +4137,7 @@ function Invoke-AgentTask([string]$TaskText) {
                     $history.Add("第${step}步${ptag}: $desc → $result")
                     $failCount = 0
                     $errStreak = 0
-                    if ($kind -notin 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr') { $lastActed = $true }
+                    if ($kind -notin 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr') { $lastActed = $true; $pendingExpect = "$($parsed.expect)" }
                 }
                 catch {
                     if ($_.Exception.Message -like '触发保护*') { throw }
@@ -4143,8 +4213,8 @@ function Invoke-SelfTest {
         Write-Host ("  [{0}] {1}  {2}" -f $mark, $name, $detail) -ForegroundColor $color
     }
     Write-Host '自检开始：请不要触碰鼠标键盘（约 30 秒）...' -ForegroundColor Cyan
-    $w = [DsNative6]::PrimaryW(); $h = [DsNative6]::PrimaryH()
-    & $rec 'Native 层编译 / DPI' $true ("缩放 {0:N2}x，主屏 {1}x{2}，管理员={3}" -f [DsNative6]::DpiScale(), $w, $h, $script:IsAdmin)
+    $w = [DsNative61]::PrimaryW(); $h = [DsNative61]::PrimaryH()
+    & $rec 'Native 层编译 / DPI' $true ("缩放 {0:N2}x，主屏 {1}x{2}，管理员={3}" -f [DsNative61]::DpiScale(), $w, $h, $script:IsAdmin)
     & $rec '运行空间池（后台 UIA 调用）' ($null -ne $script:Pool) ''
     # ---- 纯逻辑自检（不碰鼠标键盘）：日志里出现过的真实故障样本 ----
     $two = '{"thought":"a","action":"wait","seconds":1}' + "`n" + '{"thought":"b","action":"done","summary":"x"}'
@@ -4237,7 +4307,7 @@ function Invoke-SelfTest {
     }
     catch { $tmo = ($_.Exception.Message -match '超过 2 秒'); $tmoSec = [int]$swT.Elapsed.TotalSeconds }
     & $rec 'v4.3 run_process 超时会杀进程树（睡 30 秒、2 秒超时）' ($tmo -and $tmoSec -le 6) "已终止=$tmo 用时 ${tmoSec} 秒"
-    $pxs = Get-PixelSig ([DsNative6]::GetForegroundWindow())
+    $pxs = Get-PixelSig ([DsNative61]::GetForegroundWindow())
     & $rec 'v4.3 屏幕像素采样可用（独立于 UIA 的变化证据）' ($null -ne $pxs -and $pxs.Length -eq 1536) $(if ($null -ne $pxs) { '48x32 灰度采样成功' } else { '采样失败' })
     # ---- v5 纯逻辑自检（日志任务6「给视频点赞」的真实故障样本；不碰鼠标键盘）----
     $svLedger = $script:Ledger; $svEl = $script:Elements; $svGr = $script:Grounded; $svOv = $script:RepeatOverride
@@ -4311,12 +4381,12 @@ function Invoke-SelfTest {
     }
     & $rec 'v5.1 回归哨兵（@() 作用于 List[object]/计划步骤必须可用；源码中不得再出现 New-Object List[object]）' ($canary -and ($lintBad -eq 0)) "$canaryMsg；$lintMsg"
     $sbn = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-    $cpOld = [DsNative6]::CursorPos()
-    $vx = [DsNative6]::VirtX(); $vy = [DsNative6]::VirtY(); $vw = [DsNative6]::VirtW(); $vh = [DsNative6]::VirtH()
+    $cpOld = [DsNative61]::CursorPos()
+    $vx = [DsNative61]::VirtX(); $vy = [DsNative61]::VirtY(); $vw = [DsNative61]::VirtW(); $vh = [DsNative61]::VirtH()
     $probe = @(@(($vx + 6), ($vy + 6)), @(($vx + $vw - 7), ($vy + $vh - 7)), @([int]($w / 2), [int]($h / 2)), @(($vx + 123), ($vy + 457)))
     $badPts = @()
-    foreach ($pp in $probe) { [DsNative6]::SetCursor([int]$pp[0], [int]$pp[1]); $rb = [DsNative6]::CursorPos(); if ($rb[0] -ne [int]$pp[0] -or $rb[1] -ne [int]$pp[1]) { $badPts += "($($pp[0]),$($pp[1]))→($($rb[0]),$($rb[1]))" } }
-    [DsNative6]::SetCursor($cpOld[0], $cpOld[1])
+    foreach ($pp in $probe) { [DsNative61]::SetCursor([int]$pp[0], [int]$pp[1]); $rb = [DsNative61]::CursorPos(); if ($rb[0] -ne [int]$pp[0] -or $rb[1] -ne [int]$pp[1]) { $badPts += "($($pp[0]),$($pp[1]))→($($rb[0]),$($rb[1]))" } }
+    [DsNative61]::SetCursor($cpOld[0], $cpOld[1])
     & $rec 'v4.3 物理光标回读（虚拟桌面四角/中心写入再读回，且 WinForms 与 Win32 对主屏尺寸一致=DPI 无虚拟化）' (($badPts.Count -eq 0) -and ($sbn.Width -eq $w) -and ($sbn.Height -eq $h)) "偏差点=$($badPts -join ' ') WinForms=$($sbn.Width)x$($sbn.Height) Win32=${w}x${h}"
     # ---- v6 人类化输入自检：轨迹算法统计（纯算法）+ 真实光标闭环回读 ----
     $hpMsg = ''; $hpOk = $false
@@ -4328,8 +4398,8 @@ function Invoke-SelfTest {
             $x0 = $rs.Next(50, 1800); $y0 = $rs.Next(50, 1000)
             $ang = $rs.NextDouble() * 6.2832; $dist = 60 + $rs.NextDouble() * 280   # <350 无过冲：速度应为单峰钟形
             $x1 = $x0 + [Math]::Cos($ang) * $dist; $y1 = $y0 + [Math]::Sin($ang) * $dist
-            $dur = [DsNative6]::HumanDuration($dist, 40)
-            $pts = [DsNative6]::HumanPath($x0, $y0, $x1, $y1, [double]$dur, 8.0, ($i + 7), 40.0)
+            $dur = [DsNative61]::HumanDuration($dist, 40)
+            $pts = [DsNative61]::HumanPath($x0, $y0, $x1, $y1, [double]$dur, 8.0, ($i + 7), 40.0)
             $n = $pts.Length; $last = $pts[$n - 1]
             if ([Math]::Abs($last[1] - $x1) -gt 1e-6 -or [Math]::Abs($last[2] - $y1) -gt 1e-6 -or [Math]::Abs($last[0] - $dur) -gt 1e-6) { $fail.Add("终点#$i"); continue }
             $vmax = 0.0; $kp = 1; $len = 0.0; $dev = 0.0; $px = [double]$x0; $py = [double]$y0; $pt = 0.0; $v1 = 0.0; $vl = 0.0
@@ -4348,40 +4418,50 @@ function Invoke-SelfTest {
             if ($len / $dist -gt 1.3) { $fail.Add("路径比#$i=$([Math]::Round($len / $dist, 2))") }
             if ($dev -ge 1.0) { $curved++ }
         }
-        $dAvg = { param($d) $sum = 0; for ($j = 0; $j -lt 40; $j++) { $sum += [DsNative6]::HumanDuration($d, 40) }; $sum / 40.0 }
+        $dAvg = { param($d) $sum = 0; for ($j = 0; $j -lt 40; $j++) { $sum += [DsNative61]::HumanDuration($d, 40) }; $sum / 40.0 }
         $d20 = & $dAvg 20; $d200 = & $dAvg 200; $d1200 = & $dAvg 1200
-        $durOk = ($d20 -lt $d200) -and ($d200 -lt $d1200) -and ($d20 -ge 110) -and ($d1200 -le 950) -and ([DsNative6]::HumanDuration(0.5, 40) -eq 0)
+        $durOk = ($d20 -lt $d200) -and ($d200 -lt $d1200) -and ($d20 -ge 110) -and ($d1200 -le 950) -and ([DsNative61]::HumanDuration(0.5, 40) -eq 0)
         $hpOk = ($fail.Count -eq 0) -and ($curved -ge [int]($trials * 0.9)) -and $durOk
         $hpMsg = "轨迹 $trials 条：违规 $($fail.Count) $(Limit-Text ($fail -join ',') 40)；弧线占 $curved/$trials；Fitts 时长 20px=$([int]$d20)ms 200px=$([int]$d200)ms 1200px=$([int]$d1200)ms"
     }
     catch { $hpMsg = $_.Exception.Message }
     & $rec 'v6 人类轨迹算法（终点精确 / 慢-快-慢钟形速度 / 弧线 / 路径比≤1.3 / Fitts 时长随距离增长）' $hpOk $hpMsg
-    $cp0 = [DsNative6]::CursorPos()
+    $cp0 = [DsNative61]::CursorPos()
     $trMsg = ''; $trOk = $false
     try {
-        [DsNative6]::TraceClear(); [DsNative6]::RecordTrace = $true
+        [DsNative61]::TraceClear(); [DsNative61]::RecordTrace = $true
         $tg = @(@(300, 300), @(($w - 300), 250), @(($w - 250), ($h - 300)), @(400, ($h - 250)), @([int]($w / 2), [int]($h / 2)))
         $badEnd = @()
         foreach ($p in $tg) {
-            [DsNative6]::HumanMoveTo([int]$p[0], [int]$p[1])
-            $rb = [DsNative6]::CursorPos()
+            [DsNative61]::HumanMoveTo([int]$p[0], [int]$p[1])
+            $rb = [DsNative61]::CursorPos()
             if ($rb[0] -ne [int]$p[0] -or $rb[1] -ne [int]$p[1]) { $badEnd += "($($p[0]),$($p[1]))→($($rb[0]),$($rb[1]))" }
         }
-        [DsNative6]::RecordTrace = $false
-        $tr = [DsNative6]::TraceArray(); $cnt = $tr.Length; $mx = 0.0
+        [DsNative61]::RecordTrace = $false
+        $tr = [DsNative61]::TraceArray(); $cnt = $tr.Length; $mx = 0.0
         foreach ($q in $tr) { $mx = [Math]::Max($mx, [Math]::Max([Math]::Abs($q[1] - $q[3]), [Math]::Abs($q[2] - $q[4]))) }
         $trOk = ($badEnd.Count -eq 0) -and ($cnt -ge 60) -and ($mx -le 2)
-        $trMsg = "5 段移动共 $cnt 个真实采样；写入与读回最大偏差 ${mx}px；终点偏差 $($badEnd.Count) 个；末点纠正 $([DsNative6]::Fixups) 次"
+        $trMsg = "5 段移动共 $cnt 个真实采样；写入与读回最大偏差 ${mx}px；终点偏差 $($badEnd.Count) 个；末点纠正 $([DsNative61]::Fixups) 次"
     }
     catch { $trMsg = (Get-NativeError $_) }
-    finally { [DsNative6]::RecordTrace = $false; [DsNative6]::SetCursor($cp0[0], $cp0[1]) }
+    finally { [DsNative61]::RecordTrace = $false; [DsNative61]::SetCursor($cp0[0], $cp0[1]) }
     & $rec 'v6 真实光标闭环（SendInput 绝对移动 → GetCursorPos 读回；5 段移动终点像素级精确）' $trOk $trMsg
     $bn = @('chrome', 'msedge', 'firefox', '360se', 'qqbrowser')
     & $rec 'v6 浏览器识别名单（Chrome / Edge / Firefox / 360 / QQ 浏览器）' (($bn | Where-Object { $script:BrowserNames -contains $_ }).Count -eq 5 -and ($script:BrowserNames -notcontains 'notepad')) "名单共 $($script:BrowserNames.Count) 项"
     $wrapTest = $false
-    try { [void][DsNative6]::HumanPath(0, 0, 0, 0, 0, 8, 1, 40) ; $wrapTest = $true } catch { }
+    try { [void][DsNative61]::HumanPath(0, 0, 0, 0, 0, 8, 1, 40) ; $wrapTest = $true } catch { }
     & $rec 'v6 零距离 / 零时长路径不崩溃' $wrapTest ''
-    $real0 = [DsNative6]::CursorPos()
+    $rtOk = (Test-ApiRetryable 429 '') -and (Test-ApiRetryable 503 '') -and (Test-ApiRetryable 408 '') -and (Test-ApiRetryable $null 'The request was canceled') -and
+        -not (Test-ApiRetryable 400 '') -and -not (Test-ApiRetryable 401 '') -and -not (Test-ApiRetryable 402 '') -and -not (Test-ApiRetryable 422 '')
+    $d1r = Get-RetryDelayMs 1 0 7; $d3r = Get-RetryDelayMs 3 0 7; $d9r = Get-RetryDelayMs 9 0 7; $dRa = Get-RetryDelayMs 1 5 7; $dRaMax = Get-RetryDelayMs 1 999 7
+    $bkOk = ($d1r -ge 1000 -and $d1r -le 1400) -and ($d3r -ge 4000 -and $d3r -le 4400) -and ($d9r -le 30000) -and ($dRa -ge 5000 -and $dRa -le 5400) -and ($dRaMax -le 60000)
+    & $rec 'v6.1 API 重试策略（429/5xx/408/超时重试；400/401/402/422 不重试；Retry-After 优先；退避有上限）' ($rtOk -and $bkOk) "1次=${d1r}ms 3次=${d3r}ms 9次=${d9r}ms Retry-After5s=${dRa}ms 上限=${dRaMax}ms"
+    $pgOk = ($null -ne [DsNative61].GetMethod('PressGuard', [System.Reflection.BindingFlags]'NonPublic,Static')) -and ($null -ne [DsNative61].GetField('LastPressDev')) -and ($null -ne [DsNative61].GetField('LastReleaseDev')) -and ($null -ne [DsNative61].GetField('PressGuardFixes'))
+    & $rec 'v6.1 按下前守卫与回执字段存在（PressGuard / LastPressDev / LastReleaseDev）' $pgOk ''
+    $eiOk = ((Get-ErrorInfo '光标定位失败（按下前）：目标').Code -eq 'CURSOR_FIX') -and ((Get-ErrorInfo '你正在使用鼠标，已让出控制权（按下前发现光标偏离目标 9px，未点击）。').Code -eq 'USER_ACTIVE')
+    & $rec 'v6.1 错误码分类（CURSOR_FIX / USER_ACTIVE）' $eiOk ''
+
+    $real0 = [DsNative61]::CursorPos()
     if ($script:Cur) {
         $script:Cur.ResetStats()
         $pts = @(@(200, 200), @(($w - 200), 200), @(($w - 200), ($h - 200)), @(200, ($h - 200)), @([int]($w / 2), [int]($h / 2)))
@@ -4393,11 +4473,11 @@ function Invoke-SelfTest {
         & $rec '虚拟鼠标平滑度' ($fps -ge 50 -and $gap -lt 80) ("平均 {0:N0} fps，最大帧间隔 {1:N1} ms（共 {2} 帧 / {3:N2} 秒）" -f $fps, $gap, $script:Cur.Frames, $sec)
         $endOk = ([Math]::Abs($script:Cur.X - [int]($w / 2)) -lt 0.5) -and ([Math]::Abs($script:Cur.Y - [int]($h / 2)) -lt 0.5)
         & $rec '虚拟鼠标终点精确（亚像素误差 < 0.5px）' $endOk ("终点 ({0:N2},{1:N2})" -f $script:Cur.X, $script:Cur.Y)
-        $real1 = [DsNative6]::CursorPos()
+        $real1 = [DsNative61]::CursorPos()
         & $rec '真实鼠标未被占用' (($real0[0] -eq $real1[0]) -and ($real0[1] -eq $real1[1])) ("前 ($($real0[0]),$($real0[1])) 后 ($($real1[0]),$($real1[1]))")
     }
     else { & $rec '虚拟鼠标覆盖层启动' $false '未启动（-NoOverlay 或创建失败）' }
-    $tt = [DsTestTarget6]::new()
+    $tt = [DsTestTarget61]::new()
     $savedMode = $script:Mode
     $cid = 0; $eid = 0
     try {
@@ -4421,9 +4501,9 @@ function Invoke-SelfTest {
             # A. UIA
             $script:Mode = 'Uia'
             $tt.SetCheck(0)
-            $r0 = [DsNative6]::CursorPos()
+            $r0 = [DsNative61]::CursorPos()
             try { $msg = Invoke-Action ([pscustomobject]@{ action = 'click'; id = $cid }) } catch { $msg = "异常: $($_.Exception.Message)" }
-            $r1 = [DsNative6]::CursorPos()
+            $r1 = [DsNative61]::CursorPos()
             & $rec '第1层 UIA 点击（勾选复选框）并读回状态' ($tt.GetCheck() -eq 1 -and $r0[0] -eq $r1[0] -and $r0[1] -eq $r1[1] -and $msg -match '读回 on') $msg
             # A2. click_many
             $tt.SetCheck(0)
@@ -4447,7 +4527,7 @@ function Invoke-SelfTest {
             $script:Mode = 'Message'
             $tt.SetCheck(0)
             try { $msg = Invoke-Action ([pscustomobject]@{ action = 'click'; id = $cid }) } catch { $msg = "异常: $($_.Exception.Message)" }
-            $r2 = [DsNative6]::CursorPos()
+            $r2 = [DsNative61]::CursorPos()
             & $rec '第2层 窗口消息点击' ($tt.GetCheck() -eq 1 -and $r0[0] -eq $r2[0] -and $r0[1] -eq $r2[1]) $msg
             # D. 物理
             $script:Mode = 'Physical'
@@ -4455,21 +4535,21 @@ function Invoke-SelfTest {
             Start-Sleep -Milliseconds ($IdleMs + 100)
             try { $msg = Invoke-Action ([pscustomobject]@{ action = 'click'; id = $cid }) } catch { $msg = "异常: $($_.Exception.Message)" }
             Start-Sleep -Milliseconds 100
-            $r3 = [DsNative6]::CursorPos()
+            $r3 = [DsNative61]::CursorPos()
             & $rec '第3层 物理点击并归位真实鼠标' ($tt.GetCheck() -eq 1 -and $r0[0] -eq $r3[0] -and $r0[1] -eq $r3[1]) "$msg ；归位后 ($($r3[0]),$($r3[1]))"
             # G. v5 inspect + Windows OCR（真实屏幕；编辑框此时内容为「你好 DeepSeek 123」）
             $script:Mode = 'Auto'
             $insp = ''
             try { $insp = Invoke-InspectAction ([pscustomobject]@{ id = $cid }) } catch { $insp = "异常: $($_.Exception.Message)" }
             & $rec 'v5 inspect 钻取（返回 CheckBox 祖先链与 tog 状态）' (($insp -match 'CheckBox') -and ($insp -match 'tog=')) (Limit-Text ($insp -replace '\s+', ' ') 90)
-            $twr = [DsNative6]::WinRect($tt.Parent)
+            $twr = [DsNative61]::WinRect($tt.Parent)
             $ocrR = Invoke-Ocr $twr[0] $twr[1] ($twr[2] - $twr[0]) ($twr[3] - $twr[1])
             $ocrTxt = (@($ocrR.Lines) | ForEach-Object { $_.Text }) -join ' '
             if ((-not $ocrR.Ok) -and ($ocrR.Err -match '语言包|PowerShell 5|NoOcr')) { & $rec 'v5 Windows OCR（本机不可用，已跳过）' $true $ocrR.Err }
             else { & $rec 'v5 Windows OCR 识别自检窗口文字（DeepSeek / 123 / 自检）' ($ocrR.Ok -and ($ocrTxt -match 'DeepSeek|123|自检')) "识别=[$(Limit-Text $ocrTxt 60)] $($ocrR.Err)" }
             # H. v5 局部视觉证据（真实屏幕）：编辑框内容改变 → 该处「变了」；什么都不做 → 「无变化」
             $edIt = $script:Elements[$eid]
-            $dk = [DsNative6]::DpiScale()
+            $dk = [DsNative61]::DpiScale()
             $ex = [int]($edIt.L + 60 * $dk); $ey = [int]$edIt.cy; $erad = [int](40 * $dk)
             Start-EffectProbe $ex $ey $erad
             try { [void](Invoke-TypeAction ([pscustomobject]@{ action = 'type'; id = $eid; text = 'WWWWWWWWWWWWWWWW'; clear = $true })) } catch { }
@@ -4577,7 +4657,7 @@ function Show-Help {
 }
 function Show-Banner {
     Write-Host ''
-    Write-Host '=== DeepSeek Computer Use v6.0（人类化输入：曲线移动 + 悬停 + 按压节奏 + 闭环核验；保留 v5.1 全部能力）===' -ForegroundColor Cyan
+    Write-Host '=== DeepSeek Computer Use v6.1（人类化输入 + 按下前守卫 + 操作回执 + 预期核对 + 按状态码重试；保留 v5.1 / v6.0 全部能力）===' -ForegroundColor Cyan
     Write-Host "模型    : $Model    每任务最大步数: $MaxSteps    批量动作上限: $MaxBatch"
     Write-Host "模式    : $(if ($DryRun) { '仅预演(DryRun)' } elseif ($script:Auto) { '全自动（无需确认）' } else { '逐步确认' })    Shell: $(if ($NoShell) { '禁止' } else { '允许' })    管理员: $(if ($script:IsAdmin) { '是' } else { '否（加 -RunAsAdmin 可操作高权限窗口）' })    会话记忆: $(if ($MemoryLimit -gt 0) { "最近 $MemoryLimit 个任务" } else { '关闭' })"
     Write-Host "输入    : $($script:Mode)（Auto=UIA→消息→物理借用归位）    虚拟鼠标: $(if ($script:Cur) { '已启用' } else { '未启用' })    让位阈值: ${IdleMs}ms"
@@ -4589,7 +4669,7 @@ function Show-Banner {
 }
 Initialize-Runtime
 Show-Banner
-Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '6.0'; human = [bool][DsNative6]::Humanize }
+Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '6.1'; human = [bool][DsNative61]::Humanize }
 $pending = $Task
 try {
     while ($true) {
