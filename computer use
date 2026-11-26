@@ -1,22 +1,21 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v4.3 —— 在 v4.2 已验证可用的功能上做「更深」而不是「更大」：只修运行日志里实证的故障，并补上「看得更准、点得更准」的证据链。
+  DeepSeek Computer Use v5.0 —— 在 v4.3 已验证可用的功能上继续做「更深」而不是「更大」：先规划后执行、绝不重复切换类动作、看清再点。
 .DESCRIPTION
-  DeepSeek 官方 API 是纯文本模型，所以仍用 Windows UI Automation（无障碍树，思路同 vercel-labs/agent-desktop）把前台窗口读成文本，模型返回 JSON 动作。
-  C# 原生层 DsNative4 逐字未改（日志证明它工作正常）；所有新增都是纯 PowerShell，参数 / 命令 / 急停方式与 v4.2 完全兼容。
-  v4.3 相对 v4.2（全部来自运行日志）：
-    1. 【联锁误判·根因】日志任务3：select_rows 46-50 后工具栏「刪除」被判成「行内按钮」，连续被拒 58 步。原因：几何包含用了「所有行」，
-       含已滚出视口的行（未裁剪矩形盖到吸顶工具栏的坐标）。现在只看视口内的行，并用 UIA 祖先链核验按钮是否真是某一行的后代。
-    2. 【错误码 + 熔断】借鉴 agent-desktop 的结构化错误（code + retry）：INTERLOCK / STALE_REF / TIMEOUT / OCCLUDED / USER_ACTIVE …；
-       同一动作同一错误 3 次提示换法、5 次（或连续 10 次出错）终止任务，不再白烧 58 步。
-    3. 【长输出不再变非法 JSON】日志任务1：长脚本触到 max_tokens=2500 被截断，连续 5 次「没有完整 JSON」。现在 max_tokens=8000，
-       识别 finish_reason=length 并告诉模型拆分；修复 JSON 字符串里的裸换行；新增 write_file（分段写）与 run_process（子进程，超时杀进程树）。
-    4. 【看得更准】观察里给出坐标系（物理像素 / 虚拟桌面 / 各显示器 / DPI / 窗口矩形）；控件坐标取「可见部分」中心（被吸顶栏或窗口边缘
-       遮一半的控件不再点到看不见的地方）；新增独立于 UIA 的「屏幕像素」变化证据，界面是否真的变了不再只靠控件文本。
-    5. 【点得更准】物理点击的候选落点只在可见部分内选；漂移核对同时考虑可见中心。
-    6. 【自检】-SelfTest 新增 9 项（联锁误判回放、错误码、JSON 修复、可见区裁剪、像素差、write_file+run_process、超时杀进程树、
-       像素采样、物理光标回读/DPI 一致性）。
+  DeepSeek 官方 API 是纯文本模型，所以「眼睛」仍是 Windows UI Automation 无障碍树（思路同 vercel-labs/agent-desktop：每个可操作元素一个编号，
+  操作后重新观察核实），v5 再补两只「辅助眼」：动作前后的局部像素/颜色证据、Windows 自带 OCR。C# 原生层 DsNative4 逐字未改。
+  v5.0 相对 v4.3（全部来自运行日志任务6「给这个视频点赞」45 步未完成）：
+    1. 【先规划后执行】任务开始先调用一次规划器，产出 目标 / 完成证据 / 步骤(方法+核实方式) / 只能执行一次的动作；之后每轮按计划推进，
+       计划被证据否定时用 replan 重新规划，而不是原地试错。
+    2. 【动作账本防重复】每个点击/按键/输入记录验证结果（已生效/无效果/未验证）。同一目标：已生效的切换类动作不再执行（点赞不会被撤销）、
+       未验证的不盲目重复、两次无效果后拒绝第三次。日志里 z 按 4 次、(1770,840) 点 7 次的情况被系统拦截。
+    3. 【局部视觉证据】点击前在落点周围采样两次测「静止噪声」（视频/动画），点击后再采样：给出像素变化率与鲜艳颜色占比变化（心形变红 = 红 0%→15%）。
+    4. 【看清再点】新增 inspect（某点的无障碍祖先链 + 颜色 + 区域 OCR）和 ocr（Windows 自带 OCR，读无障碍树看不到的软件）；
+       坐标点击必须有依据（落在控件内或 inspect/ocr 的文字框内），猜出来的坐标被拒绝（UNGROUNDED）；坐标不再吸附到整页大小的容器上。
+    5. 【网页图标按钮可见】无名但可获得焦点/可调用的 Group/Image/Custom（网页点赞、收藏图标）进入观察，并标注内部文字 ≈「41.1万」。
+    6. 【控制台让位】目标点被本控制台挡住时自动最小化控制台再点；前台被控制台占据时系统自动切回上一个目标窗口，不再浪费 focus_window。
+  紧急停止 / 参数 / 命令与 v4.3 完全兼容；新增开关见下方 PARAMETER。
   紧急停止（只终止当前任务）：鼠标甩到屏幕左上角 (0,0) / Ctrl+Alt+Q ；Ctrl+C 退出整个程序。
   使用：保存为 UTF-8 的 DeepSeekComputerUse.ps1，然后运行（不要粘贴进控制台）：
       pwsh -ExecutionPolicy Bypass -File .\DeepSeekComputerUse.ps1
@@ -30,6 +29,16 @@
   物理输入 / 键盘输入前要求你已停手多少毫秒，默认 400。
 .PARAMETER SelfTest
   运行内置自检后退出（请自检期间不要碰鼠标键盘）。
+.PARAMETER NoPlan
+  关闭任务开始时的规划阶段（v5）。
+.PARAMETER NoRepeatGuard
+  关闭动作账本的重复拦截与坐标依据检查（v5）。
+.PARAMETER NoOcr
+  关闭 Windows OCR（inspect 中的 OCR、ocr 动作、无障碍稀疏窗口的自动 OCR）（v5）。
+.PARAMETER NoConsoleYield
+  不自动最小化 / 绕开运行本脚本的控制台（v5）。
+.PARAMETER NoContainers
+  观察中不列出无名的可交互 Group/Image/Custom（v5）。
 .NOTES
   Task / ApiKey / Model / Once / StepConfirm / ConsoleConfirm / NoShell / NoSafety / RunAsAdmin / MaxBatch /
   MemoryLimit / DryRun / ObserveOnly / SaveScreenshots 等参数与 v3 / v4 完全相同。MaxBatch 默认值由 4 提高到 6。
@@ -72,6 +81,11 @@ param(
     [switch]$DryRun,
     [switch]$ObserveOnly,
     [switch]$SaveScreenshots,
+    [switch]$NoPlan,
+    [switch]$NoRepeatGuard,
+    [switch]$NoOcr,
+    [switch]$NoConsoleYield,
+    [switch]$NoContainers,
     [string]$LogDir
 )
 $ErrorActionPreference = 'Stop'
@@ -929,6 +943,10 @@ function Send-Text([string]$text) {
 }
 function Assert-KeyboardReady {
     $fg = [DsNative4]::GetForegroundWindow()
+    # v5：前台被本控制台占据、而观察的目标窗口仍在：先自动切回，再做后面的核对
+    if (-not $NoConsoleYield -and (Test-IsConsoleWindow $fg) -and $script:ObsHwnd -ne [IntPtr]::Zero -and -not (Test-IsConsoleWindow $script:ObsHwnd) -and [DsNative4]::IsWindow($script:ObsHwnd)) {
+        [void][DsNative4]::Activate($script:ObsHwnd); Start-Sleep -Milliseconds 120; $fg = [DsNative4]::GetForegroundWindow()
+    }
     if (Test-IsConsoleWindow $fg) { throw '前台窗口是运行本脚本的控制台，已拒绝发送按键/文本（防止输入到自己）。请先 launch / focus_window 切换到目标程序。' }
     if ($script:ObsHwnd -ne [IntPtr]::Zero -and $fg -ne $script:ObsHwnd) {
         throw "前台窗口已变化（观察时 [$([DsNative4]::WinText($script:ObsHwnd))]，现在 [$([DsNative4]::WinText($fg))]），为避免输入到错误窗口已取消，请重新观察。"
@@ -978,6 +996,22 @@ function Get-UiElements([IntPtr]$hwnd) {
         'ComboBox', 'Hyperlink', 'TreeItem', 'SplitButton', 'Slider', 'DataItem')
     $vb = Get-ViewBounds   # v4.3：控件坐标取「可见部分」中心
     $cond = New-UiaCondition ($interactive + @('Text'))
+    # v5：网页里可点击的 div（点赞 / 收藏 / 评论图标）在 UIA 里通常是「无名 Group/Image/Custom + 可获得焦点或可调用」，v4 完全看不到
+    $extraMax = 0; $winArea = 0.0
+    if (-not $NoContainers) {
+        try {
+            $exTypes = New-UiaCondition @('Group', 'Image', 'Custom')
+            $exFoc = [System.Windows.Automation.PropertyCondition]::new($AE::IsKeyboardFocusableProperty, $true)
+            $exInv = [System.Windows.Automation.PropertyCondition]::new($AE::IsInvokePatternAvailableProperty, $true)
+            $exAct = [System.Windows.Automation.OrCondition]::new([System.Windows.Automation.Condition[]]@($exFoc, $exInv))
+            $exCond = [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]]@($exTypes, $exAct))
+            $cond = [System.Windows.Automation.OrCondition]::new([System.Windows.Automation.Condition[]]@($cond, $exCond))
+            $extraMax = 60
+            if ($null -ne $vb.Win) { $winArea = ($vb.Win[2] - $vb.Win[0]) * ($vb.Win[3] - $vb.Win[1]) }
+        }
+        catch { $extraMax = 0 }
+    }
+    $extraCount = 0
     $patProps = [ordered]@{
         inv = $AE::IsInvokePatternAvailableProperty
         val = $AE::IsValuePatternAvailableProperty
@@ -996,7 +1030,7 @@ function Get-UiElements([IntPtr]$hwnd) {
         $cr = [System.Windows.Automation.CacheRequest]::new()
         foreach ($p in @($AE::NameProperty, $AE::AutomationIdProperty, $AE::ControlTypeProperty,
                 $AE::BoundingRectangleProperty, $AE::IsEnabledProperty, $AE::NativeWindowHandleProperty,
-                $AE::HasKeyboardFocusProperty, $TogP, $ValP, $SelP)) { $cr.Add($p) }
+                $AE::HasKeyboardFocusProperty, $AE::IsKeyboardFocusableProperty, $TogP, $ValP, $SelP)) { $cr.Add($p) }
         foreach ($p in $patProps.Values) { $cr.Add($p) }
         $act = $cr.Activate()
     }
@@ -1019,6 +1053,12 @@ function Get-UiElements([IntPtr]$hwnd) {
             if ($vr.IsEmpty) { continue }
             $type = ($c.ControlType.ProgrammaticName -replace '^ControlType\.', '')
             $isText = ($type -eq 'Text')
+            $isExtra = ($type -in @('Group', 'Image', 'Custom'))
+            if ($isExtra) {
+                if ($extraCount -ge $extraMax) { continue }
+                if ($winArea -gt 0 -and ($vr.Width * $vr.Height) -gt (0.2 * $winArea)) { continue }   # 整块内容区不是按钮
+                $extraCount++
+            }
             $name = $c.Name
             if ([string]::IsNullOrWhiteSpace($name) -and -not $isText) { $name = $c.AutomationId }
             if ($isText -and [string]::IsNullOrWhiteSpace($name)) { continue }
@@ -1031,6 +1071,11 @@ function Get-UiElements([IntPtr]$hwnd) {
                     }
                     catch { }
                 }
+            }
+            if ($isExtra) {
+                $kf = $false
+                try { $kf = [bool]$c.IsKeyboardFocusable } catch { }
+                if ($kf) { $pats += 'foc' }
             }
             $value = ''
             $state = ''
@@ -1099,6 +1144,8 @@ function Get-UiElements([IntPtr]$hwnd) {
                     IsMaster = $false
                     RowIdx = 0
                     RowText = ''
+                    Extra = $isExtra
+                    Near = ''
                     cx = [int]($vr.Left + $vr.Width / 2)
                     cy = [int]($vr.Top + $vr.Height / 2)
                     L = [int]$r.Left
@@ -1124,6 +1171,7 @@ function Get-Observation {
     $cursor = [DsNative4]::CursorPos()
     $windows = @(Get-TopWindowList 15 | ForEach-Object { "  - $($_.Process): $(Limit-Text $_.Title 60)" })
     $all = @(Get-UiElements $fg.Handle | Sort-Object cy, cx)
+    try { Add-NearLabels $all } catch { }   # v5：无名可点击容器带上内部 / 紧邻文字
     # v4.2：屏幕上有 ≥2 个复选框时建立「列表行模型」（含视口外的行）
     $model = $null
     if (@($all | Where-Object { $_.Type -eq 'CheckBox' }).Count -ge 2) { try { $model = Get-RowModel $fg.Handle } catch { $model = $null } }
@@ -1143,7 +1191,7 @@ function Get-Observation {
     foreach ($it in $all) {
         $gk = Get-GeoKey $it
         if ($rowParts.Contains($gk)) { continue }                                              # 行与行复选框在「列表行」区单独列出
-        if ($it.Type -eq 'Text' -and $rowRects.Count -gt 0 -and (Test-InAnyRect $it $rowRects)) { continue }   # 行内文字已并入行摘要
+        if (($it.Type -eq 'Text' -or $it.Extra) -and $rowRects.Count -gt 0 -and (Test-InAnyRect $it $rowRects)) { continue }   # 行内文字已并入行摘要
         if ($masterKeys.Contains($gk)) { $it.IsMaster = $true }
         if ($it.Type -eq 'Text') { if ($txt -ge 40) { continue }; $txt++ }
         else { if ($inter -ge $MaxElements) { continue }; $inter++ }
@@ -1159,6 +1207,7 @@ function Get-Observation {
         $id++
         $script:Elements[$id] = $it
         $line = "[$id] $($it.Type) `"$($it.Name)`""
+        if ($it.Near) { $line += " ≈「$($it.Near)」" }
         if ($it.Value) { $line += " value=`"$($it.Value)`"" }
         if ($it.State) { $line += " state=$($it.State)" }
         if (-not $it.Enabled) { $line += ' (disabled)' }
@@ -1221,7 +1270,7 @@ function Get-Observation {
         $focusLine
         '已打开的窗口:'
         ($windows -join "`n")
-        "前台窗口控件（共 $($general.Count) 个，按从上到下、从左到右排序；{...} 为可用的无障碍模式 inv=可调用 val=可写值 tog=开关 sel=可选中 exp=可展开 scr=可滚动）:"
+        "前台窗口控件（共 $($general.Count) 个，按从上到下、从左到右排序；{...} 为可用的无障碍模式 inv=可调用 val=可写值 tog=开关 sel=可选中 exp=可展开 scr=可滚动 foc=可获得键盘焦点（网页可点击元素常见）；≈「…」是无名控件内部或紧邻的文字）:"
         ($lines -join "`n")
         $cbLine
         $rowBlock
@@ -1233,6 +1282,10 @@ function Get-Observation {
     $pix = Get-PixelSig $fg.Handle
     $pixPct = Get-PixelDiff $script:PixPrev $pix
     $script:PixPrev = $pix
+    # v5：无障碍控件很少（游戏 / 画布 / 远程桌面 / 自绘界面）时自动 OCR，补上「看得见的文字 + 坐标」；画面不变则复用
+    if (-not $NoOcr -and -not $isConsole -and $inter -lt 6 -and $fg.Handle -ne [IntPtr]::Zero) {
+        try { $ob = Get-WindowOcrBlock $fg.Handle $pix; if ($ob) { $text = "$text`n$ob" } } catch { }
+    }
     if ($null -ne $pixPct) {
         $pl = if ($pixPct -lt 0.2) { '屏幕像素: 前台窗口几乎无变化' } else { "屏幕像素: 前台窗口约 $pixPct% 的区块发生了变化" }
         $changes = "$changes`n $pl".Trim()
@@ -1969,6 +2022,11 @@ function Test-TargetInRow($t, $modelRows) {
 function Get-ErrorInfo([string]$msg) {
     # 借鉴 agent-desktop 的结构化错误（code + 可否重试），让模型和熔断器不再靠猜
     $m = "$msg"; $code = 'ERROR'; $retry = 'after_observe'
+    if ($m -match '^\[(REPEAT_EFFECT|REPEAT_UNVERIFIED|REPEAT_NOEFFECT|UNGROUNDED)\]') {
+        $c5 = $Matches[1]; $r5 = 'no'
+        if ($c5 -eq 'UNGROUNDED') { $r5 = 'after_inspect' } elseif ($c5 -ne 'REPEAT_NOEFFECT') { $r5 = 'after_verify' }
+        return [pscustomobject]@{ Code = $c5; Retry = $r5 }
+    }
     if ($m -match '安全联锁') { $code = 'INTERLOCK'; $retry = 'no' }
     elseif ($m -match '黑名单|禁止写入|已使用 -NoShell') { $code = 'BLOCKED'; $retry = 'no' }
     elseif ($m -match '超过 \d+ 秒') { $code = 'TIMEOUT'; $retry = 'no_same_command' }
@@ -2088,9 +2146,614 @@ function Invoke-ProcessAction($a) {
     return "退出码 $($p.ExitCode)（$([int]$sw.Elapsed.TotalSeconds) 秒）; stdout: $o$(if ($e) { "; stderr: $e" })"
 }
 #endregion
+#region ---------- v5.0：先规划后执行 / 动作账本防重复 / 局部视觉证据 / inspect + OCR / 控制台让位 ----------
+# 设计依据全部来自运行日志任务6「给这个视频点赞」（45 步未完成）：
+#   ① 控制台 8 次挡住目标点或占据前台，每次浪费一步 focus_window；
+#   ② z 键按了 4 次、(1770,840) 点了 7 次——切换类动作在「效果无法验证」时被反复执行，点赞会被来回撤销；
+#   ③ 落点靠「图标大概在数字上方 40px」猜；第 2 步的坐标还被吸附到整页大小的 Hyperlink 上并 Invoke 了它；
+#   ④ 全程没有任何一步核实「心形是否变红」。
+# v5 每一项都只针对其中一个根因，并且都能在 -SelfTest 里复现。DsNative4（C#）仍逐字未改。
+if (-not ('DsWin5.U' -as [type])) {
+    Add-Type -Namespace DsWin5 -Name U -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+[DllImport("user32.dll")] public static extern bool IsIconic(System.IntPtr hWnd);
+'@
+}
+$script:LastTarget = [IntPtr]::Zero
+$script:ConsoleParked = $false
+$script:EffectProbe = $null
+$script:LastEffect = $null
+$script:OcrCache = $null
+$script:OcrHelper = $null
+$script:OcrUnavailable = ''
+$script:Grounded = New-Object System.Collections.Generic.List[object]
+$script:Ledger = New-Object System.Collections.Generic.List[object]
+$script:RepeatOverride = @{}
+$script:Plan = $null
+$script:PlanCur = 0
+$script:Replans = 0
+$script:HueNames = @('红', '橙', '黄', '绿', '青', '蓝', '紫', '粉')
+$script:GuardKinds = @('click', 'double_click', 'right_click', 'middle_click', 'key', 'hotkey', 'type')
+$script:SafeRepeatKeys = '^(esc|escape|tab|shift\+tab|ctrl\+l|alt\+d|ctrl\+a|ctrl\+c|ctrl\+f|f6)$'
+
+# ---------- ① 控制台让位 ----------
+function Invoke-ConsoleYield {
+    # 目标点被本脚本的控制台挡住：把控制台最小化（不激活），再把观察到的目标窗口切回前台
+    if ($NoConsoleYield -or $script:ConsoleHwnd -eq [IntPtr]::Zero) { return $false }
+    try {
+        if (-not [DsWin5.U]::IsIconic($script:ConsoleHwnd)) { [void][DsWin5.U]::ShowWindow($script:ConsoleHwnd, 7) }   # SW_SHOWMINNOACTIVE
+        $script:ConsoleParked = $true
+        Start-Sleep -Milliseconds 150
+        $tgt = $script:LastTarget
+        if ($script:ObsHwnd -ne [IntPtr]::Zero -and -not (Test-IsConsoleWindow $script:ObsHwnd)) { $tgt = $script:ObsHwnd }
+        if ($tgt -ne [IntPtr]::Zero -and [DsNative4]::IsWindow($tgt)) { [void][DsNative4]::Activate($tgt) }
+        Start-Sleep -Milliseconds 120
+        # 让位前的像素基线里是控制台，必须重新采样，否则会把「控制台消失」误判成「点击生效」
+        if ($script:EffectProbe) { $ep = $script:EffectProbe; Start-EffectProbe $ep.X $ep.Y $ep.Rad }
+        return $true
+    }
+    catch { return $false }
+}
+function Resume-TargetWindow {
+    # 每轮观察前：前台若是本控制台，由系统自动切回上一个目标窗口（不再让模型花一步 focus_window）
+    $fg = [DsNative4]::GetForegroundWindow()
+    if ($fg -ne [IntPtr]::Zero -and -not (Test-IsConsoleWindow $fg)) { $script:LastTarget = $fg; return '' }
+    if ($NoConsoleYield) { return '' }
+    $t = $script:LastTarget
+    if ($t -eq [IntPtr]::Zero -or -not [DsNative4]::IsWindow($t) -or (Test-IsConsoleWindow $t)) { return '' }
+    if ([DsNative4]::Activate($t)) {
+        Start-Sleep -Milliseconds 150
+        return "前台原本是运行本脚本的控制台，系统已自动切回上一个目标窗口 [$(Limit-Text ([DsNative4]::WinText($t)) 50)]，不需要再 focus_window；任务若需要别的程序请 launch / focus_window。"
+    }
+    return ''
+}
+
+# ---------- ② 局部视觉证据（点击点周围的小块屏幕，动作前后对比，先测静止噪声） ----------
+function Get-RegionSample([int]$cx, [int]$cy, [int]$rad) {
+    # 截取 (cx,cy) 周围的小块屏幕（物理像素），等距采样最多 32x32 个点；虚拟鼠标窗口已排除出截图
+    $bmp = $null; $g = $null
+    try {
+        $vb = Get-ViewBounds; $s = $vb.Screen
+        $x0 = [int][Math]::Max($cx - $rad, $s[0]); $y0 = [int][Math]::Max($cy - $rad, $s[1])
+        $x1 = [int][Math]::Min($cx + $rad, $s[2]); $y1 = [int][Math]::Min($cy + $rad, $s[3])
+        $w = $x1 - $x0; $h = $y1 - $y0
+        if ($w -lt 6 -or $h -lt 6) { return $null }
+        $fmt = [System.Drawing.Imaging.PixelFormat]::Format32bppArgb
+        $bmp = [System.Drawing.Bitmap]::new($w, $h, $fmt)
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($x0, $y0, 0, 0, [System.Drawing.Size]::new($w, $h))
+        $bd = $bmp.LockBits([System.Drawing.Rectangle]::new(0, 0, $w, $h), [System.Drawing.Imaging.ImageLockMode]::ReadOnly, $fmt)
+        try {
+            $stride = [Math]::Abs($bd.Stride)
+            $buf = New-Object 'byte[]' ($stride * $h)
+            [System.Runtime.InteropServices.Marshal]::Copy($bd.Scan0, $buf, 0, $buf.Length)
+        }
+        finally { $bmp.UnlockBits($bd) }
+        $nx = [Math]::Min(32, $w); $ny = [Math]::Min(32, $h)
+        $px = New-Object 'int[]' ($nx * $ny)
+        $k = 0
+        for ($j = 0; $j -lt $ny; $j++) {
+            $yy = [int][Math]::Floor(($j + 0.5) * $h / $ny)
+            for ($i = 0; $i -lt $nx; $i++) {
+                $xx = [int][Math]::Floor(($i + 0.5) * $w / $nx)
+                $o = $yy * $stride + $xx * 4
+                $px[$k] = ([int]$buf[$o + 2] -shl 16) -bor ([int]$buf[$o + 1] -shl 8) -bor [int]$buf[$o]
+                $k++
+            }
+        }
+        return [pscustomobject]@{ L = $x0; T = $y0; W = $w; H = $h; Px = $px }
+    }
+    catch { return $null }
+    finally { if ($g) { $g.Dispose() }; if ($bmp) { $bmp.Dispose() } }
+}
+function Get-SampleDiff($sa, $sb) {
+    # 两次采样之间 RGB 总差 ≥60 的采样点占比（%）
+    if ($null -eq $sa -or $null -eq $sb -or $sa.Px.Length -ne $sb.Px.Length -or $sa.Px.Length -eq 0) { return $null }
+    $n = 0
+    for ($i = 0; $i -lt $sa.Px.Length; $i++) {
+        $p = $sa.Px[$i]; $q = $sb.Px[$i]
+        $d = [Math]::Abs((($p -shr 16) -band 255) - (($q -shr 16) -band 255)) + [Math]::Abs((($p -shr 8) -band 255) - (($q -shr 8) -band 255)) + [Math]::Abs(($p -band 255) - ($q -band 255))
+        if ($d -ge 60) { $n++ }
+    }
+    return [Math]::Round(100.0 * $n / $sa.Px.Length, 1)
+}
+function Get-ColorStats($smp) {
+    # 鲜艳像素按色相分 8 桶，返回 @{ 颜色名 = 百分比 }：点亮的红心、选中的蓝色、绿色对勾都会体现在这里
+    $res = @{}
+    if ($null -eq $smp -or $smp.Px.Length -eq 0) { return $res }
+    $cnt = New-Object 'int[]' 8
+    foreach ($p in $smp.Px) {
+        $r = ($p -shr 16) -band 255; $g = ($p -shr 8) -band 255; $b = $p -band 255
+        $mx = [Math]::Max($r, [Math]::Max($g, $b)); $mn = [Math]::Min($r, [Math]::Min($g, $b))
+        $c = $mx - $mn
+        if ($mx -lt 70 -or $c -lt 70) { continue }
+        if ($mx -eq $r) { $hh = 60.0 * ((($g - $b) / $c) % 6) }
+        elseif ($mx -eq $g) { $hh = 60.0 * ((($b - $r) / $c) + 2) }
+        else { $hh = 60.0 * ((($r - $g) / $c) + 4) }
+        if ($hh -lt 0) { $hh += 360 }
+        $bin = 7
+        if ($hh -lt 15 -or $hh -ge 345) { $bin = 0 } elseif ($hh -lt 40) { $bin = 1 } elseif ($hh -lt 70) { $bin = 2 } elseif ($hh -lt 160) { $bin = 3 } elseif ($hh -lt 200) { $bin = 4 } elseif ($hh -lt 255) { $bin = 5 } elseif ($hh -lt 300) { $bin = 6 }
+        $cnt[$bin]++
+    }
+    for ($i = 0; $i -lt 8; $i++) { if ($cnt[$i] -gt 0) { $res[$script:HueNames[$i]] = [Math]::Round(100.0 * $cnt[$i] / $smp.Px.Length, 1) } }
+    return $res
+}
+function Format-ColorShift($before, $after) {
+    $names = @(@($before.Keys) + @($after.Keys) | Select-Object -Unique)
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($nm in $names) {
+        $x = [double]$before[$nm]; $y = [double]$after[$nm]
+        if ([Math]::Abs($y - $x) -ge 3) { $parts.Add("$nm $x%→$y%") }
+    }
+    return ($parts -join '，')
+}
+function Start-EffectProbe([int]$x, [int]$y, [int]$rad = 0) {
+    # 动作前在目标点周围采样两次（间隔 110ms）：第二次作为基线，两次之差作为「静止噪声」（视频 / 动画）
+    $script:EffectProbe = $null
+    try {
+        if ($rad -le 0) { $rad = [int][Math]::Max(40, [Math]::Min(160, 56 * [DsNative4]::DpiScale())) }
+        $a1 = Get-RegionSample $x $y $rad
+        Start-Sleep -Milliseconds 110
+        $a2 = Get-RegionSample $x $y $rad
+        if ($null -eq $a1 -or $null -eq $a2) { return }
+        $script:EffectProbe = [pscustomobject]@{ X = $x; Y = $y; Rad = $rad; Before = $a2; Noise = (Get-SampleDiff $a1 $a2) }
+    }
+    catch { $script:EffectProbe = $null }
+}
+function Complete-EffectProbe {
+    # 返回 @{ Verdict = changed / nochange / noisy ; Text = 证据 }；没有探针时返回 $null
+    $p = $script:EffectProbe
+    $script:EffectProbe = $null
+    if ($null -eq $p) { return $null }
+    try {
+        $after = Get-RegionSample $p.X $p.Y $p.Rad
+        $d = Get-SampleDiff $p.Before $after
+        if ($null -eq $d) { return $null }
+        $noise = [double]$p.Noise
+        $shift = Format-ColorShift (Get-ColorStats $p.Before) (Get-ColorStats $after)
+        $th = [Math]::Max(6.0, 2.0 * $noise + 3.0)
+        $verdict = 'nochange'
+        if ($d -ge $th) { $verdict = 'changed' }
+        elseif ($noise -ge 25) { $verdict = 'noisy' }
+        elseif ($shift) { $verdict = 'changed' }
+        $txt = "局部视觉证据：点 ($($p.X),$($p.Y)) 周围 $(2 * $p.Rad)px 内 $d% 像素变化（动作前静止噪声 $noise%）"
+        if ($shift) { $txt += "，鲜艳颜色占比 $shift" }
+        $tail = ' → 背景在动（视频/动画），像素证据不可靠：请 inspect 该处看颜色/状态，不要直接重复'
+        if ($verdict -eq 'changed') { $tail = ' → 该处确实变了' }
+        elseif ($verdict -eq 'nochange') { $tail = ' → 该处没有可见变化（这次点击很可能没生效）' }
+        return [pscustomobject]@{ Verdict = $verdict; Text = "$txt$tail" }
+    }
+    catch { return $null }
+}
+
+# ---------- ③ 坐标依据 / 不吸附大容器 ----------
+function Test-UiaActionable($item) {
+    if ($null -eq $item) { return $false }
+    if ($item.Type -eq 'Edit') { return $true }
+    foreach ($p in @($item.Pat)) { if ($p -in 'inv', 'tog', 'sel', 'exp') { return $true } }
+    return $false
+}
+function Test-Grounded([int]$x, [int]$y) {
+    # 坐标点击的依据：落在当前观察某个「小」控件的矩形内（大容器不算），或落在 inspect / ocr 给出的区域内
+    if ($null -eq $script:Elements -or $script:Elements.Count -eq 0) { return $true }
+    $maxA = [Math]::Pow(320.0 * [DsNative4]::DpiScale(), 2)
+    foreach ($kv in $script:Elements.GetEnumerator()) {
+        $it = $kv.Value
+        if ($it.Off) { continue }
+        if (([double]$it.W * [double]$it.H) -gt $maxA) { continue }
+        if ($x -ge ($it.L - 6) -and $x -le ($it.L + $it.W + 6) -and $y -ge ($it.T - 6) -and $y -le ($it.T + $it.H + 6)) { return $true }
+    }
+    foreach ($gr in $script:Grounded) {
+        if ($x -ge ($gr.L - 12) -and $x -le ($gr.L + $gr.W + 12) -and $y -ge ($gr.T - 12) -and $y -le ($gr.T + $gr.H + 12)) { return $true }
+    }
+    return $false
+}
+function Add-NearLabels($all) {
+    # 无名字的可交互容器（Group/Image/Custom）用其内部或紧邻（48px 内）的文字作标签，例如 ≈"41.1万"
+    $texts = @($all | Where-Object { $_.Type -eq 'Text' } | Select-Object -First 600)
+    if ($texts.Count -eq 0) { return }
+    foreach ($it in $all) {
+        if (-not $it.Extra -or -not [string]::IsNullOrWhiteSpace($it.Name)) { continue }
+        $best = ''; $bestD = [double]::MaxValue
+        $ax = [double]$it.L; $ay = [double]$it.T; $bx = $ax + [double]$it.W; $by = $ay + [double]$it.H
+        foreach ($tx in $texts) {
+            $tcx = [double]$tx.cx; $tcy = [double]$tx.cy
+            if ($tcy -lt ($ay - 48) -or $tcy -gt ($by + 48) -or $tcx -lt ($ax - 48) -or $tcx -gt ($bx + 48)) { continue }
+            $dx = [Math]::Max([Math]::Max($ax - $tcx, 0.0), $tcx - $bx)
+            $dy = [Math]::Max([Math]::Max($ay - $tcy, 0.0), $tcy - $by)
+            $d = [Math]::Sqrt($dx * $dx + $dy * $dy)
+            if ($d -lt $bestD) { $bestD = $d; $best = "$($tx.Name)"; if ($d -le 0) { break } }
+        }
+        if ($best) { $it.Near = (Limit-Text $best 24) }
+    }
+}
+
+# ---------- ④ 动作账本：切换类动作不重复、无效动作不硬试 ----------
+function Get-ActionPoint($a) {
+    if (Test-IdValue $a.id) {
+        $n = [int]"$($a.id)"
+        if ($script:Elements.ContainsKey($n)) { $it = $script:Elements[$n]; return @([int]$it.cx, [int]$it.cy) }
+        return $null
+    }
+    if ((Test-NumValue $a.x) -and (Test-NumValue $a.y)) { return @([int][double]"$($a.x)", [int][double]"$($a.y)") }
+    return $null
+}
+function New-LedgerProbe($a, [string]$kind) {
+    if ($kind -notin $script:GuardKinds) { return $null }
+    $keys = ''
+    if ($kind -in 'key', 'hotkey') {
+        $keys = ("$($a.keys)" -replace '\s*\+\s*', '+').Trim().ToLower()
+        if ($keys -match $script:SafeRepeatKeys) { return $null }
+    }
+    if ($kind -eq 'type' -and (Test-True $a.clear)) { return $null }
+    $pt = Get-ActionPoint $a
+    if (($kind -in @('click', 'double_click', 'right_click', 'middle_click')) -and ($null -eq $pt)) { return $null }
+    $title = ''
+    try { $title = [DsNative4]::WinText([DsNative4]::GetForegroundWindow()) } catch { }
+    $txt = ''
+    if ($kind -eq 'type') { $txt = "$($a.text)" }
+    return [pscustomobject]@{ Kind = $kind; Keys = $keys; Text = $txt; Pt = $pt; Title = $title }
+}
+function Test-LedgerMatch($e, $p) {
+    if ($e.Kind -ne $p.Kind -or $e.Title -ne $p.Title) { return $false }
+    if ($p.Kind -in 'key', 'hotkey') { return ($e.Keys -eq $p.Keys) }
+    if ($p.Kind -eq 'type') {
+        if ($e.Text -ne $p.Text) { return $false }
+        if ($null -eq $p.Pt -and $null -eq $e.Pt) { return $true }
+    }
+    if ($null -eq $e.Pt -or $null -eq $p.Pt) { return $false }
+    $dx = $e.Pt[0] - $p.Pt[0]; $dy = $e.Pt[1] - $p.Pt[1]
+    return ([Math]::Sqrt($dx * $dx + $dy * $dy) -le 36)
+}
+function Assert-RepeatGuard($a, [string]$kind) {
+    # 返回本次动作的账本探针（$null = 不受账本约束）；需要拒绝时抛出带错误码的异常（动作不会被执行）
+    if ($NoRepeatGuard) { return $null }
+    $p = New-LedgerProbe $a $kind
+    if ($null -eq $p) { return $null }
+    $hits = @($script:Ledger | Where-Object { Test-LedgerMatch $_ $p })
+    if ($hits.Count -eq 0) { return $p }
+    $last = $hits[$hits.Count - 1]
+    $noEff = @($hits | Where-Object { $_.Outcome -eq 'nochange' }).Count
+    $what = $p.Kind
+    if ($p.Kind -in 'key', 'hotkey') { $what = "按键 $($p.Keys)" }
+    elseif ($null -ne $p.Pt) { $what = "$($p.Kind) ($($p.Pt[0]),$($p.Pt[1])) 附近" }
+    if ($noEff -ge 2) {
+        throw "[REPEAT_NOEFFECT] $what 在本任务已执行 $($hits.Count) 次，其中 $noEff 次没有任何可验证的效果；原样重试不会有不同结果。请先 inspect 该区域（无障碍祖先链 / 文字 / 颜色），或换控件编号 / 换快捷键 / replan"
+    }
+    if ($last.Outcome -eq 'nochange') { return $p }
+    $ok = Test-True $a.repeat
+    if ($last.Outcome -eq 'changed') {
+        if ($ok) { return $p }
+        throw "[REPEAT_EFFECT] $what 在第 $($last.Step) 步已经执行过并且产生了变化（$(Limit-Text $last.Evidence 80)）。切换类动作（点赞 / 收藏 / 勾选 / 播放暂停）再执行一次会把效果撤销。如果任务确实需要再执行（翻下一个视频、多次点下一步），请在该动作里加 `"repeat`":true 并在 thought 里写明原因"
+    }
+    $key = "$($p.Kind)|$($p.Keys)"
+    if ($null -ne $p.Pt) { $key += "|$([int]($p.Pt[0] / 36))_$([int]($p.Pt[1] / 36))" }
+    $used = [int]$script:RepeatOverride[$key]
+    if ($ok -and $used -lt 1) { $script:RepeatOverride[$key] = $used + 1; return $p }
+    throw "[REPEAT_UNVERIFIED] $what 在第 $($last.Step) 步已执行过，但效果无法验证（$(Limit-Text $last.Evidence 80)）。不要盲目重复切换类动作：先 inspect 该处（颜色 / 文字 / tog 状态）确认确实没生效，再加 `"repeat`":true 重试一次"
+}
+function Add-LedgerEntry($probe, [int]$step, [string]$desc, $effect) {
+    if ($null -eq $probe) { return }
+    $outcome = 'pending'; $ev = '等待下一轮观察核实'; $local = 'none'
+    if ($effect) {
+        $local = "$($effect.Verdict)"; $ev = "$($effect.Text)"
+        if ($local -eq 'changed') { $outcome = 'changed' } elseif ($local -eq 'nochange') { $outcome = 'nochange' }
+    }
+    $script:Ledger.Add([pscustomobject]@{ Kind = $probe.Kind; Keys = $probe.Keys; Text = $probe.Text; Pt = $probe.Pt; Title = $probe.Title; Step = $step; Desc = $desc; Local = $local; Outcome = $outcome; Evidence = $ev; Fresh = $true })
+}
+function Update-LedgerFromObservation($obs) {
+    # 用新一轮观察核实上一轮的动作：标题变化 > 局部视觉证据 > 控件增减；仍无法判断的记为「未验证」
+    $ch = "$($obs.Changes)"
+    $title = ($ch -match '前台窗口标题')
+    $ui = ($ch -match '新增 \d+ 个|消失 \d+ 个')
+    $same = ($ch -match '完全相同|控件列表与上一轮相同')
+    $still = ($ch -match '几乎无变化')
+    foreach ($e in $script:Ledger) {
+        if (-not $e.Fresh) { continue }
+        $e.Fresh = $false
+        if ($title) { $e.Outcome = 'changed'; $e.Evidence = '下一轮前台窗口标题变化'; continue }
+        if ($e.Outcome -ne 'pending') { continue }
+        if ($e.Local -eq 'noisy') {
+            if ($same -and $still) { $e.Outcome = 'nochange'; $e.Evidence = '控件与像素都没有变化' } else { $e.Outcome = 'unknown' }
+        }
+        elseif ($ui) { $e.Outcome = 'changed'; $e.Evidence = '下一轮观察出现控件新增 / 消失' }
+        elseif ($same) { $e.Outcome = 'nochange'; $e.Evidence = '下一轮控件列表完全相同' }
+        else { $e.Outcome = 'unknown'; $e.Evidence = '下一轮没有能归因于该动作的证据' }
+    }
+}
+function Format-Ledger {
+    if ($script:Ledger.Count -eq 0) { return '' }
+    $map = @{ changed = '已生效'; nochange = '无效果'; unknown = '未验证'; pending = '待核实' }
+    $lines = @($script:Ledger | Select-Object -Last 10 | ForEach-Object { "  第$($_.Step)步 $(Limit-Text $_.Desc 60) → $($map[$_.Outcome])（$(Limit-Text $_.Evidence 90)）" })
+    return "【动作账本】（同一目标上「已生效 / 未验证」的切换类动作不会被重复执行；两次「无效果」的动作会被拒绝）:`n" + ($lines -join "`n")
+}
+
+# ---------- ⑤ 先规划后执行 ----------
+function ConvertTo-PlanObject($pl) {
+    $steps = New-Object System.Collections.Generic.List[object]
+    $i = 0
+    foreach ($s in @($pl.steps)) {
+        if ($null -eq $s) { continue }
+        $i++
+        if ($i -gt 10) { break }
+        $act = ''
+        foreach ($nmk in @('act', 'do', 'action', 'desc', 'step')) { if (-not $act) { try { $act = "$($s.$nmk)" } catch { } } }
+        if (-not $act) { $act = "$s" }
+        $steps.Add([pscustomobject]@{ N = $i; Act = (Limit-Text $act 90); How = (Limit-Text "$($s.how)" 110); Verify = (Limit-Text "$($s.verify)" 90) })
+    }
+    if ($steps.Count -eq 0) { throw '计划里没有可执行的 steps' }
+    $dw = @(@($pl.done_when) | Where-Object { $_ } | ForEach-Object { Limit-Text "$_" 90 } | Select-Object -First 4)
+    $once = @(@($pl.once) | Where-Object { $_ } | ForEach-Object { Limit-Text "$_" 40 } | Select-Object -First 6)
+    $risks = @(@($pl.risks) | Where-Object { $_ } | ForEach-Object { Limit-Text "$_" 80 } | Select-Object -First 4)
+    return [pscustomobject]@{ Goal = (Limit-Text "$($pl.goal)" 120); DoneWhen = $dw; Steps = $steps; Once = $once; Risks = $risks }
+}
+function Format-Plan {
+    $p = $script:Plan
+    if ($null -eq $p) { return '' }
+    $ls = New-Object System.Collections.Generic.List[string]
+    $ls.Add('【执行计划】（动手之前由规划器制定。每轮 JSON 用 "step":n 标明正在执行第几步，用 "expect" 写出预期变化；证据表明计划不对时单独输出 {"action":"replan",...}）')
+    if ($p.Goal) { $ls.Add("  目标: $($p.Goal)") }
+    if (@($p.DoneWhen).Count -gt 0) { $ls.Add("  完成证据: $(@($p.DoneWhen) -join '；')") }
+    foreach ($s in $p.Steps) {
+        $m = '·'
+        if ($s.N -lt $script:PlanCur) { $m = '✓' } elseif ($s.N -eq $script:PlanCur) { $m = '→' }
+        $line = "  $m $($s.N). $($s.Act)"
+        if ($s.How) { $line += " ｜方法: $($s.How)" }
+        if ($s.Verify) { $line += " ｜核实: $($s.Verify)" }
+        $ls.Add($line)
+    }
+    if (@($p.Once).Count -gt 0) { $ls.Add("  只能执行一次（执行后先核实，绝不连按）: $(@($p.Once) -join '、')") }
+    if (@($p.Risks).Count -gt 0) { $ls.Add("  风险: $(@($p.Risks) -join '；')") }
+    return ($ls -join "`n")
+}
+function Invoke-PlanPhase([string]$TaskText, $obs, [string]$memNote) {
+    $u = "${memNote}【任务】: $TaskText`n`n当前观察:`n$($obs.Text)`n`n请输出执行计划 JSON（只输出一个 JSON 对象）。"
+    $raw = Invoke-DeepSeek $u $PlannerPrompt 1500
+    return (ConvertTo-PlanObject (ConvertFrom-ModelJson $raw))
+}
+
+# ---------- ⑥ 看得更准：inspect（钻取某一点）与 Windows OCR（无障碍树看不到的软件） ----------
+$script:OcrScript = @'
+param([string]$Path)
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+try {
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+    $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
+    $null = [Windows.Foundation.IAsyncOperation`1, Windows.Foundation, ContentType = WindowsRuntime]
+    $null = [Windows.Graphics.Imaging.SoftwareBitmap, Windows.Foundation, ContentType = WindowsRuntime]
+    $null = [Windows.Storage.Streams.RandomAccessStream, Windows.Storage.Streams, ContentType = WindowsRuntime]
+    $aw = [WindowsRuntimeSystemExtensions].GetMember('GetAwaiter') | Where-Object { $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' } | Select-Object -First 1
+    function Await($op, [Type]$rt) { $aw.MakeGenericMethod($rt).Invoke($null, @($op)).GetResult() }
+    $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($Path)) ([Windows.Storage.StorageFile])
+    $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+    $dec = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+    $bmp = Await ($dec.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+    $eng = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+    if ($null -eq $eng) {
+        foreach ($lg in [Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages) { $eng = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($lg); if ($eng) { break } }
+    }
+    if ($null -eq $eng) { Write-Output '{"err":"no_ocr_language"}'; $stream.Dispose(); exit 0 }
+    $res = Await ($eng.RecognizeAsync($bmp)) ([Windows.Media.Ocr.OcrResult])
+    foreach ($ln in $res.Lines) {
+        $x0 = 1e9; $y0 = 1e9; $x1 = -1e9; $y1 = -1e9
+        foreach ($wd in $ln.Words) {
+            $b = $wd.BoundingRect
+            if ($b.X -lt $x0) { $x0 = $b.X }
+            if ($b.Y -lt $y0) { $y0 = $b.Y }
+            if (($b.X + $b.Width) -gt $x1) { $x1 = $b.X + $b.Width }
+            if (($b.Y + $b.Height) -gt $y1) { $y1 = $b.Y + $b.Height }
+        }
+        if ($x1 -lt $x0) { continue }
+        $o = New-Object PSObject -Property @{ t = [string]$ln.Text; x = [int]$x0; y = [int]$y0; w = [int]($x1 - $x0); h = [int]($y1 - $y0) }
+        Write-Output ($o | ConvertTo-Json -Compress)
+    }
+    $stream.Dispose()
+}
+catch { Write-Output ((New-Object PSObject -Property @{ err = [string]$_.Exception.Message }) | ConvertTo-Json -Compress) }
+'@
+function Optimize-OcrText([string]$s) {
+    # Windows OCR 会在中文字之间插空格：「润 魂 学」→「润魂学」
+    if ([string]::IsNullOrWhiteSpace($s)) { return '' }
+    $s = [regex]::Replace($s, '(?<=[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF])\s+(?=[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF])', '')
+    return $s.Trim()
+}
+function New-OcrResult([bool]$ok, [string]$err, $lines) { return [pscustomobject]@{ Ok = $ok; Err = $err; Lines = @($lines) } }
+function Invoke-Ocr([int]$rx, [int]$ry, [int]$rw, [int]$rh) {
+    # 返回 @{ Ok; Err; Lines = @( @{ Text; L; T; W; H; cx; cy } ) }，坐标为屏幕物理像素；识别出的文字框自动成为坐标点击的「依据」
+    $none = New-Object System.Collections.Generic.List[object]
+    if ($NoOcr) { return (New-OcrResult $false '已用 -NoOcr 关闭 OCR' $none) }
+    if ($script:OcrUnavailable) { return (New-OcrResult $false $script:OcrUnavailable $none) }
+    $ps5 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $ps5)) { $script:OcrUnavailable = '找不到 Windows PowerShell 5.1（Windows 自带 OCR 需要通过它调用 WinRT）'; return (New-OcrResult $false $script:OcrUnavailable $none) }
+    $vb = Get-ViewBounds; $s = $vb.Screen
+    $x0 = [int][Math]::Max($rx, $s[0]); $y0 = [int][Math]::Max($ry, $s[1])
+    $x1 = [int][Math]::Min($rx + $rw, $s[2]); $y1 = [int][Math]::Min($ry + $rh, $s[3])
+    $cw = $x1 - $x0; $ch = $y1 - $y0
+    if ($cw -lt 8 -or $ch -lt 8) { return (New-OcrResult $false '识别区域太小或在屏幕外' $none) }
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse'
+    if (-not (Test-Path -LiteralPath $dir)) { [void](New-Item -ItemType Directory -Force -Path $dir) }
+    $helper = Join-Path $dir 'ocr-v5.ps1'
+    if ($script:OcrHelper -ne $helper -or -not (Test-Path -LiteralPath $helper)) {
+        [System.IO.File]::WriteAllText($helper, $script:OcrScript, [System.Text.UTF8Encoding]::new($true))
+        $script:OcrHelper = $helper
+    }
+    # 小字放大：Windows OCR 对 10px 以下的字识别率很低，短边 < 700 时放大 2 倍再识别，坐标再按比例换算回来
+    $scale = 1.0
+    if ([Math]::Min($cw, $ch) -lt 700 -and [Math]::Max($cw, $ch) -le 2000) { $scale = 2.0 }
+    $png = Join-Path $dir ('ocr-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.png')
+    $bmp = $null; $g = $null; $big = $null; $g2 = $null
+    try {
+        $bmp = [System.Drawing.Bitmap]::new($cw, $ch)
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($x0, $y0, 0, 0, [System.Drawing.Size]::new($cw, $ch))
+        if ($scale -gt 1.0) {
+            $big = [System.Drawing.Bitmap]::new([int]($cw * $scale), [int]($ch * $scale))
+            $g2 = [System.Drawing.Graphics]::FromImage($big)
+            $g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $g2.DrawImage($bmp, 0, 0, $big.Width, $big.Height)
+            $big.Save($png, [System.Drawing.Imaging.ImageFormat]::Png)
+        }
+        else { $bmp.Save($png, [System.Drawing.Imaging.ImageFormat]::Png) }
+    }
+    finally { foreach ($o in @($g2, $big, $g, $bmp)) { if ($o) { $o.Dispose() } } }
+    $outText = ''
+    try {
+        $argLine = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $helper + '" -Path "' + $png + '"'
+        $psi = [System.Diagnostics.ProcessStartInfo]::new($ps5, $argLine)
+        $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+        $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $so = $proc.StandardOutput.ReadToEndAsync(); $se = $proc.StandardError.ReadToEndAsync()
+        $swo = [System.Diagnostics.Stopwatch]::StartNew()
+        while (-not $proc.WaitForExit(150)) {
+            try { Test-Abort } catch { $abortErr = $_; try { $proc.Kill($true) } catch { }; throw $abortErr }
+            if ($swo.Elapsed.TotalSeconds -gt 25) { try { $proc.Kill($true) } catch { }; return (New-OcrResult $false 'OCR 超过 25 秒未返回，已终止' $none) }
+        }
+        $proc.WaitForExit()
+        $outText = [string]$so.Result
+    }
+    catch {
+        if ($_.Exception.Message -like '触发保护*') { throw }
+        return (New-OcrResult $false "OCR 子进程失败: $(Limit-Text $_.Exception.Message 100)" $none)
+    }
+    finally { Remove-Item -LiteralPath $png -Force -ErrorAction SilentlyContinue }
+    $lines = New-Object System.Collections.Generic.List[object]
+    $err = ''
+    foreach ($rawLine in ($outText -split "`r?`n")) {
+        $ln = $rawLine.Trim().TrimStart([char]0xFEFF)
+        if (-not $ln.StartsWith('{')) { continue }
+        $o = $null
+        try { $o = $ln | ConvertFrom-Json } catch { continue }
+        if ($o.err) { $err = "$($o.err)"; continue }
+        $txt = Optimize-OcrText "$($o.t)"
+        if ($txt -eq '') { continue }
+        $lx = $x0 + [int]([double]$o.x / $scale); $ly = $y0 + [int]([double]$o.y / $scale)
+        $lw = [int]([double]$o.w / $scale); $lh = [int]([double]$o.h / $scale)
+        $item = [pscustomobject]@{ Text = $txt; L = $lx; T = $ly; W = $lw; H = $lh; cx = [int]($lx + $lw / 2); cy = [int]($ly + $lh / 2) }
+        $lines.Add($item)
+        $script:Grounded.Add($item)
+    }
+    if ($err -eq 'no_ocr_language') { $script:OcrUnavailable = '系统没有可用的 OCR 语言包（设置 → 时间和语言 → 语言和区域 → 中文/英文 → 语言选项 → 安装「光学字符识别」）'; return (New-OcrResult $false $script:OcrUnavailable $none) }
+    if ($err -and $lines.Count -eq 0) { return (New-OcrResult $false "OCR 出错: $(Limit-Text $err 120)" $none) }
+    return (New-OcrResult $true '' $lines)
+}
+function Get-WindowOcrBlock([IntPtr]$hwnd, $pix) {
+    # 观察时：前台窗口的无障碍控件很少（游戏 / 画布 / 远程桌面 / 自绘界面）才自动 OCR；画面没变就复用上次结果
+    $c = $script:OcrCache
+    if ($c -and $c.Hwnd -eq $hwnd -and $null -ne $pix) {
+        $dd = Get-PixelDiff $c.Pix $pix
+        if ($null -ne $dd -and $dd -lt 0.5) { foreach ($gr in @($c.Rects)) { $script:Grounded.Add($gr) }; return $c.Block }
+    }
+    $wr = [DsNative4]::WinRect($hwnd)
+    $res = Invoke-Ocr $wr[0] $wr[1] ($wr[2] - $wr[0]) ($wr[3] - $wr[1])
+    if (-not $res.Ok) {
+        $fb = "OCR（该窗口无障碍控件很少，尝试读屏幕文字）: 不可用 - $($res.Err)"
+        $script:OcrCache = [pscustomobject]@{ Hwnd = $hwnd; Pix = $pix; Block = $fb; Rects = @() }
+        return $fb
+    }
+    if (@($res.Lines).Count -eq 0) { return 'OCR（该窗口无障碍控件很少）: 没有识别到文字' }
+    $ls = @(@($res.Lines) | Select-Object -First 45 | ForEach-Object { "  「$(Limit-Text $_.Text 50)」@($($_.cx),$($_.cy))" })
+    $block = "OCR 屏幕文字（该窗口无障碍控件很少；以下是识别出的文字及中心坐标，可作为坐标点击的依据）:`n" + ($ls -join "`n")
+    $script:OcrCache = [pscustomobject]@{ Hwnd = $hwnd; Pix = $pix; Block = $block; Rects = @($res.Lines) }
+    return $block
+}
+function Invoke-OcrAction($a) {
+    if ((Test-NumValue $a.x) -and (Test-NumValue $a.y) -and (Test-NumValue $a.w) -and (Test-NumValue $a.h)) {
+        $res = Invoke-Ocr ([int][double]"$($a.x)") ([int][double]"$($a.y)") ([int][double]"$($a.w)") ([int][double]"$($a.h)")
+    }
+    else {
+        $wr = [DsNative4]::WinRect($script:ObsHwnd)
+        $res = Invoke-Ocr $wr[0] $wr[1] ($wr[2] - $wr[0]) ($wr[3] - $wr[1])
+    }
+    if (-not $res.Ok) { throw "OCR 不可用: $($res.Err)" }
+    $n = @($res.Lines).Count
+    if ($n -eq 0) { return 'OCR 完成：该区域没有识别到文字' }
+    $ls = @(@($res.Lines) | Select-Object -First 60 | ForEach-Object { "「$(Limit-Text $_.Text 40)」@($($_.cx),$($_.cy))" })
+    return "OCR 识别到 $n 行文字（中心坐标，可直接作为坐标点击的依据）: " + ($ls -join ' ；')
+}
+function Invoke-InspectAction($a) {
+    # 钻取一个点（思路同 agent-desktop 的 snapshot --root）：无障碍祖先链 + 鲜艳颜色占比 + 区域 OCR；不改变界面
+    $x = 0; $y = 0; $label = ''
+    if (Test-IdValue $a.id) {
+        $n = [int]"$($a.id)"
+        if (-not $script:Elements.ContainsKey($n)) { throw "元素编号 $n 不存在" }
+        $it = $script:Elements[$n]
+        $x = [int]$it.cx; $y = [int]$it.cy
+        $label = "[$n] $($it.Type) " + '"' + "$($it.Name)" + '"'
+    }
+    elseif ((Test-NumValue $a.x) -and (Test-NumValue $a.y)) {
+        $x = [int][double]"$($a.x)"; $y = [int][double]"$($a.y)"; $label = "($x,$y)"
+    }
+    else {
+        $fe = $null
+        try { $fe = [System.Windows.Automation.AutomationElement]::FocusedElement } catch { }
+        if ($null -eq $fe) { throw 'inspect 需要 id 或 x,y（当前也读不到键盘焦点）' }
+        $fr = $fe.Current.BoundingRectangle
+        if ($fr.IsEmpty) { throw '键盘焦点元素没有位置信息，请给 id 或 x,y' }
+        $x = [int]($fr.Left + $fr.Width / 2); $y = [int]($fr.Top + $fr.Height / 2); $label = '键盘焦点'
+    }
+    $rad = [int][Math]::Max(40, [Math]::Min(160, 70 * [DsNative4]::DpiScale()))
+    if (Test-NumValue $a.r) { $rad = [int][Math]::Min([Math]::Max([double]"$($a.r)", 20), 400) }
+    $out = New-Object System.Collections.Generic.List[string]
+    $out.Add("inspect $label 中心 ($x,$y) 半径 ${rad}px:")
+    $maxA = [Math]::Pow(320.0 * [DsNative4]::DpiScale(), 2)
+    try {
+        $AE = [System.Windows.Automation.AutomationElement]
+        $hit = $AE::FromPoint([System.Windows.Point]::new([double]$x, [double]$y))
+        $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+        $cur = $hit
+        $out.Add('  该点的无障碍元素（自内向外）:')
+        for ($i = 0; $i -lt 5 -and $null -ne $cur; $i++) {
+            $c = $cur.Current
+            $r = $c.BoundingRectangle
+            $tp = ($c.ControlType.ProgrammaticName -replace '^ControlType\.', '')
+            $fl = New-Object System.Collections.Generic.List[string]
+            try { if ($c.IsKeyboardFocusable) { $fl.Add('foc') } } catch { }
+            try { if ($cur.GetCurrentPropertyValue($AE::IsInvokePatternAvailableProperty) -eq $true) { $fl.Add('inv') } } catch { }
+            try {
+                if ($cur.GetCurrentPropertyValue($AE::IsTogglePatternAvailableProperty) -eq $true) {
+                    $ts = "$($cur.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState)".ToLower()
+                    $fl.Add("tog=$ts")
+                }
+            }
+            catch { }
+            $nm = Limit-Text "$($c.Name)" 40
+            $help = ''
+            try { if ($c.HelpText) { $help = ' help="' + (Limit-Text "$($c.HelpText)" 30) + '"' } } catch { }
+            $flags = ''
+            if ($fl.Count -gt 0) { $flags = ' {' + ($fl -join ',') + '}' }
+            $rt = '无'
+            if (-not $r.IsEmpty) {
+                $rt = "$([int]$r.Left),$([int]$r.Top) $([int]$r.Width)x$([int]$r.Height)"
+                if (($r.Width * $r.Height) -le $maxA) { $script:Grounded.Add([pscustomobject]@{ L = [int]$r.Left; T = [int]$r.Top; W = [int]$r.Width; H = [int]$r.Height }) }
+            }
+            $out.Add('    ' + ('  ' * $i) + $tp + ' "' + $nm + '"' + $help + $flags + ' 矩形(' + $rt + ')')
+            if ($tp -eq 'Window') { break }
+            $cur = $walker.GetParent($cur)
+        }
+    }
+    catch { $out.Add("  无障碍元素读取失败: $(Limit-Text $_.Exception.Message 80)") }
+    $smp = Get-RegionSample $x $y $rad
+    if ($smp) {
+        $cs = Get-ColorStats $smp
+        $ctext = '几乎没有鲜艳颜色（以灰 / 白 / 黑为主）'
+        if ($cs.Count -gt 0) { $ctext = (@($cs.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key) $($_.Value)%" })) -join '，' }
+        $out.Add("  区域内鲜艳颜色占比: $ctext（点亮的点赞心形通常表现为 红/粉 明显升高）")
+    }
+    $ocr = Invoke-Ocr ($x - $rad) ($y - $rad) (2 * $rad) (2 * $rad)
+    if ($ocr.Ok) {
+        if (@($ocr.Lines).Count -gt 0) { $out.Add('  区域内 OCR 文字: ' + ((@($ocr.Lines) | Select-Object -First 12 | ForEach-Object { "「$(Limit-Text $_.Text 30)」@($($_.cx),$($_.cy))" }) -join ' ')) }
+        else { $out.Add('  区域内 OCR 文字: （无）') }
+    }
+    else { $out.Add("  OCR: $($ocr.Err)") }
+    return ($out -join "`n")
+}
+#endregion
 #region ---------- 发送前校验（Schema） ----------
 $script:ActionNames = @('click', 'click_many', 'check', 'uncheck', 'select_rows', 'double_click', 'right_click', 'middle_click', 'hover', 'drag', 'type', 'key', 'hotkey',
-    'scroll', 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'done', 'fail')
+    'scroll', 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'replan', 'done', 'fail')
 function Test-IdValue($v) { return ($null -ne $v -and "$v" -match '^\d+$') }
 function Test-NumValue($v) { return ($null -ne $v -and "$v" -ne '' -and $null -ne ("$v" -as [double])) }
 function Test-ActionUsesId($a) {
@@ -2182,6 +2845,17 @@ function Test-ActionSchema($a, [int]$index) {
             if ([string]::IsNullOrWhiteSpace("$($a.file)")) { return 'run_process 需要 file' }
         }
         'wait' { if ($null -ne $a.seconds -and "$($a.seconds)" -ne '' -and -not (Test-NumValue $a.seconds)) { return 'wait 的 seconds 必须是数字' } }
+        'replan' {
+            if ($index -gt 1) { return 'replan 必须单独输出（不能和其他动作放在同一批）' }
+            if ($null -eq $a.steps -or @($a.steps).Count -lt 1) { return 'replan 需要非空的 steps 数组，例如 [{"act":"…","how":"…","verify":"…"}]' }
+        }
+        'inspect' {
+            if (Test-IdValue $a.id) { if (-not $script:Elements.ContainsKey([int]"$($a.id)")) { return "元素编号 $($a.id) 不存在" } }
+            elseif ($null -ne $a.x -and -not ((Test-NumValue $a.x) -and (Test-NumValue $a.y))) { return 'inspect 需要 id，或同时提供 x 和 y（都不给则检查键盘焦点）' }
+        }
+        'ocr' {
+            if ($null -ne $a.x -and -not ((Test-NumValue $a.x) -and (Test-NumValue $a.y) -and (Test-NumValue $a.w) -and (Test-NumValue $a.h))) { return 'ocr 的区域需要同时给 x,y,w,h（都不给则识别整个前台窗口）' }
+        }
     }
     return $null
 }
@@ -2218,9 +2892,11 @@ function Find-ElementAtPoint([int]$x, [int]$y) {
     if ($script:Mode -notin 'Auto', 'Uia') { return $null }
     try {
         $best = $null; $bestId = 0; $bestArea = [double]::MaxValue
+        $snapMax = [Math]::Pow(320.0 * [DsNative4]::DpiScale(), 2)   # v5：日志任务6第2步坐标被吸附到整页大小的 Hyperlink 并 Invoke 了它
         foreach ($kv in $script:Elements.GetEnumerator()) {
             $it = $kv.Value
             if ($it.Type -eq 'Text' -or $it.Pat.Count -eq 0 -or $it.Off) { continue }
+            if (([double]$it.W * [double]$it.H) -gt $snapMax) { continue }
             if ($x -ge $it.L -and $x -le ($it.L + $it.W) -and $y -ge $it.T -and $y -le ($it.T + $it.H)) {
                 $area = [double]$it.W * [double]$it.H
                 if ($area -lt $bestArea) { $best = $it; $bestId = [int]$kv.Key; $bestArea = $area }
@@ -2319,7 +2995,11 @@ function Assert-PhysicalReady($t) {
     Wait-UserIdle
     $hit = [DsNative4]::RootAt($t.x, $t.y)
     if ($script:Cur -and $hit -eq $script:Cur.Hwnd) { return }
-    if ($hit -ne [IntPtr]::Zero -and (Test-IsConsoleWindow $hit)) { throw '目标点位于运行本脚本的控制台窗口上，已取消（避免误点自己）。' }
+    if ($hit -ne [IntPtr]::Zero -and (Test-IsConsoleWindow $hit)) {
+        # v5：日志任务6里 8 次因此失败。先把控制台最小化让位、切回目标窗口，再核对一次
+        if (Invoke-ConsoleYield) { $hit = [DsNative4]::RootAt($t.x, $t.y) }
+        if ($hit -ne [IntPtr]::Zero -and (Test-IsConsoleWindow $hit)) { throw '目标点位于运行本脚本的控制台窗口上，已取消（避免误点自己）。' }
+    }
     if ($t.item) {
         $expect = [DsNative4]::Root($script:ObsHwnd)
         if ($hit -ne $expect) {
@@ -2400,8 +3080,13 @@ function Invoke-UiaClick($item) {
 }
 function Invoke-PointerAction([string]$kind, $a) {
     $t = Resolve-Target $a
+    # v5：坐标点击必须有依据（日志任务6：模型按「图标大概在数字上方 40px」猜了 20 多次）
+    if (-not $t.byId -and $null -eq $t.item -and $kind -ne 'hover' -and -not (Test-True $a.force) -and -not $NoRepeatGuard -and -not (Test-Grounded $t.x $t.y)) {
+        throw "[UNGROUNDED] 坐标 ($($t.x),$($t.y)) 不在当前观察的任何控件内，也不在 inspect / ocr 给出的区域内——这是猜出来的位置。请先 inspect 该点（或 ocr 该区域）拿到真实元素和坐标；确实要点空白处时加 `"force`":true"
+    }
     Move-VirtualCursor $t.x $t.y
     $item = $t.item
+    if ($kind -ne 'hover') { Start-EffectProbe $t.x $t.y }   # v5：动作前采样落点周围，动作后由 Invoke-Action 对比
     if ($kind -eq 'hover') {
         Assert-PhysicalReady $t
         Set-CursorPulse 2
@@ -2414,7 +3099,7 @@ function Invoke-PointerAction([string]$kind, $a) {
     # ---- 第 1 层：UIA 模式（不动鼠标、不用键盘）----
     $script:LastClickState = ''
     if ($script:Mode -in 'Auto', 'Uia') {
-        if ($item -and $kind -eq 'click') {
+        if ($item -and $kind -eq 'click' -and (Test-UiaActionable $item)) {
             $m = Invoke-UiaClick $item
             if ($m) {
                 Set-CursorPulse 0
@@ -2611,7 +3296,7 @@ function Focus-WindowByTitle([string]$keyword) {
 }
 function Describe-Action($a) {
     $parts = @("action=$($a.action)")
-    foreach ($k in 'id', 'ids', 'rows', 'exclusive', 'x', 'y', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id', 'path', 'file', 'cwd', 'timeout', 'append') {
+    foreach ($k in 'id', 'ids', 'rows', 'exclusive', 'x', 'y', 'w', 'h', 'r', 'repeat', 'force', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id', 'path', 'file', 'cwd', 'timeout', 'append') {
         $v = "$($a.$k)"
         if ($null -ne $a.$k -and $v -ne '') { $parts += ("{0}={1}" -f $k, (Limit-Text $v 80)) }
     }
@@ -2694,19 +3379,24 @@ function Invoke-ActionCore($a, [string]$kind) {
         'run_powershell' { return (Invoke-ShellCommand "$($a.command)" $(if (Test-NumValue $a.timeout) { [int][double]"$($a.timeout)" } else { 0 })) }
         'write_file' { return (Invoke-WriteFile $a) }
         'run_process' { return (Invoke-ProcessAction $a) }
+        'inspect' { return (Invoke-InspectAction $a) }
+        'ocr' { return (Invoke-OcrAction $a) }
         default { throw "未知动作: '$($a.action)'" }
     }
 }
 function Invoke-Action($a) {
     $kind = "$($a.action)".ToLower().Trim()
+    $script:EffectProbe = $null; $script:LastEffect = $null
     Assert-BulkInterlock $a $kind   # v4.2：数量联锁（删除/归档/全选前核对已勾选行数）
     $before = [DsNative4]::GetForegroundWindow()
     $r = Invoke-ActionCore $a $kind
-    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process') {
+    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr') {
         Start-Sleep -Milliseconds 60
         Wait-UiSettled
         $after = [DsNative4]::GetForegroundWindow()
         if ($after -ne $before) { $r += "；前台窗口已变为 [$(Limit-Text ([DsNative4]::WinText($after)) 50)]" }
+        $fx = Complete-EffectProbe   # v5：局部视觉证据
+        if ($fx) { $script:LastEffect = $fx; $r += "；$($fx.Text)" }
     }
     return $r
 }
@@ -2721,8 +3411,8 @@ $SystemPrompt = @'
 「行勾选汇总」给出已勾选的行。请据此计数，不要靠记忆。标注「⚠全选复选框」的是全选框。
 每轮提示里还有「相对上一轮的界面变化」：标题变化、新增/消失的控件。这是判断「上一步是否生效」的第一证据。
 你必须只输出【一个】JSON 对象（不要 markdown、不要多余文字、不要输出第二个 JSON）。有两种格式：
-A) 单个动作： {"thought":"一句话判断","action":"动作名", ...参数}
-B) 批量动作： {"thought":"一句话判断","actions":[{"action":...},{"action":...}]}   （按顺序执行，任一步出错则中止其余）
+A) 单个动作： {"thought":"一句话判断","step":1,"expect":"预期在下一轮观察里看到的变化","action":"动作名", ...参数}
+B) 批量动作： {"thought":"一句话判断","step":1,"expect":"…","actions":[{"action":...},{"action":...}]}   （按顺序执行，任一步出错则中止其余）
 可用动作：
 - {"action":"click","id":12}                       单击控件（必须优先用 id；只有观察里确实没有该控件时才用 x,y）
 - {"action":"select_rows","rows":"1-10"}           按「列表行」的 R 编号精确勾选（幂等：已勾选的不会被反选；默认 exclusive=true 同时取消其他行；视口外的行也能处理，无需滚动）。
@@ -2741,6 +3431,9 @@ B) 批量动作： {"thought":"一句话判断","actions":[{"action":...},{"acti
 - {"action":"run_powershell","command":"Get-Date","timeout":60} 执行 PowerShell（仅当系统提示允许时可用；默认约 60 秒超时，可用 timeout 加长到 900；不要运行会常驻/交互的命令；脚本超过约 40 行不要塞进 command，改用 write_file）
 - {"action":"write_file","path":"C:\\绝对路径\\x.py","content":"…","append":false}   写 UTF-8 文本文件（系统读回核验大小）。长脚本分段写：第一段 append=false，后续段 append=true，每段不超过约 150 行
 - {"action":"run_process","file":"python","args":"C:\\x.py","cwd":"","timeout":300}   以子进程运行（.ps1/.py/.js/.bat 自动选解释器；gcc/cl/cargo/nvcc/node/npm 也可直接当 file）。返回退出码和输出；超时会杀掉整个进程树
+- {"action":"inspect","id":12} 或 {"action":"inspect","x":1770,"y":850,"r":80}   钻取一个点（不改变界面）：返回该点的无障碍祖先链（类型/名字/foc/inv/tog 状态/矩形）、区域鲜艳颜色占比、区域 OCR 文字；不给参数则检查键盘焦点
+- {"action":"ocr"} 或 {"action":"ocr","x":0,"y":0,"w":800,"h":600}   用 Windows 自带 OCR 读前台窗口（或指定区域）的文字和中心坐标：无障碍树看不到的软件（游戏、画布、远程桌面、自绘界面）用它
+- {"action":"replan","reason":"原计划为何不对","steps":[{"act":"…","how":"…","verify":"…"}],"done_when":["…"]}   证据表明计划不对时重新规划（单独输出）
 - {"action":"done","summary":"完成情况"}             当前任务已完成
 - {"action":"fail","reason":"原因"}                  确认无法完成
 规则：
@@ -2767,13 +3460,40 @@ B) 批量动作： {"thought":"一句话判断","actions":[{"action":...},{"acti
 18. 做 PPT / 写程序 / 多步脚本：先 write_file 分段写脚本，再 run_process 运行并看退出码和输出；不要把几十行脚本塞进一次 JSON（输出会被截断成非法 JSON）。Office COM 很慢，run_process 设 timeout 300。
 19. 结果里出现「[错误码 …]」时：INTERLOCK / BLOCKED = 规则拒绝，同一动作重试没有意义，必须换方法；STALE_REF = 先重新观察；OCCLUDED = 先 focus_window；USER_ACTIVE = 先 wait。同一错误出现 3 次系统会提示熔断，5 次终止任务。
 20. 观察里的「屏幕像素」行是独立于无障碍树的证据：大面积变化 = 界面确实变了；「几乎无变化」且控件也没变 = 动作没生效。「坐标系」行说明所有坐标都是物理像素；控件 @(x,y) 已是可见部分的中心，按坐标点击时直接用它。
+21. 【先规划后执行】任务开始时规划器已给出【执行计划】。每轮在 JSON 顶层写 "step":当前计划步号 和 "expect":"执行后预期在观察里看到什么"。按计划推进；证据表明某步方法不对时，单独输出 replan 给出新步骤，不要在原地反复试。
+22. 【动作账本】列出本任务每个点击/按键/输入的验证结果（已生效 / 无效果 / 未验证）。系统会拒绝：同一目标上「已生效」的动作再做一次（REPEAT_EFFECT：点赞、收藏、关注、勾选、播放暂停再按一次就撤销了）；「未验证」的动作直接重复（REPEAT_UNVERIFIED）；两次「无效果」后的第三次（REPEAT_NOEFFECT）。任务确实需要重复（翻多个视频、多次下一步）时，在该动作里加 "repeat":true 并在 thought 写明原因。
+23. 【看清再点】控件没有名字、只看到数字或图标、或要确认某处状态（心形是否变红、开关是否打开）时，先 inspect 该控件或该点：它告诉你谁真正可点、颜色占比和文字。无障碍树几乎为空的软件用 ocr 读文字和坐标。
+24. 【坐标必须有依据】按坐标点击时，坐标必须落在当前观察某控件内，或来自 inspect / ocr 的结果；凭经验猜（例如「图标大概在数字上方 40px」）会被拒绝（UNGROUNDED）。确需点空白处时加 "force":true。
+25. 【局部视觉证据】点击结果里的「局部视觉证据」对比了落点周围在动作前后的像素（已扣除视频/动画的静止噪声）和鲜艳颜色占比：「该处确实变了」= 生效；「没有可见变化」= 很可能没生效，换方法；「背景在动」= 先 inspect 看颜色/状态，不要直接重复。
+26. 无名的可交互容器以 Group / Image / Custom 列出：{foc}=可获得键盘焦点（网页可点击元素常见），≈「…」是它内部或紧邻的文字（例如点赞按钮常显示为 Group ≈「41.1万」或 Group "41.1万"：点它的编号，而不是猜它上方的坐标）。
+27. 前台被本控制台占据时，系统会自动切回上一个目标窗口并在观察开头说明，不需要你 focus_window。done 的 summary 里要写出你在最新观察中看到的完成证据（对应计划的「完成证据」）。
 '@
-function Invoke-DeepSeek([string]$userContent) {
+$PlannerPrompt = @'
+你是 Windows 电脑操作代理的「规划器」。在执行任何动作之前，根据【任务】和【当前观察】制定一份完整、可验证、不重复的执行计划。
+观察格式：[编号] 控件类型 "名称" ≈「附近文字」 {可用模式} @(中心x,中心y)；inv=可调用 val=可写值 tog=开关 sel=可选中 exp=可展开 foc=可获得焦点。
+执行器可用的动作：click / double_click / right_click / hover / drag / type / key / scroll / select_rows / check / uncheck / launch / focus_window / wait /
+inspect（查看某点的无障碍祖先链、颜色、OCR） / ocr（读屏幕文字和坐标） / run_powershell / write_file / run_process。
+只输出一个 JSON 对象（不要 markdown）：
+{"goal":"一句话目标",
+ "done_when":["完成时在观察里能看到的客观证据：标题 / 控件 / value / 勾选汇总 / inspect 的颜色占比等，1~3 条"],
+ "steps":[{"act":"做什么","how":"首选方法（控件编号、快捷键或命令）+ 备选方法","verify":"做完后如何从下一轮观察核实"}],
+ "once":["只能执行一次、执行后必须先核实的切换/不可逆动作（点赞、收藏、关注、发送、删除、播放/暂停…）"],
+ "risks":["可能的坑与对策"]}
+要求：
+1. steps 2~8 步，按顺序；能一步完成的不要拆；每一步都要有可观察的 verify。
+2. 方法优先级：观察里的控件编号 > 应用自带快捷键（不确定的快捷键写成备选，并在 verify 写明如何确认它生效） > run_powershell / run_process > 坐标点击。
+3. 坐标只能来自观察里的 @(x,y) 或 inspect / ocr 的结果，不要凭经验估计「图标大概在上方 40 像素」。目标没有名字或只显示数字时，计划里先 inspect 它。
+4. 切换类动作（点赞 / 收藏 / 勾选 / 播放暂停）只执行一次，执行后用局部视觉证据或 inspect（颜色、tog 状态）核实，绝不连按。
+5. 当前前台若是运行本脚本的控制台，第一步应切换到目标程序（launch 或 focus_window）。
+'@
+function Invoke-DeepSeek([string]$userContent, [string]$systemText = '', [int]$maxTok = 0) {
+    if ([string]::IsNullOrEmpty($systemText)) { $systemText = $SystemPrompt }
+    if ($maxTok -le 0) { $maxTok = $MaxTokens }
     $messages = @(
-        [ordered]@{ role = 'system'; content = $SystemPrompt }
+        [ordered]@{ role = 'system'; content = $systemText }
         [ordered]@{ role = 'user'; content = $userContent }
     )
-    $payload = [ordered]@{ model = $Model; messages = $messages; temperature = 0; max_tokens = $MaxTokens }
+    $payload = [ordered]@{ model = $Model; messages = $messages; temperature = 0; max_tokens = $maxTok }
     if ($Model -notlike '*reasoner*') { $payload['response_format'] = @{ type = 'json_object' } }
     $json = $payload | ConvertTo-Json -Depth 10 -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -2842,6 +3562,14 @@ function Invoke-AgentTask([string]$TaskText) {
     $script:TaskQty = Get-TaskQuantity $TaskText
     $script:SelectMemo = $null
     $script:PixPrev = $null
+    # v5：每个任务独立的计划 / 账本 / 坐标依据
+    $script:Ledger = New-Object System.Collections.Generic.List[object]
+    $script:Grounded = New-Object System.Collections.Generic.List[object]
+    $script:RepeatOverride = @{}
+    $script:Plan = $null; $script:PlanCur = 0; $script:Replans = 0
+    $script:OcrCache = $null
+    $stepRounds = @{}
+    $planTried = $false
     if ($script:TaskQty -gt 0 -and -not $NoSafety) { Write-Host "  （安全联锁：识别到任务数量 N=$($script:TaskQty)；删除/归档前会核对已勾选行数必须等于 N）" -ForegroundColor DarkGray }
     $history = New-Object System.Collections.Generic.List[string]
     $descCount = @{}
@@ -2862,6 +3590,8 @@ function Invoke-AgentTask([string]$TaskText) {
         for ($step = 1; $step -le $MaxSteps; $step++) {
             Test-Abort
             Write-Host "── 第 $step 步 ──" -ForegroundColor Cyan
+            $resumeNote = Resume-TargetWindow   # v5：前台被控制台占据时由系统切回目标窗口
+            if ($resumeNote) { Write-Host "  $resumeNote" -ForegroundColor DarkGray }
             $obs = Get-Observation
             $sig = Get-ObsSig $obs
             # 刚操作完界面却完全没变：很可能是页面/弹窗延迟生效（日志任务3），先自动等一下再观察一次，再交给模型
@@ -2872,6 +3602,7 @@ function Invoke-AgentTask([string]$TaskText) {
                 $sig = Get-ObsSig $obs
             }
             $lastActed = $false
+            Update-LedgerFromObservation $obs   # v5：用这一轮观察核实上一轮动作的效果
             if ($SaveScreenshots -and $script:RunDir) {
                 try { Save-Screenshot (Join-Path $script:RunDir ("task{0:D2}-step{1:D2}.png" -f $script:TaskNo, $step)) }
                 catch { Write-Host "  截图失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
@@ -2892,7 +3623,34 @@ function Invoke-AgentTask([string]$TaskText) {
             if ($MemoryLimit -gt 0 -and $script:Session.Count -gt 0) {
                 $memNote = "本会话之前的任务（仅供参考）:`n" + (($script:Session | Select-Object -Last $MemoryLimit) -join "`n") + "`n`n"
             }
-            $userContent = "${memNote}【当前任务】: $TaskText`n`n$shellNote 单轮最多 $MaxBatch 个动作（click_many 的 ids 另算，最多 20 个）。`n`n当前任务已执行的操作历史:`n$hist`n`n当前观察:`n$($obs.Text)$changeNote$stuckNote$repeatNote`n`n请输出下一步的 JSON（只输出一个 JSON 对象）。"
+            # v5：先规划后执行——第一轮观察后先让规划器产出完整计划，之后每轮按计划推进
+            if (-not $planTried -and -not $NoPlan) {
+                $planTried = $true
+                Write-Host '  规划中（先想清楚完整步骤与核实方法，再动手）...' -ForegroundColor DarkGray
+                try {
+                    $script:Plan = Invoke-PlanPhase $TaskText $obs $memNote
+                    $script:PlanCur = 1
+                    Write-Host (Format-Plan) -ForegroundColor DarkMagenta
+                    Write-Log @{ type = 'plan'; step = $step; plan = (Format-Plan) }
+                }
+                catch {
+                    if ($_.Exception.Message -like '触发保护*') { throw }
+                    Write-Host "  规划失败，改为逐步执行: $(Limit-Text $_.Exception.Message 120)" -ForegroundColor DarkYellow
+                    $script:Plan = $null
+                }
+            }
+            $planNote = ''
+            if ($script:Plan) {
+                $planNote = "`n`n" + (Format-Plan)
+                $rk = [int]$script:PlanCur
+                $stepRounds[$rk] = 1 + [int]$stepRounds[$rk]
+                if ($stepRounds[$rk] -ge 5) { $planNote += "`n【请重新规划】计划第 $rk 步已经进行了 $($stepRounds[$rk]) 轮仍未完成；如果是方法不对，请单独输出 replan 给出新的步骤。" }
+            }
+            $ledgerNote = Format-Ledger
+            if ($ledgerNote) { $ledgerNote = "`n`n$ledgerNote" }
+            $resumeLine = ''
+            if ($resumeNote) { $resumeLine = "`n（$resumeNote）" }
+            $userContent = "${memNote}【当前任务】: $TaskText$planNote`n`n$shellNote 单轮最多 $MaxBatch 个动作（click_many 的 ids 另算，最多 20 个）。`n`n当前任务已执行的操作历史:`n$hist$ledgerNote`n`n当前观察:$resumeLine`n$($obs.Text)$changeNote$stuckNote$repeatNote`n`n请输出下一步的 JSON（只输出一个 JSON 对象）。"
             $repeatNote = ''
             $raw = Invoke-DeepSeek $userContent
             # 观察 → 模型返回之间用户可能切换了窗口，这里不更新 ObsHwnd；执行前由 Assert-KeyboardReady / Assert-PhysicalReady 核对
@@ -2906,6 +3664,13 @@ function Invoke-AgentTask([string]$TaskText) {
                 continue
             }
             if ($parsed.thought) { Write-Host "  思考: $($parsed.thought)" -ForegroundColor DarkGray }
+            if (Test-NumValue $parsed.step) {
+                $ns = [int][double]"$($parsed.step)"
+                if ($script:Plan -and $ns -ge 1 -and $ns -le @($script:Plan.Steps).Count) { $script:PlanCur = $ns }
+            }
+            if ($parsed.expect) { Write-Host "  预期: $(Limit-Text "$($parsed.expect)" 120)" -ForegroundColor DarkGray }
+            $ptag = ''
+            if ($script:Plan -and $script:PlanCur -gt 0) { $ptag = "（计划第$($script:PlanCur)步）" }
             $list = @()
             if ($parsed.actions) { $list = @(@($parsed.actions) | Select-Object -First ([Math]::Max(1, $MaxBatch))) }
             else { $list = @($parsed) }
@@ -2955,6 +3720,26 @@ function Invoke-AgentTask([string]$TaskText) {
                     $finished = $true
                     break
                 }
+                if ($kind -eq 'replan') {
+                    # v5：模型依据证据重新规划（不改变界面）
+                    if ($script:Replans -ge 4) { $history.Add("第${step}步: replan 被拒绝（本任务已重新规划 4 次），请按现有计划执行，确实做不到就 fail"); break }
+                    try {
+                        $np = ConvertTo-PlanObject $action
+                        if ($script:Plan) {
+                            if (-not $np.Goal) { $np.Goal = $script:Plan.Goal }
+                            if (@($np.DoneWhen).Count -eq 0) { $np.DoneWhen = $script:Plan.DoneWhen }
+                            if (@($np.Once).Count -eq 0) { $np.Once = $script:Plan.Once }
+                        }
+                        $script:Plan = $np; $script:PlanCur = 1; $script:Replans++
+                        $stepRounds = @{}
+                        Write-Host "  重新规划（原因: $(Limit-Text "$($action.reason)" 80)）:" -ForegroundColor Magenta
+                        Write-Host (Format-Plan) -ForegroundColor DarkMagenta
+                        $history.Add("第${step}步: 已重新规划（原因: $(Limit-Text "$($action.reason)" 80)），新计划共 $(@($np.Steps).Count) 步")
+                        Write-Log @{ type = 'replan'; step = $step; reason = "$($action.reason)"; plan = (Format-Plan) }
+                    }
+                    catch { $history.Add("第${step}步: replan 无效: $($_.Exception.Message)") }
+                    break
+                }
                 if ($DryRun) {
                     $history.Add("第${step}步: $desc → (DryRun 未执行)")
                     continue
@@ -2982,12 +3767,14 @@ function Invoke-AgentTask([string]$TaskText) {
                     $repeatNote = "`n【提示】动作「$(Limit-Text $desc 60)」在本任务中已重复执行 $($descCount[$desc]) 次，请确认它是否真的有效果（看「界面变化」），否则换一种方法。"
                 }
                 try {
+                    $probe = Assert-RepeatGuard $action $kind   # v5：动作账本（拒绝时抛出 REPEAT_* 错误码，动作不会执行）
                     $result = Invoke-Action $action
+                    Add-LedgerEntry $probe $step $desc $script:LastEffect
                     Write-Host "  结果: $result" -ForegroundColor Green
-                    $history.Add("第${step}步: $desc → $result")
+                    $history.Add("第${step}步${ptag}: $desc → $result")
                     $failCount = 0
                     $errStreak = 0
-                    if ($kind -notin 'wait', 'run_powershell', 'write_file', 'run_process') { $lastActed = $true }
+                    if ($kind -notin 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr') { $lastActed = $true }
                 }
                 catch {
                     if ($_.Exception.Message -like '触发保护*') { throw }
@@ -3048,7 +3835,7 @@ function Invoke-SelfTest {
         $mark = if ($ok) { 'PASS' } else { 'FAIL' }
         Write-Host ("  [{0}] {1}  {2}" -f $mark, $name, $detail) -ForegroundColor $color
     }
-    Write-Host '自检开始：请不要触碰鼠标键盘（约 20 秒）...' -ForegroundColor Cyan
+    Write-Host '自检开始：请不要触碰鼠标键盘（约 30 秒）...' -ForegroundColor Cyan
     $w = [DsNative4]::PrimaryW(); $h = [DsNative4]::PrimaryH()
     & $rec 'Native 层编译 / DPI' $true ("缩放 {0:N2}x，主屏 {1}x{2}，管理员={3}" -f [DsNative4]::DpiScale(), $w, $h, $script:IsAdmin)
     & $rec '运行空间池（后台 UIA 调用）' ($null -ne $script:Pool) ''
@@ -3145,6 +3932,64 @@ function Invoke-SelfTest {
     & $rec 'v4.3 run_process 超时会杀进程树（睡 30 秒、2 秒超时）' ($tmo -and $tmoSec -le 6) "已终止=$tmo 用时 ${tmoSec} 秒"
     $pxs = Get-PixelSig ([DsNative4]::GetForegroundWindow())
     & $rec 'v4.3 屏幕像素采样可用（独立于 UIA 的变化证据）' ($null -ne $pxs -and $pxs.Length -eq 1536) $(if ($null -ne $pxs) { '48x32 灰度采样成功' } else { '采样失败' })
+    # ---- v5 纯逻辑自检（日志任务6「给视频点赞」的真实故障样本；不碰鼠标键盘）----
+    $svLedger = $script:Ledger; $svEl = $script:Elements; $svGr = $script:Grounded; $svOv = $script:RepeatOverride
+    try {
+        $script:Ledger = New-Object System.Collections.Generic.List[object]; $script:RepeatOverride = @{}; $script:Elements = @{}
+        $kz = [pscustomobject]@{ action = 'key'; keys = 'z' }
+        $g1 = Assert-RepeatGuard $kz 'key'; Add-LedgerEntry $g1 21 'action=key keys=z' $null
+        Update-LedgerFromObservation ([pscustomobject]@{ Changes = '屏幕像素: 前台窗口约 35% 的区块发生了变化' })
+        $z2 = ''; try { [void](Assert-RepeatGuard $kz 'key') } catch { $z2 = $_.Exception.Message }
+        $p1 = Assert-RepeatGuard ([pscustomobject]@{ action = 'click'; x = 1770; y = 840 }) 'click'
+        Add-LedgerEntry $p1 27 'action=click x=1770 y=840' ([pscustomobject]@{ Verdict = 'nochange'; Text = '该处没有可见变化' })
+        $p2 = Assert-RepeatGuard ([pscustomobject]@{ action = 'click'; x = 1772; y = 846 }) 'click'
+        Add-LedgerEntry $p2 28 'action=click x=1772 y=846' ([pscustomobject]@{ Verdict = 'nochange'; Text = '该处没有可见变化' })
+        $c3 = ''; try { [void](Assert-RepeatGuard ([pscustomobject]@{ action = 'click'; x = 1770; y = 840; repeat = $true }) 'click') } catch { $c3 = $_.Exception.Message }
+        $lk = [pscustomobject]@{ action = 'click'; x = 600; y = 300 }
+        $p3 = Assert-RepeatGuard $lk 'click'
+        Add-LedgerEntry $p3 30 'action=click x=600 y=300' ([pscustomobject]@{ Verdict = 'changed'; Text = '鲜艳颜色占比 红 0%→14%' })
+        $l2 = ''; try { [void](Assert-RepeatGuard $lk 'click') } catch { $l2 = $_.Exception.Message }
+        $l3 = $null; try { $l3 = Assert-RepeatGuard ([pscustomobject]@{ action = 'click'; x = 600; y = 300; repeat = $true }) 'click' } catch { }
+        $esc = $true
+        try { for ($i = 0; $i -lt 3; $i++) { $pe = Assert-RepeatGuard ([pscustomobject]@{ action = 'key'; keys = 'escape' }) 'key'; if ($null -ne $pe) { $esc = $false } } } catch { $esc = $false }
+        & $rec 'v5 动作账本重放日志任务6（z 第2次被拦 / 同点两次无效后第3次被拦 / 已生效的点赞不会被撤销 / Esc 不受限）' (($z2 -match 'REPEAT_UNVERIFIED') -and ($c3 -match 'REPEAT_NOEFFECT') -and ($l2 -match 'REPEAT_EFFECT') -and ($null -ne $l3) -and $esc) "z#2=[$(Limit-Text $z2 18)] 点#3=[$(Limit-Text $c3 16)] 赞#2=[$(Limit-Text $l2 14)] 赞#2+repeat=$($null -ne $l3) Esc=$esc"
+        $script:Elements = @{ 1 = [pscustomobject]@{ Type = 'Text'; Name = '41.1万'; L = 1750; T = 875; W = 42; H = 24; cx = 1771; cy = 887 } }
+        $script:Grounded = New-Object System.Collections.Generic.List[object]
+        $gA = Test-Grounded 1770 887; $gB = Test-Grounded 1770 840
+        $script:Grounded.Add([pscustomobject]@{ L = 1752; T = 828; W = 36; H = 30 })
+        $gC = Test-Grounded 1770 840
+        & $rec 'v5 坐标依据（点在数字上=有据；凭经验猜「上方 40px」=UNGROUNDED；inspect 拿到矩形后=有据）' ($gA -and (-not $gB) -and $gC) "数字处=$gA 猜测处=$gB inspect后=$gC"
+        $grp = [pscustomobject]@{ Type = 'Group'; Name = ''; Extra = $true; Near = ''; L = 1740; T = 820; W = 60; H = 90; cx = 1770; cy = 865 }
+        Add-NearLabels @($grp, $script:Elements[1])
+        & $rec 'v5 无名可点击容器带上内部文字（≈「41.1万」）' ($grp.Near -eq '41.1万') "Near=[$($grp.Near)]"
+    }
+    finally { $script:Ledger = $svLedger; $script:Elements = $svEl; $script:Grounded = $svGr; $script:RepeatOverride = $svOv }
+    $smR = [pscustomobject]@{ Px = @(0xFE2C55) * 100 }
+    $smG = [pscustomobject]@{ Px = @(0x808080) * 100 }
+    $smH = [pscustomobject]@{ Px = (@(0xFE2C55) * 50) + (@(0x808080) * 50) }
+    $csR = Get-ColorStats $smR; $csG = Get-ColorStats $smG
+    $dHalf = Get-SampleDiff $smG $smH; $dSame = Get-SampleDiff $smG $smG
+    $cShift = Format-ColorShift $csG (Get-ColorStats $smH)
+    & $rec 'v5 局部视觉：色相分桶（抖音红 #FE2C55→红）/ 灰色无鲜艳色 / 半块变红=50%' (([double]$csR['红'] -eq 100) -and ($csG.Count -eq 0) -and ($dHalf -eq 50) -and ($dSame -eq 0) -and ($cShift -match '红 0%→50%')) "红=$($csR['红'])% 灰=$($csG.Count)种 半块差=$dHalf% 变化=[$cShift]"
+    $svPlan = $script:Plan; $svCur = $script:PlanCur
+    try {
+        $pjs = ConvertFrom-ModelJson '{"goal":"给视频点赞","done_when":["点赞处红色占比明显升高"],"steps":[{"act":"切到抖音窗口","how":"系统自动切回","verify":"前台标题含抖音"},{"act":"点赞","how":"click 点赞容器编号","verify":"局部视觉证据出现红色"}],"once":["点赞"]}'
+        $script:Plan = ConvertTo-PlanObject $pjs; $script:PlanCur = 2
+        $fp = Format-Plan
+        $badPlan = ''; try { [void](ConvertTo-PlanObject ([pscustomobject]@{ goal = 'x' })) } catch { $badPlan = $_.Exception.Message }
+        & $rec 'v5 先规划后执行：计划解析 / 进度标记（✓1 →2）/ 只能一次的动作 / 空计划被拒' ((@($script:Plan.Steps).Count -eq 2) -and ($fp -match '✓ 1\.') -and ($fp -match '→ 2\.') -and ($fp -match '只能执行一次.*点赞') -and ($badPlan -match 'steps')) "步骤=$(@($script:Plan.Steps).Count) 空计划=[$(Limit-Text $badPlan 20)]"
+    }
+    catch { & $rec 'v5 先规划后执行：计划解析' $false $_.Exception.Message }
+    finally { $script:Plan = $svPlan; $script:PlanCur = $svCur }
+    $otx = Optimize-OcrText '润 魂 学 1-5 合 集 | 纯享版'
+    $ecs = @((Get-ErrorInfo '[REPEAT_EFFECT] x').Code, (Get-ErrorInfo '[UNGROUNDED] y').Code, (Get-ErrorInfo '[REPEAT_NOEFFECT] z').Retry)
+    $sv1 = Test-ActionSchema ([pscustomobject]@{ action = 'replan'; steps = @(@{ act = 'a' }) }) 1
+    $sv2 = Test-ActionSchema ([pscustomobject]@{ action = 'replan'; steps = @(@{ act = 'a' }) }) 2
+    $sv3 = Test-ActionSchema ([pscustomobject]@{ action = 'replan' }) 1
+    $sv4 = Test-ActionSchema ([pscustomobject]@{ action = 'inspect'; x = 10; y = 20 }) 1
+    $sv5 = Test-ActionSchema ([pscustomobject]@{ action = 'ocr' }) 1
+    $sv6 = Test-ActionSchema ([pscustomobject]@{ action = 'ocr'; x = 1 }) 1
+    & $rec 'v5 OCR 中文去空格 / 新错误码 / replan·inspect·ocr 的 Schema' (($otx -eq '润魂学 1-5 合集 | 纯享版') -and ($ecs[0] -eq 'REPEAT_EFFECT') -and ($ecs[1] -eq 'UNGROUNDED') -and ($ecs[2] -eq 'no') -and (-not $sv1) -and [bool]$sv2 -and [bool]$sv3 -and (-not $sv4) -and (-not $sv5) -and [bool]$sv6) "OCR=[$otx] 码=[$($ecs -join ',')]"
     $sbn = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
     $cpOld = [DsNative4]::CursorPos()
     $vx = [DsNative4]::VirtX(); $vy = [DsNative4]::VirtY(); $vw = [DsNative4]::VirtW(); $vh = [DsNative4]::VirtH()
@@ -3229,6 +4074,28 @@ function Invoke-SelfTest {
             Start-Sleep -Milliseconds 100
             $r3 = [DsNative4]::CursorPos()
             & $rec '第3层 物理点击并归位真实鼠标' ($tt.GetCheck() -eq 1 -and $r0[0] -eq $r3[0] -and $r0[1] -eq $r3[1]) "$msg ；归位后 ($($r3[0]),$($r3[1]))"
+            # G. v5 inspect + Windows OCR（真实屏幕；编辑框此时内容为「你好 DeepSeek 123」）
+            $script:Mode = 'Auto'
+            $insp = ''
+            try { $insp = Invoke-InspectAction ([pscustomobject]@{ id = $cid }) } catch { $insp = "异常: $($_.Exception.Message)" }
+            & $rec 'v5 inspect 钻取（返回 CheckBox 祖先链与 tog 状态）' (($insp -match 'CheckBox') -and ($insp -match 'tog=')) (Limit-Text ($insp -replace '\s+', ' ') 90)
+            $twr = [DsNative4]::WinRect($tt.Parent)
+            $ocrR = Invoke-Ocr $twr[0] $twr[1] ($twr[2] - $twr[0]) ($twr[3] - $twr[1])
+            $ocrTxt = (@($ocrR.Lines) | ForEach-Object { $_.Text }) -join ' '
+            if ((-not $ocrR.Ok) -and ($ocrR.Err -match '语言包|PowerShell 5|NoOcr')) { & $rec 'v5 Windows OCR（本机不可用，已跳过）' $true $ocrR.Err }
+            else { & $rec 'v5 Windows OCR 识别自检窗口文字（DeepSeek / 123 / 自检）' ($ocrR.Ok -and ($ocrTxt -match 'DeepSeek|123|自检')) "识别=[$(Limit-Text $ocrTxt 60)] $($ocrR.Err)" }
+            # H. v5 局部视觉证据（真实屏幕）：编辑框内容改变 → 该处「变了」；什么都不做 → 「无变化」
+            $edIt = $script:Elements[$eid]
+            $dk = [DsNative4]::DpiScale()
+            $ex = [int]($edIt.L + 60 * $dk); $ey = [int]$edIt.cy; $erad = [int](40 * $dk)
+            Start-EffectProbe $ex $ey $erad
+            try { [void](Invoke-TypeAction ([pscustomobject]@{ action = 'type'; id = $eid; text = 'WWWWWWWWWWWWWWWW'; clear = $true })) } catch { }
+            Start-Sleep -Milliseconds 250
+            $fxOn = Complete-EffectProbe
+            Start-EffectProbe $ex $ey $erad
+            Start-Sleep -Milliseconds 250
+            $fxNo = Complete-EffectProbe
+            & $rec 'v5 局部视觉证据（真实屏幕：内容改变=变了；不动=无变化）' (($null -ne $fxOn) -and ($fxOn.Verdict -eq 'changed') -and ($null -ne $fxNo) -and ($fxNo.Verdict -eq 'nochange')) "改变=[$(if ($fxOn) { $fxOn.Verdict })] 不动=[$(if ($fxNo) { $fxNo.Verdict })] $(if ($fxOn) { Limit-Text $fxOn.Text 50 })"
         }
         # E. Schema
         $okId = if ($cid -gt 0) { $cid } else { 1 }
@@ -3318,6 +4185,7 @@ function Show-Help {
     Write-Host '  history            查看本会话已执行过的任务'
     Write-Host '  log                打印日志目录路径'
     Write-Host '  mode <名称>        切换输入模式：auto / uia / message / physical（当前: 见横幅）'
+    Write-Host 'v5：每个任务先规划再执行；切换类动作（点赞/收藏/勾选）不会被重复执行；看不清的地方模型会先 inspect / ocr。' -ForegroundColor DarkGray
     Write-Host '  cls                清屏'
     Write-Host '  exit / quit / 退出  结束程序'
     Write-Host '执行任务期间的紧急停止（只终止当前任务，回到本提示符）:' -ForegroundColor Yellow
@@ -3326,17 +4194,18 @@ function Show-Help {
 }
 function Show-Banner {
     Write-Host ''
-    Write-Host '=== DeepSeek Computer Use v4.3（可见区精确坐标 + 像素证据 + 联锁根因修复 + 错误码熔断 + 长任务通道）===' -ForegroundColor Cyan
+    Write-Host '=== DeepSeek Computer Use v5.0（先规划后执行 + 动作账本防重复 + 局部视觉证据 + inspect/OCR + 控制台让位；保留 v4.3 全部能力）===' -ForegroundColor Cyan
     Write-Host "模型    : $Model    每任务最大步数: $MaxSteps    批量动作上限: $MaxBatch"
     Write-Host "模式    : $(if ($DryRun) { '仅预演(DryRun)' } elseif ($script:Auto) { '全自动（无需确认）' } else { '逐步确认' })    Shell: $(if ($NoShell) { '禁止' } else { '允许' })    管理员: $(if ($script:IsAdmin) { '是' } else { '否（加 -RunAsAdmin 可操作高权限窗口）' })    会话记忆: $(if ($MemoryLimit -gt 0) { "最近 $MemoryLimit 个任务" } else { '关闭' })"
     Write-Host "输入    : $($script:Mode)（Auto=UIA→消息→物理借用归位）    虚拟鼠标: $(if ($script:Cur) { '已启用' } else { '未启用' })    让位阈值: ${IdleMs}ms"
+    Write-Host "v5      : 规划 $(if ($NoPlan) { '关' } else { '开' })    防重复 $(if ($NoRepeatGuard) { '关' } else { '开' })    OCR $(if ($NoOcr) { '关' } else { '开' })    控制台让位 $(if ($NoConsoleYield) { '关' } else { '开' })"
     Write-Host "日志    : $(if ($script:RunDir) { $script:RunDir } else { '（未启用）' })"
     Write-Host '紧急停止: 鼠标甩到左上角 / Ctrl+Alt+Q（终止当前任务）；Ctrl+C（退出程序）' -ForegroundColor Yellow
     Write-Host '输入 help 查看命令，输入 exit 退出；首次使用建议先运行  -SelfTest  验证本机环境。' -ForegroundColor DarkGray
 }
 Initialize-Runtime
 Show-Banner
-Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '4.3' }
+Write-Log @{ type = 'session_start'; model = $Model; admin = $script:IsAdmin; mode = $script:Mode; overlay = [bool]$script:Cur; version = '5.0' }
 $pending = $Task
 try {
     while ($true) {
