@@ -1,18 +1,4 @@
 PowerShell 7.7.0
-.: C:\Users\28013\Documents\PowerShell\profile.ps1:10
-Line |
-  10 |  . 'D:\DeepSeekDesktopAgent1\ps\DeskAgent.ps1'   # DeskAgent
-     |    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-     | 术语 'D:\DeepSeekDesktopAgent1\ps\DeskAgent.ps1' 不会被识别为 cmdlet、函数、脚本文件或可执行程序的名称。 请检查名称的拼写或验证路径是否正确(如果包含路径)，然后重试。
-
-.: C:\Users\28013\Documents\PowerShell\Microsoft.PowerShell_profile.ps1:2
-Line |
-   2 |  . 'D:\DeepSeekDesktopAgent\ps\DeskAgent.ps1'   # DeskAgent
-     |    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-     | 术语 'D:\DeepSeekDesktopAgent\ps\DeskAgent.ps1' 不会被识别为 cmdlet、函数、脚本文件或可执行程序的名称。 请检查名称的拼写或验证路径是否正确(如果包含路径)，然后重试。
-
-加载个人和系统配置文件耗时 3572 毫秒。
-(base) PS C:\Windows\System32> #Requires -Version 7.0
 (base) PS C:\Windows\System32> <#
 >> .SYNOPSIS
 >>   DeepSeek Computer Use v13.0 — 统一 Agent 大脑 Monorepo（Step 1 / P0：消灭“双大脑分裂”）
