@@ -1,13 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v8.0（Polyglot 4-Plane 全量零回归融合终极版 · 完整融合 computer use 调度优化版 + computer-use1 硬件直连版 + 四平面多语言协同内核）
-  面向 Windows 11 / PowerShell 7.7.0（原生兼容 AMD Ryzen 7 8745H + Radeon 780M 24GB UMA 与 NVIDIA CUDA/TensorRT 平台）：
-  100% 零回归继承 v6.0~v7.0 两大分支全部 290+ 函数、安全内核与自检套件：
-    - [Plane 1: Native OS Driver Plane] DXGI Desktop Duplication 共享内存环形缓冲区 + DsPhase5Native70 LockBits 指针级 <2ms 48x32 灰度指纹 + DirtyRects 增量裁剪 + UIAccess 令牌/清单 + Java Access Bridge (JAB) + imm32.dll 中文 IME 英文强制锁 + Hardware ScanCode + Job Object 进程树隔离；
-    - [Plane 2: Vision & Compute Plane] CUDA/DirectML 硬件自适应探测 + 24GB UMA 内存水位熔断（4GB 阈值 + 0.75GB 迟滞防抖 + 180s 空闲侧车自动卸载）+ SoM 视觉标注兜底 + WinRT OCR；
-    - [Plane 3: Browser Semantic Plane] DsCdp63 Chromium CDP 完整 AXTree + DOMSnapshot 穿透 Shadow DOM/iframe + 遮挡/透明遮罩防陷阱 + 页面域污点绑定 (Update-TaintState)；
-    - [Plane 4: Orchestration, Security & Eval Plane] 零 LLM FastPath 快速通道 + Adaptive max_tokens=2400 自适应封顶 + HTTP/2 多路复用 + KV-Cache 固定前缀 + SkillStore v2 半衰期衰减与长程 Checkpoint + 单调递增 ActionId 乐观锁 + OpenTelemetry P50/P99 Span 追踪 + WAA/OSWorld/ScreenSpot-Pro/AgentDojo 评测导出。
+  DeepSeek Computer Use v6.5（深化版）—— 只加深、不加大：在 v6.4 零信任硬边界与确定性评估套件之上，优化「每步 LLM 往返」与长文本输入耗时；v6.4 原述：在 v6.3（DsNative61 / DsCdp63 四级感知漏斗 / SoM + deepseek-flash 视觉兜底 / ActionLedger）全部能力之上，增加「不依赖模型自觉」的零信任硬边界与确定性评估套件。
 .DESCRIPTION
   v7.0（第五阶段·深化版：只加深、不加大——不新增能力面；v6.4 / v6.5 的零信任安全区块、四级感知漏斗、PressGuard、人类化输入、缓存友好 Prompt 与 Token 遥测逐字保留）：
     1. 【零 LLM 快速通道】「打开记事本 / 计算器 / 画图 / 资源管理器」这类整句即确定性意图的任务，直接经 Invoke-Action（仍过 Assert-ActionPolicy）启动并用前台标题核实，
@@ -247,14 +241,7 @@ param(
     [switch]$WsbNoNetwork,
     [switch]$RunEval,
     [ValidateSet('Scripted', 'Model')][string]$EvalAgent = 'Scripted',
-    [string]$EvalReport,
-    [string]$PipeName = 'ds_computer_use_v7',
-    [ValidateRange(1024, 16384)][int]$MemoryFloorMB = 4096,
-    [ValidateRange(10, 3600)][int]$SidecarIdleTtlSec = 180,
-    [switch]$NoDxgi,
-    [switch]$NoJab,
-    [switch]$SetupUiAccess,
-    [switch]$ExportWaaReport
+    [string]$EvalReport
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw '本脚本只能在 Windows 上运行。' }
@@ -286,13 +273,6 @@ if ($CursorSpeed -le 0.1) { $CursorSpeed = 0.1 }
 $script:CdpPortCfg = 9222; if ($PSBoundParameters.ContainsKey('CdpPort')) { $script:CdpPortCfg = [int]$CdpPort }
 $script:CdpQuietMs = if ($CdpQuietMs -gt 0) { [int]$CdpQuietMs } else { 250 }
 $script:CdpSettleTimeoutMs = if ($CdpTimeoutMs -gt 0) { [int]$CdpTimeoutMs } else { 5000 }
-# v7.0 Phase 5 + v8.0：粘贴安全默认值（PowerShell 7.7.0 直接粘贴保障）
-if ([string]::IsNullOrWhiteSpace($PipeName)) { $PipeName = 'ds_computer_use_v7' }
-$script:MemoryFloorMB = if ($MemoryFloorMB -ge 1024) { [int]$MemoryFloorMB } else { 4096 }
-$script:SidecarIdleTtlSec = if ($SidecarIdleTtlSec -ge 10) { [int]$SidecarIdleTtlSec } else { 180 }
-$script:DxgiOn = (-not $NoDxgi)
-$script:JabOn = (-not $NoJab)
-$script:UmaCircuitTripped = $false
 #region ---------- v6.4 第三阶段·零信任安全内核（纯 PowerShell / BCL；先于原生层加载，-GenerateWsb 不需要编译任何 C#）----------
 # 设计原则：安全边界在「运行时代码」里强制执行，不依赖提示词。三层纵深：
 #   L1 Assert-SafePath（路径牢笼）→ L2 Test-SafePowerShellAst（AST 白名单，默认拒绝）→ L3 CLM 运行时（ConstrainedLanguage）+ DsJob63 Job Object + Windows Sandbox。
@@ -1073,7 +1053,7 @@ Start-Process -FilePath $pw -ArgumentList @('-NoLogo', '-NoExit', '-ExecutionPol
   <ProtectedClient>Enable</ProtectedClient>
   <PrinterRedirection>Disable</PrinterRedirection>
   <ClipboardRedirection>Disable</ClipboardRedirection>
-  <MemoryInMB>6144</MemoryInMB>
+  <MemoryInMB>4096</MemoryInMB>
   <MappedFolders>
     <MappedFolder>
       <HostFolder>$(& $esc $codeDir)</HostFolder>
@@ -1196,405 +1176,6 @@ function Import-DsCSharp {
     Add-Type -TypeDefinition $Source -Language CSharp -IgnoreWarnings
     return 'compiled'
 }
-$script:Phase5Src = @'
-using System;
-using System.IO;
-using System.IO.Pipes;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
-using System.Text;
-
-// v7.0 Phase 5：DXGI 零拷贝/脏矩形探测 + LockBits 指针级极速图像指纹（比 PowerShell GetPixel 快 20 倍）+ AMD 780M 24GB UMA 内存水位熔断 + JAB 桥 + IME 护栏 + Named Pipe IPC
-public static class DsPhase5Native70 {
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-    private class MEMORYSTATUSEX {
-        public uint dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
-        public uint dwMemoryLoad;
-        public ulong ullTotalPhys;
-        public ulong ullAvailPhys;
-        public ulong ullTotalPageFile;
-        public ulong ullAvailPageFile;
-        public ulong ullTotalVirtual;
-        public ulong ullAvailVirtual;
-        public ulong ullAvailExtendedVirtual;
-    }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool GlobalMemoryStatusEx([In, Out] MEMORYSTATUSEX lpBuffer);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool GetTokenInformation(IntPtr TokenHandle, int TokenInformationClass, out uint TokenInformation, uint TokenInformationLength, out uint ReturnLength);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CloseHandle(IntPtr hObject);
-
-    [DllImport("imm32.dll")]
-    private static extern IntPtr ImmGetContext(IntPtr hWnd);
-
-    [DllImport("imm32.dll")]
-    private static extern bool ImmGetOpenStatus(IntPtr hIMC);
-
-    [DllImport("imm32.dll")]
-    private static extern bool ImmSetOpenStatus(IntPtr hIMC, bool fOpen);
-
-    [DllImport("imm32.dll")]
-    private static extern bool ImmReleaseContext(IntPtr hWnd, IntPtr hIMC);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr LoadLibraryW(string lpFileName);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
-    private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
-
-    [DllImport("d3d11.dll", ExactSpelling = true)]
-    private static extern int D3D11CreateDevice(
-        IntPtr pAdapter, int DriverType, IntPtr Software, uint Flags,
-        IntPtr pFeatureLevels, uint FeatureLevels, uint SDKVersion,
-        out IntPtr ppDevice, out int pFeatureLevel, out IntPtr ppImmediateContext);
-
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate void JabWindowsRunDelegate();
-
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate int JabIsJavaWindowDelegate(IntPtr hwnd);
-
-    private static bool jabProbed = false;
-    private static bool jabAvailable = false;
-    private static JabIsJavaWindowDelegate jabIsJavaWin = null;
-    private static bool dxgiProbed = false;
-    private static bool dxgiAvailable = false;
-    private static byte[] lastSig48x32 = null;
-    private static long lastCaptureUs = 0;
-    private static int lastDirtyRects = 0;
-    private static long sidecarLastActiveTick = 0;
-    public static bool SidecarLoaded = false;
-
-    public static long LastCaptureUs { get { return lastCaptureUs; } }
-    public static int LastDirtyRects { get { return lastDirtyRects; } }
-
-    // 1. 24GB 统一内存水位检测与熔断守卫（针对 AMD Ryzen 7 8745H + Radeon 780M UMA）
-    public static long[] GetMemoryTelemetryMB() {
-        try {
-            MEMORYSTATUSEX ms = new MEMORYSTATUSEX();
-            if (GlobalMemoryStatusEx(ms)) {
-                long totalMb = (long)(ms.ullTotalPhys / (1024UL * 1024UL));
-                long availMb = (long)(ms.ullAvailPhys / (1024UL * 1024UL));
-                long loadPct = (long)ms.dwMemoryLoad;
-                return new long[] { totalMb, availMb, loadPct };
-            }
-        } catch { }
-        return new long[] { 24576L, 12288L, 50L };
-    }
-
-    public static bool CheckUmaCircuitBreaker(long floorMb, long availOverrideMb = -1) {
-        long avail = availOverrideMb >= 0 ? availOverrideMb : GetMemoryTelemetryMB()[1];
-        if (avail < floorMb) {
-            if (SidecarLoaded) { SidecarLoaded = false; }
-            return true; // 触发熔断：强制降级回纯云端 deepseek-flash，卸载本地缓存/侧车
-        }
-        return false;
-    }
-
-    public static void TouchSidecar() {
-        SidecarLoaded = true;
-        sidecarLastActiveTick = Environment.TickCount64;
-    }
-
-    public static bool CheckSidecarIdleUnload(int ttlSec) {
-        if (!SidecarLoaded) return false;
-        long elapsedMs = Environment.TickCount64 - sidecarLastActiveTick;
-        if (elapsedMs >= (long)ttlSec * 1000L) {
-            SidecarLoaded = false;
-            return true;
-        }
-        return false;
-    }
-
-    // 2. UIPI TokenUIAccess 令牌检测
-    public static bool HasUiAccessToken() {
-        IntPtr hTok = IntPtr.Zero;
-        try {
-            if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 0x0008u, out hTok)) return false;
-            uint uiAccess = 0, retLen = 0;
-            // TokenUIAccess = 26
-            if (GetTokenInformation(hTok, 26, out uiAccess, 4u, out retLen)) return uiAccess != 0;
-        } catch { }
-        finally { if (hTok != IntPtr.Zero) CloseHandle(hTok); }
-        return false;
-    }
-
-    // 3. 中文输入法 (IME) 护栏：在发送纯 ASCII / 代码 / 快捷键前关闭 IME 组合态，防止吞键
-    public static bool NeutralizeIme(IntPtr hwnd) {
-        if (hwnd == IntPtr.Zero) return false;
-        IntPtr himc = IntPtr.Zero;
-        try {
-            himc = ImmGetContext(hwnd);
-            if (himc == IntPtr.Zero) return false;
-            if (ImmGetOpenStatus(himc)) {
-                ImmSetOpenStatus(himc, false);
-                return true;
-            }
-        } catch { }
-        finally { if (himc != IntPtr.Zero) ImmReleaseContext(hwnd, himc); }
-        return false;
-    }
-
-    // 4. 动态探测 D3D11 / DXGI 硬件设备（无 CUDA 依赖，原生支持 AMD Radeon 780M D3D11/DXGI）
-    public static bool ProbeDxgiHardware() {
-        if (dxgiProbed) return dxgiAvailable;
-        dxgiProbed = true;
-        IntPtr dev = IntPtr.Zero, ctx = IntPtr.Zero;
-        try {
-            int fl = 0;
-            // D3D_DRIVER_TYPE_HARDWARE = 1, D3D11_CREATE_DEVICE_BGRA_SUPPORT = 0x20, D3D11_SDK_VERSION = 7
-            int hr = D3D11CreateDevice(IntPtr.Zero, 1, IntPtr.Zero, 0x20u, IntPtr.Zero, 0u, 7u, out dev, out fl, out ctx);
-            dxgiAvailable = (hr >= 0 && dev != IntPtr.Zero);
-        } catch { dxgiAvailable = false; }
-        finally {
-            if (ctx != IntPtr.Zero) Marshal.Release(ctx);
-            if (dev != IntPtr.Zero) Marshal.Release(dev);
-        }
-        return dxgiAvailable;
-    }
-
-    // 5. 动态加载 Java Access Bridge (WindowsAccessBridge-64.dll)
-    public static bool ProbeJavaAccessBridge() {
-        if (jabProbed) return jabAvailable;
-        jabProbed = true;
-        try {
-            IntPtr hMod = LoadLibraryW("WindowsAccessBridge-64.dll");
-            if (hMod != IntPtr.Zero) {
-                IntPtr pRun = GetProcAddress(hMod, "Windows_run");
-                IntPtr pIsJava = GetProcAddress(hMod, "isJavaWindow");
-                if (pRun != IntPtr.Zero && pIsJava != IntPtr.Zero) {
-                    var runFn = Marshal.GetDelegateForFunctionPointer<JabWindowsRunDelegate>(pRun);
-                    jabIsJavaWin = Marshal.GetDelegateForFunctionPointer<JabIsJavaWindowDelegate>(pIsJava);
-                    runFn();
-                    jabAvailable = true;
-                }
-            }
-        } catch { jabAvailable = false; }
-        return jabAvailable;
-    }
-
-    public static bool IsJavaSwingWindow(IntPtr hwnd, string className) {
-        if (hwnd == IntPtr.Zero) return false;
-        if (!string.IsNullOrEmpty(className) && (className.StartsWith("SunAwt", StringComparison.OrdinalIgnoreCase) || className.IndexOf("Swing", StringComparison.OrdinalIgnoreCase) >= 0)) {
-            return true;
-        }
-        if (ProbeJavaAccessBridge() && jabIsJavaWin != null) {
-            try { return jabIsJavaWin(hwnd) != 0; } catch { }
-        }
-        return false;
-    }
-
-    // 6. LockBits 指针级 48x32 灰度指纹与 DirtyRects 增量估算（替代 PowerShell 1,536 次 GetPixel，耗时 < 2ms）
-    public static byte[] FastPixelSig48x32(int l, int t, int w, int h) {
-        if (w < 16 || h < 16) return null;
-        Stopwatch sw = Stopwatch.StartNew();
-        try {
-            using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
-                using (Graphics g = Graphics.FromImage(bmp)) {
-                    g.CopyFromScreen(l, t, 0, 0, new Size(w, h), CopyPixelOperation.SourceCopy);
-                }
-                using (Bitmap small = new Bitmap(48, 32, PixelFormat.Format24bppRgb)) {
-                    using (Graphics g2 = Graphics.FromImage(small)) {
-                        g2.InterpolationMode = InterpolationMode.Bilinear;
-                        g2.DrawImage(bmp, 0, 0, 48, 32);
-                    }
-                    return ExtractGray48x32FromBitmap(small, sw);
-                }
-            }
-        } catch { return null; }
-    }
-
-    public static byte[] ExtractGray48x32FromBitmap(Bitmap small, Stopwatch sw = null) {
-        if (small == null || small.Width != 48 || small.Height != 32) return null;
-        Rectangle rect = new Rectangle(0, 0, 48, 32);
-        BitmapData data = small.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
-        try {
-            int stride = data.Stride;
-            byte[] raw = new byte[Math.Abs(stride) * 32];
-            Marshal.Copy(data.Scan0, raw, 0, raw.Length);
-            byte[] sig = new byte[1536];
-            int dirtyBlocks = 0;
-            for (int y = 0; y < 32; y++) {
-                int rowOff = y * Math.Abs(stride);
-                int sigOff = y * 48;
-                for (int x = 0; x < 48; x++) {
-                    int px = rowOff + x * 3;
-                    byte b = raw[px];
-                    byte g = raw[px + 1];
-                    byte r = raw[px + 2];
-                    byte lum = (byte)((299 * r + 587 * g + 114 * b) / 1000);
-                    sig[sigOff + x] = lum;
-                    if (lastSig48x32 != null && Math.Abs((int)lum - (int)lastSig48x32[sigOff + x]) >= 10) {
-                        dirtyBlocks++;
-                    }
-                }
-            }
-            lastSig48x32 = sig;
-            lastDirtyRects = dirtyBlocks;
-            if (sw != null) { sw.Stop(); lastCaptureUs = sw.ElapsedTicks * 1000000L / Stopwatch.Frequency; }
-            return sig;
-        } finally {
-            small.UnlockBits(data);
-        }
-    }
-
-    // 7. LockBits 指针级局部区域采样（替代 Start-EffectProbe / Complete-EffectProbe 的 576 次 GetPixel）
-    public static byte[] FastRegionSample(int l, int t, int w, int h, int step) {
-        if (w < 8 || h < 8 || step < 1) return null;
-        try {
-            using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format24bppRgb)) {
-                using (Graphics g = Graphics.FromImage(bmp)) {
-                    g.CopyFromScreen(l, t, 0, 0, new Size(w, h), CopyPixelOperation.SourceCopy);
-                }
-                BitmapData data = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
-                try {
-                    int stride = Math.Abs(data.Stride);
-                    byte[] raw = new byte[stride * h];
-                    Marshal.Copy(data.Scan0, raw, 0, raw.Length);
-                    int nx = (w + step - 1) / step;
-                    int ny = (h + step - 1) / step;
-                    byte[] buf = new byte[nx * ny * 3];
-                    int k = 0;
-                    for (int y = 0; y < h; y += step) {
-                        int rowOff = y * stride;
-                        for (int x = 0; x < w; x += step) {
-                            int px = rowOff + x * 3;
-                            buf[k++] = raw[px + 2]; // R
-                            buf[k++] = raw[px + 1]; // G
-                            buf[k++] = raw[px];     // B
-                        }
-                    }
-                    return buf;
-                } finally {
-                    bmp.UnlockBits(data);
-                }
-            }
-        } catch { return null; }
-    }
-
-    // 8. Named Pipe IPC 协议帧构建与客户端探测（对接 Rust/C++20 driver-core）
-    public static string BuildPipeRpc(int id, string method, string paramsJson) {
-        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"" + method + "\",\"params\":" + (string.IsNullOrEmpty(paramsJson) ? "{}" : paramsJson) + "}";
-    }
-
-    public static string TryCallNamedPipe(string pipeName, string requestJson, int timeoutMs = 40) {
-        if (string.IsNullOrEmpty(pipeName)) return null;
-        try {
-            using (var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous)) {
-                client.Connect(timeoutMs);
-                byte[] reqBytes = Encoding.UTF8.GetBytes(requestJson + "\n");
-                client.Write(reqBytes, 0, reqBytes.Length);
-                client.Flush();
-                using (var sr = new StreamReader(client, Encoding.UTF8, false, 4096, true)) {
-                    return sr.ReadLine();
-                }
-            }
-        } catch { return null; }
-    }
-}
-'@
-[void](Import-DsCSharp -Name 'DsPhase5Native70' -Source $script:Phase5Src -ProbeType 'DsPhase5Native70')
-
-
-
-$script:PolyglotV80Src = @'
-using System;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
-using System.Threading;
-
-// v8.0 Polyglot Native Accelerator: Per-Monitor DPI v2 + Hardware ScanCode + Optimistic HWND/Pixel Lock + SIMD-Unrolled Dirty Bounding Box
-public static class DsPolyglotV80 {
-    [DllImport("user32.dll")]
-    private static extern bool IsWindow(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForWindow(IntPtr hwnd);
-
-    [DllImport("user32.dll")]
-    private static extern uint MapVirtualKeyW(uint uCode, uint uMapType);
-
-    private static long monotonicActionId = 0;
-
-    public static long NextActionId() {
-        return Interlocked.Increment(ref monotonicActionId);
-    }
-
-    public static long CurrentActionId {
-        get { return Interlocked.Read(ref monotonicActionId); }
-    }
-
-    public static double GetWindowDpiScale(IntPtr hwnd) {
-        try {
-            if (hwnd != IntPtr.Zero && IsWindow(hwnd)) {
-                uint dpi = GetDpiForWindow(hwnd);
-                if (dpi >= 72 && dpi <= 480) return (double)dpi / 96.0;
-            }
-        } catch { }
-        return 1.0;
-    }
-
-    public static uint VirtualKeyToScanCode(ushort vk) {
-        try { return MapVirtualKeyW((uint)vk, 0u); } catch { return 0u; }
-    }
-
-    // Optimistic Concurrency Precondition Check: verifies target HWND validity & computes 48x32 frame signature delta before committing physical input
-    public static bool VerifyOptimisticPrecondition(IntPtr expectedHwnd, byte[] baselineSig48x32, byte[] currentSig48x32, double maxAllowedDriftPct, out double actualDriftPct) {
-        actualDriftPct = 0.0;
-        if (expectedHwnd != IntPtr.Zero && !IsWindow(expectedHwnd)) {
-            return false;
-        }
-        if (baselineSig48x32 != null && currentSig48x32 != null && baselineSig48x32.Length == 1536 && currentSig48x32.Length == 1536) {
-            int changed = 0;
-            for (int i = 0; i < 1536; i += 4) {
-                if (Math.Abs((int)baselineSig48x32[i] - (int)currentSig48x32[i]) >= 10) changed++;
-                if (Math.Abs((int)baselineSig48x32[i+1] - (int)currentSig48x32[i+1]) >= 10) changed++;
-                if (Math.Abs((int)baselineSig48x32[i+2] - (int)currentSig48x32[i+2]) >= 10) changed++;
-                if (Math.Abs((int)baselineSig48x32[i+3] - (int)currentSig48x32[i+3]) >= 10) changed++;
-            }
-            actualDriftPct = Math.Round(100.0 * (double)changed / 1536.0, 2);
-            if (actualDriftPct > maxAllowedDriftPct) return false;
-        }
-        return true;
-    }
-
-    // Computes Dirty-Rect bounding box [minX, minY, maxX, maxY, dirtyCount] in 48x32 grid space
-    public static int[] ComputeDirtyBoundingBox48x32(byte[] prevSig, byte[] currSig, int threshold = 10) {
-        if (prevSig == null || currSig == null || prevSig.Length != 1536 || currSig.Length != 1536) {
-            return new int[] { 0, 0, 47, 31, 1536 };
-        }
-        int minX = 48, minY = 32, maxX = -1, maxY = -1, count = 0;
-        for (int y = 0; y < 32; y++) {
-            int row = y * 48;
-            for (int x = 0; x < 48; x++) {
-                if (Math.Abs((int)prevSig[row + x] - (int)currSig[row + x]) >= threshold) {
-                    count++;
-                    if (x < minX) minX = x;
-                    if (x > maxX) maxX = x;
-                    if (y < minY) minY = y;
-                    if (y > maxY) maxY = y;
-                }
-            }
-        }
-        if (count == 0) return new int[] { 0, 0, 0, 0, 0 };
-        return new int[] { minX, minY, maxX, maxY, count };
-    }
-}
-'@
-[void](Import-DsCSharp -Name 'DsPolyglotV80' -Source $script:PolyglotV80Src -ProbeType 'DsPolyglotV80')
-
 $script:JobSrc = @'
 using System;
 using System.Runtime.InteropServices;
@@ -2620,8 +2201,7 @@ function Wait-UiSettled([int]$minMs = 110, [int]$maxMs = 1200) {   # v6.2：下�
     if (Test-CdpForeground) { try { if (Wait-CdpSettled) { return } } catch { if ("$($_.Exception.Message)" -like '触发保护*') { throw } } }
     # 操作之后等界面「稳定」：前台窗口与标题连续两次采样一致即返回（页面/弹窗仍在加载时多等一会儿）
     $end = (Get-Date).AddMilliseconds($maxMs)
-    $effMin = if ($script:DxgiOn -and ('DsPhase5Native70' -as [type]) -and [DsPhase5Native70]::LastDirtyRects -eq 0 -and $minMs -gt 55) { 55 } else { $minMs }
-    Start-Sleep -Milliseconds $effMin
+    Start-Sleep -Milliseconds $minMs
     $fg = [DsNative61]::GetForegroundWindow()
     $last = "$fg|$([DsNative61]::WinText($fg))"
     while ((Get-Date) -lt $end) {
@@ -2814,10 +2394,6 @@ function Send-KeySequence([string]$seq) {
 }
 function Send-Text([string]$text) {
     if ($text.Length -le 400) {
-    # v7.0 Phase 5：若输入为纯 ASCII（命令/网址/代码），发送前自动关闭中文 IME 激活态防止吞键
-    if ($text -match '^[\x20-\x7E\r\n\t]+$' -and ('DsPhase5Native70' -as [type])) {
-        try { [void][DsPhase5Native70]::NeutralizeIme([DsNative61]::GetForegroundWindow()) } catch { }
-    }
         [DsNative61]::UnicodeText($text)   # Unicode 直输：不动剪贴板，中文 / Emoji 均可
         Start-Sleep -Milliseconds ([Math]::Min(500, 40 + $text.Length))
         return
@@ -3964,26 +3540,13 @@ function Get-PixelSig([IntPtr]$hwnd) {
         $l = [int][Math]::Max($bd[0], $s[0]); $t = [int][Math]::Max($bd[1], $s[1]); $r = [int][Math]::Min($bd[2], $s[2]); $b = [int][Math]::Min($bd[3], $s[3])
         $w = $r - $l; $h = $b - $t
         if ($w -lt 16 -or $h -lt 16) { return $null }
-        # 若外部 Rust driver-core 未连接且启用了进程内 DsPhase5Native70 LockBits 极速通道，直接走 <2ms 指针扫描
-        if ((-not ($script:Drv.Pipe -and $script:Drv.Pipe.IsConnected)) -and $script:DxgiOn -and ('DsPhase5Native70' -as [type])) {
-            $swFast = [System.Diagnostics.Stopwatch]::StartNew()
-            $fastSig = [DsPhase5Native70]::FastPixelSig48x32($l, $t, $w, $h)
-            if ($null -ne $fastSig -and $fastSig.Length -eq 1536) {
-                $script:CapStats.Gdi++; $script:CapStats.GdiMs += $swFast.Elapsed.TotalMilliseconds
-                return , $fastSig
-            }
-        }
         $bmp = [System.Drawing.Bitmap]::new($w, $h)
         $g = [System.Drawing.Graphics]::FromImage($bmp)
         Copy-ScreenPixels $g $l $t $w $h
-        $small = [System.Drawing.Bitmap]::new(48, 32, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+        $small = [System.Drawing.Bitmap]::new(48, 32)
         $g2 = [System.Drawing.Graphics]::FromImage($small)
         $g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
         $g2.DrawImage($bmp, 0, 0, 48, 32)
-        if ('DsPhase5Native70' -as [type]) {
-            $sigLock = [DsPhase5Native70]::ExtractGray48x32FromBitmap($small, $null)
-            if ($null -ne $sigLock -and $sigLock.Length -eq 1536) { return , $sigLock }
-        }
         $sig = New-Object 'byte[]' 1536
         for ($y = 0; $y -lt 32; $y++) { for ($x = 0; $x -lt 48; $x++) { $c = $small.GetPixel($x, $y); $sig[$y * 48 + $x] = [byte][int](0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B) } }
         return , $sig
@@ -7253,268 +6816,6 @@ function Invoke-OptSelfTest($rec) {
     }
     & $rec 'v6.5 输出精简契约已注入系统提示' ($NoTerse -or ($SystemPrompt -like '*输出精简契约*')) "NoTerse=$([bool]$NoTerse)"
 }
-
-# ====================================================================================================
-# v7.0 Phase 5：24GB 统一内存守卫、SkillStore v2 衰减与状态 Checkpoint、UIPI 自签名证书配置与自检
-# ====================================================================================================
-function Test-UmaMemoryHealth {
-    if (-not ('DsPhase5Native70' -as [type])) { return [pscustomobject]@{ TotalMB = 24576; AvailMB = 12288; LoadPct = 50; Tripped = $false } }
-    $m = [DsPhase5Native70]::GetMemoryTelemetryMB()
-    $tripped = [DsPhase5Native70]::CheckUmaCircuitBreaker($script:MemoryFloorMB, -1)
-    [void][DsPhase5Native70]::CheckSidecarIdleUnload($script:SidecarIdleTtlSec)
-    if ($tripped -and -not $script:UmaCircuitTripped) {
-        $script:UmaCircuitTripped = $true
-        $script:ScanCap = 800
-        Write-Host ("  [UMA 24GB 内存熔断守卫] 当前可用物理内存 {0} MB < 阈值 {1} MB：已自动卸载本地侧车缓存、收紧 UIA 扫描上限并锁定云端轻量通道 deepseek-flash！" -f $m[1], $script:MemoryFloorMB) -ForegroundColor Yellow
-        Write-Log @{ type = 'uma_circuit_breaker'; totalMB = $m[0]; availMB = $m[1]; loadPct = $m[2]; floorMB = $script:MemoryFloorMB }
-    }
-    elseif (-not $tripped -and $script:UmaCircuitTripped -and $m[1] -ge ($script:MemoryFloorMB + 512)) {
-        $script:UmaCircuitTripped = $false
-        $script:ScanCap = 1500
-    }
-    return [pscustomobject]@{ TotalMB = $m[0]; AvailMB = $m[1]; LoadPct = $m[2]; Tripped = $tripped }
-}
-
-function Get-SkillDecayWeight($Skill, [datetime]$Now = (Get-Date)) {
-    if ($null -eq $Skill) { return 0.0 }
-    $ageDays = 0.0
-    if ($Skill.ts) {
-        try { $ageDays = [Math]::Max(0.0, ($Now - [datetime]::Parse("$($Skill.ts)")).TotalDays) } catch { $ageDays = 0.0 }
-    }
-    $uses = [Math]::Max(1, [int]$Skill.uses)
-    $fails = if ($null -ne $Skill.fails) { [Math]::Max(0, [int]$Skill.fails) } else { 0 }
-    $succRate = [double]$uses / [double]($uses + $fails * 1.8)
-    $timeDecay = [Math]::Exp(-0.025 * $ageDays)
-    return [Math]::Round($succRate * $timeDecay * (1.0 + 0.05 * [Math]::Min(5, $uses)), 4)
-}
-
-function Save-TaskCheckpoint([string]$TaskText, [int]$Step, [int]$PlanCur, $Trail) {
-    try {
-        $base = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'DeepSeekComputerUse\checkpoints' } else { Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse\checkpoints' }
-        if (-not (Test-Path -LiteralPath $base)) { [void][System.IO.Directory]::CreateDirectory($base) }
-        $cpFile = Join-Path $base ("ckpt-task{0:D2}.json" -f [Math]::Max(1, [int]$script:TaskNo))
-        $obj = [ordered]@{
-            version = '7.0-phase5'
-            task = (Protect-SkillText $TaskText)
-            step = $Step
-            planCur = $PlanCur
-            trail = @($Trail | ForEach-Object { Protect-SkillText "$_" })
-            tainted = [bool]$script:Taint.Tainted
-            ts = (Get-Date).ToString('o')
-        }
-        [System.IO.File]::WriteAllText($cpFile, ($obj | ConvertTo-Json -Compress -Depth 5), [System.Text.UTF8Encoding]::new($false))
-        return $cpFile
-    }
-    catch { return $null }
-}
-
-function Restore-TaskCheckpoint([string]$CkptPath) {
-    if ([string]::IsNullOrWhiteSpace($CkptPath) -or -not (Test-Path -LiteralPath $CkptPath)) { return $null }
-    try {
-        $raw = [System.IO.File]::ReadAllText($CkptPath, [System.Text.Encoding]::UTF8)
-        if (@(Find-InjectionPhrases $raw).Count -gt 0) { return $null }
-        return ($raw | ConvertFrom-Json)
-    }
-    catch { return $null }
-}
-
-function Export-UiAccessManifest([string]$OutDir) {
-    if ([string]::IsNullOrWhiteSpace($OutDir)) {
-        $OutDir = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'DeepSeekComputerUse\uipi' } else { Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse\uipi' }
-    }
-    if (-not (Test-Path -LiteralPath $OutDir)) { [void][System.IO.Directory]::CreateDirectory($OutDir) }
-    $manifestPath = Join-Path $OutDir 'driver-core.exe.manifest'
-    $xml = @'
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
-  <assemblyIdentity version="7.0.0.0" processorArchitecture="amd64" name="DeepSeek.ComputerUse.DriverCore" type="win32"/>
-  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
-    <security>
-      <requestedPrivileges>
-        <requestedExecutionLevel level="asInvoker" uiAccess="true"/>
-      </requestedPrivileges>
-    </security>
-  </trustInfo>
-  <asmv3:application>
-    <asmv3:windowsSettings>
-      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
-      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
-    </asmv3:windowsSettings>
-  </asmv3:application>
-</assembly>
-'@
-    [System.IO.File]::WriteAllText($manifestPath, $xml.Trim(), [System.Text.UTF8Encoding]::new($false))
-    return $manifestPath
-}
-
-function Invoke-Phase5SelfTest($rec) {
-    # ① DsPhase5Native70 LockBits 极速灰度指纹 vs 传统 GetPixel 100% 字节一致性与耗时检验
-    $bmpTest = [System.Drawing.Bitmap]::new(48, 32, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
-    try {
-        for ($y = 0; $y -lt 32; $y++) {
-            for ($x = 0; $x -lt 48; $x++) {
-                $bmpTest.SetPixel($x, $y, [System.Drawing.Color]::FromArgb(($x * 5) % 256, ($y * 7) % 256, (($x + $y) * 3) % 256))
-            }
-        }
-        $swFast = [System.Diagnostics.Stopwatch]::StartNew()
-        $sigFast = [DsPhase5Native70]::ExtractGray48x32FromBitmap($bmpTest, $swFast)
-        $fastUs = [DsPhase5Native70]::LastCaptureUs
-        $sigSlow = New-Object 'byte[]' 1536
-        for ($y = 0; $y -lt 32; $y++) {
-            for ($x = 0; $x -lt 48; $x++) {
-                $c = $bmpTest.GetPixel($x, $y)
-                $sigSlow[$y * 48 + $x] = [byte][int]((299 * $c.R + 587 * $c.G + 114 * $c.B) / 1000)
-            }
-        }
-        $diff = Get-PixelDiff $sigFast $sigSlow
-        $dxgiHw = [DsPhase5Native70]::ProbeDxgiHardware()
-        & $rec 'v7.0 Phase 5：LockBits + DXGI 极速指纹（与 GDI 逐像素 0.0% 误差，单帧提取 < 2ms）' ($null -ne $sigFast -and $sigFast.Length -eq 1536 -and $diff -eq 0.0) ("长度=$($sigFast.Length) 误差=${diff}% 耗时=${fastUs}us DXGI硬件=$dxgiHw")
-    }
-    finally { $bmpTest.Dispose() }
-
-    # ② 24GB 统一内存（AMD Radeon 780M UMA）水位监控与 < 4096MB 熔断自检
-    $mem = [DsPhase5Native70]::GetMemoryTelemetryMB()
-    [DsPhase5Native70]::TouchSidecar()
-    $tripLow = [DsPhase5Native70]::CheckUmaCircuitBreaker(4096, 3200)
-    $unloadedOnTrip = (-not [DsPhase5Native70]::SidecarLoaded)
-    [DsPhase5Native70]::TouchSidecar()
-    $tripHigh = [DsPhase5Native70]::CheckUmaCircuitBreaker(4096, 8192)
-    $keptOnHigh = [DsPhase5Native70]::SidecarLoaded
-    & $rec 'v7.0 Phase 5：24GB UMA 内存水位熔断守卫（<4096MB 自动卸载本地侧车并降级 deepseek-flash）' ($mem[0] -gt 0 -and $tripLow -and $unloadedOnTrip -and (-not $tripHigh) -and $keptOnHigh) ("主机内存=$($mem[0])MB 可用=$($mem[1])MB 低水位熔断=$tripLow 侧车卸载=$unloadedOnTrip")
-
-    # ③ SkillStore v2 衰减模型 + 任务 Checkpoint 保存/恢复 + 注入污染拒载
-    $now = Get-Date
-    $skFresh = [pscustomobject]@{ uses = 4; fails = 0; ts = $now.AddDays(-1).ToString('o') }
-    $skStale = [pscustomobject]@{ uses = 1; fails = 3; ts = $now.AddDays(-60).ToString('o') }
-    $wFresh = Get-SkillDecayWeight $skFresh $now
-    $wStale = Get-SkillDecayWeight $skStale $now
-    $cpFile = Save-TaskCheckpoint '打开设置检查显示分辨率' 3 2 @('launch ms-settings:display', 'click 分辨率')
-    $cpLoaded = Restore-TaskCheckpoint $cpFile
-    try { if ($cpFile -and (Test-Path -LiteralPath $cpFile)) { Remove-Item -LiteralPath $cpFile -Force -ErrorAction SilentlyContinue } } catch { }
-    & $rec 'v7.0 Phase 5：SkillStore v2 技能衰减权重与长程状态 Checkpoint 回滚' (($wFresh -gt $wStale * 3.0) -and ($null -ne $cpLoaded) -and ([int]$cpLoaded.step -eq 3)) ("新技能权重=$wFresh 衰减技能权重=$wStale CheckpointStep=$($cpLoaded.step)")
-
-    # ④ Named Pipe IPC 帧协议 + UIPI 清单生成 + 24GB 沙箱内存配额校验
-    $rpcJson = [DsPhase5Native70]::BuildPipeRpc(7, 'dxgi_capture', '{"dirtyOnly":true}')
-    $mfFile = Export-UiAccessManifest (Join-Path ([System.IO.Path]::GetTempPath()) "dscu-uipi-$PID")
-    $mfOk = (Test-Path -LiteralPath $mfFile) -and ([System.IO.File]::ReadAllText($mfFile) -match 'uiAccess="true"')
-    try { Remove-Item -LiteralPath ([System.IO.Path]::GetDirectoryName($mfFile)) -Recurse -Force -ErrorAction SilentlyContinue } catch { }
-    & $rec 'v7.0 Phase 5：Named Pipe IPC 契约帧 + uiAccess="true" 清单生成' (($rpcJson -match '"method":"dxgi_capture"') -and $mfOk) ("RPC=$rpcJson uiAccessManifest=$mfOk")
-
-
-# ====================================================================================================
-# v8.0 Polyglot 四平面协同增强：单调递增 ActionId 乐观锁 / OpenTelemetry P50-P99 Span / WAA & AgentDojo 报告导出 / 自检
-# ====================================================================================================
-$script:OtelSpans = [System.Collections.Generic.List[object]]::new()
-
-function Start-OtelSpan([string]$Plane, [string]$Operation) {
-    return [pscustomobject]@{
-        TraceId   = [Guid]::NewGuid().ToString('N')
-        SpanId    = [Guid]::NewGuid().ToString('N').Substring(0, 16)
-        Plane     = $Plane
-        Operation = $Operation
-        StartUtc  = [datetime]::UtcNow.ToString('o')
-        Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    }
-}
-
-function Stop-OtelSpan($Span, [string]$Status = 'ok', $Attributes = @{}) {
-    if ($null -eq $Span) { return $null }
-    try { $Span.Stopwatch.Stop() } catch { }
-    $rec = [pscustomobject]@{
-        trace_id    = $Span.TraceId
-        span_id     = $Span.SpanId
-        plane       = $Span.Plane
-        operation   = $Span.Operation
-        status      = $Status
-        duration_ms = [Math]::Round($Span.Stopwatch.Elapsed.TotalMilliseconds, 3)
-        start_utc   = $Span.StartUtc
-        attributes  = $Attributes
-    }
-    $script:OtelSpans.Add($rec)
-    while ($script:OtelSpans.Count -gt 2000) { $script:OtelSpans.RemoveAt(0) }
-    return $rec
-}
-
-function Get-OtelLatencyStats([string]$Plane = '') {
-    $items = if ([string]::IsNullOrWhiteSpace($Plane)) { @($script:OtelSpans) } else { @($script:OtelSpans | Where-Object { $_.plane -eq $Plane }) }
-    if ($items.Count -eq 0) { return [pscustomobject]@{ Count = 0; P50Ms = 0.0; P99Ms = 0.0; MeanMs = 0.0 } }
-    $sorted = @($items | ForEach-Object { [double]$_.duration_ms } | Sort-Object)
-    $p50Idx = [Math]::Min($sorted.Count - 1, [int][Math]::Floor($sorted.Count * 0.50))
-    $p99Idx = [Math]::Min($sorted.Count - 1, [int][Math]::Floor($sorted.Count * 0.99))
-    $avg = ($sorted | Measure-Object -Average).Average
-    return [pscustomobject]@{
-        Count  = $sorted.Count
-        P50Ms  = [Math]::Round($sorted[$p50Idx], 2)
-        P99Ms  = [Math]::Round($sorted[$p99Idx], 2)
-        MeanMs = [Math]::Round([double]$avg, 2)
-    }
-}
-
-function Assert-OptimisticActionLock([IntPtr]$TargetHwnd, [byte[]]$BaselineSig, [double]$MaxDriftPct = 35.0) {
-    $actId = if ('DsPolyglotV80' -as [type]) { [DsPolyglotV80]::NextActionId() } else { 1L }
-    if (-not ('DsPolyglotV80' -as [type])) {
-        return [pscustomobject]@{ ActionId = $actId; Ok = $true; DriftPct = 0.0 }
-    }
-    $currSig = if ($null -ne $BaselineSig) { Get-PixelSig $TargetHwnd } else { $null }
-    $drift = 0.0
-    $ok = [DsPolyglotV80]::VerifyOptimisticPrecondition($TargetHwnd, $BaselineSig, $currSig, $MaxDriftPct, [ref]$drift)
-    return [pscustomobject]@{ ActionId = $actId; Ok = $ok; DriftPct = $drift }
-}
-
-function Export-WaaBenchmarkReport([string]$OutPath, $EvalSummary) {
-    if ([string]::IsNullOrWhiteSpace($OutPath)) {
-        $OutPath = Join-Path ([System.IO.Path]::GetTempPath()) "dscu-waa-report-$($script:WsStamp).json"
-    }
-    $otelCap = Get-OtelLatencyStats 'plane1_driver'
-    $otelVis = Get-OtelLatencyStats 'plane2_vision'
-    $otelCdp = Get-OtelLatencyStats 'plane3_cdp'
-    $otelOrc = Get-OtelLatencyStats 'plane4_orchestrator'
-    $rep = [ordered]@{
-        schema_version = 'waa-osworld-agentdojo-v8.0'
-        generated_at   = [datetime]::UtcNow.ToString('o')
-        architecture   = 'Polyglot 4-Plane (Rust driver-core + C++/DirectML/CUDA vision-engine + TS cdp-bridge + Python/PWSH7 orchestrator)'
-        benchmarks     = [ordered]@{
-            windows_agent_arena = [ordered]@{ compatible = $true; task_success_rate = $EvalSummary.TaskSuccessRate }
-            osworld_desktop     = [ordered]@{ compatible = $true; occlusion_guard = $EvalSummary.PerceptionChannelHit.cdpOcclusionDetect }
-            screenspot_pro      = [ordered]@{ compatible = $true; dpi_normalization = 'PerMonitorV2'; som_fallback = (-not $NoVision) }
-            agentdojo_security  = [ordered]@{
-                compatible              = $true
-                injection_defense_rate  = $EvalSummary.InjectionDefenseRate
-                path_escape_block_rate  = $EvalSummary.PathEscapeBlockRate
-                ast_danger_block_rate   = $EvalSummary.AstDangerBlockRate
-            }
-        }
-        otel_telemetry = [ordered]@{
-            plane1_driver       = $otelCap
-            plane2_vision       = $otelVis
-            plane3_cdp          = $otelCdp
-            plane4_orchestrator = $otelOrc
-        }
-    }
-    [System.IO.File]::WriteAllText($OutPath, ($rep | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
-    return $OutPath
-}
-
-function Invoke-V8PolyglotSelfTest($rec) {
-    # ① 单调递增 ActionId 与乐观并发锁校验
-    $id1 = [DsPolyglotV80]::NextActionId()
-    $id2 = [DsPolyglotV80]::NextActionId()
-    $sigA = New-Object 'byte[]' 1536
-    $sigB = New-Object 'byte[]' 1536
-    for ($i = 0; $i -lt 1536; $i++) { $sigA[$i] = 100; $sigB[$i] = $(if ($i -lt 768) { 220 } else { 100 }) }
-    $drift1 = 0.0; $drift2 = 0.0
-    $okSame = [DsPolyglotV80]::VerifyOptimisticPrecondition([IntPtr]::Zero, $sigA, $sigA, 25.0, [ref]$drift1)
-    $okDiff = [DsPolyglotV80]::VerifyOptimisticPrecondition([IntPtr]::Zero, $sigA, $sigB, 25.0, [ref]$drift2)
-    $bbox = [DsPolyglotV80]::ComputeDirtyBoundingBox48x32($sigA, $sigB, 10)
-    & $rec 'v8.0 Polyglot：单调递增 ActionId + 乐观并发像素锁 + DirtyRect 包围盒计算' (($id2 -gt $id1) -and $okSame -and (-not $okDiff) -and $bbox[4] -eq 768) ("ActionId=$id1->$id2 静止放行=$okSame(drift=${drift1}%) 突变拦截=$(-not $okDiff)(drift=${drift2}%) DirtyBlocks=$($bbox[4])")
-
-    # ② OpenTelemetry P50/P99 Span 统计与 WAA/AgentDojo 报告导出
-    $sp1 = Start-OtelSpan 'plane1_driver' 'dxgi.capture'
-    [void](Stop-OtelSpan $sp1 'ok' @{ backend = 'dxgi_shared_mem' })
-    $st = Get-OtelLatencyStats 'plane1_driver'
-    & $rec 'v8.0 Polyglot：OpenTelemetry 全链路 Span 追踪与 P50/P99 延迟统计' ($st.Count -ge 1 -and $st.P50Ms -ge 0.0) ("Spans=$($st.Count) P50=$($st.P50Ms)ms P99=$($st.P99Ms)ms")
-}
-
 #endregion
 #region ---------- DeepSeek ----------
 $SystemPrompt = @'
@@ -7840,7 +7141,6 @@ function Invoke-AgentTask([string]$TaskText) {
         for ($step = $(if ($fpDone) { $MaxSteps + 1 } else { 1 }); $step -le $MaxSteps; $step++) {
             try {
             Test-Abort
-            [void](Test-UmaMemoryHealth)   # v7.0 Phase 5 + v8.0：每步检查 24GB UMA 内存水位与 180s 空闲侧车卸载
             Write-Host "── 第 $step 步 ──" -ForegroundColor Cyan
             $swStep = [System.Diagnostics.Stopwatch]::StartNew()
             $resumeNote = Resume-TargetWindow   # v5：前台被控制台占据时由系统切回目标窗口
@@ -8179,8 +7479,6 @@ function Invoke-SelfTest {
     & $rec '运行空间池（后台 UIA 调用）' ($null -ne $script:Pool) ''
     Invoke-SecuritySelfTest $rec   # v6.4：路径牢笼 / AST / 污点 / CLM / Job Object 自检
     Invoke-V7SelfTest $rec         # v7.0：快速通道 / 自适应 token / 内存熔断 / 技能衰减 / 驱动 RPC
-    Invoke-Phase5SelfTest $rec     # v7.0 Phase 5：LockBits 0%误差 / 24GB UMA熔断 / Checkpoint / UIPI清单
-    Invoke-V8PolyglotSelfTest $rec # v8.0 Polyglot：乐观锁 / DirtyRect包围盒 / OpenTelemetry P50-P99 Span
     Invoke-OptSelfTest $rec        # v6.5：历史窗口 / 计划前缀 / 遥测 / 过程记忆
     # ---- 纯逻辑自检（不碰鼠标键盘）：日志里出现过的真实故障样本 ----
     $two = '{"thought":"a","action":"wait","seconds":1}' + "`n" + '{"thought":"b","action":"done","summary":"x"}'
@@ -9362,10 +8660,6 @@ function Invoke-EvalHarness {
         Write-Host "└ JSONL 报告: $report" -ForegroundColor Cyan
         $allOk = (($st.PathEscapeBlockRate -eq 1.0) -and ($st.AstDangerBlockRate -eq 1.0) -and ($st.InjectionDetectRate -eq 1.0) -and ($st.PathBenignAllowRate -eq 1.0) -and ($st.AstBenignAllowRate -eq 1.0) -and ($st.InjectionCleanRate -eq 1.0) -and ((-not $e2e.Executed) -or ($e2e.TaskSuccess -and $e2e.InjectionDefenseRate -eq 1.0)))
         Write-Host $(if ($allOk) { '  结论：PASS' } else { '  结论：FAIL（见上方未通过项 / 备注）' }) -ForegroundColor $(if ($allOk) { 'Green' } else { 'Red' })
-        if ($ExportWaaReport) {
-            $waaFile = Export-WaaBenchmarkReport '' $summary
-            Write-Host "└ WAA/OSWorld/AgentDojo 基准报告: $waaFile" -ForegroundColor Green
-        }
         $global:LASTEXITCODE = $(if ($allOk) { 0 } else { 1 })
         return $summary
     }
@@ -9512,7 +8806,7 @@ function Connect-DsDriver {
     if ([datetime]::UtcNow -lt $script:Drv.DownUntil) { return $false }
     try {
         if (-not (Get-DriverToken)) { $script:Drv.DownUntil = [datetime]::UtcNow.AddSeconds(600); return $false }   # 没装驱动：10 分钟内不再探测
-        $name = if ($DriverPipe) { $DriverPipe } elseif ($PipeName -and $PipeName -ne 'ds_computer_use_v7') { $PipeName } else { 'dscu-driver-v1' }
+        $name = if ($DriverPipe) { $DriverPipe } else { 'dscu-driver-v1' }
         $p = [System.IO.Pipes.NamedPipeClientStream]::new('.', $name, [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None)
         $p.Connect(60)
         $enc = [System.Text.UTF8Encoding]::new($false)
@@ -9734,26 +9028,10 @@ if ($SelfTest) {
     finally { Stop-Runtime }
     return
 }
-if ($SetupUiAccess) {
-    $mf = Export-UiAccessManifest ''
-    Write-Host "已生成 Phase 5 UIPI 清单文件 (uiAccess=true): $mf" -ForegroundColor Green
-    return
-}
-# v7.0 Phase 5 + v8.0：PowerShell 7.7.0 直接粘贴大段脚本时，清空粘贴尾部可能残留的空白回车缓冲，并支持最多 3 次安全输入提示
 if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-    try {
-        Start-Sleep -Milliseconds 35
-        while ([Console]::KeyAvailable) {
-            $k = [Console]::ReadKey($true)
-            if ($k.Key -ne [ConsoleKey]::Enter -and $k.Key -ne [ConsoleKey]::Spacebar) { break }
-        }
-    } catch { }
-    for ($tryKey = 1; $tryKey -le 3; $tryKey++) {
-        $ApiKey = Read-Host '请输入 DeepSeek API Key（输入时不显示，直接粘贴后按回车）' -MaskInput
-        if (-not [string]::IsNullOrWhiteSpace($ApiKey)) { break }
-    }
+    $ApiKey = Read-Host '请输入 DeepSeek API Key（输入时不显示）' -MaskInput
 }
-if ([string]::IsNullOrWhiteSpace($ApiKey)) { throw '缺少 API Key：请设置环境变量 DEEPSEEK_API_KEY 或在提示符处输入您的 DeepSeek API Key。' }
+if ([string]::IsNullOrWhiteSpace($ApiKey)) { throw '缺少 API Key：请设置环境变量 DEEPSEEK_API_KEY 或使用 -ApiKey 参数。' }
 $ApiKey = $ApiKey.Trim()
 try { Start-ApiWarmup } catch { }   # v6.2：提前建立 TLS 连接，第一次请求直接复用
 $RunId = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -9810,11 +9088,7 @@ function Show-Banner {
     Write-Host "v6.2    : 视觉兜底 $(if ($NoVision) { '关（-NoVision）' } else { "开（$VisionModel；UIA 盲区<6 / 连续2次无效 / vision_inspect 时触发；长边≤${VisionMaxEdge}px，JPEG q${VisionJpegQuality}；单任务最多 $($script:VisionMaxTurns) 轮）" })    HTTP 连接复用：开    步间等待：自适应"
     Write-Host "v6 : 人类化输入 $(if ($NoHuman) { '关（-NoHuman）' } else { "开（浏览器内：曲线移动→悬停→按压；速度 ${HumanSpeed}x，打字 ${TypeCps} 字/秒；用户一动鼠标立即让出）" })"
     Write-Host "v6.4    : 零信任 $(if ($script:SafeOn) { "开（路径牢笼 + AST 白名单 + CLM + 污点隔离 + HITL ${script:HitlTimeout}s；工作区 $(if ($script:WorkspaceFixed) { $script:WorkspaceBase } else { 'USERPROFILE\DeepSeekComputerUse\workspace\<时间戳>\taskNN' })）" } else { '关（-SafeMode:$false）' })    C# 程序集缓存 $(if ($NoAsmCache) { '关' } else { '开' })" -ForegroundColor $(if ($script:SafeOn) { 'Green' } else { 'Red' })
-    Write-Host "v7.0 : 快速通道 $(if ($NoFastPath) { '关' } else { '开' })   自适应 token $(if ($NoAdaptiveTokens) { '关' } else { '开（决策轮封顶 2400）' })   HTTP/2 优先   内存熔断线 ${MinFreeGB}GB (+0.75GB迟滞)   原生驱动 $(if ($NoDriver) { '关（-NoDriver）' } else { '自动探测（无则 LockBits/GDI）' })"
-    $umaInfo = Test-UmaMemoryHealth
-    $dxgiOk = if ('DsPhase5Native70' -as [type]) { [DsPhase5Native70]::ProbeDxgiHardware() } else { $false }
-    $uiAcc = if ('DsPhase5Native70' -as [type]) { [DsPhase5Native70]::HasUiAccessToken() } else { $false }
-    Write-Host "v8.0 P5 : DXGI/LockBits $(if ($script:DxgiOn -and $dxgiOk) { '开（<2ms 极速指纹+DirtyRects）' } else { 'GDI 兼容' })   24GB UMA 守卫: 可用 $($umaInfo.AvailMB)/$($umaInfo.TotalMB) MB（熔断线 ${script:MemoryFloorMB} MB）   UIPI uiAccess: $uiAcc   乐观锁 ActionId + OTel Span: 开" -ForegroundColor Cyan
+    Write-Host "v6.5    : 输出精简 $(if ($NoTerse) { '关' } else { '开' })    过程记忆 $(if ($script:SkillsOn) { '开' } else { '关（-NoSkills）' })    HumanSpeed ${HumanSpeed}x    缓存友好布局 开（每步显示 Token 入/出 + 前缀缓存命中率）"
     Write-Host "v7.0    : 快速通道 $(if ($NoFastPath) { '关' } else { '开' })    自适应 token $(if ($NoAdaptiveTokens) { '关' } else { '开（决策轮封顶 2400）' })    HTTP/2 优先    内存熔断线 ${MinFreeGB}GB    原生驱动 $(if ($NoDriver) { '关（-NoDriver）' } else { '自动探测（无则 GDI）' })"
     Write-Host "日志    : $(if ($script:RunDir) { $script:RunDir } else { '（未启用）' })"
     Write-Host '紧急停止: 鼠标甩到左上角 / Ctrl+Alt+Q（终止当前任务）；Ctrl+C（退出程序）' -ForegroundColor Yellow
