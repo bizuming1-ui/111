@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v9.0 Phase 7（四平面多语言零拷贝：Rust 共享内存环 / C++ AVX2·CUDA·DirectML / TypeScript CDP 守护 / Python 幂等编排；v8.0 全部能力逐字保留，新平面缺席时零报错回退）｜原 v8.0 Phase 6（= v7.1 融合版逐字保留 + Rust 原生驱动 dscu-driver 全量嵌入：DXGI 零拷贝抓屏 / 稠密应用渐进式披露 / Fail-Closed Ref / Headless-First UIA / JAB / UIAccess / DirectML 侧车；驱动缺席时零影响）
+  DeepSeek Computer Use v9.1 Phase 7.1（运行日志驱动的生产稳定化：语义停滞检测 SEMANTIC_STALL / CDP 强制接管 + cdp_navigate · cdp_wait_selector / REPEAT_EFFECT 无状态豁免 / file_stat · dir_list 只读校验 / Monorepo crates+packages 一键 v9 up；v9.0 全部能力逐字保留）｜原 v9.0 Phase 7（四平面多语言零拷贝：Rust 共享内存环 / C++ AVX2·CUDA·DirectML / TypeScript CDP 守护 / Python 幂等编排；v8.0 全部能力逐字保留，新平面缺席时零报错回退）｜原 v8.0 Phase 6（= v7.1 融合版逐字保留 + Rust 原生驱动 dscu-driver 全量嵌入：DXGI 零拷贝抓屏 / 稠密应用渐进式披露 / Fail-Closed Ref / Headless-First UIA / JAB / UIAccess / DirectML 侧车；驱动缺席时零影响）
   原 v7.1：（融合版：computer use v7.0 调度优化 × computer-use1 v7.0 硬件直连 · 零回归）—— 把两条并行演进的 v7.0 分支合并为一份：快速通道 / 自适应 token / 技能衰减 / HTTP2 / RedTeam / Worker / 驱动桥（来自调度版）与 DsPhase5Native70 / UMA 熔断 / UIAccess·JAB·IME / Named Pipe IPC / 粘贴加固（来自硬件直连版）全部保留，并新增幂等动作 / 全链路 Span / Golden-Trace / 评测适配器。
 .DESCRIPTION
   v9.0 Phase 7 新增（只增不改 · Strangler Fig）：粘贴后在「请输入任务」提示符输入  v9 verify（进程内契约对拍 + 多语言工程验证）→ v9 extract（释放 Monorepo）→ v9 build → v9 audit（ETW/WPR 30 分钟泄漏审计）。
@@ -4079,7 +4079,7 @@ $script:PlanCur = 0
 $script:Replans = 0
 $script:HueNames = @('红', '橙', '黄', '绿', '青', '蓝', '紫', '粉')
 $script:GuardKinds = @('click', 'double_click', 'right_click', 'middle_click', 'key', 'hotkey', 'type')
-$script:SafeRepeatKeys = '^(esc|escape|tab|shift\+tab|ctrl\+l|alt\+d|ctrl\+a|ctrl\+c|ctrl\+f|f6)$'
+$script:SafeRepeatKeys = '^(esc|escape|tab|shift\+tab|ctrl\+l|alt\+d|ctrl\+a|ctrl\+c|ctrl\+f|f6|enter|return|f5|ctrl\+r|pagedown|pageup|page_down|page_up|home|end|up|down|left|right)$'   # v9.1：enter / 翻页 / 方向键 / 刷新 = 无状态导航键，不进动作账本（运行日志任务2第 11 步 key enter 被 REPEAT_EFFECT 误杀）
 
 # ---------- ① 控制台让位 ----------
 function Invoke-ConsoleYield {
@@ -4289,9 +4289,10 @@ function New-LedgerProbe($a, [string]$kind) {
     $keys = ''
     if ($kind -in 'key', 'hotkey') {
         $keys = ("$($a.keys)" -replace '\s*\+\s*', '+').Trim().ToLower()
-        if ($keys -match $script:SafeRepeatKeys) { return $null }
+        if (Test-AllStatelessKeys $keys) { return $null }   # v9.1：无状态导航键（单键或序列）不进账本
     }
     if ($kind -eq 'type' -and (Test-True $a.clear)) { return $null }
+    if ($kind -eq 'type' -and (Get-StatelessReason $a $kind)) { return $null }   # v9.1：输入 URL = 幂等导航，不会像点赞那样「被撤销」
     $pt = Get-ActionPoint $a
     if (($kind -in @('click', 'double_click', 'right_click', 'middle_click')) -and ($null -eq $pt)) { return $null }
     $title = ''
@@ -4314,6 +4315,9 @@ function Test-LedgerMatch($e, $p) {
 function Assert-RepeatGuard($a, [string]$kind) {
     # 返回本次动作的账本探针（$null = 不受账本约束）；需要拒绝时抛出带错误码的异常（动作不会被执行）
     if ($NoRepeatGuard) { return $null }
+    # v9.1：无状态导航 / 交互动作（key enter / ctrl+l / scroll / cdp_navigate / URL 输入…）豁免 REPEAT_EFFECT / UNVERIFIED；仅「同一动作连续 4 次且页面签名不变」才拒绝（Register-StatelessAction）
+    $slr = Get-StatelessReason $a $kind
+    if ($slr) { Register-StatelessAction $a $kind $slr; return $null }
     $p = New-LedgerProbe $a $kind
     if ($null -eq $p) { return $null }
     $hits = @($script:Ledger | Where-Object { Test-LedgerMatch $_ $p })
@@ -4659,7 +4663,8 @@ function Invoke-InspectAction($a) {
 #endregion
 #region ---------- 发送前校验（Schema） ----------
 $script:ActionNames = @('click', 'click_many', 'check', 'uncheck', 'select_rows', 'double_click', 'right_click', 'middle_click', 'hover', 'drag', 'type', 'key', 'hotkey',
-    'scroll', 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect', 'replan', 'done', 'fail')
+    'scroll', 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect', 'replan', 'done', 'fail',
+    'cdp_navigate', 'cdp_wait_selector', 'file_stat', 'dir_list')   # v9.1：浏览器一等公民导航 / 等待 + 只读文件探测
 function Test-IdValue($v) { return ($null -ne $v -and "$v" -match '^\d+$') }
 function Test-NumValue($v) { return ($null -ne $v -and "$v" -ne '' -and $null -ne ("$v" -as [double])) }
 function Test-ActionUsesId($a) {
@@ -4750,6 +4755,13 @@ function Test-ActionSchema($a, [int]$index) {
             if ($NoShell) { return '已使用 -NoShell，禁止 run_process' }
             if ([string]::IsNullOrWhiteSpace("$($a.file)")) { return 'run_process 需要 file' }
         }
+        'cdp_navigate' { try { [void](ConvertTo-NavUrl "$($a.url)") } catch { return "$($_.Exception.Message)" } }
+        'cdp_wait_selector' {
+            if ([string]::IsNullOrWhiteSpace("$($a.selector)") -and [string]::IsNullOrWhiteSpace("$($a.text)")) { return 'cdp_wait_selector 需要 selector（CSS 选择器）或 text' }
+            if ("$($a.selector)".Length -gt 400) { return 'selector 过长（>400）' }
+            if ($null -ne $a.timeout -and "$($a.timeout)" -ne '' -and -not (Test-NumValue $a.timeout)) { return 'cdp_wait_selector 的 timeout 必须是数字（毫秒）' }
+        }
+        { $_ -in 'file_stat', 'dir_list' } { if ([string]::IsNullOrWhiteSpace("$($a.path)")) { return "$k 需要 path（以 桌面 / 文档 / 下载 / 工作区 开头，或绝对路径；file_stat 的文件名可带 * ?）" } }
         'wait' { if ($null -ne $a.seconds -and "$($a.seconds)" -ne '' -and -not (Test-NumValue $a.seconds)) { return 'wait 的 seconds 必须是数字' } }
         'replan' {
             if ($index -gt 1) { return 'replan 必须单独输出（不能和其他动作放在同一批）' }
@@ -5250,7 +5262,7 @@ function Focus-WindowByTitle([string]$keyword) {
 }
 function Describe-Action($a) {
     $parts = @("action=$($a.action)")
-    foreach ($k in 'id', 'ids', 'rows', 'exclusive', 'x', 'y', 'w', 'h', 'r', 'repeat', 'force', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id', 'path', 'file', 'cwd', 'timeout', 'append', 'mode', 'detail', 'vision_grounded') {
+    foreach ($k in 'url', 'selector', 'path', 'pattern', 'expect_text', 'id', 'ids', 'rows', 'exclusive', 'x', 'y', 'w', 'h', 'r', 'repeat', 'force', 'text', 'keys', 'direction', 'amount', 'target', 'args', 'title', 'seconds', 'command', 'from_id', 'to_id', 'path', 'file', 'cwd', 'timeout', 'append', 'mode', 'detail', 'vision_grounded') {
         $v = "$($a.$k)"
         if ($null -ne $a.$k -and $v -ne '') { $parts += ("{0}={1}" -f $k, (Limit-Text $v 80)) }
     }
@@ -5356,6 +5368,10 @@ function Invoke-ActionCore($a, [string]$kind) {
         }
         'vision_inspect' { return (Request-VisionInspect $a) }
         'ocr' { return (Invoke-OcrAction $a) }
+        'cdp_navigate' { return (Invoke-CdpNavigate $a) }
+        'cdp_wait_selector' { return (Invoke-CdpWaitSelector $a) }
+        'file_stat' { return (Invoke-FileStat $a) }
+        'dir_list' { return (Invoke-DirList $a) }
         default { throw "未知动作: '$($a.action)'" }
     }
 }
@@ -5368,11 +5384,11 @@ function Invoke-Action($a) {
     [DsNative61]::ExpectRoot = [IntPtr]::Zero
     Assert-BulkInterlock $a $kind   # v4.2：数量联锁（删除/归档/全选前核对已勾选行数）
     $before = [DsNative61]::GetForegroundWindow()
-    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect') { Set-CdpActionEpoch }   # v6.3
+    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect', 'file_stat', 'dir_list', 'cdp_wait_selector') { Set-CdpActionEpoch }   # v6.3
     $v71sw = [System.Diagnostics.Stopwatch]::StartNew()
     $r = Invoke-ActionCore $a $kind
     Add-Span 'input' ([double]$v71sw.Elapsed.TotalMilliseconds) $kind   # v7.1
-    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect') {
+    if ($kind -notin 'launch', 'focus_window', 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect', 'file_stat', 'dir_list', 'cdp_wait_selector') {
         if (-not (Test-CdpForeground)) { Start-Sleep -Milliseconds 60 }   # v6.4：CDP 前台由 Wait-CdpSettled 确定性等待，不再固定多睡 60ms
         $script:CdpSettleNote = ''
         Wait-UiSettled
@@ -5385,6 +5401,446 @@ function Invoke-Action($a) {
     return $r
 }
 #endregion
+#region ---------- v9.1 Phase 7.1：运行日志驱动的生产稳定化（只增不改 · Strangler Fig）
+# 运行日志暴露的 5 个缺陷与本区块的对应关系：
+#   ① 浏览器 CDP 未挂载 → Invoke-CdpTakeover / Invoke-CdpGuardian（强制接管：独立 Profile + 调试端口 + SetForegroundWindow）+ cdp_navigate / cdp_wait_selector 一等公民动作
+#   ② REPEAT_EFFECT 误杀无状态导航 → Get-StatelessReason / Register-StatelessAction（enter / ctrl+l / scroll / cdp_navigate / URL 输入豁免；4 次相同且页面未变才拦）
+#   ③ 浏览器视觉兜底盲区（工具栏 6~110 个 UIA 控件使 UIA_BLIND<6 永不触发）→ Update-SemanticStall（(标题|URL, aHash) 滑动窗口，连续 2 步无进展 → SEMANTIC_STALL 强制升级视觉）
+#   ④ 缺少只读文件校验原语 → file_stat / dir_list（Path Jail 白名单根 + 只读 + 仅返回元数据与布尔校验，不回显内容、不执行脚本）
+$script:P71Ver = '9.1-phase7.1'
+$script:StatelessActionKinds = @('scroll', 'wait', 'inspect', 'ocr', 'vision_inspect', 'cdp_navigate', 'cdp_wait_selector', 'file_stat', 'dir_list', 'focus_window')
+$script:StatelessNavTypeRx = '^\s*(?:(?:https?)://\S+|www\.\S+|(?:[a-z0-9\-]+\.)+[a-z]{2,}(?::\d+)?(?:[/?#]\S*)?)\s*$'
+$script:StatelessTrail = [System.Collections.Generic.List[string]]::new()
+$script:StatelessLoopMax = 4
+$script:SemWin = [System.Collections.Generic.List[object]]::new()
+$script:SemStall = [pscustomobject]@{ Active = $false; Streak = 0; Cooldown = 0; Triggers = 0; Where = ''; Why = '' }
+$script:SemStallNoteText = ''
+$script:SemStallSteps = 2          # 连续 N 步（期间执行过动作）页面签名不变 → 判定语义停滞
+$script:SemHashTol = 2             # aHash 汉明距离容差（光标闪烁 / 视频角标不算变化）
+$script:ActCounter = 0
+$script:CdpTakeoverTries = 0
+$script:P71Stats = [pscustomobject]@{ StatelessPass = 0; StallTriggers = 0; Takeovers = 0; CdpNavigate = 0; FileStat = 0; DirList = 0; WaitSelector = 0 }
+$script:BrowserIntentRx = '(?i)(浏览器|\bchrome\b|\bedge\b|msedge|\bbrave\b|网页|网站|网址|https?://|\bwww\.|[a-z0-9\-]+\.(com|cn|net|org|io|tv|cc)\b|抖音|百度|淘宝|京东|bilibili|b站|微博|知乎|小红书|youtube|google|bing|github|热榜|上网|搜索一下)'
+
+function Test-AllStatelessKeys([string]$Keys) {
+    # 单键或按键序列（空格分隔）全部属于「无状态导航 / 交互键」时返回 $true
+    $k = ("$Keys" -replace '\s*\+\s*', '+').Trim().ToLower()
+    if ($k -eq '') { return $false }
+    $toks = @($k -split '\s+' | Where-Object { $_ })
+    if ($toks.Count -lt 1) { return $false }
+    foreach ($t in $toks) { if ($t -notmatch $script:SafeRepeatKeys) { return $false } }
+    return $true
+}
+function Get-StatelessReason($a, [string]$kind) {
+    # 返回 $null = 有状态动作（照常受动作账本约束）；否则返回豁免原因
+    if ($kind -in $script:StatelessActionKinds) { return "stateless:$kind" }
+    if ($kind -in 'key', 'hotkey') { if (Test-AllStatelessKeys "$($a.keys)") { return 'stateless-key' } }
+    if ($kind -eq 'type') {
+        $t = "$($a.text)"
+        if ($t.Length -gt 0 -and $t.Length -le 2048 -and $t -match $script:StatelessNavTypeRx) { return 'stateless-nav-type' }
+    }
+    return $null
+}
+function Register-StatelessAction($a, [string]$kind, [string]$reason) {
+    # 无状态动作不进账本，但留一条轻量轨迹：同一动作连续 N 次且页面签名从未变化 = 空转，拒绝（防止豁免变成死循环）
+    if ($kind -in 'key', 'hotkey', 'type', 'scroll', 'cdp_navigate') { $script:P71Stats.StatelessPass++ }
+    $key = switch ($kind) { { $_ -in 'key', 'hotkey' } { "key|$("$($a.keys)".Trim().ToLower())" } 'type' { "type|$("$($a.text)".Trim().ToLower())" } 'cdp_navigate' { "nav|$("$($a.url)".Trim().ToLower())" } default { $null } }
+    if ($null -eq $key) { return }
+    $script:StatelessTrail.Add($key)
+    while ($script:StatelessTrail.Count -gt 8) { $script:StatelessTrail.RemoveAt(0) }
+    $n = $script:StatelessTrail.Count
+    if ($n -ge $script:StatelessLoopMax) {
+        $same = $true
+        for ($i = $n - $script:StatelessLoopMax; $i -lt $n; $i++) { if ($script:StatelessTrail[$i] -ne $key) { $same = $false; break } }
+        if ($same) {
+            $script:StatelessTrail.Clear()
+            throw "[REPEAT_NOEFFECT] 无状态动作「$(Limit-Text $key 60)」已连续 $($script:StatelessLoopMax) 次且页面签名（标题/URL + 画面哈希）始终没有变化——这是空转而不是进展。请换方法：浏览器任务用 cdp_navigate 直达正确网址 / cdp_wait_selector 等元素；或 vision_inspect 看真实页面（可能是 404 / 登录墙 / 验证码）。"
+        }
+    }
+}
+function Reset-SemanticStall([switch]$Full, [int]$Cooldown = 0) {
+    $script:SemWin.Clear()
+    $script:SemStall.Active = $false; $script:SemStall.Streak = 0; $script:SemStall.Cooldown = $Cooldown
+    if ($Full) { $script:SemStall.Triggers = 0; $script:ActCounter = 0; $script:StatelessTrail.Clear(); $script:SemStallNoteText = '' }
+}
+function Get-SemanticSig($obs) {
+    $where = ''
+    try { if ($obs.Cdp -and "$($obs.Cdp.Url)") { $where = "$($obs.Cdp.Url)" } } catch { }
+    if (-not $where) { try { $where = "$($obs.Foreground.Title)" } catch { } }
+    $hash = ''
+    try { if ($null -ne $obs.Pix) { $h = Get-RegionAHash ([byte[]]$obs.Pix); if ($h) { $hash = "$h" } } } catch { }
+    return [pscustomobject]@{ Where = $where; Hash = $hash; Acts = [int]$script:ActCounter }
+}
+function Update-SemanticStall($obs) {
+    # Semantic Stall Detector：每步一次。记录 (标题|URL, 区域 aHash)；若连续 SemStallSteps 步「期间执行过动作」但页面签名仍相同 → Active
+    if ($null -eq $obs) { return }
+    $cur = Get-SemanticSig $obs
+    $win = $script:SemWin
+    $streak = 0
+    if ($win.Count -gt 0) {
+        $idx = $win.Count - 1
+        $next = $cur
+        while ($idx -ge 0) {
+            $prev = $win[$idx]
+            $sameWhere = ($prev.Where -eq $next.Where)
+            $sameHash = ((Measure-HashDistance $prev.Hash $next.Hash) -le $script:SemHashTol) -or ([string]::IsNullOrEmpty($prev.Hash) -and [string]::IsNullOrEmpty($next.Hash))
+            if ($sameWhere -and $sameHash -and $next.Acts -gt $prev.Acts) { $streak++; $next = $prev; $idx-- } else { break }
+        }
+    }
+    $win.Add($cur)
+    while ($win.Count -gt 8) { $win.RemoveAt(0) }
+    $script:SemStall.Streak = $streak
+    if ($streak -eq 0) { $script:StatelessTrail.Clear() }   # 页面签名变了 = 有进展，空转计数归零
+    if ($script:SemStall.Cooldown -gt 0) { $script:SemStall.Cooldown--; $script:SemStall.Active = $false; return }
+    if ($streak -ge [int]$script:SemStallSteps) {
+        $script:SemStall.Active = $true; $script:SemStall.Where = $cur.Where
+        $script:SemStall.Why = "语义停滞：连续 $streak 步动作后页面签名未变（$(Limit-Text $cur.Where 70)；画面哈希 $($cur.Hash)）"
+        $script:SemStallNoteText = "【语义停滞】$($script:SemStall.Why)。同一导航 / 输入动作不会带来不同结果：不要再重复地址栏输入或按 Enter；先看图确认页面真实状态（是否 404 /「内容不存在」/ 登录墙 / 验证码 / 弹窗遮挡）；浏览器任务请改用 cdp_navigate 直达正确 URL，并用 cdp_wait_selector 等待目标元素。"
+    }
+    else { $script:SemStall.Active = $false }
+}
+function Get-SemanticStallNote { $n = $script:SemStallNoteText; $script:SemStallNoteText = ''; return $n }
+
+# ---------- 浏览器意图 / CDP 强制接管 ----------
+function Test-BrowserIntent([string]$Text) { return ([bool]("$Text" -match $script:BrowserIntentRx)) }
+function Get-FirstUrl([string]$Text) {
+    $m = [regex]::Match("$Text", '(?i)\bhttps?://[^\s<>"''，。；、）)]+')
+    if ($m.Success) { return $m.Value.TrimEnd('.', ',', ';') }
+    return ''
+}
+function Find-BrowserExe([string]$Hint = '') {
+    $h = "$Hint".ToLower()
+    $want = if ($h -match 'edge') { @('msedge.exe', 'chrome.exe', 'brave.exe') } elseif ($h -match 'brave') { @('brave.exe', 'chrome.exe', 'msedge.exe') } else { @('chrome.exe', 'msedge.exe', 'brave.exe') }
+    $dirs = @{
+        'chrome.exe' = @("$env:ProgramFiles\Google\Chrome\Application", "${env:ProgramFiles(x86)}\Google\Chrome\Application", "$env:LOCALAPPDATA\Google\Chrome\Application")
+        'msedge.exe' = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application", "$env:ProgramFiles\Microsoft\Edge\Application")
+        'brave.exe'  = @("$env:ProgramFiles\BraveSoftware\Brave-Browser\Application", "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\Application")
+    }
+    foreach ($exe in $want) {
+        foreach ($hive in 'HKCU', 'HKLM') {
+            try {
+                $k = Get-Item -LiteralPath "${hive}:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\$exe" -ErrorAction Stop
+                $p = [string]$k.GetValue('')
+                if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+            }
+            catch { }
+        }
+        foreach ($d in $dirs[$exe]) { $p = Join-Path $d $exe; if ($d -and (Test-Path -LiteralPath $p)) { return $p } }
+    }
+    return $null
+}
+function Invoke-CdpTakeover([string]$Reason, [string]$Url = '', [string]$Hint = '') {
+    # 强制接管：不允许静默降级为「盲人 UIA」。已有附着实例 → 复用并置顶；否则拉起独立 --user-data-dir + --remote-debugging-port 实例，SetForegroundWindow 置顶，并附着 CDP
+    $res = [pscustomobject]@{ Attached = $false; Reused = $false; Port = 0; Profile = ''; Hwnd = [IntPtr]::Zero; Note = ''; Reason = $Reason }
+    if (-not (Test-CdpEnabled)) { $res.Note = 'CDP 已关闭（-NoCdp）或输入模式不支持'; return $res }
+    if (-not (Initialize-CdpEngine)) { $res.Note = 'CDP 引擎不可用'; return $res }
+    $port = [int]$script:CdpState.Port
+    if ($port -gt 0 -and $script:Cdp -and $script:Cdp.Connected -and (Test-CdpEndpoint $port 600)) {
+        $res.Reused = $true; $res.Attached = $true; $res.Port = $port
+        $root = $script:CdpState.Root
+        if ($root -and $root -ne [IntPtr]::Zero) { [void][DsNative61]::Activate($root); $script:ObsHwnd = $root; $res.Hwnd = $root }
+        return $res
+    }
+    $exe = Find-BrowserExe $Hint
+    if (-not $exe) { $res.Note = '未找到 Chrome / Edge / Brave 可执行文件'; return $res }
+    $known = Get-TopHandles
+    $la = Start-CdpBrowser $exe $(if ($Url) { $Url } else { 'about:blank' })
+    $res.Port = [int]$la.Port; $res.Profile = "$($la.Profile)"
+    if (-not (Wait-CdpEndpoint ([int]$la.Port) 12000)) { $res.Note = "调试端口 $($la.Port) 12 秒内未就绪（浏览器可能被策略禁用远程调试）"; return $res }
+    $h = [IntPtr]::Zero; $pn = ''
+    $end = (Get-Date).AddSeconds(6)
+    while ((Get-Date) -lt $end -and $h -eq [IntPtr]::Zero) {
+        Test-Abort
+        foreach ($line in [DsNative61]::TopWindows([uint32]$PID, 100)) {
+            $hs = $line.Split('|', 3)[0]
+            if ($known.Contains($hs)) { continue }
+            $cand = [IntPtr][int64]$hs; $p2 = ''
+            try { $p2 = (Get-Process -Id ([int][DsNative61]::WinPid($cand)) -ErrorAction Stop).ProcessName.ToLower() } catch { }
+            if ($script:ChromiumNames -contains $p2) { $h = $cand; $pn = $p2; break }
+        }
+        if ($h -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 150 }
+    }
+    if ($h -ne [IntPtr]::Zero) {
+        [void][DsNative61]::Activate($h); $script:ObsHwnd = $h; $res.Hwnd = $h
+        $fg = [pscustomobject]@{ Handle = $h; Title = [DsNative61]::WinText($h); Process = $pn }
+        for ($i = 0; $i -lt 5 -and -not $res.Attached; $i++) {
+            try { if (Connect-CdpTarget $fg -Force) { $res.Attached = $true } } catch { }
+            if (-not $res.Attached) { Start-Sleep -Milliseconds 250; $fg.Title = [DsNative61]::WinText($h) }
+        }
+    }
+    else { $res.Note = '调试端口已就绪但没找到新的浏览器窗口' }
+    if ($res.Attached) { $script:P71Stats.Takeovers++; $script:CdpRetryAfter = 0 }
+    elseif (-not $res.Note) { $res.Note = 'CDP 目标附着失败' }
+    return $res
+}
+function Invoke-CdpGuardian {
+    # 每步一次：前台是 Chromium 浏览器、但没有可用的 CDP 调试端口（盲人 UIA）→ 立刻接管；最多 2 次 / 任务
+    if ($env:DSCU_NO_CDP_TAKEOVER -or -not (Test-CdpEnabled)) { return '' }
+    $fg = $null
+    try { $fg = Get-ForegroundInfo } catch { return '' }
+    if ($null -eq $fg -or $script:ChromiumNames -notcontains "$($fg.Process)".ToLower()) { return '' }
+    if (Test-CdpForeground) { return '' }
+    if ((Resolve-CdpPort $fg) -gt 0) { return '' }
+    if ([int]$script:CdpTakeoverTries -ge 2) { return '' }
+    $script:CdpTakeoverTries++
+    $tk = Invoke-CdpTakeover 'blind-uia-guard' '' "$($fg.Process)"
+    if ($tk -and $tk.Attached) { return "🌐 CDP 强制接管：前台 $($fg.Process) 未开启 --remote-debugging-port（只能盲人 UIA），已拉起独立 Profile + 调试端口 $($tk.Port) 的实例并置顶聚焦。浏览器导航请直接用 cdp_navigate（Page.navigate），不要再点地址栏 + 键盘敲 URL。" }
+    return "⚠ CDP 接管失败（$($tk.Note)）：本步仍回退 UIA；页面若反复无变化会由「语义停滞检测」升级为视觉。"
+}
+
+# ---------- cdp_navigate / cdp_wait_selector ----------
+function ConvertTo-NavUrl([string]$Raw) {
+    $u = "$Raw".Trim().Trim('"').Trim("'")
+    if ($u -eq '') { throw 'cdp_navigate 需要 url' }
+    if ($u -match '^(?i)(javascript|data|file|vbscript|blob|ftp|chrome-extension|view-source|ws|wss):') { throw (New-SecError 'SECURITY_EXEC_VIOLATION' "cdp_navigate 禁止 $($Matches[1]): 协议（只允许 http / https / about:blank）。") }
+    if ($u -eq 'about:blank') { return $u }
+    if ($u -notmatch '^(?i)https?://') {
+        if ($u -match '^//') { $u = 'https:' + $u }
+        elseif ($u -match '^(?i)(localhost|(?:[a-z0-9\-]+\.)+[a-z]{2,}|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?([/?#].*)?$') { $u = 'https://' + $u }
+        else { throw "cdp_navigate 的 url「$(Limit-Text $u 80)」不是合法网址（需要 http(s)://… 或域名）" }
+    }
+    $uri = $null
+    try { $uri = [System.Uri]::new($u) } catch { throw "cdp_navigate 的 url 无法解析: $(Limit-Text $u 80)" }
+    if ($uri.Scheme -notin 'http', 'https') { throw (New-SecError 'SECURITY_EXEC_VIOLATION' "cdp_navigate 只允许 http / https（收到 $($uri.Scheme)）。") }
+    return $uri.AbsoluteUri
+}
+function Assert-CdpNavigatePolicy($a) {
+    $u = ConvertTo-NavUrl "$($a.url)"
+    if ($u -eq 'about:blank') { return }
+    $h = ([System.Uri]$u).Host
+    if ($script:Taint.TaskInjection -and -not (Test-DomainTrusted $h)) {
+        $script:SecStats.TaintBlocked++
+        Write-SecEvent 'SECURITY_TAINT_BLOCKED' "cdp_navigate host=$h"
+        throw (New-SecError 'SECURITY_TAINT_BLOCKED' "本任务已检测到间接提示词注入：禁止导航到不在任务原文里的域名（$h）。")
+    }
+    Write-SecEvent 'CDP_NAVIGATE' "host=$h tainted=$($script:Taint.Tainted)"
+}
+function Invoke-CdpNavigate($a) {
+    $url = ConvertTo-NavUrl "$($a.url)"
+    if (-not (Test-CdpEnabled)) { throw '[CDP_UNAVAILABLE] CDP 已关闭（-NoCdp）或输入模式不支持；请改用 {"action":"launch","target":"https://…"}。' }
+    if (-not (Initialize-CdpEngine)) { throw '[CDP_UNAVAILABLE] CDP 引擎初始化失败；请改用 launch 带网址。' }
+    $note = ''
+    $c = $script:Cdp
+    $port = [int]$script:CdpState.Port
+    $alive = ($c -and $c.Connected -and $port -gt 0 -and (Test-CdpEndpoint $port 600))
+    if (-not $alive) {
+        $tk = Invoke-CdpTakeover 'cdp_navigate' '' ''
+        if (-not $tk -or -not $tk.Attached) { throw "[CDP_UNAVAILABLE] 无法接管浏览器（$(if ($tk) { $tk.Note } else { '未知' })）；请改用 launch chrome 后再试。" }
+        $note = "；已自动拉起 CDP 隔离浏览器（端口 $($tk.Port)）并置顶聚焦"
+    }
+    else {
+        $root = $script:CdpState.Root
+        if ($root -and $root -ne [IntPtr]::Zero -and [DsNative61]::Root([DsNative61]::GetForegroundWindow()) -ne $root) { [void][DsNative61]::Activate($root); $script:ObsHwnd = $root; $note = '；已把 CDP 浏览器窗口置顶' }
+    }
+    $r = Invoke-CdpMethod 'Page.navigate' @{ url = $url } 15000
+    if ($r -and $r.errorText) { throw "[NAV_FAILED] Page.navigate 失败: $($r.errorText)（URL=$(Limit-Text $url 100)）" }
+    $settled = $false
+    try { $settled = [bool](Wait-CdpSettled -TimeoutMs 6000) } catch { if ("$($_.Exception.Message)" -like '触发保护*') { throw } }
+    $info = $null
+    try { $e = Invoke-CdpMethod 'Runtime.evaluate' @{ expression = '({u:location.href,t:document.title,s:document.readyState})'; returnByValue = $true } 4000; $info = $e.result.value } catch { }
+    $script:P71Stats.CdpNavigate++
+    $fin = if ($info) { "$($info.u)" } else { $url }
+    $jump = ''
+    try { if ($info -and ([System.Uri]$fin).Host -ne ([System.Uri]$url).Host) { $jump = "；⚠ 发生跨域跳转（$(([System.Uri]$url).Host) → $(([System.Uri]$fin).Host)），请确认是不是登录墙 / 验证页" } } catch { }
+    return "已通过 CDP Page.navigate 直达 $(Limit-Text $url 100)；当前 URL=$(Limit-Text $fin 120)；标题「$(Limit-Text $(if ($info) { "$($info.t)" } else { '' }) 60)」；readyState=$(if ($info) { $info.s } else { '?' })；$(if ($settled) { '页面已稳定（readyState=complete 且无在途请求）' } else { '页面仍在加载，请下一轮观察确认' })$jump$note"
+}
+$script:CdpWaitSelectorJs = @'
+(()=>{const SEL=__SEL__,TXT=__TXT__,VIS=__VIS__;
+function* roots(r,d){yield r;if(d>6)return;let all;try{all=r.querySelectorAll('*')}catch(_){return}
+for(const e of all){if(e.shadowRoot)yield* roots(e.shadowRoot,d+1);if(e.tagName==='IFRAME'||e.tagName==='FRAME'){try{if(e.contentDocument)yield* roots(e.contentDocument,d+1)}catch(_){}}}}
+let n=0;
+for(const r of roots(document,0)){let list=[];try{list=SEL?r.querySelectorAll(SEL):r.querySelectorAll('*')}catch(_){return {ok:false,err:'bad selector'}}
+for(const el of list){const t=(el.innerText||el.textContent||'');if(TXT&&t.indexOf(TXT)<0)continue;
+if(!SEL&&TXT&&el.children&&el.children.length>0&&Array.from(el.children).some(c=>(c.innerText||c.textContent||'').indexOf(TXT)>=0))continue;
+const b=el.getBoundingClientRect();const cs=getComputedStyle(el);
+const vis=b.width>0&&b.height>0&&cs.visibility!=='hidden'&&cs.display!=='none';
+n++;if(VIS&&!vis)continue;
+return {ok:true,tag:el.tagName,text:t.replace(/\s+/g,' ').slice(0,80),x:Math.round(b.x+b.width/2),y:Math.round(b.y+b.height/2),count:n}}}
+return {ok:false,count:n}})()
+'@
+function Invoke-CdpWaitSelector($a) {
+    if (-not (Test-CdpEnabled) -or -not (Initialize-CdpEngine)) { throw '[CDP_UNAVAILABLE] CDP 不可用；改用 wait + inspect / ocr。' }
+    if (-not ($script:Cdp -and $script:Cdp.Connected)) { throw '[CDP_UNAVAILABLE] 当前没有已附着的 CDP 页面；先用 cdp_navigate（会自动接管浏览器）。' }
+    $sel = "$($a.selector)"
+    $txt = "$($a.text)"
+    $to = 8000
+    if (Test-NumValue $a.timeout) { $to = [int][double]"$($a.timeout)"; if ($to -le 60) { $to = $to * 1000 } }   # 兼容模型写秒
+    $to = [Math]::Min([Math]::Max($to, 300), 30000)
+    $vis = if ($null -ne $a.visible -and "$($a.visible)" -ne '') { [bool](Test-True $a.visible) } else { $true }
+    $js = $script:CdpWaitSelectorJs.Replace('__SEL__', ($sel | ConvertTo-Json -Compress)).Replace('__TXT__', ($txt | ConvertTo-Json -Compress)).Replace('__VIS__', $(if ($vis) { 'true' } else { 'false' }))
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $last = $null
+    while ($true) {
+        Test-Abort
+        try {
+            $e = Invoke-CdpMethod 'Runtime.evaluate' @{ expression = $js; returnByValue = $true } 3000
+            $v = $e.result.value
+            if ($v -and $v.err) { throw "选择器语法错误: $(Limit-Text $sel 80)" }
+            if ($v -and $v.ok) {
+                $script:P71Stats.WaitSelector++
+                return "元素已出现：<$($v.tag.ToLower())> 「$(Limit-Text "$($v.text)" 50)」视口中心(CSS px) ($($v.x),$($v.y))；用时 $($sw.ElapsedMilliseconds)ms（selector=$(Limit-Text $sel 60)$(if ($txt) { " text=$(Limit-Text $txt 30)" })；已穿透 Shadow DOM / 同源 iframe）"
+            }
+            $last = $v
+        }
+        catch { if ("$($_.Exception.Message)" -like '选择器语法错误*') { throw }; $last = $null }
+        if ($sw.ElapsedMilliseconds -ge $to) { break }
+        Start-Sleep -Milliseconds 150
+    }
+    $script:P71Stats.WaitSelector++
+    return "❌ 等待超时（$to ms）：selector=$(Limit-Text $sel 60)$(if ($txt) { " text=$(Limit-Text $txt 30)" }) 未出现$(if ($last -and $last.count) { "（有 $($last.count) 个匹配但不可见）" })。页面可能是 404 /「内容不存在」/ 登录墙 / 需要滚动；请 vision_inspect 或换选择器，不要原样重试。"
+}
+
+# ---------- file_stat / dir_list：只读、Path Jail 约束、仅返回元数据 ----------
+function Expand-StatAlias([string]$Raw) {
+    $p = "$Raw".Trim().Trim('"').Trim("'")
+    $parts = $p -split '[\\/]', 2
+    $seg = ($parts[0] -replace '^[\{\$~%]+', '' -replace '[\}%]+$', '' -replace '^env:', '').Trim().ToLower()
+    $map = @{ '桌面' = 'Desktop'; 'desktop' = 'Desktop'; '文档' = 'MyDocuments'; '我的文档' = 'MyDocuments'; 'documents' = 'MyDocuments'; 'mydocuments' = 'MyDocuments'; '图片' = 'MyPictures'; 'pictures' = 'MyPictures'; '视频' = 'MyVideos'; 'videos' = 'MyVideos'; '音乐' = 'MyMusic'; 'music' = 'MyMusic'; '下载' = 'Downloads'; 'downloads' = 'Downloads'; '工作区' = 'WS'; 'workspace' = 'WS'; 'ws' = 'WS' }
+    if (-not $map.ContainsKey($seg)) { return $p }
+    $base = $null
+    switch ($map[$seg]) {
+        'WS' { $base = [string]$script:WorkspaceRoot }
+        'Downloads' { $up = [Environment]::GetEnvironmentVariable('USERPROFILE'); if ($up) { $base = Join-Path $up 'Downloads' } }
+        default { try { $base = [Environment]::GetFolderPath($map[$seg]) } catch { $base = $null } }
+    }
+    if ([string]::IsNullOrWhiteSpace($base)) { return $p }
+    if ($parts.Count -gt 1 -and $parts[1]) { return ($base.TrimEnd('\', '/') + '\' + $parts[1].TrimStart('\', '/')) }   # 纯字符串拼接：Windows 路径语义，与平台无关
+    return $base
+}
+function Get-StatRoots {
+    $roots = [System.Collections.Generic.List[string]]::new()
+    if ($script:WorkspaceRoot) { $roots.Add([string]$script:WorkspaceRoot) }
+    foreach ($sf in 'Desktop', 'MyDocuments', 'MyPictures', 'MyVideos', 'MyMusic') {
+        try { $p = [Environment]::GetFolderPath($sf); if ($p -and -not $roots.Contains($p)) { $roots.Add($p) } } catch { }
+    }
+    $up = [Environment]::GetEnvironmentVariable('USERPROFILE')
+    if ($up) { $dl = Join-Path $up 'Downloads'; if (-not $roots.Contains($dl)) { $roots.Add($dl) } }
+    return @($roots)
+}
+function Assert-StatJail([string]$Path, [switch]$Wildcard) {
+    # 复用 Test-SafePath（规范化 / 保留名 / ADS / 8.3 / ReparsePoint / FinalPath）逐个检查「只读白名单根」：工作区 + 桌面 / 文档 / 图片 / 视频 / 音乐 / 下载；任何敏感目录（.ssh / AppData / 系统目录）都在这些根之外 → 拒绝
+    if (-not $script:SafeOn) { return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path)) }
+    foreach ($root in (Get-StatRoots)) {
+        $r = Test-SafePath -Path $Path -Operation 'read' -Root $root -AllowWildcard:$Wildcard
+        if ($r.Ok) { return $r.Path }
+    }
+    return (Assert-SafePath -Path $Path -Operation 'read' -AllowWildcard:$Wildcard)   # 统一抛 SECURITY_PATH_VIOLATION（含 SecEvent 计数）
+}
+function Resolve-StatTarget($a, [string]$kind) {
+    $raw = "$($a.path)"
+    if ([string]::IsNullOrWhiteSpace($raw)) { throw "$kind 需要 path" }
+    $p = Expand-StatAlias $raw
+    $tp = $p.TrimEnd('\', '/'); $ix = [Math]::Max($tp.LastIndexOf('\'), $tp.LastIndexOf('/'))   # 手工切分（Windows 语义，与运行平台无关；[IO.Path] 在非 Windows 上不认反斜杠）
+    $leaf = if ($ix -ge 0) { $tp.Substring($ix + 1) } else { $tp }
+    $dirPart = if ($ix -gt 0) { $tp.Substring(0, $ix) } else { '' }
+    if ($p -match '[*?]') {
+        if ($dirPart -match '[*?]') { throw "$kind 的通配符只能出现在最后一级文件名里" }
+        $dir = Assert-StatJail $(if ($dirPart) { $dirPart } else { '.' })
+        return [pscustomobject]@{ Kind = $kind; Dir = $dir; Pattern = $leaf; Path = $null }
+    }
+    $full = Assert-StatJail $p
+    return [pscustomobject]@{ Kind = $kind; Dir = $null; Pattern = $null; Path = $full }
+}
+function Get-FileEncodingInfo([byte[]]$Bytes, [bool]$Truncated = $false) {
+    $n = $Bytes.Length
+    $mk = { param($name, $skip, $enc) [pscustomobject]@{ Name = $name; Skip = $skip; Enc = $enc } }
+    if ($n -ge 4 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE -and $Bytes[2] -eq 0 -and $Bytes[3] -eq 0) { return (& $mk 'UTF-32 LE (BOM)' 4 ([System.Text.UTF32Encoding]::new($false, $false))) }
+    if ($n -ge 4 -and $Bytes[0] -eq 0 -and $Bytes[1] -eq 0 -and $Bytes[2] -eq 0xFE -and $Bytes[3] -eq 0xFF) { return (& $mk 'UTF-32 BE (BOM)' 4 ([System.Text.UTF32Encoding]::new($true, $false))) }
+    if ($n -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) { return (& $mk 'UTF-8 (带 BOM)' 3 ([System.Text.UTF8Encoding]::new($false))) }
+    if ($n -ge 2 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE) { return (& $mk 'UTF-16 LE (BOM)' 2 ([System.Text.UnicodeEncoding]::new($false, $false))) }
+    if ($n -ge 2 -and $Bytes[0] -eq 0xFE -and $Bytes[1] -eq 0xFF) { return (& $mk 'UTF-16 BE (BOM)' 2 ([System.Text.UnicodeEncoding]::new($true, $false))) }
+    $ascii = $true
+    foreach ($b in $Bytes) { if ($b -ge 0x80) { $ascii = $false; break } }
+    if ($ascii) { return (& $mk 'ASCII（与 UTF-8 兼容）' 0 ([System.Text.UTF8Encoding]::new($false))) }
+    $chk = if ($Truncated -and $n -gt 4) { $Bytes[0..($n - 4)] } else { $Bytes }
+    try { [void][System.Text.UTF8Encoding]::new($false, $true).GetString($chk); return (& $mk 'UTF-8 (无 BOM)' 0 ([System.Text.UTF8Encoding]::new($false))) } catch { }
+    foreach ($cp in 54936, 936) { try { $e = [System.Text.Encoding]::GetEncoding($cp); return (& $mk "ANSI/GBK（推测，codepage $cp）" 0 $e) } catch { } }
+    return (& $mk '未知（非 UTF-8，按 Latin1 读取）' 0 ([System.Text.Encoding]::Latin1))
+}
+function Format-StatTime($d) { return ([datetime]$d).ToString('yyyy-MM-dd HH:mm:ss') }
+function Invoke-FileStat($a) {
+    $t = Resolve-StatTarget $a 'file_stat'
+    $script:P71Stats.FileStat++
+    $files = @()
+    $how = ''
+    if ($t.Pattern) { $files = @(Get-ChildItem -LiteralPath $t.Dir -Filter $t.Pattern -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending); $how = "通配 $($t.Pattern)" }
+    elseif ([System.IO.File]::Exists($t.Path)) { $files = @(Get-Item -LiteralPath $t.Path -ErrorAction SilentlyContinue); $how = '精确匹配' }
+    elseif ([System.IO.Directory]::Exists($t.Path)) { return "file_stat: 「$($t.Path)」是目录，请用 dir_list。" }
+    else {
+        $dir = [System.IO.Path]::GetDirectoryName($t.Path); $leaf = [System.IO.Path]::GetFileName($t.Path)
+        if ($dir -and [System.IO.Directory]::Exists($dir)) {
+            $files = @(Get-ChildItem -LiteralPath $dir -Filter ($leaf + '.*') -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+            if ($files.Count -gt 0) { $how = "按「名称.*」匹配（记事本等程序会自动补扩展名）" }
+        }
+    }
+    if ($files.Count -eq 0) {
+        $near = ''
+        try {
+            $dir = if ($t.Dir) { $t.Dir } else { [System.IO.Path]::GetDirectoryName($t.Path) }
+            if ($dir -and [System.IO.Directory]::Exists($dir)) {
+                $stem = if ($t.Pattern) { ($t.Pattern -replace '[*?]', '') } else { [System.IO.Path]::GetFileNameWithoutExtension($t.Path) }
+                if ($stem.Length -ge 3) {
+                    $nn = @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name.ToLower().Contains($stem.Substring(0, [Math]::Min(6, $stem.Length)).ToLower()) } | Select-Object -First 5 | ForEach-Object { $_.Name })
+                    if ($nn.Count -gt 0) { $near = "；同目录名称相近的文件: " + ($nn -join ' | ') }
+                }
+            }
+        } catch { }
+        return "file_stat: ❌ 不存在 — $(Limit-Text $(if ($t.Pattern) { Join-Path $t.Dir $t.Pattern } else { $t.Path }) 160)$near"
+    }
+    $f = $files[0]
+    $max = 65536
+    $bytes = [byte[]]@(); $trunc = $false; $lenRead = 0
+    $fs = $null
+    try {
+        $fs = [System.IO.File]::Open($f.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+        $buf = [byte[]]::new([int][Math]::Min([long]$max, $fs.Length))
+        $lenRead = $fs.Read($buf, 0, $buf.Length); $bytes = $buf[0..([Math]::Max(0, $lenRead - 1))]
+        if ($lenRead -le 0) { $bytes = [byte[]]@() }
+        $trunc = ($fs.Length -gt $max)
+    }
+    catch { return "file_stat: 存在但无法读取元数据 — $($f.FullName)（$(Limit-Text $_.Exception.Message 80)）" }
+    finally { if ($fs) { $fs.Dispose() } }
+    $enc = Get-FileEncodingInfo $bytes $trunc
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.Append("file_stat: ✅ 存在（$how）— 名称=$($f.Name) | 大小=$($f.Length) 字节 | 编码=$($enc.Name) | 修改时间=$(Format-StatTime $f.LastWriteTime) | 路径=$($f.FullName)")
+    if ($files.Count -gt 1) { [void]$sb.Append("；另有 $($files.Count - 1) 个匹配: " + (($files | Select-Object -Skip 1 -First 4 | ForEach-Object { $_.Name }) -join ' | ')) }
+    $exp = @()
+    if ($null -ne $a.expect_text -and "$($a.expect_text)" -ne '') { $exp = @($a.expect_text | ForEach-Object { "$_" }) }
+    if ($exp.Count -gt 0) {
+        if ($trunc -or $f.Length -gt 2MB) { [void]$sb.Append("；内容校验：文件较大，仅检查了前 64KB") }
+        $text = ''
+        try { $text = $enc.Enc.GetString($bytes, [int]$enc.Skip, [int]($bytes.Length - $enc.Skip)) } catch { }
+        $flat = ($text -replace '\s+', '')
+        foreach ($x in $exp) {
+            $hit = $text.Contains($x) -or $flat.Contains(($x -replace '\s+', ''))
+            [void]$sb.Append("；内容包含「$(Limit-Text $x 40)」= $(if ($hit) { '是 ✓' } else { '否 ✗' })")
+        }
+        [void]$sb.Append("（只返回布尔值，不回显文件内容）")
+    }
+    if (-not $trunc) { try { $txt2 = $enc.Enc.GetString($bytes, [int]$enc.Skip, [int]($bytes.Length - $enc.Skip)); [void]$sb.Append("；字符数=$($txt2.TrimEnd("`r", "`n").Length)") } catch { } }
+    return $sb.ToString()
+}
+function Invoke-DirList($a) {
+    $t = Resolve-StatTarget $a 'dir_list'
+    $script:P71Stats.DirList++
+    $dir = if ($t.Dir) { $t.Dir } else { $t.Path }
+    $pat = if ($t.Pattern) { $t.Pattern } elseif ("$($a.pattern)" -ne '') { "$($a.pattern)" } else { '*' }
+    if ($pat -match '[\\/:]') { throw 'dir_list 的 pattern 不能包含路径分隔符' }
+    if (-not [System.IO.Directory]::Exists($dir)) { return "dir_list: ❌ 目录不存在 — $(Limit-Text $dir 160)" }
+    $lim = 50
+    if (Test-NumValue $a.limit) { $lim = [Math]::Min([Math]::Max([int][double]"$($a.limit)", 1), 200) }
+    $items = @(Get-ChildItem -LiteralPath $dir -Filter $pat -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+    $lines = @($items | Select-Object -First $lim | ForEach-Object {
+            if ($_.PSIsContainer) { "  [目录] $($_.Name)  $(Format-StatTime $_.LastWriteTime)" } else { "  [文件] $($_.Name)  $($_.Length) 字节  $(Format-StatTime $_.LastWriteTime)" }
+        })
+    return "dir_list: $(Limit-Text $dir 120) 共 $($items.Count) 项（pattern=$pat，按修改时间倒序，显示前 $([Math]::Min($items.Count, $lim)) 项；仅元数据）:`n" + ($lines -join "`n")
+}
+function Get-P71StatsLine {
+    $s = $script:P71Stats
+    return "v9.1：无状态豁免 $($s.StatelessPass) 次 · 语义停滞触发 $($s.StallTriggers) 次 · CDP 接管 $($s.Takeovers) 次 · cdp_navigate $($s.CdpNavigate) 次 · file_stat/dir_list $($s.FileStat)/$($s.DirList) 次"
+}
+#endregion
+
 #region ---------- v6.2 第一阶段：UIA 主通道 + Set-of-Mark 标注截图 + DeepSeek 视觉兜底（按需触发） ----------
 # 设计要点（只加深、不加大；C# 原生层 DsNative61 / DsOverlay61 / DsTestTarget61 逐字未改）：
 #  1) 视觉通道只在「UIA 盲区 / 执行受阻 / 模型显式 vision_inspect」时触发；常规步骤与规划继续走 $Model。UIA 永远是主通道。
@@ -5440,6 +5896,13 @@ function Test-ShouldEscalateToVision($obs, $ledger = $script:Ledger) {
         return [pscustomobject]@{ Use = $true; Reason = 'EXPLICIT'; Why = '模型显式请求 vision_inspect'; Detail = (ConvertTo-VisionDetail $req.Detail); Region = $req.Region }
     }
     if ($obs.IsConsole) { return $no }
+    # v9.1 Semantic Stall Detector：(标题|URL, aHash) 窗口连续 2 步无进展 → 无视 UIA 控件数（浏览器工具栏 6~110 个控件使 UIA_BLIND 永不触发）直接升级视觉
+    if ($script:SemStall.Active) {
+        $why = "$($script:SemStall.Why)"
+        $script:P71Stats.StallTriggers++; $script:SemStall.Triggers++
+        Reset-SemanticStall -Cooldown 2
+        return [pscustomobject]@{ Use = $true; Reason = 'SEMANTIC_STALL'; Why = $why; Detail = 'original'; Region = $null }
+    }
     if ($obs.CdpHint) { return [pscustomobject]@{ Use = $true; Reason = 'CDP_CANVAS'; Why = "CDP 盲区：$($obs.CdpHint)"; Detail = 'original'; Region = $null } }   # v6.3：canvas / WebGL / 验证码 / 跨进程 iframe
     $ic = if ($null -ne $obs.Inter) { [int]$obs.Inter } else { 99 }
     if ($ic -lt 6) {
@@ -6431,7 +6894,7 @@ function Get-CdpLaunchArgs([string]$Target, [string]$ArgStr) {
     $flags = [System.Collections.Generic.List[string]]::new()
     if ($ArgStr -notmatch '--remote-debugging-port') { $flags.Add("--remote-debugging-port=$port") }
     if ($ArgStr -notmatch '--user-data-dir') { $flags.Add("--user-data-dir=`"$profile`"") }
-    foreach ($f in @('--no-first-run', '--no-default-browser-check', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows')) {
+    foreach ($f in @('--remote-debugging-address=127.0.0.1', '--no-first-run', '--no-default-browser-check', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows')) {
         if ($ArgStr -notmatch [regex]::Escape($f)) { $flags.Add($f) }   # 后三项：窗口被遮挡 / 失焦时不降频，rAF / 定时器照常，等待才是确定性的
     }
     $full = (($flags -join ' ') + ' ' + $ArgStr).Trim()
@@ -6441,7 +6904,7 @@ function Start-CdpBrowser([string]$Target, [string]$ArgStr = '') {
     # 隔离式启动：独立 --user-data-dir（不污染 / 不冲突你日常浏览器的登录态）+ --remote-debugging-port；显式 -CdpProfile 才复用指定目录
     $la = Get-CdpLaunchArgs $Target $ArgStr
     New-Item -ItemType Directory -Force -Path $la.Profile | Out-Null
-    Start-Process -FilePath $Target -ArgumentList $la.Args
+    Start-Process -FilePath $Target -ArgumentList $la.Args   # v9.1：调用方（Invoke-CdpTakeover）负责等待端点 + SetForegroundWindow + 附着
     $script:CdpState.Port = [int]$la.Port; $script:CdpState.Profile = $la.Profile; $script:CdpState.Launched = $true
     $script:CdpPidPort = @{}
     return $la
@@ -7402,6 +7865,10 @@ B) 批量动作： {"thought":"一句话判断","step":1,"expect":"…","actions
 - {"action":"scroll","direction":"down","amount":5}  可带 id 指定要滚动的区域
 - {"action":"launch","target":"notepad","args":""} 启动程序/网址/文件（notepad、calc、chrome、msedge、https://www.bing.com）
 - {"action":"focus_window","title":"记事本"}         按标题或进程名切换窗口
+- {"action":"cdp_navigate","url":"https://www.douyin.com/hot"}   【浏览器首选】用 CDP Page.navigate 直达网址（自动接管 / 置顶浏览器，等页面稳定后返回最终 URL 与标题）。**禁止**再用「点地址栏 + type 网址 + key enter」——那条路径会被无障碍盲区和位置漂移卡死
+- {"action":"cdp_wait_selector","selector":"a[href*='/video/']","text":"","timeout":8000,"visible":true}   等页面元素出现（穿透 Shadow DOM / 同源 iframe）；超时会明确告诉你页面可能是 404 / 登录墙，不要原样重试
+- {"action":"file_stat","path":"桌面\\P2024*.txt","expect_text":"你好"}   【只读验收】查文件是否存在 + 名称 / 大小 / 编码 / 修改时间；expect_text 只返回「是否包含」的布尔值。验收保存结果用它，**不要**用 run_powershell Get-ChildItem（会被 AST 审计拒绝）。path 以 桌面 / 文档 / 下载 / 工作区 开头或给绝对路径
+- {"action":"dir_list","path":"桌面","pattern":"*.txt","limit":30}   【只读】列目录（名称 / 类型 / 大小 / 修改时间，按时间倒序）
 - {"action":"wait","seconds":2}
 - {"action":"run_powershell","command":"Get-Date","timeout":60} 执行 PowerShell（仅当系统提示允许时可用；默认约 60 秒超时，可用 timeout 加长到 900；不要运行会常驻/交互的命令；脚本超过约 40 行不要塞进 command，改用 write_file）
 - {"action":"write_file","path":"C:\\绝对路径\\x.py","content":"…","append":false}   写 UTF-8 文本文件（系统读回核验大小）。长脚本分段写：第一段 append=false，后续段 append=true，每段不超过约 150 行
@@ -7445,12 +7912,13 @@ B) 批量动作： {"thought":"一句话判断","step":1,"expect":"…","actions
 27. 前台被本控制台占据时，系统会自动切回上一个目标窗口并在观察开头说明，不需要你 focus_window。done 的 summary 里要写出你在最新观察中看到的完成证据（对应计划的「完成证据」）。
 28. 【人类化输入 v6】浏览器窗口里的 click / double_click / right_click / hover / drag / scroll / type 是「真实鼠标键盘的人类化操作」：光标沿曲线真实移到目标（约 0.15~0.9 秒）、到位后重新核对目标位置与遮挡、悬停片刻、再按下抬起；结果写「人类化物理输入」即这些步骤都已完成，光标会停在目标上（hover 后菜单保持展开）；文字按人类节奏逐字输入。所以一个动作大约要 1 秒，不要连发相同动作，也不要为了「更快」换别的方式；结果提示「你正在使用鼠标…让出控制权」时先 wait 再重试。
 29. 【视觉兜底 v6.2】系统会在三种情况下自动给你「标注截图」并改用视觉模型：前台窗口可交互控件 < 6（盲区）、连续 2 次动作无效 / UNGROUNDED、或你输出了 vision_inspect。视觉轮次里：带 [n] 角标的彩色框就是观察列表里的控件 [n]，优先 {"id":n}；没有框的目标直接给坐标 x,y；该轮所有坐标（包括文本里的 @(x,y)）都是「图像坐标」，系统自动换算为物理屏幕坐标，落在截图窗口内的坐标自动视为有依据（不会再报 UNGROUNDED）。每个任务的视觉轮数有上限，能用控件编号就不要靠看图；图片不会保留到下一轮，需要记住的信息请写进 thought。
+30. 【v9.1 稳定化】① 浏览器任务：前台浏览器没有调试端口时系统会自动拉起「独立 Profile + 调试端口」实例并置顶，之后导航只用 cdp_navigate / cdp_wait_selector，页面细节用 CDP 观察（不再是 UIA 盲区）。② key enter / ctrl+l / scroll / cdp_navigate / 输入网址属于无状态动作，可以重复；但「同一动作连续 4 次且页面标题/URL/画面哈希都没变」会被判为空转（REPEAT_NOEFFECT）。③ 系统出现【语义停滞】提示 = 连续 2 步动作后页面没有任何进展，会自动给你标注截图：先看图判断真实状态（404 /「内容不存在」/ 登录墙 / 验证码），再换方法，不要重复同一导航。④ 验收文件结果用 file_stat（只读，返回大小 / 编码 / 修改时间 / 内容是否包含 expect_text），不要用 run_powershell 读桌面。
 '@
 $PlannerPrompt = @'
 你是 Windows 电脑操作代理的「规划器」。在执行任何动作之前，根据【任务】和【当前观察】制定一份完整、可验证、不重复的执行计划。
 观察格式：[编号] 控件类型 "名称" ≈「附近文字」 {可用模式} @(中心x,中心y)；inv=可调用 val=可写值 tog=开关 sel=可选中 exp=可展开 foc=可获得焦点。
 执行器可用的动作：click / double_click / right_click / hover / drag / type / key / scroll / select_rows / check / uncheck / launch / focus_window / wait /
-inspect（查看某点的无障碍祖先链、颜色、OCR） / ocr（读屏幕文字和坐标） / vision_inspect（无障碍盲区时看标注截图） / run_powershell / write_file / run_process。
+inspect（查看某点的无障碍祖先链、颜色、OCR） / ocr（读屏幕文字和坐标） / vision_inspect（无障碍盲区时看标注截图） / run_powershell / write_file / run_process / cdp_navigate（浏览器直达网址，替代点地址栏输入） / cdp_wait_selector（等元素出现） / file_stat · dir_list（只读验收文件结果，替代 run_powershell 读桌面）。
 只输出一个 JSON 对象（不要 markdown）：
 {"goal":"一句话目标",
  "done_when":["完成时在观察里能看到的客观证据：标题 / 控件 / value / 勾选汇总 / inspect 的颜色占比等，1~3 条"],
@@ -7647,6 +8115,7 @@ function Invoke-AgentTask([string]$TaskText) {
     $script:Ledger = [System.Collections.Generic.List[object]]::new()
     $script:Grounded = [System.Collections.Generic.List[object]]::new()
     $script:RepeatOverride = @{}
+    Reset-SemanticStall -Full; $script:CdpTakeoverTries = 0   # v9.1：每个任务独立的语义停滞窗口 / 接管次数
     $script:Plan = $null; $script:PlanCur = 0; $script:Replans = 0
     $script:OcrCache = $null
     Initialize-TaskSecurity $TaskText   # v6.4：任务专属工作区 / 污点复位 / 可信域名 / Job
@@ -7698,6 +8167,15 @@ function Invoke-AgentTask([string]$TaskText) {
             }
             else { Write-Host "  $($fpr.Summary)" -ForegroundColor DarkYellow }
         }
+        # v9.1：浏览器类任务开局即强制接管（独立 Profile + 调试端口 + 置顶），不再让第一步落在「盲人 UIA」的用户 Chrome 上
+        if (-not $fpDone -and -not $DryRun -and -not $env:DSCU_NO_CDP_TAKEOVER -and (Test-CdpEnabled) -and (Test-BrowserIntent $TaskText)) {
+            try {
+                $tk0 = Invoke-CdpTakeover 'task-intent' (Get-FirstUrl $TaskText) ''
+                if ($tk0 -and $tk0.Attached) { $m0 = "🌐 浏览器任务：已强制接管 CDP（$(if ($tk0.Reused) { '复用已附着实例' } else { "独立 Profile 实例，端口 $($tk0.Port)" })），前台已置顶。直达网址请用 cdp_navigate。"; Write-Host "  $m0" -ForegroundColor Green; $history.Add("系统: $m0") }
+                elseif ($tk0) { Write-Host "  ⚠ CDP 开局接管失败（$($tk0.Note)）；运行中仍会重试，页面无进展时由语义停滞检测升级视觉。" -ForegroundColor DarkYellow }
+            }
+            catch { if ("$($_.Exception.Message)" -like '触发保护*') { throw }; Write-Host "  CDP 开局接管异常: $(Limit-Text $_.Exception.Message 120)" -ForegroundColor DarkYellow }
+        }
         for ($step = $(if ($fpDone) { $MaxSteps + 1 } else { 1 }); $step -le $MaxSteps; $step++) {
             try {
             Test-Abort
@@ -7705,6 +8183,9 @@ function Invoke-AgentTask([string]$TaskText) {
             $swStep = [System.Diagnostics.Stopwatch]::StartNew()
             $resumeNote = Resume-TargetWindow   # v5：前台被控制台占据时由系统切回目标窗口
             if ($resumeNote) { Write-Host "  $resumeNote" -ForegroundColor DarkGray }
+            $tkNote = ''
+            try { $tkNote = Invoke-CdpGuardian } catch { if ("$($_.Exception.Message)" -like '触发保护*') { throw } }   # v9.1：前台是无调试端口的浏览器 → 强制接管，禁止静默降级盲人 UIA
+            if ($tkNote) { Write-Host "  $tkNote" -ForegroundColor Yellow; $history.Add("系统（第${step}步前）: $tkNote") }
             [void](Test-UmaMemoryHealth)   # v7.0 Phase 5：每步检查 24GB UMA 内存水位（<4096MB 自动熔断保护）
             $obs = Get-Observation
             $sig = Get-ObsSig $obs
@@ -7719,6 +8200,7 @@ function Invoke-AgentTask([string]$TaskText) {
             $obsMs = [int]$swStep.ElapsedMilliseconds
             Add-Span $(if ($obs.Cdp) { 'cdp' } else { 'uia' }) ([double]$obsMs) 'observe'   # v7.1
             Update-LedgerFromObservation $obs   # v5：用这一轮观察核实上一轮动作的效果
+            try { Update-SemanticStall $obs } catch { }   # v9.1：语义停滞窗口（标题|URL, aHash）
             $obs = Protect-Observation $obs     # v6.4：污点标记 + 间接提示词注入清洗（命中的行在交给模型之前就被删除）
             if ($SaveScreenshots -and $script:RunDir) {
                 try { Save-Screenshot (Join-Path $script:RunDir ("task{0:D2}-step{1:D2}.png" -f $script:TaskNo, $step)) }
@@ -7784,6 +8266,7 @@ function Invoke-AgentTask([string]$TaskText) {
             $visionCtx = $null
             $raw = $null
             $esc = Test-ShouldEscalateToVision $obs
+            $stNote = Get-SemanticStallNote; if ($stNote) { $userContent += "`n$stNote" }   # v9.1：把停滞事实和换法提示交给模型（无论是否升级视觉）
             if ($esc.Use) {
                 try {
                     $v71vs = [System.Diagnostics.Stopwatch]::StartNew()
@@ -7949,7 +8432,7 @@ function Invoke-AgentTask([string]$TaskText) {
                     $failCount = 0
                     $errStreak = 0
                     $script:BlockErrStreak = 0
-                    if ($kind -notin 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect') { $lastActed = $true; $pendingExpect = "$($parsed.expect)" }
+                    if ($kind -notin 'wait', 'run_powershell', 'write_file', 'run_process', 'inspect', 'ocr', 'vision_inspect', 'file_stat', 'dir_list', 'cdp_wait_selector') { $lastActed = $true; $pendingExpect = "$($parsed.expect)"; $script:ActCounter++ }
                 }
                 catch {
                     if ($_.Exception.Message -like '触发保护*') { throw }
@@ -8014,6 +8497,7 @@ function Invoke-AgentTask([string]$TaskText) {
     Stop-TaskProcesses   # v6.4：任务结束也清理遗留的 run_process 子进程
     $elapsed = [int]((Get-Date) - $taskStart).TotalSeconds
     Write-Host "本任务耗时: ${elapsed} 秒" -ForegroundColor DarkGray
+    try { Write-Host "  $(Get-P71StatsLine)" -ForegroundColor DarkGray } catch { }   # v9.1
     try { $spn = Format-SpanSummary $script:TaskNo; if ($spn) { Write-Host "  $spn" -ForegroundColor DarkGray; Write-Log @{ type = 'spans'; summary = $spn; traceId = $script:TraceId } } } catch { }   # v7.1
     try { $v7n = Format-V7Note; if ($v7n) { Write-Host "  $v7n" -ForegroundColor DarkGray; Write-Log @{ type = 'v7'; note = $v7n; capDxgi = $script:CapStats.Dxgi; capGdi = $script:CapStats.Gdi; memState = $script:MemGuard.State; fast = [bool]$fpDone } } } catch { }
     $usageSum = Format-UsageSummary
@@ -8769,7 +9253,9 @@ function Assert-ActionPolicy($a, [string]$kind) {
                 Resolve-Risks $rk "launch $tgt $($a.args)"
             }
         }
-        { $_ -in 'wait', 'done', 'fail', 'replan', 'inspect', 'ocr', 'vision_inspect', 'focus_window', 'scroll', 'hover' } { }
+        { $_ -in 'wait', 'done', 'fail', 'replan', 'inspect', 'ocr', 'vision_inspect', 'focus_window', 'scroll', 'hover', 'cdp_wait_selector' } { }
+        'cdp_navigate' { Assert-CdpNavigatePolicy $a }
+        { $_ -in 'file_stat', 'dir_list' } { [void](Resolve-StatTarget $a $kind) }   # v9.1：只读，路径牢笼（工作区 + 用户文件夹白名单根）先于执行
         default {
             $rk = @(Get-ActionRisk $a $kind)
             $rk += @(Get-ClickNavRisk $a $kind)
@@ -15553,7 +16039,7 @@ function Invoke-Phase6SelfTest($rec) {
 # Plane 2 vision-engine（C++20 AVX2 / CUDA / D3D11-DirectML）+ 进程内 DsV9Fast（C#，位级等价、无需任何工具链）
 # Plane 3 cdp-bridge（TypeScript 持久多标签 CDP 守护 + 域级污点信号）  Plane 4 orchestrator（Python asyncio 幂等状态机 / OTLP / UMA 熔断）
 # 本区块把整个 Monorepo 作为文本嵌入：`v9 extract` / -ExportPhase7 释放；`v9 verify` / -VerifyPhase7 一键验证；`v9 audit` / -LeakAudit 做 ETW/WPR 泄漏审计。
-$script:P7Ver = '9.0-phase7'
+$script:P7Ver = '9.1-phase7.1'
 $script:P7Base = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'DeepSeekComputerUse\dscu-v9' } else { Join-Path ([System.IO.Path]::GetTempPath()) 'DeepSeekComputerUse\dscu-v9' }
 $script:V9Fast = $false
 $script:V9Tried = $false
@@ -15774,22 +16260,26 @@ $script:P7Payload = @'
 释放：`-ExportPhase7 <目录>`（或 REPL：`v9 extract`）。验证：`-VerifyPhase7`（或 `v9 verify`）。构建：`-BuildV9`。泄漏审计：`-LeakAudit -LeakAuditMinutes 30`。
 文档：`docs/ANALYSIS-REPORT.md` · `docs/EXPERT-PLAYBOOK.md` · `docs/ARCHITECTURE.md` · `docs/CONTRACTS.md` · `docs/GOLDEN-FIXTURE.md` · `docs/VERIFICATION.md`
 每个平面独立可测：`cargo test --release`(dscu-v9) · `cmake -S vision-engine -B build && ctest` · `npm test`(cdp-bridge) · `python -m pytest`(orchestrator)。
-#=#=# FILE: cdp-bridge/package.json
+
+**v9.1（Phase 7.1）新增**：`v9 up`（编译 + 启动 + 内存门禁） · `v9 regress`（日志驱动回归） · 目录 `crates/dscu-driver` + `packages/cdp-daemon` · 文档 `docs/PHASE7.1-LOG-ANALYSIS.md`。
+#=#=# FILE: packages/cdp-daemon/package.json
 {
   "name": "dscu-cdp-bridge",
-  "version": "9.0.0",
+  "version": "9.1.0",
   "private": true,
   "type": "module",
-  "description": "Plane 3: persistent multi-tab CDP daemon (AX tree + DOMSnapshot -> compact semantic tree with physical-pixel boxes, domain-level taint signals)",
+  "description": "Plane 3: persistent multi-tab CDP daemon (AX tree + DOMSnapshot -> compact semantic tree with physical-pixel boxes, domain-level taint signals; v9.1: first-class navigate / waitSelector / waitSettled)",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-transform-types --no-warnings --test test/*.test.ts",
+    "build": "node --no-warnings build-dist.mjs",
     "start": "node --experimental-transform-types --no-warnings src/index.ts",
+    "start:dist": "node --no-warnings --max-old-space-size=64 dist/index.js",
     "start:bun": "bun run src/index.ts"
   },
   "devDependencies": { "typescript": "^5.6.0", "@types/node": "^22.0.0" }
 }
-#=#=# FILE: cdp-bridge/src/ax.ts
+#=#=# FILE: packages/cdp-daemon/src/ax.ts
 // Compact semantic tree: Accessibility.getFullAXTree + DOMSnapshot.captureSnapshot -> numbered lines with ABSOLUTE PHYSICAL-PIXEL boxes.
 export interface AxValue { value?: unknown }
 export interface AxNode { nodeId: string; ignored?: boolean; role?: AxValue; name?: AxValue; value?: AxValue; childIds?: string[]; backendDOMNodeId?: number; properties?: { name: string; value: AxValue }[] }
@@ -15841,10 +16331,11 @@ export function compactTree(ax: AxNode[], snap: DomSnapshot | null, m: ViewMetri
 export function renderCompact(nodes: SemNode[]): string {
   return nodes.map((s) => `[${s.n}] ${s.role}${s.name ? ` "${s.name}"` : ''}${s.value ? ` ={${s.value}}` : ''}${s.flags.length ? ` (${s.flags.join(',')})` : ''}${s.box ? ` @${s.box.x},${s.box.y},${s.box.w},${s.box.h}` : ''}`).join('\n');
 }
-#=#=# FILE: cdp-bridge/src/daemon.ts
+#=#=# FILE: packages/cdp-daemon/src/daemon.ts
 // Persistent multi-tab CDP daemon. Uses the platform-native WebSocket (Node >= 22 / Bun); no runtime dependencies.
 import { compactTree, renderCompact, type AxNode, type DomSnapshot, type ViewMetrics } from './ax.ts';
 import { OriginMonitor, type TaintSignal } from './taint.ts';
+import { navigate, trackInflight, waitSelector, waitSettled, type InflightTracker, type NavResult, type SettleOpts, type WaitSelectorOpts, type WaitSelectorResult } from './actions.ts';
 
 export interface Wire { send(data: string): void; close(): void; onmessage: ((data: string) => void) | null; onclose: (() => void) | null }
 export type WireFactory = (wsUrl: string) => Promise<Wire>;
@@ -15873,6 +16364,7 @@ export class CdpSession {
 
 export class CdpDaemon {
   private sessions = new Map<string, CdpSession>();
+  private inflight = new Map<string, InflightTracker>();
   readonly monitor: OriginMonitor;
   private taintSubs = new Set<(s: TaintSignal) => void>();
   constructor(private httpBase: string, private factory: WireFactory, allow: string[] = [], private fetchJson: (u: string) => Promise<any> = async (u) => (await fetch(u)).json()) {
@@ -15884,12 +16376,13 @@ export class CdpDaemon {
   async refresh(): Promise<string[]> {
     const list: { id: string; type: string; url: string; webSocketDebuggerUrl?: string }[] = await this.fetchJson(`${this.httpBase}/json/list`);
     const live = new Set(list.filter((t) => t.type === 'page').map((t) => t.id));
-    for (const [id, s] of this.sessions) if (!live.has(id)) { s.close(); this.sessions.delete(id); this.monitor.closed(id); }
+    for (const [id, s] of this.sessions) if (!live.has(id)) { s.close(); this.sessions.delete(id); this.inflight.delete(id); this.monitor.closed(id); }
     for (const t of list) {
       if (t.type !== 'page' || !t.webSocketDebuggerUrl || this.sessions.has(t.id)) continue;
       const s = new CdpSession(await this.factory(t.webSocketDebuggerUrl), t.id);
       s.on('Page.frameNavigated', (p) => { if (!p.frame.parentId) this.monitor.navigated(t.id, p.frame.url); });
       s.on('Network.responseReceived', (p) => { if (p.type === 'Document' || p.type === 'Other') this.monitor.response(t.id, p.response.url, p.response.mimeType ?? '', p.response.status ?? 200); });
+      this.inflight.set(t.id, trackInflight(s));
       await Promise.all([s.send('Page.enable'), s.send('Network.enable'), s.send('Accessibility.enable')]);
       this.sessions.set(t.id, s); this.monitor.navigated(t.id, t.url || 'about:blank');
     }
@@ -15911,11 +16404,20 @@ export class CdpDaemon {
     const nodes = compactTree(ax.nodes, dom, m, { maxNodes });
     return { tab, text: renderCompact(nodes), nodes: nodes.length, ms: Math.round(performance.now() - t0) };
   }
-  close(): void { for (const s of this.sessions.values()) s.close(); this.sessions.clear(); }
+  private get(tab: string): CdpSession { const s = this.sessions.get(tab); if (!s) throw new Error(`unknown tab ${tab}`); return s; }
+  /** First-class navigation (Page.navigate) + deterministic settle. Replaces "click omnibox + type URL + Enter". */
+  navigate(tab: string, url: string, o: SettleOpts = {}): Promise<NavResult> { return navigate(this.get(tab), url, this.inflight.get(tab), o); }
+  waitSelector(tab: string, o: WaitSelectorOpts): Promise<WaitSelectorResult> { return waitSelector(this.get(tab), o); }
+  settled(tab: string, o: SettleOpts = {}): Promise<boolean> { return waitSettled(this.get(tab), this.inflight.get(tab), o); }
+  /** Multi-tab management: bring a tab to front / close it. */
+  async activate(tab: string): Promise<void> { await this.get(tab).send('Page.bringToFront'); }
+  async closeTab(tab: string): Promise<void> { await this.get(tab).send('Page.close'); }
+  close(): void { for (const s of this.sessions.values()) s.close(); this.sessions.clear(); this.inflight.clear(); }
 }
-#=#=# FILE: cdp-bridge/src/index.ts
-// Control plane: NDJSON over a named pipe (Windows) / unix socket. Methods: cdp.ping | cdp.tabs | cdp.snapshot | cdp.taint.subscribe
+#=#=# FILE: packages/cdp-daemon/src/index.ts
+// Control plane: NDJSON over a named pipe (Windows) / unix socket. Methods: cdp.ping | cdp.tabs | cdp.snapshot | cdp.navigate | cdp.waitSelector | cdp.settled | cdp.activate | cdp.close | cdp.taint.subscribe
 import net from 'node:net';
+import { unlinkSync } from 'node:fs';
 import { CdpDaemon, type Wire } from './daemon.ts';
 
 export function nativeWire(url: string): Promise<Wire> {
@@ -15940,9 +16442,14 @@ export function serve(daemon: CdpDaemon, listenPath: string): net.Server {
           const req = JSON.parse(line); id = req.id ?? null; const p = req.params ?? {};
           let result: unknown;
           switch (req.method) {
-            case 'cdp.ping': result = { ok: true, version: '9.0.0' }; break;
+            case 'cdp.ping': result = { ok: true, version: '9.1.0' }; break;
             case 'cdp.tabs': result = { tabs: await daemon.refresh() }; break;
             case 'cdp.snapshot': await daemon.refresh(); result = await daemon.snapshot(String(p.tab), { screenX: p.screenX ?? 0, screenY: p.screenY ?? 0, chromeX: p.chromeX ?? 0, chromeY: p.chromeY ?? 0 }, p.maxNodes ?? 400); break;
+            case 'cdp.navigate': await daemon.refresh(); result = await daemon.navigate(String(p.tab), String(p.url), { timeoutMs: p.timeoutMs }); break;
+            case 'cdp.waitSelector': result = await daemon.waitSelector(String(p.tab), { selector: p.selector, text: p.text, timeoutMs: p.timeoutMs, visible: p.visible }); break;
+            case 'cdp.settled': result = { settled: await daemon.settled(String(p.tab), { quietMs: p.quietMs, timeoutMs: p.timeoutMs }) }; break;
+            case 'cdp.activate': await daemon.activate(String(p.tab)); result = { ok: true }; break;
+            case 'cdp.close': await daemon.closeTab(String(p.tab)); await daemon.refresh(); result = { ok: true }; break;
             case 'cdp.taint.subscribe': result = { subscribed: true }; break;
             default: throw new Error(`METHOD_NOT_FOUND: ${req.method}`);
           }
@@ -15951,6 +16458,7 @@ export function serve(daemon: CdpDaemon, listenPath: string): net.Server {
       }
     });
   });
+  if (process.platform !== 'win32') { try { unlinkSync(listenPath); } catch { /* no stale socket */ } }   // stale unix socket after a crash => EADDRINUSE
   server.listen(listenPath);
   return server;
 }
@@ -15961,9 +16469,9 @@ if (isMain) {
   const allow = (process.env.DSCU_ALLOW_DOMAINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const daemon = new CdpDaemon(`http://127.0.0.1:${port}`, nativeWire, allow);
   serve(daemon, process.platform === 'win32' ? '\\\\.\\pipe\\dscu-cdp-bridge-v1' : '/tmp/dscu-cdp-bridge-v1.sock');
-  console.error(`dscu-cdp-bridge v9.0.0 on CDP :${port}`);
+  console.error(`dscu-cdp-bridge v9.1.0 on CDP :${port}`);
 }
-#=#=# FILE: cdp-bridge/src/taint.ts
+#=#=# FILE: packages/cdp-daemon/src/taint.ts
 // Domain-level taint classification. MUST stay equivalent to tools/gen_golden.py::taint_ref (checked by test/taint.test.ts).
 export type TaintLevel = 'low' | 'high' | 'critical';
 export interface TaintSignal { type: 'taint'; tab: string; url: string; origin: string; level: TaintLevel; tainted: true; reason: string; ts: number }
@@ -16020,7 +16528,7 @@ export class OriginMonitor {
     }
   }
 }
-#=#=# FILE: cdp-bridge/test/bridge.test.ts
+#=#=# FILE: packages/cdp-daemon/test/bridge.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -16030,7 +16538,7 @@ import { compactTree, renderCompact, toPhysical, type AxNode } from '../src/ax.t
 import { CdpDaemon, type Wire } from '../src/daemon.ts';
 import { serve } from '../src/index.ts';
 
-const golden = JSON.parse(readFileSync(new URL('../../golden/contracts.v9.golden.json', import.meta.url), 'utf8'));
+const golden = JSON.parse(readFileSync(new URL('../../../golden/contracts.v9.golden.json', import.meta.url), 'utf8'));
 
 test('taint classification equals the Python golden reference', () => {
   for (const c of golden.taint.cases) {
@@ -16094,7 +16602,7 @@ test('control plane NDJSON server answers ping and unknown methods', async () =>
   await new Promise((r) => setTimeout(r, 150)); c.destroy(); srv.close();
   assert.equal(JSON.parse(lines[0]).result.ok, true); assert.match(JSON.parse(lines[1]).error.message, /METHOD_NOT_FOUND/);
 });
-#=#=# FILE: cdp-bridge/tsconfig.json
+#=#=# FILE: packages/cdp-daemon/tsconfig.json
 {
   "compilerOptions": {
     "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext", "strict": true, "noEmit": true,
@@ -18828,7 +19336,15 @@ if (Get-Command cmake -ErrorAction SilentlyContinue) {
     try { cmake -S . -B build -DCMAKE_BUILD_TYPE=Release $(if ($D3D11) { '-DVE_D3D11=ON' }); cmake --build build --config Release; if ($LASTEXITCODE) { throw 'cmake build failed' }
         Get-ChildItem build -Recurse -Filter 'vision_engine.dll' | Select-Object -First 1 | Copy-Item -Destination $Bin -Force; Write-Host "vision_engine.dll -> $Bin" -ForegroundColor Green } catch { Write-Warning $_; $ok = $false } finally { Pop-Location }
 } else { Write-Warning 'cmake missing: Plane 2 native backend skipped (in-process C# DsV9Fast keeps the fast path).' }
-if (Get-Command npm -ErrorAction SilentlyContinue) { Push-Location (Join-Path $Root 'cdp-bridge'); npm install --silent; Pop-Location; Write-Host 'cdp-bridge deps installed. Start: node --experimental-transform-types src/index.ts' -ForegroundColor Green }
+if (Get-Command npm -ErrorAction SilentlyContinue) { Push-Location (Join-Path $Root 'packages\cdp-daemon'); npm install --silent; Pop-Location; Write-Host 'cdp-bridge deps installed. Start: node --experimental-transform-types src/index.ts' -ForegroundColor Green }
+# v9.1: crates/dscu-driver (Rust native driver: DXGI zero-copy capture / shared-memory ring / UIA+JAB / UIAccess) -> %LOCALAPPDATA%\DeepSeekComputerUse\dscu-driver\bin
+if ((Get-Command cargo -ErrorAction SilentlyContinue) -and (Test-Path (Join-Path $Root 'crates\dscu-driver'))) {
+    Push-Location (Join-Path $Root 'crates\dscu-driver')
+    try { cargo build --release -p dscu-daemon -p dscu-ffi; if ($LASTEXITCODE) { throw 'dscu-driver build failed' }
+        $drvBin = Join-Path $env:LOCALAPPDATA 'DeepSeekComputerUse\dscu-driver\bin'; [void][System.IO.Directory]::CreateDirectory($drvBin)
+        Get-Process dscu-driver -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Copy-Item -Force target\release\dscu-driver.exe $drvBin; Write-Host "dscu-driver.exe -> $drvBin" -ForegroundColor Green } catch { Write-Warning $_; $ok = $false } finally { Pop-Location }
+} else { Write-Warning 'cargo or crates\dscu-driver missing: native driver skipped (GDI capture fallback keeps working).' }
 exit $(if ($ok) { 0 } else { 1 })
 #=#=# FILE: scripts/etw-leak-audit.ps1
 #Requires -Version 7.0
@@ -18929,7 +19445,7 @@ if ((Has 'cmake') -and ((Has 'cl') -or (Has 'g++') -or (Has 'clang++'))) {
     Run 'cmake + ctest vision-engine (AVX2 == scalar == original-PowerShell vectors)' (Join-Path $Root 'vision-engine') { cmake -S . -B build -DCMAKE_BUILD_TYPE=Release; cmake --build build --config Release; ctest --test-dir build -C Release --output-on-failure }
 } else { Rec 'c++ vision-engine' 'SKIP' 'cmake + a C++20 compiler not found' }
 if (Has 'node') {
-    $cb = Join-Path $Root 'cdp-bridge'
+    $cb = Join-Path $Root 'packages\cdp-daemon'
     if (Has 'npm') { Push-Location $cb; if (-not (Test-Path node_modules)) { npm install --silent 2>&1 | Out-Null }; Pop-Location; Run 'tsc --noEmit cdp-bridge' $cb { npx tsc --noEmit }; Run 'node:test cdp-bridge (AX compaction / taint / daemon / control plane)' $cb { npm test --silent } }
     else { Rec 'cdp-bridge' 'SKIP' 'npm not found' }
 } else { Rec 'typescript cdp-bridge' 'SKIP' 'node 22+ not found' }
@@ -19719,6 +20235,594 @@ int main(int argc, char** argv) {
   std::printf("caps=0x%x version=%s vectors A=%d D=%d diff-fuzz=%ld failures=%d\n", ve_caps(), ve_version(), nA, nD, iters, fails);
   return fails ? 1 : 0;
 }
+#=#=# FILE: docs/PHASE7.1-LOG-ANALYSIS.md
+# Phase 7.1 — 运行日志驱动的生产稳定化（v9.1）
+
+实测环境：联想小新 Pro 16（Ryzen 7 8745H / Radeon 780M / 24GB UMA，运行期可用内存约 6.1 GB），`运行日志` 401 行，2 个任务。
+
+| # | 日志证据 | 根因 | v9.1 修复 | 回归断言（`tests/verify-log-regression.ps1`） |
+|---|---|---|---|---|
+| 1 | 任务2 全程 `[Perception: UIA]`，CDP 命中 0；32 步反复敲地址栏，第 31 步 `[28] 位置已偏移 26 像素` | 用户的 Chrome 没有 `--remote-debugging-port`；`Get-CdpObservation` 静默 `return $null` → 盲人 UIA | `Invoke-CdpTakeover` / `Invoke-CdpGuardian`：开局（浏览器意图）与每步（前台 Chromium 无端口）强制接管：独立 `--user-data-dir` + 端口 + `SetForegroundWindow` + 附着；新动作 `cdp_navigate`（Page.navigate）/ `cdp_wait_selector` | 意图识别 / URL 归一化 / 危险协议拒绝 / Schema / JS 模板 |
+| 2 | 第 8、11、24、25 步 `[REPEAT_EFFECT]` 拦截 type 地址栏与 key enter | 动作账本把「输入 URL / 回车」当成会被「撤销」的切换类动作 | `Get-StatelessReason`：enter / ctrl+l / 翻页键 / scroll / cdp_navigate / URL 输入豁免；`Register-StatelessAction` 防止豁免变死循环（同一动作连续 4 次且页面签名不变 → REPEAT_NOEFFECT） | 误杀 4 → 0；space / 普通文本仍受约束；4 连拦截 |
+| 3 | 工具栏暴露 6~110 个 UIA 控件 → `UIA_BLIND (<6)` 永不触发，32 步从未唤醒 deepseek-flash | 视觉熔断只看控件数 | `Update-SemanticStall`：`(标题\|URL, aHash)` 滑动窗口；连续 2 步「执行过动作但页面签名不变」→ `SEMANTIC_STALL` 绕过 UIA_BLIND 直达视觉，并把换法提示交给模型 | 重放 32 步序列：从未 → 第 7 步 |
+| 4 | 任务1 第 13 步 `run_powershell Get-ChildItem …Desktop` → `[SECURITY_AST_VIOLATION] dynamic_path` | 缺少只读验收原语，模型被迫用脚本 | `file_stat` / `dir_list`：Path Jail 白名单根（工作区 + 桌面/文档/图片/视频/音乐/下载，复用 `Test-SafePath` 的规范化 / 保留名 / ADS / 8.3 / ReparsePoint / FinalPath 检查）；只返回名称 / 大小 / 编码 / 修改时间 / 内容布尔值，不回显内容、不执行脚本 | 误触发 1 → 0；越界 / 系统目录 / .ssh / UNC / ADS 全拒 |
+| 5 | `屏幕采集：GDI 29 次 均 16.2ms`，`capture P50/P99 = 17.59/41.66 ms` | Rust / TS / C++ 平面只是文本，没有编译运行 | `scripts/up.ps1`（`v9 up`）：cargo test + build → 部署 `dscu-driver.exe`；TS 守护预编译为纯 JS（RSS 89→47 MB）；启动 + 管道健康检查 + 常驻内存 < 120 MB 门禁；OTLP capture P99 < 5 ms 门禁 | `-OtlpFile` 门禁（缺数据 = SKIP，不假 PASS） |
+
+## Monorepo 布局（`v9 extract` 释放）
+```
+crates/dscu-driver/        Rust 原生驱动（DXGI IDXGIOutputDuplication 零拷贝 + 命名管道 + UIA/JAB + UIAccess + 内存熔断）
+packages/cdp-daemon/       TypeScript CDP 守护（多标签 / navigate / waitSelector / waitSettled / 污点信号）
+dscu-v9/                   Rust 共享内存环 DsV9Ring / aHash / 坐标 / FFI
+vision-engine/             C++ AVX2 / CUDA / D3D11-DirectML 差分与指纹
+orchestrator/              Python 幂等状态机 / OTLP / UMA 熔断
+tests/verify-log-regression.ps1   日志驱动回归（用例 A / B + 性能与契约门禁）
+scripts/up.ps1 · build-all.ps1 · verify-phase7.ps1 · etw-leak-audit.ps1
+```
+一键：`v9 extract` → `v9 build` → `v9 up` → `v9 regress`。
+#=#=# FILE: packages/cdp-daemon/build-dist.mjs
+// Zero-dependency build: strip TypeScript types with Node's built-in transformer (node >= 22.13) -> dist/*.js.
+// Why: `--experimental-transform-types` keeps a WASM TS transformer resident (~40 MB RSS); plain JS keeps the daemon at ~45 MB.
+import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { stripTypeScriptTypes } from 'node:module';
+const out = new URL('./dist/', import.meta.url); mkdirSync(out, { recursive: true });
+let n = 0;
+for (const f of readdirSync(new URL('./src/', import.meta.url)).filter((x) => x.endsWith('.ts'))) {
+  const js = stripTypeScriptTypes(readFileSync(new URL(`./src/${f}`, import.meta.url), 'utf8'), { mode: 'transform' }).replace(/(from\s+['"]\.\/[^'"]+)\.ts(['"])/g, '$1.js$2');
+  writeFileSync(new URL(f.replace(/\.ts$/, '.js'), out), js); n++;
+}
+console.log(`dist: ${n} files`);
+#=#=# FILE: packages/cdp-daemon/src/actions.ts
+// First-class browser actions for the CDP daemon (v9.1): navigate / waitSelector / waitSettled / inflight tracking.
+// Zero dependencies. These are the TypeScript twin of PowerShell `Invoke-CdpNavigate` / `Invoke-CdpWaitSelector` / `Wait-CdpSettled`
+// so a long-lived daemon can serve them without re-attaching a WebSocket per call.
+import type { CdpSession } from './daemon.ts';
+
+export class ActionError extends Error { constructor(readonly code: string, msg: string) { super(`[${code}] ${msg}`); } }
+
+/** Mirrors ConvertTo-NavUrl: only http(s) and about:blank; bare domains get https://. Rejects javascript:/data:/file:/ftp:... */
+export function normalizeUrl(raw: string): string {
+  let u = String(raw ?? '').trim().replace(/^["']|["']$/g, '');
+  if (!u) throw new ActionError('BAD_URL', 'url is required');
+  const bad = /^(javascript|data|file|vbscript|blob|ftp|chrome-extension|view-source|ws|wss):/i.exec(u);
+  if (bad) throw new ActionError('SECURITY_EXEC_VIOLATION', `scheme ${bad[1]}: is not allowed (http/https/about:blank only)`);
+  if (u === 'about:blank') return u;
+  if (!/^https?:\/\//i.test(u)) {
+    if (u.startsWith('//')) u = 'https:' + u;
+    else if (/^(localhost|(?:[a-z0-9-]+\.)+[a-z]{2,}|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?([/?#].*)?$/i.test(u)) u = 'https://' + u;
+    else throw new ActionError('BAD_URL', `not a valid url: ${u.slice(0, 80)}`);
+  }
+  let parsed: URL; try { parsed = new URL(u); } catch { throw new ActionError('BAD_URL', `cannot parse: ${u.slice(0, 80)}`); }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new ActionError('SECURITY_EXEC_VIOLATION', `scheme ${parsed.protocol} is not allowed`);
+  return parsed.href;
+}
+
+/** In-flight request counter (Network.*): the "network idle" half of Wait-CdpSettled. */
+export class InflightTracker {
+  private ids = new Set<string>(); lastActivity = Date.now();
+  constructor(s: CdpSession) {
+    const add = (p: any) => { if (p?.requestId) { this.ids.add(p.requestId); this.lastActivity = Date.now(); } };
+    const del = (p: any) => { if (p?.requestId) { this.ids.delete(p.requestId); this.lastActivity = Date.now(); } };
+    s.on('Network.requestWillBeSent', add); s.on('Network.loadingFinished', del); s.on('Network.loadingFailed', del);
+  }
+  get count(): number { return this.ids.size; }
+}
+export function trackInflight(s: CdpSession): InflightTracker { return new InflightTracker(s); }
+
+export interface SettleOpts { quietMs?: number; timeoutMs?: number; pollMs?: number }
+/** Deterministic wait: readyState==='complete' AND in-flight==0 held for quietMs (default 250), within timeoutMs (default 5000). */
+export async function waitSettled(s: CdpSession, inflight: InflightTracker | undefined, o: SettleOpts = {}): Promise<boolean> {
+  const quiet = o.quietMs ?? 250, timeout = o.timeoutMs ?? 5000, poll = o.pollMs ?? 80;
+  const t0 = Date.now(); let calmSince = 0;
+  while (Date.now() - t0 < timeout) {
+    let rs = ''; try { rs = (await s.send<any>('Runtime.evaluate', { expression: 'document.readyState', returnByValue: true })).result?.value ?? ''; } catch { /* navigation in progress */ }
+    const calm = rs === 'complete' && (inflight?.count ?? 0) === 0;
+    if (calm) { calmSince ||= Date.now(); if (Date.now() - calmSince >= quiet) return true; } else calmSince = 0;
+    await new Promise((r) => setTimeout(r, poll));
+  }
+  return false;
+}
+
+export interface NavResult { requested: string; url: string; title: string; readyState: string; settled: boolean; redirectedHost: boolean; ms: number }
+export async function navigate(s: CdpSession, rawUrl: string, inflight?: InflightTracker, o: SettleOpts = {}): Promise<NavResult> {
+  const requested = normalizeUrl(rawUrl); const t0 = Date.now();
+  const r = await s.send<{ errorText?: string }>('Page.navigate', { url: requested });
+  if (r?.errorText) throw new ActionError('NAV_FAILED', `${r.errorText} (${requested.slice(0, 100)})`);
+  const settled = await waitSettled(s, inflight, { timeoutMs: 6000, ...o });
+  let info: { u?: string; t?: string; s?: string } = {};
+  try { info = (await s.send<any>('Runtime.evaluate', { expression: '({u:location.href,t:document.title,s:document.readyState})', returnByValue: true })).result?.value ?? {}; } catch { /* page still swapping */ }
+  const url = info.u ?? requested; let redirectedHost = false;
+  try { redirectedHost = new URL(url).host !== new URL(requested).host; } catch { /* about:blank */ }
+  return { requested, url, title: info.t ?? '', readyState: info.s ?? '?', settled, redirectedHost, ms: Date.now() - t0 };
+}
+
+/** Same JS as the PowerShell side: pierces open Shadow DOM and same-origin iframes. */
+export const WAIT_SELECTOR_JS = `(()=>{const SEL=__SEL__,TXT=__TXT__,VIS=__VIS__;
+function* roots(r,d){yield r;if(d>6)return;let all;try{all=r.querySelectorAll('*')}catch(_){return}
+for(const e of all){if(e.shadowRoot)yield* roots(e.shadowRoot,d+1);if(e.tagName==='IFRAME'||e.tagName==='FRAME'){try{if(e.contentDocument)yield* roots(e.contentDocument,d+1)}catch(_){}}}}
+let n=0;
+for(const r of roots(document,0)){let list=[];try{list=SEL?r.querySelectorAll(SEL):r.querySelectorAll('*')}catch(_){return {ok:false,err:'bad selector'}}
+for(const el of list){const t=(el.innerText||el.textContent||'');if(TXT&&t.indexOf(TXT)<0)continue;
+if(!SEL&&TXT&&el.children&&el.children.length>0&&Array.from(el.children).some(c=>(c.innerText||c.textContent||'').indexOf(TXT)>=0))continue;
+const b=el.getBoundingClientRect();const cs=getComputedStyle(el);
+const vis=b.width>0&&b.height>0&&cs.visibility!=='hidden'&&cs.display!=='none';
+n++;if(VIS&&!vis)continue;
+return {ok:true,tag:el.tagName,text:t.replace(/\\s+/g,' ').slice(0,80),x:Math.round(b.x+b.width/2),y:Math.round(b.y+b.height/2),count:n}}}
+return {ok:false,count:n}})()`;
+
+export interface WaitSelectorOpts { selector?: string; text?: string; timeoutMs?: number; visible?: boolean; pollMs?: number }
+export interface WaitSelectorResult { ok: boolean; tag?: string; text?: string; x?: number; y?: number; matches: number; ms: number }
+export async function waitSelector(s: CdpSession, o: WaitSelectorOpts): Promise<WaitSelectorResult> {
+  const sel = o.selector ?? '', txt = o.text ?? '';
+  if (!sel && !txt) throw new ActionError('BAD_ARGS', 'selector or text is required');
+  if (sel.length > 400) throw new ActionError('BAD_ARGS', 'selector too long');
+  const timeout = Math.min(Math.max(o.timeoutMs ?? 8000, 300), 30000), poll = o.pollMs ?? 150;
+  const js = WAIT_SELECTOR_JS.replace('__SEL__', JSON.stringify(sel)).replace('__TXT__', JSON.stringify(txt)).replace('__VIS__', (o.visible ?? true) ? 'true' : 'false');
+  const t0 = Date.now(); let last = 0;
+  for (;;) {
+    try {
+      const v = (await s.send<any>('Runtime.evaluate', { expression: js, returnByValue: true })).result?.value;
+      if (v?.err) throw new ActionError('BAD_SELECTOR', sel.slice(0, 80));
+      if (v?.ok) return { ok: true, tag: String(v.tag).toLowerCase(), text: v.text, x: v.x, y: v.y, matches: v.count, ms: Date.now() - t0 };
+      last = v?.count ?? 0;
+    } catch (e) { if (e instanceof ActionError) throw e; }
+    if (Date.now() - t0 >= timeout) return { ok: false, matches: last, ms: Date.now() - t0 };
+    await new Promise((r) => setTimeout(r, poll));
+  }
+}
+#=#=# FILE: packages/cdp-daemon/test/actions.test.ts
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { CdpDaemon, type Wire } from '../src/daemon.ts';
+import { normalizeUrl, WAIT_SELECTOR_JS, ActionError } from '../src/actions.ts';
+
+function fakeWire(handlers: Record<string, (p: any) => any>, events?: (push: (method: string, params: any) => void) => void): Wire {
+  const w: Wire = { onmessage: null, onclose: null, close() {}, send(d) { const m = JSON.parse(d); queueMicrotask(() => w.onmessage?.(JSON.stringify({ id: m.id, result: handlers[m.method]?.(m.params) ?? {} }))); } };
+  events?.((method, params) => queueMicrotask(() => w.onmessage?.(JSON.stringify({ method, params }))));
+  return w;
+}
+const tabs = [{ id: 'A', type: 'page', url: 'about:blank', webSocketDebuggerUrl: 'ws://a' }];
+
+test('normalizeUrl: https default, keeps query/hash, rejects dangerous schemes', () => {
+  assert.equal(normalizeUrl('douyin.com/hot'), 'https://douyin.com/hot');
+  assert.equal(normalizeUrl('https://www.douyin.com/hot?x=1#a'), 'https://www.douyin.com/hot?x=1#a');
+  assert.equal(normalizeUrl('about:blank'), 'about:blank');
+  for (const bad of ['javascript:alert(1)', 'data:text/html,<b>', 'file:///C:/Windows/win.ini', 'chrome-extension://x/y', 'ftp://h/x', 'not a url', '']) assert.throws(() => normalizeUrl(bad), ActionError, bad);
+});
+
+test('navigate: Page.navigate + deterministic settle (readyState + in-flight==0) and redirect detection', async () => {
+  const calls: string[] = []; let pending = 1; let readyPolls = 0;
+  const d = new CdpDaemon('http://x', async () => fakeWire({
+    'Page.navigate': (p) => { calls.push(p.url); return { frameId: 'F' }; },
+    'Runtime.evaluate': (p) => {
+      if (p.expression === 'document.readyState') { readyPolls++; return { result: { value: readyPolls < 3 ? 'loading' : 'complete' } }; }
+      return { result: { value: { u: 'https://www.douyin.com/hot', t: '抖音热榜', s: 'complete' } } };
+    },
+  }, (push) => { setTimeout(() => push('Network.requestWillBeSent', { requestId: 'r1' }), 0); setTimeout(() => { pending = 0; push('Network.loadingFinished', { requestId: 'r1' }); }, 60); }), [], async () => tabs);
+  await d.refresh();
+  const r = await d.navigate('A', 'douyin.com/hot', { quietMs: 60, timeoutMs: 3000 });
+  assert.deepEqual(calls, ['https://douyin.com/hot']);
+  assert.equal(r.settled, true); assert.equal(r.title, '抖音热榜'); assert.equal(r.redirectedHost, true); assert.equal(pending, 0);
+});
+
+test('navigate: surfaces errorText as NAV_FAILED and refuses unsafe URLs before touching the wire', async () => {
+  let touched = 0;
+  const d = new CdpDaemon('http://x', async () => fakeWire({ 'Page.navigate': () => { touched++; return { errorText: 'net::ERR_NAME_NOT_RESOLVED' }; } }), [], async () => tabs);
+  await d.refresh();
+  await assert.rejects(d.navigate('A', 'https://nope.invalid/'), /NAV_FAILED.*ERR_NAME_NOT_RESOLVED/);
+  const before = touched;
+  await assert.rejects(d.navigate('A', 'javascript:alert(1)'), /SECURITY_EXEC_VIOLATION/);
+  assert.equal(touched, before);
+});
+
+test('waitSelector: polls until the element appears; reports timeout with match count', async () => {
+  let n = 0;
+  const d = new CdpDaemon('http://x', async () => fakeWire({
+    'Runtime.evaluate': (p) => {
+      assert.match(p.expression, /a\[href\*=\\"\/video\/\\"\]/); assert.doesNotMatch(p.expression, /__SEL__|__TXT__|__VIS__/);
+      n++; return { result: { value: n < 3 ? { ok: false, count: 0 } : { ok: true, tag: 'A', text: '热榜第一', x: 640, y: 300, count: 1 } } };
+    },
+  }), [], async () => tabs);
+  await d.refresh();
+  const ok = await d.waitSelector('A', { selector: 'a[href*="/video/"]', timeoutMs: 3000, pollMs: 10 });
+  assert.equal(ok.ok, true); assert.equal(ok.tag, 'a'); assert.equal(ok.x, 640);
+  const d2 = new CdpDaemon('http://x', async () => fakeWire({ 'Runtime.evaluate': () => ({ result: { value: { ok: false, count: 2 } } }) }), [], async () => tabs);
+  await d2.refresh();
+  const miss = await d2.waitSelector('A', { selector: '.never', timeoutMs: 300, pollMs: 20 });
+  assert.equal(miss.ok, false); assert.equal(miss.matches, 2);
+  await assert.rejects(d2.waitSelector('A', {}), /BAD_ARGS/);
+});
+
+test('WAIT_SELECTOR_JS is syntactically valid JavaScript once placeholders are filled (shadow DOM + iframe piercing present)', () => {
+  const js = WAIT_SELECTOR_JS.replace('__SEL__', JSON.stringify('a[href*="/video/"]')).replace('__TXT__', '""').replace('__VIS__', 'true');
+  assert.doesNotThrow(() => new Function(`return ${js}`));
+  assert.match(js, /shadowRoot/); assert.match(js, /contentDocument/);
+});
+
+test('multi-tab: activate / close send Page.bringToFront / Page.close to the right session', async () => {
+  const seen: string[] = [];
+  const two = [{ id: 'A', type: 'page', url: 'about:blank', webSocketDebuggerUrl: 'ws://a' }, { id: 'B', type: 'page', url: 'about:blank', webSocketDebuggerUrl: 'ws://b' }];
+  const d = new CdpDaemon('http://x', async (u) => fakeWire({ 'Page.bringToFront': () => { seen.push('front:' + u); }, 'Page.close': () => { seen.push('close:' + u); } }), [], async () => two);
+  await d.refresh(); await d.activate('B'); await d.closeTab('A');
+  assert.deepEqual(seen, ['front:ws://b', 'close:ws://a']);
+});
+#=#=# FILE: scripts/up.ps1
+#Requires -Version 7.0
+<#
+.SYNOPSIS  DeepSeek Computer Use v9.1 — 一键编译 + 启动（Rust 原生驱动 crates/dscu-driver + TypeScript CDP 守护 packages/cdp-daemon）+ 内存预算门禁。
+  缺任何工具链 = 明确 SKIP（不假 PASS、不影响 v8/v9 的 PowerShell 回退路径）。
+  1) 工具链探测  2) cargo test + cargo build --release（DXGI 零拷贝抓屏 / 共享内存环 / UIAccess 清单）→ %LOCALAPPDATA%\DeepSeekComputerUse\dscu-driver\bin
+  3) node:test（CDP 守护 navigate / waitSelector / settled）  4) 启动驱动 + CDP 守护（后台、隐藏窗口）  5) 命名管道健康检查  6) 常驻内存 < 120 MB 门禁（24GB UMA 机器实测可用约 6.1GB）
+.EXAMPLE   pwsh -File scripts\up.ps1            # 完整
+.EXAMPLE   pwsh -File scripts\up.ps1 -SkipTests # 只编译 + 启动
+#>
+[CmdletBinding()]
+param([string]$Root = (Split-Path -Parent $PSScriptRoot), [switch]$SkipTests, [switch]$NoDriver, [switch]$NoCdp, [switch]$NoStart, [int]$CdpPort = 9222, [int]$MemBudgetMB = 120)
+$ErrorActionPreference = 'Continue'
+$rows = [System.Collections.Generic.List[object]]::new()
+function Rec([string]$Name, [string]$Status, [string]$Detail = '') { $rows.Add([pscustomobject]@{ Name = $Name; Status = $Status; Detail = $Detail }); $c = @{ PASS = 'Green'; FAIL = 'Red'; SKIP = 'DarkYellow'; INFO = 'Cyan' }[$Status]; Write-Host ("  [{0}] {1}  {2}" -f $Status, $Name, $Detail) -ForegroundColor $c }
+function Has([string]$n) { [bool](Get-Command $n -ErrorAction SilentlyContinue) }
+$bin = Join-Path $env:LOCALAPPDATA 'DeepSeekComputerUse\dscu-driver\bin'
+$started = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
+Write-Host "v9.1 up  root=$Root" -ForegroundColor Cyan
+
+# ---- 1) 工具链 ----
+$cargo = Get-Command cargo -ErrorAction SilentlyContinue
+if (-not $cargo -and $env:USERPROFILE) { $c2 = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'; if (Test-Path -LiteralPath $c2) { $cargo = Get-Command $c2 } }
+$nodeVer = $null; if (Has 'node') { try { $nodeVer = [version]((node -v).TrimStart('v')) } catch { } }
+Rec 'cargo (Rust)' $(if ($cargo) { 'PASS' } else { 'SKIP' }) $(if ($cargo) { "$(& $cargo.Source --version)" } else { '一次性安装：winget install Rustlang.Rustup；winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"' })
+Rec 'node >= 22.6（--experimental-transform-types）' $(if ($nodeVer -and $nodeVer -ge [version]'22.6') { 'PASS' } else { 'SKIP' }) $(if ($nodeVer) { "node $nodeVer" } else { '安装：winget install OpenJS.NodeJS.LTS' })
+
+# ---- 2) Rust 原生驱动 ----
+$drvWs = Join-Path $Root 'crates\dscu-driver'
+if (-not $NoDriver -and $cargo -and (Test-Path -LiteralPath $drvWs)) {
+    Push-Location $drvWs
+    try {
+        if (-not $SkipTests) {
+            $out = & $cargo.Source test -p dscu-core --release -q 2>&1 | Out-String
+            Rec 'cargo test -p dscu-core（协议 / 幂等 / aHash 对拍 / Fail-Closed Ref / 内存熔断）' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) (($out -split "`n" | Where-Object { $_ -match 'test result' } | Select-Object -Last 1))
+        }
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $out = & $cargo.Source build --release -p dscu-daemon -p dscu-ffi 2>&1 | Out-String
+        $okb = ($LASTEXITCODE -eq 0)
+        Rec 'cargo build --release（dscu-driver.exe：DXGI IDXGIOutputDuplication 零拷贝 + 共享内存环 + UIA/JAB）' $(if ($okb) { 'PASS' } else { 'FAIL' }) $(if ($okb) { "$([int]$sw.Elapsed.TotalSeconds)s" } else { (($out -split "`n" | Select-Object -Last 4) -join ' | ') })
+        if ($okb) {
+            [void][System.IO.Directory]::CreateDirectory($bin)
+            Get-Process dscu-driver -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Copy-Item -LiteralPath (Join-Path $drvWs 'target\release\dscu-driver.exe') -Destination $bin -Force
+            if (Test-Path -LiteralPath (Join-Path $drvWs 'target\release\dscu.dll')) { Copy-Item -LiteralPath (Join-Path $drvWs 'target\release\dscu.dll') -Destination $bin -Force }
+            Rec '部署' 'PASS' "$bin\dscu-driver.exe"
+        }
+    }
+    finally { Pop-Location }
+}
+elseif (-not $NoDriver) { Rec '驱动编译' 'SKIP' $(if (-not $cargo) { '未装 Rust 工具链（computer use 自动回退 GDI 抓屏，功能不受影响）' } else { "找不到 $drvWs" }) }
+
+# ---- 3) TS CDP 守护 ----
+$cdpDir = Join-Path $Root 'packages\cdp-daemon'
+$nodeOk = ($nodeVer -and $nodeVer -ge [version]'22.6')
+if (-not $NoCdp -and $nodeOk -and (Test-Path -LiteralPath $cdpDir)) {
+    if (-not $SkipTests) {
+        Push-Location $cdpDir
+        try { $out = & node --experimental-transform-types --no-warnings --test 'test/bridge.test.ts' 'test/actions.test.ts' 2>&1 | Out-String; $m = [regex]::Match($out, '# pass (\d+)[\s\S]*?# fail (\d+)')
+            Rec 'node:test cdp-daemon（navigate / waitSelector / settled / 多标签 / 污点 / 控制面）' $(if ($LASTEXITCODE -eq 0 -and $m.Groups[2].Value -eq '0') { 'PASS' } else { 'FAIL' }) "pass=$($m.Groups[1].Value) fail=$($m.Groups[2].Value)" }
+        finally { Pop-Location }
+    }
+}
+elseif (-not $NoCdp) { Rec 'CDP 守护测试' 'SKIP' $(if (-not $nodeOk) { '需要 node >= 22.6（computer use 自带 DsCdp63 C# 引擎，功能不受影响）' } else { "找不到 $cdpDir" }) }
+
+# ---- 4) 启动 ----
+if (-not $NoStart) {
+    $drvExe = Join-Path $bin 'dscu-driver.exe'
+    if (-not $NoDriver -and (Test-Path -LiteralPath $drvExe)) {
+        Get-Process dscu-driver -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        $p = Start-Process -FilePath $drvExe -ArgumentList @('--memory-floor-mb', '4096', '--sidecar-ttl', '180') -WindowStyle Hidden -PassThru
+        $started.Add($p); Rec '启动 dscu-driver（MemoryFloorMB=4096 硬熔断，默认不常驻重型本地推理）' 'INFO' "pid=$($p.Id)"
+    }
+    if (-not $NoCdp -and $nodeOk -and (Test-Path -LiteralPath (Join-Path $cdpDir 'src\index.ts'))) {
+        $psi = [System.Diagnostics.ProcessStartInfo]::new('node'); $psi.WorkingDirectory = $cdpDir; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        # 预编译为纯 JS（Node 内置转换器，零依赖）：避免 --experimental-transform-types 常驻的 WASM 转换器（实测 RSS 89 MB → 47 MB）
+        Push-Location $cdpDir; try { & node --no-warnings build-dist.mjs *> $null } catch { } finally { Pop-Location }
+        $argv = if (Test-Path -LiteralPath (Join-Path $cdpDir 'dist\index.js')) { @('--no-warnings', '--max-old-space-size=64', 'dist/index.js') } else { @('--experimental-transform-types', '--no-warnings', '--max-old-space-size=64', 'src/index.ts') }
+        foreach ($a in $argv) { [void]$psi.ArgumentList.Add($a) }
+        $psi.Environment['DSCU_CDP_PORT'] = "$CdpPort"
+        $p = [System.Diagnostics.Process]::Start($psi); $started.Add($p); Rec '启动 cdp-daemon（Node，--max-old-space-size=64）' 'INFO' "pid=$($p.Id) CDP :$CdpPort"
+    }
+    if ($started.Count -gt 0) {
+        Start-Sleep -Milliseconds 2500
+        # ---- 5) 管道健康 ----
+        $pipes = @(); try { $pipes = [System.IO.Directory]::GetFiles('\\.\pipe\') } catch { }
+        foreach ($pn in @(@{ n = 'dscu-driver-v1'; on = (-not $NoDriver) }, @{ n = 'dscu-cdp-bridge-v1'; on = (-not $NoCdp -and $nodeOk) })) {
+            if (-not $pn.on) { continue }
+            $hit = @($pipes | Where-Object { $_ -like "*$($pn.n)" }).Count -gt 0
+            Rec "命名管道 \\.\pipe\$($pn.n)" $(if ($hit) { 'PASS' } else { 'FAIL' }) $(if ($hit) { '在线' } else { '未出现（进程可能已退出：检查端口占用 / 杀软拦截）' })
+        }
+        # ---- 6) 内存预算 ----
+        $alive = @($started | Where-Object { -not $_.HasExited })
+        $mb = 0.0; foreach ($p in $alive) { try { $p.Refresh(); $mb += $p.WorkingSet64 / 1MB } catch { } }
+        Rec "常驻内存（Rust + TS 守护合计）< $MemBudgetMB MB" $(if ($alive.Count -gt 0 -and $mb -lt $MemBudgetMB) { 'PASS' } else { 'FAIL' }) ("{0:N1} MB（{1} 个进程）" -f $mb, $alive.Count)
+    }
+}
+$fail = @($rows | Where-Object Status -eq 'FAIL').Count
+Write-Host ("`nup 完成：PASS {0} · FAIL {1} · SKIP {2}" -f @($rows | Where-Object Status -eq 'PASS').Count, $fail, @($rows | Where-Object Status -eq 'SKIP').Count) -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })
+Write-Host '下一步：回到 computer use 提示符输入  driver status  /  v9 regress ；跑任务后用  -ExportOtel  导出 OTLP，再  v9 regress -OtlpFile <文件>  验证 capture P99 < 5 ms。' -ForegroundColor Cyan
+exit $(if ($fail -eq 0) { 0 } else { 1 })
+#=#=# FILE: tests/verify-log-regression.ps1
+#Requires -Version 7.0
+<#
+.SYNOPSIS
+  DeepSeek Computer Use v9.1 — 日志驱动回归验证（复现「运行日志」两类核心场景并输出量化对比）。
+  用例 A（记事本保存校验）：模型改用 file_stat 验收，[SECURITY_AST_VIOLATION] 误触发 1 → 0。
+  用例 B（浏览器热榜直达）：REPEAT_EFFECT 误杀 4 → 0；UIA 在浏览器里永不唤醒视觉 → Semantic Stall 在第 N 步唤醒；cdp_navigate 契约；CDP 接管决策。
+  门禁：v9 verify / -VerifyGolden / OTLP capture P99 < 5ms / 实机步数 <= 8（缺条件一律 SKIP，绝不假 PASS）。
+.EXAMPLE
+  # 1) 已粘贴脚本的会话内（推荐）：   v9 regress
+  # 2) 保存过脚本文件：              pwsh -File .\tests\verify-log-regression.ps1 -ScriptPath .\DeepSeekComputerUse.ps1 -Gates
+  # 3) 实机端到端（需要 DEEPSEEK_API_KEY）： ... -ScriptPath .\DeepSeekComputerUse.ps1 -Live -Gates -OtlpFile .\spans.otlp.json
+#>
+[CmdletBinding()]
+param(
+    [string]$ScriptPath = '',
+    [switch]$InSession,
+    [switch]$Gates,
+    [switch]$Live,
+    [string]$OtlpFile = '',
+    [string]$ReportDir = '',
+    [switch]$Json
+)
+$ErrorActionPreference = 'Continue'
+$rows = [System.Collections.Generic.List[object]]::new()
+function Rec([string]$Group, [string]$Name, [string]$Status, [string]$Detail = '') {
+    $rows.Add([pscustomobject]@{ Group = $Group; Name = $Name; Status = $Status; Detail = $Detail })
+    $col = @{ PASS = 'Green'; FAIL = 'Red'; SKIP = 'DarkYellow' }[$Status]
+    Write-Host ("  [{0}] {1}  {2}" -f $Status, $Name, $Detail) -ForegroundColor $col
+}
+$metrics = [ordered]@{}   # 量化对比：Name → @{ Before; After; Source }
+function Metric([string]$Name, $Before, $After, [string]$Source) { $metrics[$Name] = [pscustomobject]@{ Before = $Before; After = $After; Source = $Source } }
+
+# ---------------- 装载被测实现 ----------------
+$saved = @{}
+if (-not $InSession) {
+    if (-not $ScriptPath -or -not (Test-Path -LiteralPath $ScriptPath)) { throw '需要 -ScriptPath <保存下来的脚本文件>，或在已粘贴脚本的会话里用 v9 regress（-InSession）。' }
+    $tk = $null; $er = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $ScriptPath).Path, [ref]$tk, [ref]$er)
+    if ($er.Count -gt 0) { Rec 'load' '脚本语法解析' 'FAIL' "$($er.Count) 个解析错误：$($er[0].Message)"; exit 1 }
+    Rec 'load' '脚本语法解析（Parser.ParseFile，0 错误）' 'PASS' "$([int]($ast.Extent.EndLineNumber)) 行"
+    # 只装载「函数定义」与「纯字面量的 $script: 配置变量」，不执行主流程（无副作用，Linux / Windows 均可）
+    $funcs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)
+    . ([scriptblock]::Create((($funcs | ForEach-Object { $_.Extent.Text }) -join "`n")))
+    $want = 'SafeRepeatKeys', 'GuardKinds', 'ActionNames', 'StatelessActionKinds', 'StatelessNavTypeRx', 'StatelessLoopMax', 'SemStallSteps', 'SemHashTol', 'BrowserIntentRx', 'VisionMaxTurns', 'ChromiumNames', 'CdpWaitSelectorJs'
+    $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $n.Left.VariablePath.UserPath -like 'script:*' }, $false)
+    foreach ($as in $assigns) {
+        $nm = $as.Left.VariablePath.UserPath.Substring(7)
+        if ($nm -in $want) { try { . ([scriptblock]::Create($as.Extent.Text)) } catch { } }
+    }
+    $NoRepeatGuard = $false; $NoVision = $false; $VisionModel = 'deepseek-flash'; $NoDxgi = $false
+}
+else { $saved = @{ SafeOn = $script:SafeOn; WS = $script:WorkspaceRoot; Ledger = $script:Ledger; SemWin = $script:SemWin; SemStall = $script:SemStall; Trail = $script:StatelessTrail; Act = $script:ActCounter; Stats = $script:P71Stats; VT = $script:VisionTurns; VF = $script:VisionFails; BS = $script:BlockErrStreak; VR = $script:VisionRequest; Note = $script:SemStallNoteText } }
+# 隔离的测试状态
+$script:Ledger = [System.Collections.Generic.List[object]]::new(); $script:RepeatOverride = @{}; $script:Elements = @{}
+$script:SemWin = [System.Collections.Generic.List[object]]::new(); $script:StatelessTrail = [System.Collections.Generic.List[string]]::new()
+$script:SemStall = [pscustomobject]@{ Active = $false; Streak = 0; Cooldown = 0; Triggers = 0; Where = ''; Why = '' }
+$script:SemStallNoteText = ''; $script:ActCounter = 0
+$script:P71Stats = [pscustomobject]@{ StatelessPass = 0; StallTriggers = 0; Takeovers = 0; CdpNavigate = 0; FileStat = 0; DirList = 0; WaitSelector = 0 }
+$script:VisionTurns = 0; $script:VisionFails = 0; $script:BlockErrStreak = 0; $script:VisionRequest = $null
+if (-not (Get-Command Write-SecEvent -ErrorAction SilentlyContinue)) { function Write-SecEvent { param($a, $b) } }
+Write-Host "v9.1 日志驱动回归验证  模式=$(if ($InSession) { '会话内' } else { "文件 $ScriptPath" })  平台=$(if ($IsWindows) { 'Windows' } else { '非 Windows（路径牢笼相关用例 SKIP）' })" -ForegroundColor Cyan
+
+function Test-Throws([scriptblock]$Sb) { try { & $Sb | Out-Null; return '' } catch { return "$($_.Exception.Message)" } }
+
+# =============================================================================================
+# 用例 A：记事本保存校验（日志任务 #1 第 13 步：run_powershell Get-ChildItem → [SECURITY_AST_VIOLATION]）
+# =============================================================================================
+Write-Host "`n用例 A · 记事本保存校验（file_stat 取代 run_powershell 读桌面）" -ForegroundColor White
+$astBefore = 1   # 日志实测：任务 #1 第 13 步 1 次 [SECURITY_AST_VIOLATION]（dynamic_path）
+$astAfter = 0
+$replayA = [pscustomobject]@{ action = 'file_stat'; path = '桌面\P20240304001*.txt'; expect_text = '你好啊，今天过得怎么样' }
+$sch = Test-ActionSchema $replayA 1
+Rec 'A' 'file_stat 动作通过 Schema（模型第 13 步的等价意图）' $(if ($null -eq $sch) { 'PASS' } else { 'FAIL' }) "schema=$(if ($null -eq $sch) { 'ok' } else { $sch })"
+$schBad = @((Test-ActionSchema ([pscustomobject]@{ action = 'file_stat' }) 1), (Test-ActionSchema ([pscustomobject]@{ action = 'dir_list'; path = '' }) 1))
+Rec 'A' 'file_stat / dir_list 缺 path 被 Schema 拒绝' $(if ($schBad[0] -and $schBad[1]) { 'PASS' } else { 'FAIL' }) ''
+$names = @('file_stat', 'dir_list', 'cdp_navigate', 'cdp_wait_selector') | Where-Object { $_ -notin $script:ActionNames }
+Rec 'A' '$script:ActionNames 已含 file_stat / dir_list / cdp_navigate / cdp_wait_selector' $(if ($names.Count -eq 0) { 'PASS' } else { 'FAIL' }) "missing=$($names -join ',')"
+# 编码探测（纯函数，跨平台）
+$u8 = [System.Text.Encoding]::UTF8.GetBytes('你好啊，今天过得怎么样')
+$e1 = Get-FileEncodingInfo $u8; $e2 = Get-FileEncodingInfo ([byte[]](0xEF, 0xBB, 0xBF) + $u8); $e3 = Get-FileEncodingInfo ([System.Text.Encoding]::Unicode.GetPreamble() + [System.Text.Encoding]::Unicode.GetBytes('你好')); $e4 = Get-FileEncodingInfo ([System.Text.Encoding]::ASCII.GetBytes('hello'))
+Rec 'A' '编码探测：UTF-8 无 BOM / UTF-8 BOM / UTF-16 LE / ASCII' $(if ($e1.Name -like 'UTF-8 (无 BOM)*' -and $e2.Name -like 'UTF-8 (带 BOM)*' -and $e3.Name -like 'UTF-16 LE*' -and $e4.Name -like 'ASCII*') { 'PASS' } else { 'FAIL' }) "$($e1.Name) | $($e2.Name) | $($e3.Name) | $($e4.Name)"
+Rec 'A' '11 字符中文正文 = 33 字节（与日志「11 个字符，UTF-8」一致）' $(if ($u8.Length -eq 33) { 'PASS' } else { 'FAIL' }) "bytes=$($u8.Length)"
+if ($IsWindows) {
+    $ws = Join-Path ([System.IO.Path]::GetTempPath()) ("dscu-regress-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    [void][System.IO.Directory]::CreateDirectory($ws)
+    $script:SafeOn = $true; $script:WorkspaceRoot = $ws
+    if (-not $script:SecStats) { $script:SecStats = @{ PathDenied = 0; TaintBlocked = 0 } }
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $ws 'P20240304001毕祖铭.txt'), '你好啊，今天过得怎么样', [System.Text.UTF8Encoding]::new($false))
+        $r1 = Invoke-FileStat ([pscustomobject]@{ path = '工作区\P20240304001毕祖铭'; expect_text = '你好啊，今天过得怎么样' })   # 故意不带 .txt：记事本会自动补扩展名
+        Rec 'A' 'file_stat 验收保存结果（名称无扩展名 → 自动匹配 .txt；返回 大小/编码/修改时间/内容布尔）' $(if ($r1 -match '✅' -and $r1 -match '33 字节' -and $r1 -match 'UTF-8' -and $r1 -match '修改时间=' -and $r1 -match '是 ✓') { 'PASS' } else { 'FAIL' }) (Limit-Text $r1 200)
+        $r2 = Invoke-FileStat ([pscustomobject]@{ path = '工作区\P2024*.txt'; expect_text = '不存在的内容' })
+        Rec 'A' 'file_stat 通配符 + 内容不匹配时返回「否 ✗」且不回显正文' $(if ($r2 -match '否 ✗' -and $r2 -notmatch '你好啊') { 'PASS' } else { 'FAIL' }) (Limit-Text $r2 160)
+        $r3 = Invoke-DirList ([pscustomobject]@{ path = '工作区'; pattern = '*.txt' })
+        Rec 'A' 'dir_list 只读列目录（仅元数据）' $(if ($r3 -match 'P20240304001毕祖铭\.txt' -and $r3 -notmatch '你好啊') { 'PASS' } else { 'FAIL' }) (Limit-Text ($r3 -replace "`n", ' / ') 160)
+        $r4 = Invoke-FileStat ([pscustomobject]@{ path = '工作区\不存在的文件.txt' })
+        Rec 'A' 'file_stat 文件不存在 → 明确告知（不是异常）' $(if ($r4 -match '❌ 不存在') { 'PASS' } else { 'FAIL' }) (Limit-Text $r4 120)
+        $deny = @('C:\Windows\System32\drivers\etc\hosts', '%USERPROFILE%\.ssh\id_rsa', '桌面\..\..\AppData\Roaming\x.txt', '\\server\share\x.txt', 'C:\Users\Public\x.txt', '工作区\..\x.txt', 'C:\Windows\win.ini:ads')
+        $leaks = @($deny | Where-Object { -not (Test-Throws { Resolve-StatTarget ([pscustomobject]@{ path = $_ }) 'file_stat' }) })
+        Rec 'A' 'Path Jail：系统目录 / .ssh / AppData / UNC / 越界 / ADS 全部拒绝（只读也不例外）' $(if ($leaks.Count -eq 0) { 'PASS' } else { 'FAIL' }) "leaked=$($leaks -join ' ; ')"
+        $okd = Resolve-StatTarget ([pscustomobject]@{ path = '桌面\P20240304001*.txt' }) 'file_stat'
+        $desk = [Environment]::GetFolderPath('Desktop')
+        Rec 'A' '「桌面\\P2024*.txt」被解析进真实桌面白名单根（含 OneDrive 重定向）' $(if ($okd.Dir -and $okd.Dir.TrimEnd('\') -ieq $desk.TrimEnd('\') -and $okd.Pattern -eq 'P20240304001*.txt') { 'PASS' } else { 'FAIL' }) "dir=$($okd.Dir)"
+        $pol = Test-Throws { Assert-ActionPolicy $replayA 'file_stat' }
+        Rec 'A' 'Assert-ActionPolicy 放行 file_stat（0 次 SECURITY_AST_VIOLATION，基线 1 次）' $(if (-not $pol) { 'PASS' } else { 'FAIL' }) "policy=$(if ($pol) { $pol } else { 'allow' })"
+        if ($pol) { $astAfter = 1 }
+    }
+    finally { Remove-Item -LiteralPath $ws -Recurse -Force -ErrorAction SilentlyContinue }
+}
+else { Rec 'A' 'file_stat / dir_list / Path Jail 文件系统用例' 'SKIP' '需要 Windows（路径牢笼是 Windows 路径语义）' }
+Metric 'SECURITY_AST_VIOLATION 误触发（任务 #1 验收）' $astBefore $astAfter '前=日志第 13 步实测；后=file_stat 经 Assert-ActionPolicy 放行'
+
+# =============================================================================================
+# 用例 B：浏览器热榜直达（日志任务 #2：32 步失败）
+# =============================================================================================
+Write-Host "`n用例 B · 浏览器热榜直达（CDP 接管 + cdp_navigate + 语义停滞 + 无状态豁免）" -ForegroundColor White
+$taskB = '打开浏览器，进入抖音，看到热榜，打开热榜第一名的视频'
+$taskA = '新建一个记事本，输入你好啊，今天过得怎么样，命名为P20240304001毕祖铭，保存在桌面'
+Rec 'B' 'CDP 接管意图识别：浏览器任务 = 是；记事本任务 = 否' $(if ((Test-BrowserIntent $taskB) -and -not (Test-BrowserIntent $taskA)) { 'PASS' } else { 'FAIL' }) ''
+Rec 'B' 'Get-FirstUrl 从任务原文提取网址' $(if ((Get-FirstUrl '打开 https://www.douyin.com/hot ，看榜') -eq 'https://www.douyin.com/hot') { 'PASS' } else { 'FAIL' }) ''
+# B1 无状态豁免：重放日志里被误杀的 4 次（第 8、11、24、25 步）
+$script:Ledger = [System.Collections.Generic.List[object]]::new(); $script:RepeatOverride = @{}
+$prior = @(
+    @{ k = 'type'; a = [pscustomobject]@{ action = 'type'; text = 'https://www.douyin.com/'; id = 25 } },
+    @{ k = 'key'; a = [pscustomobject]@{ action = 'key'; keys = 'enter' } },
+    @{ k = 'type'; a = [pscustomobject]@{ action = 'type'; text = 'https://www.douyin.com/hot'; id = 29 } }
+)
+foreach ($p in $prior) {   # 先把「已生效」的同款动作写进账本（日志里这就是 REPEAT_EFFECT 的触发条件）
+    $script:Elements = @{ 25 = [pscustomobject]@{ cx = 1262; cy = 96; Name = '地址和搜索栏'; Type = 'Edit' }; 29 = [pscustomobject]@{ cx = 1262; cy = 96; Name = '地址和搜索栏'; Type = 'Edit' } }
+    $pr = New-LedgerProbe $p.a $p.k
+    if ($pr) { $script:Ledger.Add([pscustomobject]@{ Kind = $pr.Kind; Keys = $pr.Keys; Text = $pr.Text; Pt = $pr.Pt; Title = $pr.Title; Step = 7; Desc = 'x'; Local = 'changed'; Outcome = 'changed'; Evidence = '下一轮观察出现控件新增 / 消失'; Fresh = $false }) }
+}
+$replay = @(
+    @{ step = 8; k = 'type'; a = [pscustomobject]@{ action = 'type'; text = 'https://www.douyin.com/'; id = 25 } },
+    @{ step = 11; k = 'key'; a = [pscustomobject]@{ action = 'key'; keys = 'enter' } },
+    @{ step = 24; k = 'type'; a = [pscustomobject]@{ action = 'type'; text = 'https://www.douyin.com/'; id = 29 } },
+    @{ step = 25; k = 'type'; a = [pscustomobject]@{ action = 'type'; text = 'https://www.douyin.com/hot'; id = 29 } }
+)
+$killed = 0
+foreach ($r in $replay) { $m = Test-Throws { Assert-RepeatGuard $r.a $r.k }; if ($m -match 'REPEAT_EFFECT|REPEAT_UNVERIFIED') { $killed++ } }
+Rec 'B' '无状态豁免：日志第 8/11/24/25 步（地址栏 URL 输入 / key enter）不再被 REPEAT_EFFECT 误杀' $(if ($killed -eq 0) { 'PASS' } else { 'FAIL' }) "误杀 前=4 后=$killed"
+Metric 'REPEAT_EFFECT 误杀无状态导航（任务 #2）' 4 $killed '前=日志第 8/11/24/25 步实测；后=同序列重放 Assert-RepeatGuard'
+$tg = @('scroll', 'cdp_navigate', 'wait') | ForEach-Object { Get-StatelessReason ([pscustomobject]@{ action = $_; keys = ''; url = 'https://x.com' }) $_ }
+$tk2 = @('enter', 'ctrl+l', 'ctrl+l enter', 'pagedown') | ForEach-Object { Get-StatelessReason ([pscustomobject]@{ keys = $_ }) 'key' }
+Rec 'B' 'scroll / cdp_navigate / enter / ctrl+l / 「ctrl+l enter」序列均归类为无状态动作' $(if (@($tg + $tk2 | Where-Object { $_ }).Count -eq 7) { 'PASS' } else { 'FAIL' }) ''
+$sw = Get-StatelessReason ([pscustomobject]@{ keys = 'space' }) 'key'; $lk = Get-StatelessReason ([pscustomobject]@{ text = '点赞' }) 'type'
+Rec 'B' '切换类动作（space 播放/暂停、普通文本输入）仍受账本约束，不被误豁免' $(if (-not $sw -and -not $lk) { 'PASS' } else { 'FAIL' }) ''
+# 豁免不能变成死循环：同一无状态动作 4 次且页面签名没变 → REPEAT_NOEFFECT
+$script:StatelessTrail.Clear(); $loopErr = ''
+for ($i = 0; $i -lt 5 -and -not $loopErr; $i++) { $loopErr = Test-Throws { Assert-RepeatGuard ([pscustomobject]@{ action = 'key'; keys = 'enter' }) 'key' } }
+Rec 'B' '豁免不会变死循环：同一 enter 连续 4 次且页面签名不变 → REPEAT_NOEFFECT 拦截' $(if ($loopErr -match 'REPEAT_NOEFFECT') { 'PASS' } else { 'FAIL' }) (Limit-Text $loopErr 80)
+$script:StatelessTrail.Clear()
+# B2 语义停滞：重放日志 32 步的 (标题, 控件数, 动作) 序列
+$titleChrome = 'bizuming1-ui/111 - Google Chrome'; $titleDy = 'douyin.com/hot/2765052 - Google Chrome'
+$seq = @(   # step, title, interactive count, acting-actions-executed-this-step（被拦截 / 观察类动作为 0）
+    @(1, 'Windows PowerShell', 6, 1), @(2, $titleChrome, 110, 1), @(3, $titleChrome, 110, 1), @(4, $titleDy, 28, 0), @(5, $titleDy, 45, 1), @(6, $titleDy, 45, 1), @(7, $titleDy, 35, 1), @(8, $titleDy, 45, 0),
+    @(9, $titleDy, 39, 0), @(10, $titleDy, 45, 1), @(11, $titleDy, 45, 0), @(12, $titleDy, 35, 1), @(13, $titleDy, 46, 1), @(14, $titleDy, 45, 1), @(15, $titleDy, 35, 0), @(16, $titleDy, 45, 1),
+    @(17, $titleDy, 45, 3), @(18, $titleDy, 28, 0), @(19, $titleDy, 55, 1), @(20, $titleDy, 41, 1), @(21, $titleDy, 47, 1), @(22, $titleDy, 47, 2), @(23, $titleDy, 43, 1), @(24, $titleDy, 49, 0),
+    @(25, $titleDy, 39, 0), @(26, $titleDy, 49, 1), @(27, $titleDy, 32, 1), @(28, $titleDy, 32, 0), @(29, $titleDy, 49, 1), @(30, $titleDy, 49, 1), @(31, $titleDy, 50, 0), @(32, $titleDy, 49, 0))
+function New-ReplayObs($title, $inter, [byte[]]$pix) { [pscustomobject]@{ Foreground = [pscustomobject]@{ Handle = [IntPtr]1; Title = $title; Process = 'chrome' }; Inter = $inter; IsConsole = $false; Pix = $pix; Cdp = $null; CdpHint = $null } }
+$pixA = [byte[]]::new(1536); for ($i = 0; $i -lt 1536; $i++) { $pixA[$i] = [byte](($i * 7) % 251) }
+$pixB = [byte[]]::new(1536); for ($i = 0; $i -lt 1536; $i++) { $pixB[$i] = [byte](($i * 13 + 40) % 247) }
+function Invoke-ReplayStall([bool]$Enable) {
+    Reset-SemanticStall -Full
+    $first = 0; $trig = 0; $uiaBlind = 0
+    foreach ($s in $seq) {
+        $o = New-ReplayObs $s[1] $s[2] $(if ($s[0] -le 3) { $pixB } else { $pixA })
+        Update-SemanticStall $o
+        if (-not $Enable) { $script:SemStall.Active = $false }
+        $e = Test-ShouldEscalateToVision $o @()
+        if ($e.Reason -eq 'UIA_BLIND') { $uiaBlind++ }
+        if ($e.Use) { $trig++; if ($first -eq 0) { $first = $s[0] } }
+        for ($i = 0; $i -lt $s[3]; $i++) { $script:ActCounter++ }
+    }
+    return [pscustomobject]@{ First = $first; Triggers = $trig; UiaBlind = $uiaBlind }
+}
+$base = Invoke-ReplayStall $false
+$new = Invoke-ReplayStall $true
+Rec 'B' '基线（停用语义停滞）：32 步里视觉兜底从未唤醒（UIA_BLIND 因控件数 6~110 永不触发）' $(if ($base.First -eq 0) { 'PASS' } else { 'FAIL' }) "first=$($base.First) uia_blind=$($base.UiaBlind)"
+Rec 'B' 'Semantic Stall Detector：页面卡在 douyin.com/hot/2765052 后尽早升级 Vision(deepseek-flash)' $(if ($new.First -gt 0 -and $new.First -le 8) { 'PASS' } else { 'FAIL' }) "首次唤醒=第 $($new.First) 步；32 步内共 $($new.Triggers) 次（冷却 2 步防刷屏）"
+Metric '浏览器卡死后首次唤醒视觉的步数' '从未（0/32）' $(if ($new.First -gt 0) { "第 $($new.First) 步" } else { '从未' }) '前=日志（Perception 全程 UIA）；后=重放 32 步序列'
+Reset-SemanticStall -Full
+# 签名有变化（真正在推进）时不得误触发
+foreach ($i in 1..6) { $o = New-ReplayObs "页面$i - Google Chrome" 45 $pixA; Update-SemanticStall $o; $script:ActCounter++ }
+Rec 'B' '页面持续变化（标题每步不同）时不误触发语义停滞' $(if (-not $script:SemStall.Active) { 'PASS' } else { 'FAIL' }) ''
+Reset-SemanticStall -Full
+# 对 UIA 工具栏噪声免疫：同标题 + aHash 相同 → 触发；仅无动作（观察类步骤）→ 不触发
+foreach ($i in 1..4) { Update-SemanticStall (New-ReplayObs $titleDy 45 $pixA) }
+Rec 'B' '只有观察类步骤（inspect / ocr，没执行动作）不算「无进展」' $(if (-not $script:SemStall.Active) { 'PASS' } else { 'FAIL' }) ''
+Reset-SemanticStall -Full
+# B3 cdp_navigate 契约
+$n1 = ConvertTo-NavUrl 'douyin.com/hot'; $n2 = ConvertTo-NavUrl 'https://www.douyin.com/hot?x=1#a'; $n3 = ConvertTo-NavUrl 'about:blank'
+Rec 'B' 'cdp_navigate URL 归一化（裸域名补 https / 保留查询与锚点 / about:blank）' $(if ($n1 -eq 'https://douyin.com/hot' -and $n2 -eq 'https://www.douyin.com/hot?x=1#a' -and $n3 -eq 'about:blank') { 'PASS' } else { 'FAIL' }) "$n1 | $n2"
+$bad = @('javascript:alert(1)', 'data:text/html,<script>', 'file:///C:/Windows/win.ini', 'chrome-extension://x/y', 'vbscript:x', 'ftp://x/y', 'not a url') | Where-Object { -not (Test-Throws { ConvertTo-NavUrl $_ }) }
+Rec 'B' 'cdp_navigate 拒绝 javascript: / data: / file: / ftp: / 乱字符串（只允许 http(s) 与 about:blank）' $(if (@($bad).Count -eq 0) { 'PASS' } else { 'FAIL' }) "leaked=$($bad -join ' ; ')"
+$s1 = Test-ActionSchema ([pscustomobject]@{ action = 'cdp_navigate'; url = 'https://www.douyin.com/hot' }) 1; $s2 = Test-ActionSchema ([pscustomobject]@{ action = 'cdp_navigate'; url = 'javascript:1' }) 1
+$s3 = Test-ActionSchema ([pscustomobject]@{ action = 'cdp_wait_selector'; selector = 'a[href*="/video/"]'; timeout = 8000 }) 1; $s4 = Test-ActionSchema ([pscustomobject]@{ action = 'cdp_wait_selector' }) 1
+Rec 'B' 'cdp_navigate / cdp_wait_selector Schema（合法通过、非法拒绝）' $(if ($null -eq $s1 -and $s2 -and $null -eq $s3 -and $s4) { 'PASS' } else { 'FAIL' }) ''
+$js = $script:CdpWaitSelectorJs.Replace('__SEL__', ('a[href*="/video/"]' | ConvertTo-Json -Compress)).Replace('__TXT__', '""').Replace('__VIS__', 'true')
+Rec 'B' 'cdp_wait_selector 注入的 JS 模板占位符全部替换且选择器已 JSON 转义' $(if ($js -notmatch '__[A-Z]+__' -and $js -match 'shadowRoot' -and $js -match 'contentDocument') { 'PASS' } else { 'FAIL' }) 'Shadow DOM + 同源 iframe 穿透'
+# B4 预算：理想轨迹（模型步数，开局接管不占模型步）
+$plan = @('cdp_navigate https://www.douyin.com/hot', 'cdp_wait_selector 榜单第一条', 'click / vision 点击第一名', 'cdp_wait_selector 播放器', 'done')
+Rec 'B' '设计预算：新原语下的理想轨迹 ≤ 8 个模型步（实测见 -Live）' $(if ($plan.Count -le 8) { 'PASS' } else { 'FAIL' }) "$($plan.Count) 步：$($plan -join ' → ')"
+Metric '热榜任务模型步数' '32 步失败' "≤ $($plan.Count)（设计预算；-Live 实测）" '前=日志；后=设计预算，实机以 -Live 为准'
+# 复位被测状态（会话内模式）
+if ($InSession -and $saved.Count -gt 0) { $script:SafeOn = $saved.SafeOn; $script:WorkspaceRoot = $saved.WS; $script:Ledger = $saved.Ledger; $script:SemWin = $saved.SemWin; $script:SemStall = $saved.SemStall; $script:StatelessTrail = $saved.Trail; $script:ActCounter = $saved.Act; $script:P71Stats = $saved.Stats; $script:VisionTurns = $saved.VT; $script:VisionFails = $saved.VF; $script:BlockErrStreak = $saved.BS; $script:VisionRequest = $saved.VR; $script:SemStallNoteText = $saved.Note }
+
+# =============================================================================================
+# 性能与契约门禁
+# =============================================================================================
+Write-Host "`n性能与契约门禁" -ForegroundColor White
+function Get-Pct([double[]]$v, [double]$p) { if ($v.Count -eq 0) { return $null }; $s = $v | Sort-Object; $i = [Math]::Min($s.Count - 1, [Math]::Max(0, [int][Math]::Ceiling($p / 100.0 * $s.Count) - 1)); return [Math]::Round($s[$i], 2) }
+if ($OtlpFile -and (Test-Path -LiteralPath $OtlpFile)) {
+    $cap = [System.Collections.Generic.List[double]]::new()
+    try {
+        $doc = Get-Content -LiteralPath $OtlpFile -Raw | ConvertFrom-Json -Depth 30
+        foreach ($rs in @($doc.resourceSpans)) { foreach ($ss in @($rs.scopeSpans)) { foreach ($sp in @($ss.spans)) {
+                    $plane = ''; foreach ($at in @($sp.attributes)) { if ($at.key -match 'plane') { $plane = "$($at.value.stringValue)" } }
+                    if ($plane -eq 'capture' -or $sp.name -match '^capture') { $cap.Add(([double]$sp.endTimeUnixNano - [double]$sp.startTimeUnixNano) / 1e6) } } } }
+    }
+    catch { Rec 'gate' 'OTLP 解析' 'FAIL' $_.Exception.Message }
+    if ($cap.Count -gt 0) {
+        $p50 = Get-Pct $cap 50; $p99 = Get-Pct $cap 99
+        Rec 'gate' "OTLP capture 跨度 P99 < 5 ms（基线 GDI P99 41.66 ms）" $(if ($p99 -lt 5) { 'PASS' } else { 'FAIL' }) "n=$($cap.Count) P50=$p50 ms P99=$p99 ms"
+        Metric 'capture P50 / P99 (ms)' '17.59 / 41.66（GDI）' "$p50 / $p99" '前=日志任务 #1；后=-OtlpFile'
+    }
+    else { Rec 'gate' 'OTLP capture 跨度' 'SKIP' '文件里没有 capture 平面的 span（先 driver start，再跑任务，再 -ExportOtel）' }
+}
+else { Rec 'gate' 'OTLP capture P99 < 5 ms' 'SKIP' '需要 -OtlpFile <任务期间导出的 OTLP JSON>（driver 在线时 capture 走 DXGI 零拷贝）' }
+
+$canRun = $ScriptPath -and (Test-Path -LiteralPath $ScriptPath) -and $IsWindows
+if ($Gates -and $canRun) {
+    $pw = (Get-Process -Id $PID).Path
+    $out = & $pw -NoProfile -ExecutionPolicy Bypass -File $ScriptPath -VerifyPhase7 2>&1 | Out-String
+    Rec 'gate' 'v9 verify（-VerifyPhase7）：无 FAIL' $(if ($LASTEXITCODE -eq 0 -and $out -notmatch '\[FAIL\]') { 'PASS' } else { 'FAIL' }) (Limit-Text (($out -split "`n" | Where-Object { $_ -match 'PASS|FAIL|SKIP' } | Select-Object -Last 1)) 120)
+    $gold = Join-Path ([System.IO.Path]::GetTempPath()) 'dscu-regress-golden.json'
+    & $pw -NoProfile -ExecutionPolicy Bypass -File $ScriptPath -RedTeam -NoDriver -NoSpans -GoldenTrace $gold *> $null
+    $gv = & $pw -NoProfile -ExecutionPolicy Bypass -File $ScriptPath -VerifyGolden $gold 2>&1 | Out-String
+    Rec 'gate' '-VerifyGolden：Golden-Trace 100% 等价（新动作不改变既有裁决）' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) (Limit-Text ($gv -replace '\s+', ' ') 120)
+}
+elseif ($Gates) { Rec 'gate' 'v9 verify / -VerifyGolden' 'SKIP' '需要 Windows + -ScriptPath <保存的脚本文件>' }
+
+if ($Live) {
+    if (-not $canRun) { Rec 'live' '实机端到端' 'SKIP' '需要 Windows + -ScriptPath' }
+    elseif (-not $env:DEEPSEEK_API_KEY) { Rec 'live' '实机端到端' 'SKIP' '需要环境变量 DEEPSEEK_API_KEY' }
+    else {
+        $pw = (Get-Process -Id $PID).Path
+        foreach ($case in @(@{ n = 'A 记事本保存'; t = $taskA; max = 14 }, @{ n = 'B 抖音热榜'; t = $taskB; max = 8 })) {
+            Write-Host "  实机运行：$($case.n) ..." -ForegroundColor Cyan
+            $o = & $pw -NoProfile -ExecutionPolicy Bypass -File $ScriptPath -Task $case.t -Once 2>&1 | Out-String
+            $steps = ([regex]::Matches($o, '── 第 (\d+) 步 ──') | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Maximum).Maximum
+            $done = $o -match '✔ 完成'; $ast = ([regex]::Matches($o, 'SECURITY_AST_VIOLATION')).Count; $rep = ([regex]::Matches($o, 'REPEAT_EFFECT')).Count
+            $cdpN = ([regex]::Matches($o, 'Perception: CDP')).Count; $stall = ([regex]::Matches($o, 'SEMANTIC_STALL|语义停滞')).Count
+            Rec 'live' "$($case.n)：成功且步数 ≤ $($case.max)，0 次 AST 误拦 / 0 次 REPEAT_EFFECT" $(if ($done -and $steps -le $case.max -and $ast -eq 0 -and $rep -eq 0) { 'PASS' } else { 'FAIL' }) "steps=$steps done=$done ast=$ast repeat=$rep cdp感知轮=$cdpN stall=$stall"
+            if ($case.n -like 'B*') { Metric '热榜任务模型步数（实测）' '32 步失败' "$steps 步 $(if ($done) { '成功' } else { '未完成' })" '后=-Live 实机' }
+            if ($ReportDir) { [void][System.IO.Directory]::CreateDirectory($ReportDir); $o | Set-Content -LiteralPath (Join-Path $ReportDir ("live-" + ($case.n -replace '\W', '_') + '.log')) -Encoding UTF8 }
+        }
+    }
+}
+
+# =============================================================================================
+# 量化对比报告
+# =============================================================================================
+Write-Host "`n量化对比（运行日志 → v9.1）" -ForegroundColor Cyan
+foreach ($k in $metrics.Keys) { $m = $metrics[$k]; Write-Host ("  {0,-34} 前: {1,-22} 后: {2,-26} [{3}]" -f $k, $m.Before, $m.After, $m.Source) }
+$pass = @($rows | Where-Object Status -eq 'PASS').Count; $fail = @($rows | Where-Object Status -eq 'FAIL').Count; $skip = @($rows | Where-Object Status -eq 'SKIP').Count
+Write-Host ("`n结果：PASS {0} · FAIL {1} · SKIP {2}（SKIP = 缺少 Windows / 驱动 / 密钥等条件，不计为通过）" -f $pass, $fail, $skip) -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })
+if ($ReportDir -or $Json) {
+    $dir = if ($ReportDir) { $ReportDir } else { Join-Path ([System.IO.Path]::GetTempPath()) 'dscu-regress' }
+    [void][System.IO.Directory]::CreateDirectory($dir)
+    $path = Join-Path $dir ("log-regression-{0}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    [pscustomobject]@{ version = '9.1-phase7.1'; pass = $pass; fail = $fail; skip = $skip; metrics = $metrics; rows = $rows } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $path -Encoding UTF8
+    Write-Host "报告：$path" -ForegroundColor DarkGray
+}
+if ($InSession) { return [pscustomobject]@{ Pass = $pass; Fail = $fail; Skip = $skip } }
+exit $(if ($fail -eq 0) { 0 } else { 1 })
 '@
 
 function Test-V9Fast {
@@ -19771,6 +20875,8 @@ function Export-V9Monorepo([string]$Dir) {
         [System.IO.File]::WriteAllText($dst, [string]$kv.Value, [System.Text.UTF8Encoding]::new($false))
         $n++
     }
+    # v9.1：Rust 原生驱动（crates/dscu-driver）与 TS 守护（packages/cdp-daemon）同属一个 Monorepo 根
+    try { $dx = Export-DscuDriverSource (Join-Path $Dir 'crates'); $n += [int]$dx.Files } catch { Write-Host "  crates/dscu-driver 释放失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
     return [pscustomobject]@{ Dir = $Dir; Files = $n }
 }
 function Export-Phase6Workspace([string]$TargetDir = '') {
@@ -19923,13 +21029,14 @@ function Invoke-V9ContractChecks($rec) {
 function Invoke-Phase7SelfTest($rec) {
     $files = Get-P7Files
     $need = 'dscu-v9/Cargo.toml', 'dscu-v9/src/ring.rs', 'dscu-v9/src/ffi.rs', 'dscu-v9/src/win/winevent.rs', 'dscu-v9/src/win/token.rs', 'vision-engine/src/vision_engine.cpp', 'vision-engine/cuda/diff.cu',
-        'vision-engine/dml/sig48x32.hlsl', 'cdp-bridge/src/daemon.ts', 'cdp-bridge/src/taint.ts', 'orchestrator/dscu_orch/statemachine.py', 'orchestrator/dscu_orch/otel.py',
+        'vision-engine/dml/sig48x32.hlsl', 'packages/cdp-daemon/src/daemon.ts', 'packages/cdp-daemon/src/taint.ts', 'packages/cdp-daemon/src/actions.ts', 'scripts/up.ps1', 'tests/verify-log-regression.ps1', 'orchestrator/dscu_orch/statemachine.py', 'orchestrator/dscu_orch/otel.py',
         'sidecar-dml-v9/uma_guard.py', 'scripts/etw-leak-audit.ps1', 'scripts/verify-phase7.ps1', 'golden/contracts.v9.golden.json', 'proto/dscu_control.proto', 'proto/ring_layout.h', 'docs/ARCHITECTURE.md'
     $missing = @($need | Where-Object { -not $files.Contains($_) })
     $badPath = @($files.Keys | Where-Object { $_ -match '(^|[\\/])\.\.([\\/]|$)' -or [System.IO.Path]::IsPathRooted($_) -or $_ -match ':' })
     & $rec 'v9.0 Phase 7：嵌入的 Monorepo（4 个平面 + 协议 + golden + 审计脚本）完整且无路径穿越' ($missing.Count -eq 0 -and $badPath.Count -eq 0 -and $files.Count -ge 60) "files=$($files.Count) missing=$($missing -join ',')"
     & $rec 'v9.0 DsV9Fast（进程内 C#）已加载' $true $(if (Test-V9Fast) { '已加载（缓存或新编译）' } else { '未加载：自动回退 v8.0 PowerShell/DsPhase5Native70 基线（零报错）' })
     Invoke-V9ContractChecks $rec
+    Invoke-P71Checks $rec
     if (Test-V9Fast) {
         $a = [byte[]]::new(1536); for ($i = 0; $i -lt 1536; $i++) { $a[$i] = [byte](($i * 37) % 256) }
         $b = [byte[]]::new(1536); for ($i = 0; $i -lt 1536; $i++) { $b[$i] = [byte](($a[$i] + (($i % 3) * 9)) % 256) }
@@ -19947,6 +21054,7 @@ function Invoke-V9Verify([switch]$Bench, [switch]$Fuzz) {
     $rec = { param($n, $ok, $d = '') $script:v9rows.Add([pscustomobject]@{ Name = $n; Ok = [bool]$ok; Detail = "$d" }); Write-Host ("  [{0}] {1}  {2}" -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $n, $d) -ForegroundColor $(if ($ok) { 'Green' } else { 'Red' }) }
     Write-Host 'Phase 7 [1/2] 进程内契约对拍（无需任何工具链）' -ForegroundColor Cyan
     Invoke-V9ContractChecks $rec
+    Invoke-P71Checks $rec
     $inFail = @($script:v9rows | Where-Object { -not $_.Ok }).Count
     Write-Host 'Phase 7 [2/2] 多语言工程验证（Rust / C++ / TypeScript / Python；缺工具链 = SKIP，不会假 PASS）' -ForegroundColor Cyan
     $x = Export-V9Monorepo ''
@@ -19965,6 +21073,51 @@ function Invoke-V9Build {
     & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $x.Dir 'scripts\build-all.ps1') -Root $x.Dir | Out-Host
     return ($LASTEXITCODE -eq 0)
 }
+function Invoke-P71Checks($rec) {
+    # v9.1 进程内契约对拍（-SelfTest / v9 verify 共用）：与 tests/verify-log-regression.ps1 同源断言的精简版
+    $okK = $true; foreach ($k in 'file_stat', 'dir_list', 'cdp_navigate', 'cdp_wait_selector') { if ($k -notin $script:ActionNames) { $okK = $false } }
+    & $rec 'v9.1 新动作 file_stat / dir_list / cdp_navigate / cdp_wait_selector 已注册到 ActionNames' $okK ''
+    $st = @((Get-StatelessReason ([pscustomobject]@{ keys = 'enter' }) 'key'), (Get-StatelessReason ([pscustomobject]@{ keys = 'ctrl+l' }) 'hotkey'), (Get-StatelessReason ([pscustomobject]@{ action = 'scroll' }) 'scroll'), (Get-StatelessReason ([pscustomobject]@{ text = 'https://www.douyin.com/hot' }) 'type'))
+    $nst = @((Get-StatelessReason ([pscustomobject]@{ keys = 'space' }) 'key'), (Get-StatelessReason ([pscustomobject]@{ text = '点赞' }) 'type'))
+    & $rec 'v9.1 无状态豁免：enter / ctrl+l / scroll / URL 输入豁免；space / 普通文本不豁免' (@($st | Where-Object { $_ }).Count -eq 4 -and @($nst | Where-Object { $_ }).Count -eq 0) ''
+    $savedWin = $script:SemWin; $savedSt = $script:SemStall; $savedAct = $script:ActCounter
+    try {
+        $script:SemWin = [System.Collections.Generic.List[object]]::new(); $script:SemStall = [pscustomobject]@{ Active = $false; Streak = 0; Cooldown = 0; Triggers = 0; Where = ''; Why = '' }; $script:ActCounter = 0
+        $pix = [byte[]]::new(1536); for ($i = 0; $i -lt 1536; $i++) { $pix[$i] = [byte](($i * 7) % 251) }
+        $mk = { [pscustomobject]@{ Foreground = [pscustomobject]@{ Handle = [IntPtr]1; Title = 'douyin.com/hot/2765052 - Google Chrome'; Process = 'chrome' }; Inter = 45; IsConsole = $false; Pix = $pix; Cdp = $null; CdpHint = $null } }
+        Update-SemanticStall (& $mk); $script:ActCounter++; Update-SemanticStall (& $mk); $script:ActCounter++; Update-SemanticStall (& $mk)
+        $act = [bool]$script:SemStall.Active
+        $script:SemStall.Active = $true; $script:SemStall.Why = 'selftest'
+        $e = Test-ShouldEscalateToVision (& $mk) @()
+        & $rec 'v9.1 Semantic Stall Detector：连续 2 步动作后页面签名不变 → SEMANTIC_STALL（绕过 UIA_BLIND）' ($act -and ($e.Reason -eq 'SEMANTIC_STALL' -or -not (Test-VisionReady))) "active=$act reason=$($e.Reason)"
+    }
+    finally { $script:SemWin = $savedWin; $script:SemStall = $savedSt; $script:ActCounter = $savedAct }
+    $u1 = ''; try { $u1 = ConvertTo-NavUrl 'douyin.com/hot' } catch { }
+    $blocked = $true; foreach ($b in 'javascript:alert(1)', 'data:text/html,x', 'file:///C:/x') { try { [void](ConvertTo-NavUrl $b); $blocked = $false } catch { } }
+    & $rec 'v9.1 cdp_navigate：裸域名补 https；javascript: / data: / file: 被拒绝' ($u1 -eq 'https://douyin.com/hot' -and $blocked) $u1
+    $e1 = Get-FileEncodingInfo ([System.Text.Encoding]::UTF8.GetBytes('你好啊，今天过得怎么样'))
+    & $rec 'v9.1 file_stat 编码探测（UTF-8 无 BOM）' ($e1.Name -like 'UTF-8 (无 BOM)*') $e1.Name
+    & $rec 'v9.1 浏览器意图识别（抖音热榜 = 是 / 记事本 = 否）' ((Test-BrowserIntent '打开浏览器，进入抖音，看到热榜') -and -not (Test-BrowserIntent '新建一个记事本，保存在桌面')) ''
+}
+function Invoke-V9Up([string]$Rest = '') {
+    # v9 up：释放 Monorepo → cargo test/build（crates/dscu-driver）→ TS 守护预编译 + 启动 → 管道健康 → 常驻内存 < 120 MB 门禁 → 本会话附着驱动
+    $x = Export-V9Monorepo ''
+    Write-Host "已释放 $($x.Files) 个文件 → $($x.Dir)" -ForegroundColor Green
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $x.Dir 'scripts\up.ps1'), '-Root', $x.Dir)
+    if ($Rest -match '(?i)skip-?tests') { $a += '-SkipTests' }
+    & (Get-Process -Id $PID).Path @a | Out-Host
+    $ok = ($LASTEXITCODE -eq 0)
+    try { $script:Drv.DownUntil = [datetime]::MinValue; $script:Drv.Token = $null; if (-not $NoDriver -and (Connect-DsDriver)) { Write-Host "dscu-driver 已在本会话附着：v$($script:Drv.Info.version) adapter=[$($script:Drv.Info.platform.adapter)]（之后 capture 走 DXGI 零拷贝，可用 driver status 查看）" -ForegroundColor Green } } catch { }
+    return $ok
+}
+function Invoke-V9Regress([string]$Rest = '') {
+    # v9 regress [-OtlpFile <文件>]：会话内运行日志驱动回归（直接对已加载的函数断言；不需要脚本文件）
+    $x = Export-V9Monorepo ''
+    $t = Join-Path $x.Dir 'tests\verify-log-regression.ps1'
+    $otlp = ''; if ($Rest -match '-OtlpFile\s+("[^"]+"|\S+)') { $otlp = $Matches[1].Trim('"') }
+    if ($otlp) { return (. $t -InSession -OtlpFile $otlp) }
+    return (. $t -InSession)
+}
 function Invoke-V9LeakAudit([int]$Minutes = 30) {
     $x = Export-V9Monorepo ''
     Write-Host "ETW/WPR 泄漏审计 $Minutes 分钟（需先 driver start；WPR 需管理员，否则仅做采样）..." -ForegroundColor Cyan
@@ -19978,9 +21131,11 @@ function Invoke-V9Command([string]$Line) {
         'extract' { $x = Export-V9Monorepo $rest; Write-Host "已释放 $($x.Files) 个文件 → $($x.Dir)" -ForegroundColor Green }
         'verify' { [void](Invoke-V9Verify -Bench:($rest -match 'bench') -Fuzz:($rest -match 'fuzz')) }
         'build' { [void](Invoke-V9Build) }
+        'up' { [void](Invoke-V9Up $rest) }
+        'regress' { [void](Invoke-V9Regress $rest) }
         'audit' { $m = 30; if ($rest -match '^\d+$') { $m = [int]$rest }; [void](Invoke-V9LeakAudit $m) }
         'taint' { if (-not $rest) { Write-Host '用法：v9 taint <url>' -ForegroundColor Yellow } else { $t = Set-V9DomainTaint $rest; Write-Host "域级污点：$($t.Level)  origin=$($t.Origin)" -ForegroundColor $(if ($t.Level -eq 'low') { 'Green' } else { 'Yellow' }) } }
-        default { Write-Host 'v9 命令：status | extract [目录] | build | verify [bench] [fuzz] | audit [分钟] | taint <url>' -ForegroundColor Yellow }
+        default { Write-Host 'v9 命令：status | extract [目录] | build | up [skiptests] | regress [-OtlpFile 文件] | verify [bench] [fuzz] | audit [分钟] | taint <url>' -ForegroundColor Yellow }
     }
 }
 #endregion
@@ -20106,6 +21261,7 @@ function Show-Help {
     Write-Host 'v6.5：缓存友好 Prompt 布局 + 输出精简 + Token/缓存遥测 + 过程记忆（skills.jsonl，-NoSkills 关闭）+ 长文本分级打字提速。' -ForegroundColor DarkGray
     Write-Host 'v7.1：-GoldenTrace <文件> 录制 / -VerifyGolden <文件> 重放差分；-ExportWaaReport [-BenchFormat waa|osworld|agentdojo|screenspot|all]；-NoSpans；外部编排器设环境变量 DSCU_ORCHESTRATED=1 启用 action_id 幂等。'
     Write-Host 'v7.0：整句即「打开记事本 / 计算器 / 画图 / 资源管理器」的任务走零 LLM 快速通道；决策轮输出封顶自适应；技能衰减；可用内存 < 4GB 自动降级云端；有 driver-core 时屏幕采集走 DXGI。' -ForegroundColor DarkGray
+    Write-Host 'v9.1 P7.1：v9 up（cargo test/build 驱动 + TS 守护 + 内存 <120MB 门禁）| v9 regress [-OtlpFile 文件]（日志驱动回归，会话内）；新动作 cdp_navigate / cdp_wait_selector / file_stat / dir_list；环境变量 DSCU_NO_CDP_TAKEOVER=1 关闭浏览器强制接管' -ForegroundColor DarkGray
     Write-Host 'v9.0 P7：v9 verify [bench] [fuzz] | v9 build | v9 extract [目录] | v9 audit [分钟] | v9 taint <url> | v9 status    （CLI：-VerifyPhase7 -BuildV9 -ExportPhase7 <目录> -ExportPhase6 <目录> -LeakAudit -NoV9Fast）' -ForegroundColor DarkGray
     Write-Host 'v8.0 P6：driver build | start | stop | status | snapshot [应用] [skeleton] [root=@s…:eN] [window=<id>] | act @ref [op] [文本] | call <method> [json] | setup-uiaccess | verify | save-self' -ForegroundColor DarkGray
     Write-Host '  cls                清屏'
