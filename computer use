@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v15.0 (Step 3) —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
+  DeepSeek Computer Use v16.0 (Step 3+) —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
   直接整段粘贴到 PowerShell 7 → 输入 DeepSeek API Key → 出现「请输入任务」提示符即可使用（与 v12/v13/v14 的使用方式完全相同）。
 .DESCRIPTION
   本脚本是【自解压引导器】（与 v14 同构）：
@@ -15,16 +15,16 @@
     · StableObject 跨通道：UIA 列表行（资源管理器/回收站/邮箱）与 CDP 行同样获得稳定身份并计数命中
     · scripts/build_driver.ps1：MSVC 或 MinGW/LLVM(x86_64-pc-windows-gnu) 双工具链构建 dscu-driver.exe（可选 uiAccess），失败自动保持 py-native 满血兜底
     · evals/：Tier1 单动作微基准 · Tier2 复合任务+故障注入 · Tier3 WindowsAgentArena 风格任务 + 独立 Oracle + 可选 Behavior Best-of-N，全量归档 eval_runs/<时间戳>/
-  环境变量（可选）：DEEPSEEK_API_KEY  DSCU_ROOT（安装目录，默认 ~\DeepSeekComputerUse\v15）  DSCU_MODE=run|build|verify|verify2|regress|eval|selfcheck|extract
+  环境变量（可选）：DEEPSEEK_API_KEY  DSCU_ROOT（安装目录，默认 ~\DeepSeekComputerUse\v16）  DSCU_BROWSER_ENGINE=auto|mcp|legacy  DSCU_MCP_MODE=profile|isolated|autoconnect|browser-url  DSCU_MCP_BROWSER_URL  DSCU_MCP_CHANNEL  DSCU_MCP_HEADLESS=1  DSCU_MODE=run|build|verify|verify2|regress|eval|selfcheck|extract
                     DSCU_REBUILD=1  DSCU_AUTOINSTALL=1  DSCU_WITH_RUST=1  DSCU_DRIVER_TOOLCHAIN=auto|msvc|gnu  DSCU_CDP_PROFILE=persistent|ephemeral
-  任务提示符内命令：help · v15 status · v15 recycle · v15 eval tier1|tier2|waa|all · v15 compare a.json b.json · v14 bench · v14 verify2 · v14 regress · exit
+  任务提示符内命令：help · v16 mcp · v16 guard · v16 eval tier1|tier2|waa|all · v15 status · v15 recycle · v15 eval tier1|tier2|waa|all · v15 compare a.json b.json · v14 bench · v14 verify2 · v14 regress · exit
 #>
 $ErrorActionPreference = 'Stop'
-$script:DscuVersion = '15.0.0'
+$script:DscuVersion = '16.0.0'
 if ($PSVersionTable.PSVersion.Major -lt 7) { Write-Host '需要 PowerShell 7+（pwsh）。请在 pwsh 中粘贴。' -ForegroundColor Red; return }
 $script:DscuMode = if ($env:DSCU_MODE) { $env:DSCU_MODE } else { 'run' }
 if (-not $IsWindows -and $script:DscuMode -ne 'extract') { Write-Host '本脚本只能在 Windows 上运行（DSCU_MODE=extract 可仅释放文件）。' -ForegroundColor Red; return }
-$script:Root = if ($env:DSCU_ROOT) { $env:DSCU_ROOT } else { Join-Path $HOME 'DeepSeekComputerUse/v15' }
+$script:Root = if ($env:DSCU_ROOT) { $env:DSCU_ROOT } else { Join-Path $HOME 'DeepSeekComputerUse/v16' }
 $script:Manifest = [System.Collections.Generic.List[object]]::new()
 function Add-DscuFile([string]$Rel, [string]$Sha, [string]$Text) { $script:Manifest.Add([pscustomobject]@{ Rel = $Rel; Sha = $Sha; Text = $Text }) }
 
@@ -179,7 +179,7 @@ Add-DscuFile 'agent_brain/__init__.py' 'ca4476193357506833a5305373129eb69fe30c98
 """DSCU unified agent brain (Python 3.12 asyncio): the single decision-maker over the Rust driver and the TS CDP daemon."""
 __version__ = "14.0.0"
 '@
-Add-DscuFile 'agent_brain/__main__.py' '021c361348deb07a1148b537e436f096334df6b2f2f24b140257236ce1168add' @'
+Add-DscuFile 'agent_brain/__main__.py' '4b210ef3a8d6b21108c04fb015b2af8f34c05fe7d85ce23585e0e6fb7132dcfa' @'
 """REPL entry:  python -m agent_brain [--cdp-profile persistent|ephemeral]   (same prompt/flow as v12/v13: 请输入任务 ...)"""
 from __future__ import annotations
 
@@ -196,6 +196,9 @@ from .orchestrator import Brain
 
 HELP = """可用命令：
   <任意中文/英文任务>      交给统一大脑执行（Layer0/CLI-Anything → 规划 → 观察/决策/独立验证/恢复 循环）
+  v16 eval tier1|tier2|waa|all   v16 三层评测（含 6f76f3c 日志的 3 项硬验收：删除极性 / MCP 多标签+诊断 / 8 次破遮挡）→ eval_runs/<时间戳>/ JSON
+  v16 mcp                  官方 chrome-devtools-mcp 引擎状态（连接模式/Supervisor 重启/诊断次数/隐私参数）
+  v16 guard                输入守卫与破遮挡统计（USER_ACTIVE 抖动过滤/自动恢复；OCCLUDED 恢复率）
   v15 status               同 v14 status，另含 CDP 自愈/恢复剧本/安全原语状态
   v15 eval tier1|tier2|waa|all   运行 3 层可复现 Benchmark（evals/，归档到 eval_runs/<时间戳>/）
   v15 compare <v14.json> <v15.json>  对比两次评测的客观进步
@@ -271,8 +274,8 @@ async def amain() -> int:
                 break
             if not line:
                 continue
-            low = re.sub(r"^v1[345]\b", "v14", line.lower())
-            if line.lower().startswith("v15") and (low.split()[1:2] or [""])[0] in ("recycle", "compare", "eval"):
+            low = re.sub(r"^v1[3456]\b", "v14", line.lower())
+            if line.lower().startswith(("v15", "v16")) and (low.split()[1:2] or [""])[0] in ("recycle", "compare", "eval"):
                 low = "v15" + low[3:]
             if low in ("exit", "quit", "q"):
                 break
@@ -280,6 +283,11 @@ async def amain() -> int:
                 print(HELP)
             elif low == "v14 status":
                 await status(brain)
+            elif low == "v14 mcp":
+                print(json.dumps(await brain.hub.cdp_status(), ensure_ascii=False, indent=1, default=str)[:2400])
+            elif low == "v14 guard":
+                _n = getattr(brain.hub, "_native", None)
+                print(json.dumps({"guard": _n.guard.snapshot() if _n else "rust-driver", "occlusion": getattr(_n, "occlusion_stats", None)}, ensure_ascii=False, indent=1))
             elif low == "v14 bench":
                 r = await brain.hub.drv_bench(100)
                 print(r)
@@ -511,7 +519,7 @@ def run_json(tool: str, args: str = "", timeout: int = 120) -> CliResult:
         res.problems.append("JSON 声称的产物未通过磁盘校验")
     return res
 '@
-Add-DscuFile 'agent_brain/config.py' '801242501677024fd69779284e377a15477d3036450cfa87bf445ec5f3023f7c' @'
+Add-DscuFile 'agent_brain/config.py' '8745d1ef2c7aac0cb36fc5c10e7acf8cfd59a38741dde28df776e3415112b7ce' @'
 """Runtime configuration (all overridable by environment variables; no secrets stored on disk)."""
 from __future__ import annotations
 
@@ -547,6 +555,12 @@ class Config:
             return Path(os.environ["DSCU_AUTH_PROFILE"])
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
         return Path(base) / "DeepSeekComputerUse" / "auth_profile"
+
+    @property
+    def browser_engine(self) -> str:
+        """v16: auto (official chrome-devtools-mcp, cdp-daemon only as fallback) | mcp (no fallback) | legacy (v15 cdp-daemon)."""
+        v = os.environ.get("DSCU_BROWSER_ENGINE", "auto").strip().lower()
+        return v if v in ("auto", "mcp", "legacy") else "auto"
 
     @property
     def bin_dir(self) -> Path:
@@ -710,7 +724,7 @@ class DeepSeek:
             self.vision_failures += 1
         raise ApiError(f"DeepSeek 调用失败（{retries} 次重试）: {last}")
 '@
-Add-DscuFile 'agent_brain/ipc_client.py' '0cc13cbf31e7e7f6ce48f41cc7da1e6a0a3aff4ce987f410e4918157a5852a49' @'
+Add-DscuFile 'agent_brain/ipc_client.py' 'f758dee975d026733513932f07c67908de031cbc029b8cb8d692b293f582acab' @'
 """Async NDJSON IPC (Windows named pipe via the Proactor loop / unix socket on other OS), process supervision with a
 KILL_ON_JOB_CLOSE job (children die with Python - no orphaned 800 MB processes), and the DriverHub that gives the
 brain ONE interface over: Rust dscu-driver (preferred) | in-process native fallback, plus the TS CDP daemon."""
@@ -954,6 +968,11 @@ class DriverHub:
     async def ensure_cdp(self) -> bool:
         if self._cdp and not self._cdp.lost:
             return True
+        eng = (getattr(self.cfg, "browser_engine", "auto") or "auto").lower()
+        if eng in ("auto", "mcp") and await self._ensure_mcp():
+            return True
+        if eng == "mcp":
+            return False
         cfg = self.cfg
         node = shutil.which("node")
         if not node or not cfg.daemon_entry.exists():
@@ -975,6 +994,31 @@ class DriverHub:
             return True
         except Exception as e:
             self.cdp_error = str(e)
+            return False
+
+    async def _ensure_mcp(self) -> bool:
+        """v16: official ChromeDevTools/chrome-devtools-mcp as the browser engine (same peer contract as the legacy cdp-daemon)."""
+        if time.time() < getattr(self, "_mcp_cool_until", 0.0):
+            return False
+        try:
+            from .browser_mcp import McpBrowserEngine
+
+            eng = getattr(self, "_mcp", None)
+            if eng is None:
+                eng = McpBrowserEngine(self.cfg)
+                await eng.start(90)
+                self._mcp = eng
+            elif eng.lost:
+                await eng.restart("ensure_cdp")
+            self._cdp = eng  # type: ignore[assignment]
+            self.cdp_hello = eng.hello_cache or await eng.hello()
+            self.cdp_error = None
+            self.cdp_engine = "chrome-devtools-mcp"
+            return True
+        except Exception as e:  # noqa: BLE001
+            self.cdp_error = f"chrome-devtools-mcp 启动失败：{e}"
+            self._mcp = None
+            self._mcp_cool_until = time.time() + 120.0  # auto mode: fall back to cdp-daemon, retry MCP in 2 min
             return False
 
     @property
@@ -1282,7 +1326,7 @@ Add-DscuFile 'agent_brain/native_driver.py' '7cbaa675053a4c39cd4586b283b898881b1
 from .py_native_driver import *  # noqa: F401,F403
 from .py_native_driver import NativeDriver, DxgiStream, _ahash, _ahash_np  # noqa: F401
 '@
-Add-DscuFile 'agent_brain/orchestrator.py' '03cb7d51a726dffca8f3407dc84110ad9a930728b98b17784dc8b688e612a87e' @'
+Add-DscuFile 'agent_brain/orchestrator.py' 'ff056b8c3ac5e072d52816a90f08857c3550a9d93f536b2779901b42a09bc939' @'
 """The single live brain. Python asyncio owns: observation -> decision (DeepSeek) -> gated execution -> measured effect
 -> recovery. No placeholder telemetry: `cdp_up`, `uia_controls`, `stalled`, `blocked_streak`, `perception_channel` are all
 computed from real IPC replies every step (see choose_channel + TaskState.settle_last)."""
@@ -1394,7 +1438,7 @@ class Brain:
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
         hello = await self.hub.start_driver()
-        self.say(f"  🧠 统一大脑 v15 · 驱动={self.hub.driver_kind} · 版本 {hello.get('version')} · uiAccess={hello.get('uiaccess')} · 管理员={hello.get('elevated')}")
+        self.say(f"  🧠 统一大脑 v16 · 驱动={self.hub.driver_kind} · 版本 {hello.get('version')} · uiAccess={hello.get('uiaccess')} · 管理员={hello.get('elevated')}")
         if hello.get("rust_error"):
             self.say(f"  ⚠ Rust 驱动未接管，原因：{hello['rust_error']}（已显式回退 py-native，功能等价、性能较低）")
         try:
@@ -1431,6 +1475,9 @@ class Brain:
         s = o.dxgi_stats
         scr = f"{s.width}x{s.height} 抓屏={s.capture_backend}/{s.frame_ms:.1f}ms/脏矩形={s.dirty_rects_count}" if s else "n/a"
         lines.append(f"[感知通道] {b.channel}（cdp_up={self.hub.cdp_up}, 控件={len(o.elements)}, 停滞步={st.stalled_steps}, 连续受阻={st.blocked_streak}）  屏幕: {scr}")
+        _dg = (o.telemetry or {}).get("mcp_diagnostics")
+        if _dg:
+            lines.append(f"[浏览器诊断] {_dg}")
         if fg:
             lines.append(f'[前台] hwnd={fg.hwnd} {fg.process} "{fg.title[:60]}"' + ("（这是运行本脚本的控制台）" if fg.own_console else ""))
         if o.url:
@@ -1743,6 +1790,15 @@ class Brain:
                         r.message += f"；浏览器前台：{'已验证' if f.ok else f.message[:80]}"
                     self.counters["cdp_navigate"] += 1
                 return r
+            if name in ("new_tab", "browser_diagnose", "upload_file"):
+                if name == "new_tab":
+                    return await self._cdp("new_tab", url=str(a.get("url", "about:blank")))
+                if name == "browser_diagnose":
+                    return await self._cdp("diagnose")
+                _e = els.get(a.get("id"))
+                if _e is None or not _e.is_cdp:
+                    return ActionResult(ok=False, code=Code.NOT_FOUND, message="upload_file 需要 id 指向浏览器(cdp)控件（文件选择 input 或会打开选择框的按钮）")
+                return await self._cdp("upload_file", ref=_e.ref_id, expect_epoch=b.epoch_cdp, path=str(a.get("path", "")))
             if name == "cdp_wait_selector":
                 return await self._cdp("wait_selector", selector=str(a.get("selector", "")), text=str(a.get("text", "")), timeout_ms=int(a.get("timeout", 8000)))
             if name == "save_text":
@@ -1752,7 +1808,11 @@ class Brain:
             if name in ("verify_text_file", "file_stat"):
                 p = Path(str(a.get("path", "")))
                 if not p.is_absolute():
-                    p = layer0.known_folder("桌面") / p
+                    _parts = re.split(r"[\\/]", str(a.get("path", "")), maxsplit=1)
+                    if _parts[0] in layer0.KNOWN_FOLDERS:  # v15 bug: '桌面\\bzm.txt' became Desktop\\桌面\\bzm.txt
+                        p = layer0.known_folder(_parts[0]) / (_parts[1] if len(_parts) > 1 else "")
+                    else:
+                        p = layer0.known_folder("桌面") / p
                 if not p.exists():
                     return ActionResult(ok=False, code=Code.NOT_FOUND, message=f"文件不存在: {p}")
                 data = p.read_bytes()
@@ -2188,6 +2248,10 @@ class Brain:
         say(f"  v14：视觉锁存 {pc_['latch_served']}/{pc_['latch_armed']} · Vision 调用 {c['vision_calls']}（锁存轮 {c['vision_latched_calls']}）· FG-Gate 命中 {pc_['gate_hits']}（跳过 UIA {pc_['uia_skipped']} 次 / 实扫 {pc_['uia_scans']}）· 焦点守卫 {c['auto_refocus']} · "
             f"恢复剧本 {sum(v for k, v in c.items() if k.startswith('playbook_')) + self.recovery.stats['occluded_fix'] + self.recovery.stats['security_alt_injected'] + self.recovery.stats['cdp_heal'] + self.recovery.stats['safe_terminate']} · 独立验证器 放行 {c['verifier_pass']}/拒绝 {c['verifier_rejects']} · StableObject 重定位 {c['stable_translate']}")
         rs = self.recovery.stats
+        _g = getattr(getattr(self.hub, "_native", None), "guard", None)
+        _m = getattr(self.hub, "_mcp", None)
+        _o = getattr(getattr(self.hub, "_native", None), "occlusion_stats", None)
+        say(f"  v16：浏览器引擎={'chrome-devtools-mcp' if _m else 'cdp-daemon(兜底)'}（Supervisor 重启 {getattr(_m, 'restarts', 0)} · 诊断注入 {_m.stats['diagnostics'] if _m else 0} · 工具调用 {_m.stats['tool_calls'] if _m else 0}） · 输入守卫 {(_g.snapshot() if _g else 'n/a')} · 破遮挡 {_o if _o else 'n/a'}")
         say(f"  v15：CDP 自愈 {getattr(self.hub, 'cdp_heals', 0)} 次（失败 {getattr(self.hub, 'cdp_heal_fail', 0)}，被迫降级 {getattr(self.hub, 'cdp_degraded', 0)}） · 遮挡自动恢复 {rs['occluded_recovered']}/{rs['occluded_fix']} · 安全拒绝→禁止列表+替代 {rs['security_alt_injected']}（安全终止 {rs['safe_terminate']}） · StableObject 命中 {dict(self.registry.hits) or 0}")
         parts = []
         for k in ("fg_probe", "capture", "uia", "cdp", "shot", "input", "network", "decision", "vision"):
@@ -2561,10 +2625,10 @@ class Perception:
         except Exception:  # noqa: BLE001
             pass
 '@
-Add-DscuFile 'agent_brain/prompts.py' '75243b4257de990693e210ac6532c991c6bfb7d8c2c817e533dc340a57e915b1' @'
+Add-DscuFile 'agent_brain/prompts.py' '567864212663daf58e9948c402d9485000bccda8d73decb8bd93c175a72e00f3' @'
 """Constant prompt prefix (KV-cache friendly: byte-identical across steps, tasks and sessions)."""
 
-SYSTEM_PREFIX = """你是 Windows 电脑操作代理的唯一决策大脑（Unified Agent Brain v15）。你看不到屏幕，你的「眼睛」是系统每轮提供的实时观察（来自 Rust 原生驱动 DXGI/UIA、TS CDP 守护进程；全部为实时采集，不是缓存）。
+SYSTEM_PREFIX = """你是 Windows 电脑操作代理的唯一决策大脑（Unified Agent Brain v16）。你看不到屏幕，你的「眼睛」是系统每轮提供的实时观察（来自 Rust 原生驱动 DXGI/UIA、TS CDP 守护进程；全部为实时采集，不是缓存）。
 每轮观察包含：[感知通道] cdp|uia|dxgi_vision、[前台] 窗口、[遮挡/崩溃] 证据、[控件] 列表、[界面变化]、[动作账本]、[系统指令]。
 控件行格式： [编号] 角色 "名称" value="值" 状态 zone=Toolbar|Row|Modal|Other 行R# @(中心x,中心y)
 控件编号只对当前这一轮有效；系统会把编号转成带 snapshot_epoch 的 ref 并做 fail-closed 校验（过期会自动重试一次，仍失败返回 STALE_EPOCH）。
@@ -2586,6 +2650,7 @@ B) {"thought":"…","step":1,"expect":"…","actions":[{...},{...}]}  按顺序�
 - scroll {...} 在网页里若滚轮无效，系统会自动定位 scrollHeight>clientHeight 的容器滚动；也可 scroll_to {"text":"页面里的文字"} 直接滚动到该文字
 - run_powershell {"command":"Get-Date"}（经 AST+CLM 受控工作进程执行；禁止 Add-Type/New-Object/iex）
 - list_tabs {}   switch_tab {"index":2} 或 {"url_contains":"douyin"}（浏览器多标签；新标签页系统会自动切换，通常无需手动）
+- new_tab {"url":"https://…"}   upload_file {"id":7,"path":"C:\\Users\\…\\a.pdf"}（浏览器文件选择控件）   browser_diagnose {}（列出 4xx/5xx 网络请求 + 控制台 JS 异常）
 - cli_help {"tool":"gimp"}   cli_tool {"tool":"gimp","args":"project new --name a"}（CLI-Anything 本机工具，自动追加 --json 并校验产物；有对应工具时优先于 GUI 点击）
 - wait {"seconds":2}   vision_inspect {"detail":"original","reason":"…","crop_region":[x,y,w,h]}（锁存：下一轮【必定】收到 DXGI 真实截图+坐标网格+SoM 编号框；crop_region 可选，会 2x 放大高清重定位）   replan {"reason":"…"}   done {"summary":"…含你在最新观察里看到的完成证据"}   fail {"reason":"…"}
 硬规则：
@@ -2605,6 +2670,10 @@ B) {"thought":"…","step":1,"expect":"…","actions":[{...},{...}]}  按顺序�
 14. [OCCLUDED] 由系统在动作内部自动恢复（Esc 关菜单/置顶目标/最小化遮挡窗）并原地重试；你只会在 2 轮失败后看到它，那时请 vision_inspect。
 15. [SECURITY_DENIED]：该命令/工具立刻进入【本任务禁止列表】，[系统指令] 会给出替代方案——必须改用替代方案；同一拒绝连续出现 2 次，系统将安全终止任务。回收站相关一律用 open_known_folder / recycle_bin_status / recycle_file / empty_recycle_bin，不要碰 PowerShell。
 16. 浏览器 CDP 断线（CDP closed）由系统自愈（重连/按原 Profile 重启浏览器并恢复页面）；自愈后元素 ref 会失效（STALE_EPOCH），重新观察即可，不要因此放弃浏览器通道改用 UIA。
+17. 浏览器通道现在由官方 chrome-devtools-mcp 提供：控件来自 take_snapshot 的无障碍树（稳定 uid），点击/填写/按键走 CDP 受信输入；页面空白或等待超时时，[浏览器诊断] 会给出 4xx/5xx 请求与 JS 异常——先读它再决定，不要盲等。
+18. 页面是 <canvas>/游戏/反爬导致 CDP 点击无效时（[浏览器诊断] 会提示），才 vision_inspect 切回 DXGI+视觉+物理点击。
+19. 删除类任务的完成证据是「文件不存在」「回收站 0 项」；独立验证器对删除任务只断言“不存在”，file_stat 返回 NOT_FOUND 是正确结果，不是错误。
+20. [USER_ACTIVE]：系统会在动作内等待你静默 1.5 秒后自动继续（鼠标 <15px 抖动不算）；仍然报出时 wait 2~3 秒后重试同一动作，不要换成键盘硬撞。
 """
 
 PLANNER_PROMPT = """你是 Windows 电脑操作代理的规划器。根据【任务】与【当前观察】给出 2~6 步可验证的执行计划。只输出一个 JSON：
@@ -2806,7 +2875,7 @@ def parse_result(d: dict[str, Any]) -> ActionResult:
     d["code"] = code if code in Code._value2member_map_ else "INTERNAL"
     return ActionResult.model_validate(d)
 '@
-Add-DscuFile 'agent_brain/py_native_driver.py' 'b871376c767ea8bbfacbdcbbe07fa733fd0b0e150778be6fb1af272e5c22fdbd' @'
+Add-DscuFile 'agent_brain/py_native_driver.py' '51eefcfffd257117fbdc852bb2fa7ae0eed300f4631bc3557f01e32f7cb46380' @'
 """py-native driver v14 (used when dscu-driver.exe is not built).  Step-2 upgrades: DXGI continuous-stream capture (no per-step
 SwapChain rebuild, zero-copy peek, lazy PIL conversion), <2 ms Win32 foreground probe (`fg_probe`), UIA RuntimeId/AutomationId export,
 focus-guard (re-activate the work window when the host console steals foreground).
@@ -2825,11 +2894,22 @@ import sys
 import time
 from typing import Any, Optional
 
+from .input_guard import InputGuard, classify_blocker
+
+OWN_INPUT_HOOKS: list = []  # v16: every SendInput burst stamps an own-input span
 IS_WIN = sys.platform == "win32"
 if IS_WIN:
     from ctypes import wintypes as wt
 
     u32, k32 = ctypes.windll.user32, ctypes.windll.kernel32
+    try:  # v16: per-monitor-v2 DPI awareness -> GetCursorPos / WindowFromPoint / SendInput use the SAME physical pixels (kills false USER_ACTIVE + OCCLUDED on scaled displays)
+        u32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except Exception:  # noqa: BLE001
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:  # noqa: BLE001
+            pass
+    u32.GetAsyncKeyState.restype = ctypes.c_short
     u32.GetForegroundWindow.restype = ctypes.c_void_p
     for fn, args in {
         "IsWindowVisible": [ctypes.c_void_p], "IsIconic": [ctypes.c_void_p], "GetWindowTextW": [ctypes.c_void_p, wt.LPWSTR, ctypes.c_int],
@@ -2869,6 +2949,8 @@ if IS_WIN:
     def _send(*items: INPUT) -> None:
         arr = (INPUT * len(items))(*items)
         u32.SendInput(len(items), arr, ctypes.sizeof(INPUT))
+        for _h in OWN_INPUT_HOOKS:
+            _h()
 
     def _mouse(flags: int, dx: int = 0, dy: int = 0, data: int = 0) -> INPUT:
         i = INPUT(type=0)
@@ -3068,6 +3150,13 @@ class NativeDriver:
         self.work_hwnd = 0
         self.last_own_tick = 0.0
         self._pc: dict[int, str] = {}
+        self.guard = InputGuard(deadzone_px=int(os.environ.get("DSCU_DEADZONE_PX", "15")), quiet_s=float(os.environ.get("DSCU_USER_QUIET_S", "1.5")))
+        self.yield_wait_s = float(os.environ.get("DSCU_YIELD_WAIT_S", "4.0"))
+        self._pinned: set[int] = set()
+        self.occlusion_stats: dict[str, int] = {"attempts": 0, "recovered": 0, "minimized": 0, "pinned": 0, "failed": 0}
+        OWN_INPUT_HOOKS[:] = [lambda: self.guard.mark_own()]
+        if IS_WIN:
+            self._unlock_foreground_lock()
 
     # ------------------------------------------------------------------ windows
     def _proc(self, pid: int) -> str:
@@ -3147,7 +3236,143 @@ class NativeDriver:
             time.sleep(0.02)
         return self._fg() == h
 
+    # ------------------------------------------------------------------ v16 focus steal + occlusion breaker
+    def _unlock_foreground_lock(self) -> None:
+        """SPI_SETFOREGROUNDLOCKTIMEOUT=0 for this session (not persisted) -> SetForegroundWindow is no longer silently downgraded to a taskbar flash."""
+        try:
+            u32.SystemParametersInfoW.argtypes = [wt.UINT, wt.UINT, ctypes.c_void_p, wt.UINT]
+            u32.SystemParametersInfoW(0x2001, 0, ctypes.c_void_p(0), 0x2)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _focus_sequence(self, h: int) -> bool:
+        """Standard Win32 focus-steal order: GetWindowThreadProcessId -> AttachThreadInput(fg thread) -> ShowWindow(RESTORE if iconic, else SHOW; a maximized window is NOT un-maximized)
+        -> BringWindowToTop -> SetWindowPos(HWND_TOPMOST) then immediately HWND_NOTOPMOST -> SetForegroundWindow -> detach."""
+        fg = self._fg()
+        ft = u32.GetWindowThreadProcessId(fg, None) if fg else 0
+        tt = u32.GetWindowThreadProcessId(h, None)
+        mt = k32.GetCurrentThreadId()
+        att: list[int] = []
+        for t in {int(ft), int(tt)}:
+            if t and t != mt and u32.AttachThreadInput(mt, t, True):
+                att.append(t)
+        try:
+            u32.ShowWindow(h, 9 if u32.IsIconic(h) else 5)
+            u32.BringWindowToTop(h)
+            u32.SetWindowPos(h, ctypes.c_void_p(-1), 0, 0, 0, 0, 0x43)  # HWND_TOPMOST  | NOMOVE | NOSIZE | SHOWWINDOW
+            u32.SetWindowPos(h, ctypes.c_void_p(-2), 0, 0, 0, 0, 0x43)  # HWND_NOTOPMOST
+            u32.SetForegroundWindow(h)
+        finally:
+            for t in att:
+                u32.AttachThreadInput(mt, t, False)
+        return self._confirm(h, 150)
+
+    def pin_topmost(self, h: int) -> None:
+        u32.SetWindowPos(h, ctypes.c_void_p(-1), 0, 0, 0, 0, 0x43)
+        self._pinned.add(h)
+        self.occlusion_stats["pinned"] += 1
+
+    def _unpin_all(self) -> None:
+        for h in list(self._pinned):
+            try:
+                u32.SetWindowPos(h, ctypes.c_void_p(-2), 0, 0, 0, 0, 0x43)
+            except Exception:  # noqa: BLE001
+                pass
+        self._pinned.clear()
+
+    def _visible_at(self, eh: int, x: int, y: int) -> tuple[bool, int]:
+        """True when the pixel (x, y) really belongs to the expected window.  Same-process popups/menus/tooltips and click-through overlays do NOT count as occluders."""
+        w = u32.WindowFromPoint(wt.POINT(int(x), int(y)))
+        if not w:
+            return True, 0
+        root = int(u32.GetAncestor(w, 2) or 0)  # GA_ROOT
+        owner = int(u32.GetAncestor(w, 3) or 0)  # GA_ROOTOWNER
+        if eh in (root, owner, int(w)):
+            return True, root
+        pt, pb = wt.DWORD(), wt.DWORD()
+        u32.GetWindowThreadProcessId(eh, ctypes.byref(pt))
+        u32.GetWindowThreadProcessId(root, ctypes.byref(pb))
+        if pt.value and pt.value == pb.value:
+            return True, root
+        if (u32.GetWindowLongW(root, -20) & 0xFFFFFFFF) & 0x20:  # WS_EX_TRANSPARENT
+            return True, root
+        return False, root
+
+    def clear_occluders(self, h: int, point: Optional[tuple[int, int]] = None) -> list[str]:
+        """Minimize foreign covering windows (SW_MINIMIZE); the agent's own console is never minimized - the target is pinned topmost for the action instead."""
+        self.occlusion_stats["attempts"] += 1
+        wins = self.windows()
+        t = next((w for w in wins if w["hwnd"] == h), None)
+        out: list[str] = []
+        if t is None:
+            return out
+        cand = list(self._occluders(t, wins))
+        if point:
+            _, top = self._visible_at(h, point[0], point[1])
+            if top and top != h and top not in cand:
+                cand.insert(0, top)
+        byh = {w["hwnd"]: w for w in wins}
+        for b in cand[:6]:
+            w = byh.get(b)
+            kind = classify_blocker(w, t, SHELL)
+            if kind == "minimizable" and w is not None:
+                u32.ShowWindow(b, 6)
+                self.occlusion_stats["minimized"] += 1
+                out.append(f"minimize:{w['process']}:{w['title'][:18]}")
+                time.sleep(0.12)
+            elif kind == "own_console":
+                self.pin_topmost(h)
+                out.append("pin_topmost(own console above target)")
+            else:
+                out.append(f"skip:{kind}")
+        return out
+
+    def ensure_visible_at(self, eh: int, x: int, y: int) -> list[str]:
+        """3 escalating rounds, each followed by a coordinate re-check:  (1) focus-steal sequence  (2) minimize the covering window(s)  (3) pin the target HWND_TOPMOST for this action."""
+        self.occlusion_stats["attempts"] += 0
+        trace: list[str] = []
+        for rnd in range(3):
+            ok, _ = self._visible_at(eh, x, y)
+            if ok:
+                if trace:
+                    self.occlusion_stats["recovered"] += 1
+                return trace
+            if rnd == 0:
+                _, how, _n = self.force_foreground(eh)
+                trace.append(f"focus:{how}")
+            elif rnd == 1:
+                trace += self.clear_occluders(eh, (x, y))
+            else:
+                self.pin_topmost(eh)
+                trace.append("pin_topmost")
+            time.sleep(0.06)
+        ok, _ = self._visible_at(eh, x, y)
+        if ok:
+            self.occlusion_stats["recovered"] += 1
+        else:
+            self.occlusion_stats["failed"] += 1
+        return trace
+
     def force_foreground(self, h: int) -> tuple[bool, str, int]:
+        if not u32.IsWindow(h):
+            return False, "no_such_window", 0
+        if u32.IsIconic(h):
+            u32.ShowWindow(h, 9)
+            time.sleep(0.06)
+        if self._fg() == h:
+            return True, "already", 0
+        if self._focus_sequence(h):
+            return True, "attach_topmost_flip", 1
+        ok2, how, n = self._force_foreground_v15(h)  # alt-tap / SwitchToThisWindow / minimize-restore chain (v15)
+        if ok2:
+            return True, how, n + 1
+        trace = self.clear_occluders(h)
+        self._focus_sequence(h)
+        if self._confirm(h, 250):
+            return True, "clear_occluders:" + ",".join(trace)[:60], 7
+        return False, "all_methods_failed", 7
+
+    def _force_foreground_v15(self, h: int) -> tuple[bool, str, int]:
         if not u32.IsWindow(h):
             return False, "no_such_window", 0
         if u32.IsIconic(h):
@@ -3377,6 +3602,7 @@ class NativeDriver:
         def abs_move(ix: int, iy: int) -> None:
             _send(_mouse(0x8001 | 0x4000, int((ix - vx) * 65535 / max(1, vw - 1)), int((iy - vy) * 65535 / max(1, vh - 1))))
             self.last_own_tick = time.time()
+            self.guard.mark_own((ix, iy))
 
         d = math.hypot(x - sx, y - sy)
         if not humanize or d < 3:
@@ -3389,6 +3615,7 @@ class NativeDriver:
         c1 = (sx + (x - sx) * 0.3 + nx * bend, sy + (y - sy) * 0.3 + ny * bend)
         c2 = (sx + (x - sx) * 0.7 + nx * bend * 0.5, sy + (y - sy) * 0.7 + ny * bend * 0.5)
         lx = ly = None
+        strikes = 0
         for i in range(1, steps + 1):
             t = i / steps
             e = t * t * (3 - 2 * t)
@@ -3399,8 +3626,13 @@ class NativeDriver:
             lx, ly = round(px), round(py)
             time.sleep(0.008)
             u32.GetCursorPos(ctypes.byref(pt))
-            if abs(pt.x - lx) > 8 or abs(pt.y - ly) > 8:
-                return "USER_ACTIVE"
+            if math.hypot(pt.x - lx, pt.y - ly) > self.guard.deadzone_px:
+                strikes += 1
+                if strikes >= 2:
+                    self.guard.register_external(why=f"cursor drift {pt.x - lx},{pt.y - ly}px")
+                    return "USER_ACTIVE"
+            else:
+                strikes = 0
         abs_move(x, y)
         return None
 
@@ -3447,13 +3679,16 @@ class NativeDriver:
         return sent
 
     def user_active(self) -> bool:
+        """v16: InputGuard decides (own-input spans + >=15px dead-zone + 1.5 s quiet window); GetLastInputInfo alone can no longer misattribute our own SendInput to a human."""
         class LII(ctypes.Structure):
             _fields_ = [("cbSize", wt.UINT), ("dwTime", wt.DWORD)]
 
         li = LII(ctypes.sizeof(LII), 0)
         u32.GetLastInputInfo(ctypes.byref(li))
-        age = (k32.GetTickCount() - li.dwTime) & 0xFFFFFFFF
-        return age < 400 and (time.time() - self.last_own_tick) * 1000 > age + 60
+        pt = wt.POINT()
+        u32.GetCursorPos(ctypes.byref(pt))
+        pressed = any(u32.GetAsyncKeyState(vk) & 0x8000 for vk in (0x01, 0x02, 0x04, 0x05, 0x06, 0x08, 0x09, 0x0D, 0x1B, 0x20, *range(0x30, 0x5B), *range(0x60, 0x70)))
+        return self.guard.observe(int(li.dwTime), int(k32.GetTickCount()), (int(pt.x), int(pt.y)), pressed)
 
     # ------------------------------------------------------------------ protocol
     async def hello(self) -> dict[str, Any]:
@@ -3464,7 +3699,7 @@ class NativeDriver:
             rss = psutil.Process().memory_info().rss / 1048576
         except Exception:
             pass
-        return {"type": "hello_ack", "ok": True, "peer": "py-native", "version": "14.0.0", "caps": ["uia_ref", "sendinput", "verified_foreground", "occlusion", "dxcam_stream", "fg_probe", "guard_focus", "runtime_id"], "rss_mb": rss}
+        return {"type": "hello_ack", "ok": True, "peer": "py-native", "version": "16.0.0", "caps": ["input_guard", "focus_steal_v16", "uia_ref", "sendinput", "verified_foreground", "occlusion", "dxcam_stream", "fg_probe", "guard_focus", "runtime_id"], "rss_mb": rss}
 
     async def handle(self, req: dict[str, Any]) -> dict[str, Any]:
         t = req.get("type")
@@ -3567,7 +3802,13 @@ class NativeDriver:
             r = dict(self.replay[aid])
             r["id"], r["idempotent_replay"] = req.get("id"), True
             return r
-        r = self._action_inner(req)
+        t_start = self.guard.clock()
+        try:
+            r = self._action_inner(req)
+        finally:
+            self._unpin_all()
+            if req.get("action") not in ("click", "double_click", "right_click", "hover", "type", "key", "scroll", "drag"):
+                self.guard.mark_own(start=t_start, end=self.guard.clock())  # UIA invoke/set_value etc. may bump GetLastInputInfo too
         if aid and r["code"] not in ("USER_ACTIVE", "STALE_EPOCH"):
             self.replay[aid] = r
             if len(self.replay) > 512:
@@ -3606,8 +3847,9 @@ class NativeDriver:
                     t = next((w for w in wins if w["hwnd"] == eh), None)
                     eff["occluded_by"] = self._occluders(t, wins) if t else []
                     return R(False, "OCCLUDED", f"expected hwnd {eh} is not foreground and could not be raised (fg={fg})")
-            if self.user_active():
-                return R(False, "USER_ACTIVE", "a human is using mouse/keyboard; yielded control")
+            if self.user_active() and not self.guard.wait_quiet(self.user_active, self.yield_wait_s):
+                eff["guard"] = self.guard.snapshot()
+                return R(False, "USER_ACTIVE", f"a human is using mouse/keyboard ({self.guard.last_reason}); yielded control after {self.yield_wait_s:.0f}s (auto-resume after {self.guard.quiet_s}s of silence)")
         try:
             if a in ("focus_window", "restore_window"):
                 if req.get("hwnd"):
@@ -3682,11 +3924,13 @@ class NativeDriver:
                     if x < 0:
                         return R(False, "NOT_FOUND", "click needs ref or x,y")
                 if eh:
-                    pt = wt.POINT(x, y)
-                    top = u32.GetAncestor(u32.WindowFromPoint(pt), 2)
-                    if int(top or 0) != eh and a != "drag":
-                        eff["covered_by"] = int(top or 0)
-                        return R(False, "OCCLUDED", f"point ({x},{y}) is covered by hwnd {int(top or 0)}")
+                    vis, top = self._visible_at(eh, x, y)
+                    if not vis and a != "drag":
+                        eff["occlusion_clear"] = self.ensure_visible_at(eh, x, y)
+                        vis, top = self._visible_at(eh, x, y)
+                        if not vis:
+                            eff["covered_by"] = int(top or 0)
+                            return R(False, "OCCLUDED", f"point ({x},{y}) is covered by hwnd {int(top or 0)} after focus-steal + minimize + topmost pin (trace={eff.get('occlusion_clear')})")
                 err = self._move(x, y, bool(req.get("humanize", True)), tw_)
                 if err:
                     return R(False, err, "human took the mouse; yielded")
@@ -4957,7 +5201,7 @@ class RecoveryPlaybook:
         return Intervention("rollback", "【恢复剧本 4/4 回滚】已发送 Esc 退出可能的错误状态；请重新规划（不要沿用刚才的点击坐标）。",
                             [{"action": "key", "keys": "esc"}] + ([{"action": "key", "keys": "ctrl+z"}] if action.get("action") == "type" else []))
 '@
-Add-DscuFile 'agent_brain/verifier.py' 'debd496164fa99c1dbe1c451e6a6287e9f95f8793aa23f20d89e51db8ff338ff' @'
+Add-DscuFile 'agent_brain/verifier.py' '3f9cd950068dcfd5961502b9bbedbf22a7754afcc04fd6f206f7182310a6b11c' @'
 """Independent Post-State Verifier.
 
 The model saying `done` is a *claim*, never evidence.  Before a task may finish, this module re-derives programmatic checks from the TASK TEXT
@@ -4999,6 +5243,68 @@ SEARCH_RX = re.compile(r"搜索\s*[“\"']?([^\s,，。;；、”\"']+)")
 NTH_RX = re.compile(r"(?:打开|点开|点击|进入)第\s*([一二两三四五六七八九十\d]+)\s*个")
 URL_RX = re.compile(r"https?://[^\s,，。;；\"'<>]+")
 TXT_EXTS = (".txt", ".md", ".csv", ".log", ".json", ".py", ".ps1", ".html")
+
+# ---------------------------------------------------------------------------------------------------------------- v16 intent polarity
+# v15 bug (task #2): the verifier derived `file_exists == True` from the *summary path* even though the task said "delete" -> 3 rejections -> failed task.
+# v16: classify every clause as CREATE_OR_SAVE vs DELETE_OR_CLEAR (last verb wins inside a clause, later clauses win over earlier ones) and assert the matching polarity.
+DELETE_RX = re.compile(r"删除|删掉|清空|清除|移除|移入回收站|放入回收站|扔进回收站|丢进回收站|扔掉|delete|remove|erase|trash|recycle|clear|empty", re.I)
+CREATE_RX = re.compile(r"保存|新建|创建|写入|导出|生成|下载|另存|新增|save|create|export|write|download|generate", re.I)
+CLAUSE_SPLIT = re.compile(r"[，,。；;、\n]+|并且|并|然后|接着|之后|最后|and then|then", re.I)
+_KINDS = r"记事本文件|记事本|文本文件|文本|文件|文档|图片|照片|表格|幻灯片|演示文稿|视频|ppt|pptx|docx|xlsx|txt"
+FOLDER_NAME_RX = re.compile(r"(?P<folder>桌面|文档|下载|desktop|documents|downloads)\s*(?:上|里面|里|中)?\s*(?:的)?\s*[“\"']?(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff.]+?)[”\"']?(?:(?P<kind>" + _KINDS + r"))?(?=[，,。；;、\s]|$|并|和|以及|然后|删除|删掉|移除|清空|清除|移入|放入|扔|丢|delete|remove|trash)", re.I)
+GENERIC_NAMES = {"所有", "全部", "一个", "那个", "这个", "该", "里的", "下的", "的", "上"}
+READONLY_OK_ACTIONS = ("wait", "vision_inspect", "cdp_wait_selector", "list_tabs", "browser_diagnose")
+READONLY_PROBE_ACTIONS = ("file_stat", "dir_list", "recycle_bin_status", "verify_text_file", "run_powershell")
+
+
+def clause_events(task: str) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for c in CLAUSE_SPLIT.split(task or ""):
+        c = c.strip()
+        if not c:
+            continue
+        d, k = DELETE_RX.search(c), CREATE_RX.search(c)
+        if d and k:
+            pol = "DELETE_OR_CLEAR" if d.start() > k.start() else "CREATE_OR_SAVE"
+        elif d:
+            pol = "DELETE_OR_CLEAR"
+        elif k:
+            pol = "CREATE_OR_SAVE"
+        else:
+            continue
+        out.append((pol, c))
+    return out
+
+
+def task_polarity(task: str) -> str:
+    ev = clause_events(task)
+    has_d = any(p == "DELETE_OR_CLEAR" for p, _ in ev)
+    has_c = any(p == "CREATE_OR_SAVE" for p, _ in ev)
+    return "MIXED" if has_d and has_c else "DELETE_OR_CLEAR" if has_d else "CREATE_OR_SAVE" if has_c else "NONE"
+
+
+def delete_targets(task: str, summary: str = "") -> list[tuple]:
+    """Files the task wants GONE: ('path', Path) | ('name', folder Path, stem-or-name)."""
+    out: list[tuple] = []
+    for pol, c in clause_events(task):
+        if pol != "DELETE_OR_CLEAR":
+            continue
+        for m in WIN_PATH.findall(c):
+            out.append(("path", Path(m)))
+        for m in FOLDER_NAME_RX.finditer(c):
+            nm = m.group("name").strip("“”\"'.")
+            if not nm or nm in GENERIC_NAMES:
+                continue
+            out.append(("name", layer0.known_folder(m.group("folder")), nm))
+    if not out and task_polarity(task) == "DELETE_OR_CLEAR" and re.search(r"文件|记事本|文档|file|txt", task, re.I):
+        out += [("path", Path(m)) for m in WIN_PATH.findall(summary or "")]  # the model's own absolute path report
+    seen, uniq = set(), []
+    for t in out:
+        k = (str(t[1]).lower() + "|" + str(t[2]).lower()) if t[0] == "name" else "p|" + str(t[1]).lower()
+        if k not in seen:
+            seen.add(k)
+            uniq.append(t)
+    return uniq
 
 
 @dataclass
@@ -5195,18 +5501,69 @@ class IndependentVerifier:
         led = getattr(st, "ledger", [])
         if led:
             e = led[-1]
-            bad = e.code != "OK" and e.action.get("action") not in ("wait", "vision_inspect", "cdp_wait_selector")
+            act = e.action.get("action")
+            bad = e.code != "OK" and act not in READONLY_OK_ACTIONS and not (e.code == "NOT_FOUND" and act in READONLY_PROBE_ACTIONS)
             out.append(Check("last_action_ok", not bad, f"{e.sig[:40]}→{e.code}/{e.effect}", "sanity"))
         return out
 
     # ------------------------------------------------------------------ entry points
+    # ------------------------------------------------------------------ v16 polarity-aware assertions
+    @staticmethod
+    def assert_file_not_exists(target: tuple) -> Check:
+        """DELETE_OR_CLEAR tasks: the file must be GONE (never `file_exists == True`)."""
+        if target[0] == "path":
+            p = target[1]
+            gone = not Path(p).exists()
+            return Check("file_not_exists", gone, f"{'已不存在' if gone else '仍存在'}: {p}", "file")
+        _, folder, nm = target
+        try:
+            left = [f.name for f in Path(folder).iterdir() if f.is_file() and (f.name.lower() == nm.lower() or f.stem.lower() == nm.lower())] if Path(folder).exists() else []
+        except OSError:
+            left = []
+        return Check("file_not_exists", not left, f"{folder} 中{'已无 ' + nm + '.*' if not left else '仍有 ' + ', '.join(left)}", "file")
+
+    @staticmethod
+    def assert_recycle_bin_empty() -> Check:
+        """SHQueryRecycleBinW + COM Shell.Application NameSpace(10) must both report 0 items."""
+        from . import safe_shell
+
+        st = safe_shell.wait_recycle_count(0, 6.0)
+        if st.get("ok"):
+            return Check("recycle_bin_empty", st.get("count") == 0 and st.get("consistent", True), f"独立核验 count={st.get('count')} 来源={st.get('sources')}", "recycle")
+        return Check("recycle_bin_probe", True, f"无法独立读取回收站（{st.get('reason')}）→ 不计入覆盖", "misc")
+
+    def derive_assertions(self, task: str, summary: str) -> tuple[list[tuple[Path, Optional[str]]], list[tuple]]:
+        pol = task_polarity(task)
+        exist = self._derive_files(task, summary)
+        if pol in ("CREATE_OR_SAVE", "NONE"):
+            return exist, []
+        absent = delete_targets(task, summary)
+        if pol == "DELETE_OR_CLEAR":
+            return [], absent
+        keep: list[tuple[Path, Optional[str]]] = []  # MIXED: per file, the LAST clause that mentions it decides
+        ev = clause_events(task)
+        for p, c in exist:
+            last = None
+            for pol_i, cl in ev:
+                if p.stem and p.stem.lower() in cl.lower():
+                    last = pol_i
+            if last == "DELETE_OR_CLEAR":
+                absent.append(("path", p))
+            else:
+                keep.append((p, c))
+        return keep, absent
+
     async def verify_done(self, task: str, summary: str, st: Any, obs: Any, quantity: Optional[int] = None) -> Verdict:
         checks: list[Check] = []
-        for p, content in self._derive_files(task, summary):
+        exist, absent = self.derive_assertions(task, summary)
+        self.last_polarity = task_polarity(task)
+        for p, content in exist:
             checks += self.check_file(p, expect_text=content)
             if p.exists():
                 o = self.reg.register_file(p)
                 o.set_state("sha256:" + sha256_file(p)[:16], getattr(st, "step", 0))
+        for tgt in absent:
+            checks.append(self.assert_file_not_exists(tgt))
         checks += await self._web_checks(task, summary)
         checks += await self._quota_checks(task, quantity, obs)
         checks += await asyncio.to_thread(self._recycle_checks, task)
@@ -5911,7 +6268,7 @@ pub fn bench(cap: &mut Capture, frames: u32) -> Value {
     })
 }
 '@
-Add-DscuFile 'crates/dscu-driver/src/input.rs' 'fadad9efd8bc9ff36fd5d57fc7c3bf795d90568c3e015905a7402afc4ad6873e' @'
+Add-DscuFile 'crates/dscu-driver/src/input.rs' 'c2b59ad61992fe1ef8dd7572172b733b8a83bc0c62227449140cdd897fe283d0' @'
 //! Physical input: SendInput with Fitts'-law humanized pointer paths, scan-code keyboard, Unicode typing,
 //! user-activity yielding, and a JobObject that owns every process the agent launches (KILL_ON_JOB_CLOSE).
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -6026,7 +6383,7 @@ pub fn move_human(tx: i32, ty: i32, target_w: f64, humanize: bool) -> Result<(),
         ly = iy;
         sleep(Duration::from_millis(8));
         let (cx, cy) = cursor();
-        if (cx - lx).abs() > 8 || (cy - ly).abs() > 8 {
+        if (cx - lx).abs() > 15 || (cy - ly).abs() > 15 {
             return Err("USER_ACTIVE");
         }
         if user_active() {
@@ -10723,7 +11080,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 '@
-Add-DscuFile 'evals/tier2_composite.py' '9466ac76b26acd202e2003053a166c7b599f2c811f6d4870efdfd1bcadfb3615' @'
+Add-DscuFile 'evals/tier2_composite.py' 'cf18ce8a012bc08310cdfd441a10d73b602e9b157bbd2400b37bc5d351e99823' @'
 """Tier 2 - composite multi-app tasks on the REAL machine.
 
  A) LLM-free scenario tests that drive the real components (real Chrome/Edge + cdp-daemon, real Explorer/Recycle Bin, real Paint) and are judged by independent probes:
@@ -10918,6 +11275,145 @@ async def s_paint_occlusion(brain: Any) -> dict[str, Any]:
             pass
 
 
+# ======================================================================================================================
+# v16 hard-acceptance cases for the 3 defects exposed by runtime log 6f76f3c  (judged by independent probes, never by the agent)
+#   (1) v16_delete_polarity       create file on Desktop -> delete (+ empty Recycle Bin) -> IndependentVerifier must ACCEPT (task #2: 3x rejected in v15)
+#   (2) v16_mcp_browser_multitab  chrome-devtools-mcp: multi-tab navigation + network diagnosis + multi-select, supervisor survives a killed MCP server, 0x CDP_UNRECOVERABLE (task #8)
+#   (3) v16_occlusion_recovery    Notepad / topmost window covers the target 8 times -> [OCCLUDED] recovery must be 8/8 (task #7: 0/8 in v15)
+# ======================================================================================================================
+async def s_v16_delete_polarity(brain: Any, allow_destructive: bool) -> dict[str, Any]:
+    import uuid
+    from types import SimpleNamespace
+
+    from agent_brain import layer0, safe_shell
+    from agent_brain.state_machine import StableObjectRegistry
+    from agent_brain.verifier import IndependentVerifier
+
+    if not IS_WIN:
+        return result("v16_delete_polarity", "skipped", "requires a real Windows desktop (Recycle Bin)")
+    name = f"dscu_v16_{uuid.uuid4().hex[:6]}"
+    f = layer0.known_folder("桌面") / f"{name}.txt"
+    f.write_text("v16 polarity probe", encoding="utf-8")
+    ver = IndependentVerifier(brain.hub, StableObjectRegistry(), lambda m: None)
+    st = SimpleNamespace(step=1, ledger=[])
+    try:
+        rec_ok, rec_msg = safe_shell.recycle_file(f)
+        task = f"帮我把桌面上的{name}记事本删除"
+        if allow_destructive:
+            safe_shell.empty_recycle_bin()
+            task += "，并且清空回收站里面的文件"
+        v = await ver.verify_done(task, f"已将桌面 {f} 移入回收站", st, None)
+        neg = await ver.verify_done(f"在桌面新建一个记事本，命名为{name}，保存", f"已保存 {f}", st, None)  # control: create-task + missing file MUST still be rejected
+        names = [c.name for c in v.checks]
+        good = rec_ok and v.ok and "file_not_exists" in names and "file_exists" not in names and (not neg.ok)
+        return result("v16_delete_polarity", "pass" if good else "fail", f"recycled={rec_ok} verdict_ok={v.ok} checks={v.render()[:240]} negative_control_rejected={not neg.ok}",
+                      verifier_accept=1.0 if v.ok else 0.0, destructive=allow_destructive)
+    finally:
+        try:
+            f.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+async def s_v16_mcp_browser(brain: Any) -> dict[str, Any]:
+    from agent_brain.protocol import new_action_id
+
+    hub = brain.hub
+    up = await hub.ensure_cdp()
+    eng = getattr(hub, "_mcp", None)
+    if not up or eng is None:
+        return result("v16_mcp_browser_multitab", "skipped", f"chrome-devtools-mcp unavailable ({hub.cdp_error}); run scripts/install_mcp.ps1")
+    srv, base, _d = serve({"rows.html": ROWS_PAGE, "page_a.html": PAGE_A})
+
+    async def act(**kw: Any) -> Any:
+        return await hub.cdp_action({"action_id": new_action_id(), **kw})
+
+    try:
+        r1 = await act(action="navigate", url=f"{base}/rows.html")
+        await act(action="new_tab", url=f"{base}/page_a.html")
+        tabs = await act(action="tabs")
+        n_tabs = len(tabs.effect.get("tabs", []))
+        await act(action="switch_tab", url_contains="rows.html")
+        o = await hub.cdp_observe(max_elements=150, settle_ms=800)
+        boxes = [e for e in o.elements if e.role == "checkbox"][:2]
+        for e in boxes:
+            await act(action="click", ref=e.ref_id, expect_epoch=o.snapshot_epoch)
+        pr = await act(action="probe", needles=[])
+        title = str(pr.effect.get("title", ""))
+        dg = await act(action="wait_selector", selector="#never-exists", timeout_ms=1200)
+        diag_ok = dg.code.value == "TIMEOUT" and "诊断" in dg.message
+        heals_before = eng.restarts
+        eng.client.proc.kill()  # simulate the MCP server / browser link dying
+        await asyncio.sleep(0.6)
+        rk = await act(action="navigate", url=f"{base}/page_a.html")
+        unrec = int(getattr(hub, "cdp_degraded", 0)) + int("CDP_UNRECOVERABLE" in (rk.message or ""))
+        good = r1.ok and n_tabs >= 2 and len(boxes) == 2 and title.startswith("checked:r1,r2") and diag_ok and rk.ok and unrec == 0 and eng.restarts > heals_before
+        return result("v16_mcp_browser_multitab", "pass" if good else "fail",
+                      f"tabs={n_tabs} boxes={len(boxes)} title={title!r} diag_ok={diag_ok} supervised_restart={eng.restarts > heals_before} cdp_unrecoverable={unrec} nav_after_kill={rk.ok}",
+                      cdp_unrecoverable=unrec, tabs=n_tabs)
+    finally:
+        srv.shutdown()
+
+
+async def s_v16_occlusion_recovery(brain: Any, trials: int = 8) -> dict[str, Any]:
+    import ctypes
+    import subprocess
+
+    from tier1_micro import Gui
+    from agent_brain.protocol import new_action_id
+
+    if not IS_WIN:
+        return result("v16_occlusion_recovery", "skipped", "requires Windows")
+    hub = brain.hub
+    if hub.driver_kind != "py-native":
+        return result("v16_occlusion_recovery", "inconclusive", f"driver={hub.driver_kind}: the v16 occlusion breaker lives in py-native (rebuild Rust with the v16 sources to test it)")
+    t_start = time.time()
+    target = Gui("click", "900x600+80+80", topmost=False, seconds=240)
+    ok_n, rows = 0, []
+    try:
+        await asyncio.sleep(0.8)
+        o = await hub.drv_observe(channel="dxgi_vision", max_elements=1)
+        tw = next((w for w in o.windows if "DSCU-GROUND-TRUTH-click" in (w.title or "")), None)
+        if tw is None:
+            return result("v16_occlusion_recovery", "skipped", "ground-truth target window not found")
+        cx, cy = tw.rect[0] + tw.rect[2] // 2, tw.rect[1] + tw.rect[3] // 2
+        for i in range(trials):
+            occ_gui = None
+            note = None
+            if i % 2 == 0:  # Notepad moved over the target and raised
+                note = subprocess.Popen(["notepad.exe"])
+                nw = await brain._wait_window(lambda w: any(k in (w.process or "").lower() for k in ("notepad",)) or "记事本" in (w.title or "") or "Notepad" in (w.title or ""), 6.0)
+                if nw:
+                    ctypes.windll.user32.MoveWindow(ctypes.c_void_p(nw.hwnd), max(0, cx - 300), max(0, cy - 220), 600, 440, True)
+                    ctypes.windll.user32.SetForegroundWindow(ctypes.c_void_p(nw.hwnd))
+            else:  # always-on-top foreign window
+                occ_gui = Gui("occluder", f"700x500+{max(0, cx - 350)}+{max(0, cy - 250)}", topmost=True, seconds=60)
+            await asyncio.sleep(0.7)
+            before = len([e for e in target.events() if "x" in e])
+            res = await hub.drv_action({"action": "click", "x": cx, "y": cy, "expect_hwnd": tw.hwnd, "action_id": new_action_id()})
+            await asyncio.sleep(0.15)
+            after = len([e for e in target.events() if "x" in e])
+            good = bool(res.ok) and after > before
+            ok_n += int(good)
+            rows.append({"trial": i + 1, "occluder": "notepad" if note else "topmost-gui", "ok": good, "code": res.code.value, "trace": (res.effect or {}).get("occlusion_clear")})
+            if occ_gui:
+                occ_gui.close()
+            try:
+                import psutil
+
+                for p in psutil.process_iter(["name", "create_time"]):
+                    if (p.info["name"] or "").lower() == "notepad.exe" and p.info["create_time"] >= t_start - 1:
+                        p.kill()
+            except Exception:  # noqa: BLE001
+                pass
+            await asyncio.sleep(0.4)
+        stats = dict(getattr(hub._native, "occlusion_stats", {})) if getattr(hub, "_native", None) else {}
+        return result("v16_occlusion_recovery", "pass" if ok_n == trials else "fail", f"recovered {ok_n}/{trials} (v15 baseline 0/8) stats={stats} rows={rows[:3]}…",
+                      recovered=ok_n, trials=trials, rate=round(ok_n / trials, 3))
+    finally:
+        target.close()
+
+
 async def run_scenarios(allow_destructive: bool) -> list[dict[str, Any]]:
     from agent_brain.config import Config
     from agent_brain.orchestrator import Brain
@@ -10929,7 +11425,8 @@ async def run_scenarios(allow_destructive: bool) -> list[dict[str, Any]]:
     port = cfg.cdp_port
     rows = []
     try:
-        for fn in (lambda: s_cdp_closed(brain, port), lambda: s_stable_object(brain, port), lambda: s_recycle(brain, allow_destructive), lambda: s_paint_occlusion(brain)):
+        for fn in (lambda: s_cdp_closed(brain, port), lambda: s_stable_object(brain, port), lambda: s_recycle(brain, allow_destructive), lambda: s_paint_occlusion(brain),
+                   lambda: s_v16_delete_polarity(brain, allow_destructive), lambda: s_v16_mcp_browser(brain), lambda: s_v16_occlusion_recovery(brain)):
             try:
                 r = await fn()
             except Exception as e:  # noqa: BLE001
@@ -11768,6 +12265,1889 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 '@
+Add-DscuFile 'agent_brain/browser_mcp.py' '41b1cbbf8b27c7c9d93e96a6cf9cc0582f92fb7ee507b7f977428450ee162fac' @'
+"""v16 browser engine: official ChromeDevTools/chrome-devtools-mcp (Puppeteer/CDP) behind the SAME peer contract the brain already speaks.
+
+The brain's DriverHub talks to "the CDP peer" with  hello / status / heal / observe / action / shutdown  messages.  `McpBrowserEngine` implements that
+contract on top of an MCP stdio client, so FG-Gate, StableObject, Recovery, Verifier and the orchestrator work unchanged while the browser perception
+and control channel becomes the official server:
+
+  observe  -> take_snapshot (a11y tree, stable `uid`s) -> Elements with ref `@<epoch>:c<n>`      (+ one batched evaluate_script for geometry)
+  click / double_click / hover / type / key / drag / upload_file / navigate / new_tab / switch_tab / tabs / wait_for / scroll
+  blind wait / page not rendered -> list_network_requests (4xx/5xx/failed) + list_console_messages (errors) are injected into the decision context
+  canvas-only pages / anti-bot physical clicks -> telemetry hint -> the orchestrator keeps DXGI + deepseek-flash + DsNative61 as the physical fallback
+  Supervisor: stdio process death / "Target closed" / browser disconnect -> respawn the MCP server (same --userDataDir), re-list pages, restore the
+  last URL, bump the epoch (stale refs fail closed with STALE_EPOCH) -> no more [CDP_UNRECOVERABLE].
+
+Privacy: `--no-usage-statistics --no-performance-crux` are ALWAYS passed (cannot be disabled by configuration).
+Connection modes (DSCU_MCP_MODE): profile (default: dedicated persistent --userDataDir) | isolated | autoconnect (Chrome 144+, chrome://inspect/#remote-debugging) | browser-url
+Only a tiny JSON-RPC 2.0 stdio client is used (newline-delimited JSON, MCP 2025-06-18), so no extra Python dependency is required.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+from collections import Counter
+from pathlib import Path
+from typing import Any, Optional
+
+IS_WIN = sys.platform == "win32"
+MCP_PROTOCOL = "2025-06-18"
+FORCED_FLAGS = ["--no-usage-statistics", "--no-performance-crux"]  # privacy: always on
+VERSION = "16.0.0"
+
+INTERACTIVE_ROLES = {
+    "button", "link", "textbox", "searchbox", "combobox", "checkbox", "radio", "menuitem", "menuitemcheckbox", "menuitemradio", "tab", "option",
+    "switch", "slider", "spinbutton", "treeitem", "row", "listitem", "gridcell", "cell", "columnheader", "listbox", "menu", "dialog", "alertdialog",
+    "heading", "img", "textarea", "disclosuretriangle", "popupbutton", "togglebutton", "scrollbar", "video", "canvas",
+}
+ROW_ROLES = {"row", "listitem", "option", "treeitem"}
+TOOLBAR_ROLES = {"toolbar", "banner", "navigation", "menubar", "tablist", "search"}
+MODAL_ROLES = {"dialog", "alertdialog"}
+CONTAINER_ROLES = ROW_ROLES | TOOLBAR_ROLES | MODAL_ROLES | {"main", "complementary", "region", "list", "grid", "table", "tree", "form", "article", "contentinfo"}
+
+LINE_RX = re.compile(r'^(?P<indent>\s*)uid=(?P<uid>\S+)(?:\s+(?P<role>[^\s"]+))?(?:\s+"(?P<name>(?:[^"\\]|\\.)*)")?(?P<rest>.*)$')
+PROP_RX = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"|(\w+)')
+PAGE_RX = re.compile(r"^\s*(?:[-*]\s*)?(?:pageId[=: ]\s*)?(\d+):\s*(\S+)(?P<rest>.*)$")
+REQ_RX = re.compile(r"reqid=(\d+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]")
+CON_RX = re.compile(r"msgid=(\d+)\s+\[(\w+)\]\s+(.*?)(?:\s+\(\d+ args?\))?$")
+HEAL_TEXT_RX = re.compile(r"Target closed|Session closed|Protocol error|browser has disconnected|Browser is not connected|disconnected|ECONNRESET|"
+                          r"Connection closed|Execution context was destroyed|Navigating frame was detached|No target with given id|browser was restarted", re.I)
+STALE_TEXT_RX = re.compile(r"uid|snapshot|element.*(not found|no longer)|stale|Could not find", re.I)
+KEYMAP = {"ctrl": "Control", "control": "Control", "alt": "Alt", "shift": "Shift", "win": "Meta", "meta": "Meta", "cmd": "Meta", "enter": "Enter", "return": "Enter",
+          "esc": "Escape", "escape": "Escape", "tab": "Tab", "space": "Space", "backspace": "Backspace", "delete": "Delete", "del": "Delete", "home": "Home", "end": "End",
+          "pageup": "PageUp", "pagedown": "PageDown", "up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight", "insert": "Insert"}
+
+
+class McpError(RuntimeError):
+    pass
+
+
+class McpTransportError(McpError):
+    """The stdio server died / closed - supervisor must respawn."""
+
+
+class McpToolError(McpError):
+    """Tool returned isError=true."""
+
+
+# --------------------------------------------------------------------------------------------------------------------- command / args
+def resolve_command(env: Optional[dict[str, str]] = None) -> list[str]:
+    """DSCU_MCP_CMD override > globally installed `chrome-devtools-mcp` > `npx -y chrome-devtools-mcp@latest`."""
+    env = env if env is not None else dict(os.environ)
+    if env.get("DSCU_MCP_CMD"):
+        return shlex.split(env["DSCU_MCP_CMD"], posix=not IS_WIN)
+    g = shutil.which("chrome-devtools-mcp")
+    if g:
+        return _wrap_cmd([g])
+    npx = shutil.which("npx")
+    if npx:
+        return _wrap_cmd([npx, "-y", "chrome-devtools-mcp@latest"])
+    raise McpError("chrome-devtools-mcp 未安装：运行 `npm i -g chrome-devtools-mcp@latest`（Node >= 20.19）或安装 Node 后使用 npx")
+
+
+def _wrap_cmd(cmd: list[str]) -> list[str]:
+    if IS_WIN and cmd[0].lower().endswith((".cmd", ".bat")):
+        return ["cmd.exe", "/d", "/c", *cmd]
+    return cmd
+
+
+def find_browser_executable() -> str:
+    """chrome-devtools-mcp launches Chrome *stable* by default.  Pick what is really installed: Chrome > Chrome Canary > Edge (Chromium)."""
+    if not IS_WIN:
+        return ""
+    pf, pf86, la = os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), os.environ.get("LOCALAPPDATA", "")
+    cands = [rf"{pf}\Google\Chrome\Application\chrome.exe", rf"{pf86}\Google\Chrome\Application\chrome.exe", rf"{la}\Google\Chrome\Application\chrome.exe",
+             rf"{la}\Google\Chrome SxS\Application\chrome.exe", rf"{pf86}\Microsoft\Edge\Application\msedge.exe", rf"{pf}\Microsoft\Edge\Application\msedge.exe"]
+    return next((c for c in cands if c and Path(c).exists()), "")
+
+
+def build_args(mode: str = "profile", *, profile_dir: Optional[str] = None, browser_url: str = "", ws_endpoint: str = "", channel: str = "", headless: bool = False,
+               vision: bool = True, executable: str = "", extra: Optional[list[str]] = None) -> list[str]:
+    a = list(FORCED_FLAGS)
+    mode = (mode or "profile").lower().replace("_", "-")
+    if mode in ("autoconnect", "auto-connect"):
+        a.append("--autoConnect")
+        if channel:
+            a += ["--channel", channel]
+    elif mode in ("browser-url", "browserurl"):
+        a += ["--browserUrl", browser_url or "http://127.0.0.1:9222"]
+    elif mode in ("ws", "ws-endpoint"):
+        a += ["--wsEndpoint", ws_endpoint]
+    elif mode == "isolated":
+        a.append("--isolated")
+        if channel:
+            a += ["--channel", channel]
+    else:  # profile: dedicated persistent automation profile (log in once, reused)
+        if profile_dir:
+            a += ["--userDataDir", str(profile_dir)]
+        if channel:
+            a += ["--channel", channel]
+    if executable and mode in ("profile", "isolated"):
+        a += ["--executablePath", executable]
+    if headless and mode in ("profile", "isolated"):
+        a.append("--headless")
+    if vision:
+        a.append("--experimentalVision")
+    a += list(extra or [])
+    return a
+
+
+def default_roots() -> list[Path]:
+    import tempfile
+
+    home = Path.home()
+    extra = [Path(x) for x in (os.environ.get("DSCU_MCP_ROOTS") or "").split(os.pathsep) if x]
+    ws = os.environ.get("DSCU_ROOT")
+    return [home / "Desktop", home / "Documents", home / "Downloads", Path(tempfile.gettempdir()), *([Path(ws) / "workspace"] if ws else []), *extra]
+
+
+# --------------------------------------------------------------------------------------------------------------------- stdio JSON-RPC client
+class McpResult:
+    def __init__(self, text: str, images: list[dict[str, str]], is_error: bool, raw: dict[str, Any]) -> None:
+        self.text, self.images, self.is_error, self.raw = text, images, is_error, raw
+
+
+class McpStdioClient:
+    def __init__(self, cmd: list[str], env: dict[str, str], log_path: Optional[Path] = None) -> None:
+        self.cmd, self.env, self.log_path = cmd, env, log_path
+        self.proc: Optional[asyncio.subprocess.Process] = None
+        self.pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._id = 0
+        self.tools: dict[str, dict[str, Any]] = {}
+        self.server_info: dict[str, Any] = {}
+        self._tasks: list[asyncio.Task[Any]] = []
+        self.dead_reason = ""
+        self.roots: list[Path] = default_roots()
+
+    @property
+    def alive(self) -> bool:
+        return bool(self.proc and self.proc.returncode is None and not self.dead_reason)
+
+    async def start(self, timeout: float = 90.0) -> None:
+        kw: dict[str, Any] = {}
+        if IS_WIN:
+            kw["creationflags"] = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+        self.proc = await asyncio.create_subprocess_exec(*self.cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                                                         env=self.env, limit=1 << 26, **kw)
+        if IS_WIN:  # children (node + Chrome we launched) must die with Python
+            try:
+                import ctypes
+
+                from .ipc_client import _win_job
+
+                job = _win_job()
+                h = self.proc._transport.get_extra_info("subprocess")._handle  # type: ignore[union-attr]
+                ctypes.windll.kernel32.AssignProcessToJobObject(job, ctypes.c_void_p(int(h)))
+            except Exception:  # noqa: BLE001
+                pass
+        self._tasks = [asyncio.create_task(self._read_stdout()), asyncio.create_task(self._read_stderr())]
+        r = await self.request("initialize", {"protocolVersion": MCP_PROTOCOL, "capabilities": {"roots": {"listChanged": False}}, "clientInfo": {"name": "dscu-brain", "version": VERSION}}, timeout)
+        self.server_info = dict(r.get("serverInfo") or {})
+        await self.notify("notifications/initialized", {})
+        tl = await self.request("tools/list", {}, 30)
+        self.tools = {t["name"]: t for t in tl.get("tools", []) if isinstance(t, dict) and t.get("name")}
+        if not self.tools:
+            raise McpError("chrome-devtools-mcp 返回了空工具列表")
+
+    async def _read_stdout(self) -> None:
+        assert self.proc and self.proc.stdout
+        try:
+            while True:
+                line = await self.proc.stdout.readline()
+                if not line:
+                    break
+                s = line.strip()
+                if not s:
+                    continue
+                try:
+                    m = json.loads(s)
+                except Exception:  # noqa: BLE001
+                    continue  # non-JSON noise on stdout is ignored
+                if "id" in m and ("result" in m or "error" in m) and "method" not in m:
+                    f = self.pending.pop(int(m["id"]), None) if str(m["id"]).lstrip("-").isdigit() else None
+                    if f and not f.done():
+                        f.set_result(m)
+                elif "method" in m and "id" in m:  # server -> client request (ping, roots/list ...)
+                    resp: dict[str, Any] = {"jsonrpc": "2.0", "id": m["id"]}
+                    if m["method"] == "ping":
+                        resp["result"] = {}
+                    elif m["method"] == "roots/list":  # MCP roots: grant ONLY Desktop/Documents/Downloads/workspace/temp for file tools
+                        resp["result"] = {"roots": [{"uri": r.resolve().as_uri(), "name": r.name or str(r)} for r in self.roots if r.exists()]}
+                    else:
+                        resp["error"] = {"code": -32601, "message": "method not supported by dscu client"}
+                    await self._write(resp)
+        except Exception as e:  # noqa: BLE001
+            self.dead_reason = f"stdout reader: {e!r}"
+        finally:
+            rc = self.proc.returncode if self.proc else None
+            self.dead_reason = self.dead_reason or f"MCP stdio closed (exit={rc})"
+            self._fail_all()
+
+    async def _read_stderr(self) -> None:
+        assert self.proc and self.proc.stderr
+        lf = None
+        try:
+            if self.log_path:
+                self.log_path.parent.mkdir(parents=True, exist_ok=True)
+                lf = open(self.log_path, "ab")
+            while True:
+                line = await self.proc.stderr.readline()
+                if not line:
+                    break
+                if lf:
+                    lf.write(line)
+                    lf.flush()
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            if lf:
+                lf.close()
+
+    def _fail_all(self) -> None:
+        for f in list(self.pending.values()):
+            if not f.done():
+                f.set_exception(McpTransportError(self.dead_reason or "MCP transport closed"))
+        self.pending.clear()
+
+    async def _write(self, obj: dict[str, Any]) -> None:
+        if not self.alive or not self.proc or not self.proc.stdin:
+            raise McpTransportError(self.dead_reason or "MCP server not running")
+        try:
+            self.proc.stdin.write((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
+            await self.proc.stdin.drain()
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            self.dead_reason = f"stdin broken: {e!r}"
+            raise McpTransportError(self.dead_reason) from e
+
+    async def notify(self, method: str, params: dict[str, Any]) -> None:
+        await self._write({"jsonrpc": "2.0", "method": method, "params": params})
+
+    async def request(self, method: str, params: dict[str, Any], timeout: float = 60.0) -> dict[str, Any]:
+        self._id += 1
+        rid = self._id
+        fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        self.pending[rid] = fut
+        try:
+            await self._write({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+            m = await asyncio.wait_for(fut, timeout)
+        except asyncio.TimeoutError:
+            self.pending.pop(rid, None)
+            raise McpError(f"timeout: {method} no reply within {timeout}s")
+        except BaseException:
+            self.pending.pop(rid, None)
+            raise
+        if "error" in m:
+            raise McpToolError(f"{method}: {m['error'].get('message', m['error'])}")
+        return dict(m.get("result") or {})
+
+    async def call_tool(self, name: str, args: dict[str, Any], timeout: float = 60.0) -> McpResult:
+        r = await self.request("tools/call", {"name": name, "arguments": args}, timeout)
+        texts, imgs = [], []
+        for c in r.get("content", []) or []:
+            if c.get("type") == "text":
+                texts.append(str(c.get("text", "")))
+            elif c.get("type") == "image":
+                imgs.append({"data": c.get("data", ""), "mime": c.get("mimeType", "image/png")})
+        return McpResult("\n".join(texts), imgs, bool(r.get("isError")), r)
+
+    async def stop(self) -> None:
+        p = self.proc
+        self.dead_reason = self.dead_reason or "stopped"
+        self._fail_all()
+        if p and p.returncode is None:
+            try:
+                if p.stdin:
+                    p.stdin.close()
+                await asyncio.wait_for(p.wait(), 2.0)
+            except Exception:  # noqa: BLE001
+                try:
+                    p.kill()
+                except Exception:  # noqa: BLE001
+                    pass
+        for t in self._tasks:
+            t.cancel()
+
+
+# --------------------------------------------------------------------------------------------------------------------- snapshot parsing
+def _unq(s: str) -> str:
+    return s.replace('\\"', '"').replace("\\\\", "\\")
+
+
+def parse_snapshot(text: str) -> list[dict[str, Any]]:
+    """`uid=1_3 button "Delete" focusable url="..."` (2 spaces per depth) -> flat node list with parent chain."""
+    nodes: list[dict[str, Any]] = []
+    stack: list[tuple[int, int]] = []  # (depth, node index)
+    for raw in text.splitlines():
+        m = LINE_RX.match(raw)
+        if not m:
+            continue
+        depth = len(m.group("indent")) // 2
+        props: dict[str, Any] = {}
+        for pm in PROP_RX.finditer(m.group("rest") or ""):
+            if pm.group(1):
+                props[pm.group(1)] = _unq(pm.group(2))
+            elif pm.group(3) and not pm.group(3).startswith("["):
+                props[pm.group(3)] = True
+        role = (m.group("role") or "StaticText").strip()
+        while stack and stack[-1][0] >= depth:
+            stack.pop()
+        parent = stack[-1][1] if stack else -1
+        nodes.append({"uid": m.group("uid"), "role": role, "name": _unq(m.group("name") or ""), "props": props, "depth": depth, "parent": parent})
+        stack.append((depth, len(nodes) - 1))
+    return nodes
+
+
+def _fnv(s: str) -> str:
+    h = 0xCBF29CE484222325
+    for ch in s.encode("utf-8"):
+        h = ((h ^ ch) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return f"{h:016x}"[:12]
+
+
+def select_elements(nodes: list[dict[str, Any]], max_elements: int = 200) -> list[dict[str, Any]]:
+    """Keep actionable / structural nodes; give each a content-based stable_key (role + name + container chain + nth) that survives uid renumbering."""
+    keep: list[dict[str, Any]] = []
+    seen: dict[str, int] = {}
+    row_counter = 0
+    for i, n in enumerate(nodes):
+        role = n["role"].lower()
+        p = n["props"]
+        actionable = role in INTERACTIVE_ROLES or p.get("focusable") is True or "url" in p
+        if role in ("statictext", "generic", "none", "ignored", "paragraph", "rootwebarea", "document") and not p.get("focusable"):
+            actionable = False
+        if role == "heading" and not n["name"]:
+            actionable = False
+        if not actionable:
+            continue
+        chain: list[str] = []
+        j = n["parent"]
+        while j >= 0 and len(chain) < 4:
+            pn = nodes[j]
+            if pn["role"].lower() in CONTAINER_ROLES or pn["name"]:
+                chain.append(f"{pn['role']}:{pn['name'][:24]}")
+            j = pn["parent"]
+        base = f"{role}|{n['name'][:60]}|{'>'.join(reversed(chain))}"
+        k = seen.get(base, 0)
+        seen[base] = k + 1
+        zone = "Other"
+        anc = [nodes[x] for x in _ancestors(nodes, i)]
+        if role in ROW_ROLES or any(a["role"].lower() in ROW_ROLES for a in anc):
+            zone = "Row"
+        if any(a["role"].lower() in MODAL_ROLES for a in anc) or role in MODAL_ROLES:
+            zone = "Modal"
+        elif zone == "Other" and any(a["role"].lower() in TOOLBAR_ROLES for a in anc):
+            zone = "Toolbar"
+        row: Optional[int] = None
+        if role in ROW_ROLES:
+            row_counter += 1
+            row = row_counter
+        elif zone == "Row":
+            row = row_counter or None
+        states = [s for s in ("focused", "disabled", "checked", "selected", "expanded", "pressed", "required", "invalid", "readonly") if p.get(s) is True or (p.get(s) == "true")]
+        val = p.get("value") if isinstance(p.get("value"), str) else None
+        keep.append({"idx": i, "uid": n["uid"], "role": n["role"], "name": n["name"], "value": val, "states": states, "zone": zone, "row": row,
+                     "stable_key": f"{_fnv(base)}:{k}", "url": p.get("url")})
+        if len(keep) >= max_elements:
+            break
+    return keep
+
+
+def _ancestors(nodes: list[dict[str, Any]], i: int) -> list[int]:
+    out, j = [], nodes[i]["parent"]
+    while j >= 0:
+        out.append(j)
+        j = nodes[j]["parent"]
+    return out
+
+
+def parse_pages(text: str) -> list[dict[str, Any]]:
+    out = []
+    for line in text.splitlines():
+        m = PAGE_RX.match(line)
+        if m:
+            out.append({"page_id": int(m.group(1)), "url": m.group(2), "selected": "[selected]" in (m.group("rest") or "")})
+    return out
+
+
+def parse_network(text: str) -> list[dict[str, Any]]:
+    return [{"reqid": int(a), "method": b, "url": c, "status": d} for a, b, c, d in REQ_RX.findall(text)]
+
+
+def parse_console(text: str) -> list[dict[str, Any]]:
+    out = []
+    for line in text.splitlines():
+        m = CON_RX.search(line.strip())
+        if m:
+            out.append({"msgid": int(m.group(1)), "type": m.group(2), "text": m.group(3)[:300]})
+    return out
+
+
+def summarize_diag(net: list[dict[str, Any]], con: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    bad = [r for r in net if (r["status"].isdigit() and int(r["status"]) >= 400) or r["status"].lower().startswith("net::") or "failed" in r["status"].lower()]
+    errs = [c for c in con if c["type"] in ("error", "assert") or "exception" in c["text"].lower() or "uncaught" in c["text"].lower()]
+    parts = []
+    if bad:
+        parts.append("网络 4xx/5xx/失败 " + "; ".join(f"{r['status']} {r['method']} {r['url'][:80]}" for r in bad[:6]) + (f" …共{len(bad)}条" if len(bad) > 6 else ""))
+    if errs:
+        parts.append("JS 错误 " + " | ".join(c["text"][:110] for c in errs[:4]) + (f" …共{len(errs)}条" if len(errs) > 4 else ""))
+    if not parts:
+        parts.append(f"网络 {len(net)} 条请求无 4xx/5xx，控制台无 JS 异常（页面可能仍在加载 / 登录墙 / 自绘 canvas）")
+    return "；".join(parts), {"bad_requests": bad[:12], "console_errors": errs[:8], "requests_total": len(net), "console_total": len(con)}
+
+
+def to_puppeteer_keys(keys: str) -> list[str]:
+    """'ctrl+a' -> ['Control+A'];  'tab tab enter' -> ['Tab','Tab','Enter']."""
+    out = []
+    for chord in str(keys).split():
+        toks = [t for t in chord.split("+") if t] or ["+"]
+        mods = [KEYMAP.get(t.lower(), t) for t in toks[:-1]]
+        last = toks[-1]
+        last = KEYMAP.get(last.lower(), last.upper() if (len(last) == 1 and mods) else last)
+        out.append("+".join([*mods, last]))
+    return out
+
+
+# --------------------------------------------------------------------------------------------------------------------- the engine (peer contract)
+class McpBrowserEngine:
+    """Drop-in replacement for the NDJSON `cdp-daemon` client: .lost / .call / .hello / .close  (+ explicit .start())."""
+
+    def __init__(self, cfg: Any = None, env: Optional[dict[str, str]] = None, *, cmd: Optional[list[str]] = None, args: Optional[list[str]] = None) -> None:
+        self.cfg = cfg
+        self.env = dict(os.environ if env is None else env)
+        self._cmd_override, self._args_override = cmd, args
+        self.client: Optional[McpStdioClient] = None
+        self.epoch = 1
+        self.refs: dict[str, dict[str, Any]] = {}
+        self.pages: list[dict[str, Any]] = []
+        self.page_id: Optional[int] = None
+        self.last_url = ""
+        self.restarts = 0
+        self.crashes = 0
+        self.stats: Counter[str] = Counter()
+        self.last_diag = ""
+        self.replay: dict[str, dict[str, Any]] = {}
+        self._lock = asyncio.Lock()
+        self._heal_lock = asyncio.Lock()
+        self._pid_cache: tuple[float, list[int]] = (0.0, [])
+        self.mode = (self.env.get("DSCU_MCP_MODE") or "profile").lower()
+        self.started_at = 0.0
+        self.hello_cache: dict[str, Any] = {}  # live dict shared with DriverHub.cdp_hello (FG-Gate reads browser_pids from it)
+
+    # ------------------------------------------------------------------ lifecycle
+    @property
+    def lost(self) -> bool:
+        return self.client is None or not self.client.alive
+
+    def _profile_dir(self) -> Optional[str]:
+        if self.env.get("DSCU_MCP_USER_DATA_DIR"):
+            return self.env["DSCU_MCP_USER_DATA_DIR"]
+        try:
+            return str(self.cfg.auth_profile_dir)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _argv(self) -> list[str]:
+        cmd = self._cmd_override or resolve_command(self.env)
+        args = self._args_override if self._args_override is not None else build_args(
+            self.mode, profile_dir=self._profile_dir(), browser_url=self.env.get("DSCU_MCP_BROWSER_URL", ""), ws_endpoint=self.env.get("DSCU_MCP_WS_ENDPOINT", ""),
+            channel=self.env.get("DSCU_MCP_CHANNEL", ""), headless=self.env.get("DSCU_MCP_HEADLESS") == "1", vision=self.env.get("DSCU_MCP_VISION", "1") != "0",
+            executable=self.env.get("DSCU_MCP_EXECUTABLE") or (find_browser_executable() if self.mode in ("profile", "isolated") and not self.env.get("DSCU_MCP_CHANNEL") else ""))
+        for f in FORCED_FLAGS:  # privacy flags can never be dropped, even by overrides
+            if f not in args:
+                args = [f, *args]
+        return [*cmd, *args]
+
+    def _log_path(self) -> Optional[Path]:
+        try:
+            return Path(self.cfg.data_dir) / "chrome-devtools-mcp.log"
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def start(self, timeout: float = 90.0) -> None:
+        argv = self._argv()
+        self.client = McpStdioClient(argv, self.env, self._log_path())
+        t0 = time.perf_counter()
+        await self.client.start(timeout)
+        self.started_at = time.time()
+        await self.refresh_pages()
+        self.stats["start_ms"] = int((time.perf_counter() - t0) * 1000)
+        self.hello_cache.update(await self.hello())
+
+    async def aclose(self) -> None:
+        if self.client:
+            await self.client.stop()
+
+    async def restart(self, reason: str, force_browser: bool = False) -> dict[str, Any]:
+        async with self._heal_lock:
+            t0 = time.perf_counter()
+            self.crashes += 1
+            last = ""
+            for attempt in range(1, 6):
+                try:
+                    if self.client:
+                        await self.client.stop()
+                    await asyncio.sleep(0.5 * attempt)
+                    await self.start()
+                    self.restarts += 1
+                    self.epoch += 1
+                    self.refs.clear()
+                    restored = False
+                    if self.last_url.startswith("http") and (not self.pages or all(p["url"] in ("about:blank", "chrome://newtab/") for p in self.pages)):
+                        try:
+                            await self._tool("navigate_page", type="url", url=self.last_url)
+                            restored = True
+                        except McpError:
+                            pass
+                    return {"healed": True, "browser_respawned": True, "attempt": attempt, "restored_url": restored, "reason": reason[:120], "ms": int((time.perf_counter() - t0) * 1000)}
+                except Exception as e:  # noqa: BLE001
+                    last = str(e)
+            raise McpTransportError(f"MCP supervisor: restart failed after 5 attempts: {last}")
+
+    # ------------------------------------------------------------------ tool plumbing
+    def _adapt(self, tool: str, kw: dict[str, Any]) -> dict[str, Any]:
+        """Filter kwargs to the live tool schema (server versions differ) and inject the required `pageId` (--pageIdRouting default on)."""
+        assert self.client
+        props = ((self.client.tools.get(tool) or {}).get("inputSchema") or {}).get("properties") or {}
+        out = {k: v for k, v in kw.items() if v is not None and (not props or k in props)}
+        if "pageId" in props and "pageId" not in out and self.page_id is not None:
+            out["pageId"] = self.page_id
+        return out
+
+    def has_tool(self, name: str) -> bool:
+        return bool(self.client and name in self.client.tools)
+
+    async def _tool(self, tool: str, timeout: float = 60.0, **kw: Any) -> McpResult:
+        if not self.client or not self.client.alive:
+            raise McpTransportError(self.client.dead_reason if self.client else "not started")
+        if not self.has_tool(tool):
+            raise McpError(f"chrome-devtools-mcp 没有工具 {tool}（版本过旧？运行 npm i -g chrome-devtools-mcp@latest）")
+        r = await self.client.call_tool(tool, self._adapt(tool, kw), timeout)
+        self.stats["tool_calls"] += 1
+        if r.is_error:
+            raise McpToolError(f"{tool}: {r.text[:400]}")
+        if "restarted or reconnected" in r.text:  # server note: page ids changed
+            await self.refresh_pages()
+            self.epoch += 1
+        return r
+
+    async def _safe(self, tool: str, **kw: Any) -> McpResult:
+        """Tool call with one supervisor-assisted retry on transport / browser-disconnect errors."""
+        try:
+            return await self._tool(tool, **kw)
+        except (McpTransportError, McpToolError, McpError) as e:
+            if isinstance(e, McpTransportError) or HEAL_TEXT_RX.search(str(e)):
+                self.stats["supervised_retries"] += 1
+                await self.restart(f"{tool}: {e}")
+                return await self._tool(tool, **kw)
+            raise
+
+    async def refresh_pages(self) -> list[dict[str, Any]]:
+        r = await self._tool("list_pages", 40)
+        self.pages = parse_pages(r.text)
+        sel = next((p for p in self.pages if p["selected"]), self.pages[0] if self.pages else None)
+        self.page_id = sel["page_id"] if sel else None
+        if sel and sel["url"].startswith("http"):
+            self.last_url = sel["url"]
+        return self.pages
+
+    async def eval_js(self, fn: str, uids: Optional[list[str]] = None, timeout: float = 30.0) -> Any:
+        kw: dict[str, Any] = {"function": fn}
+        if uids:
+            kw["args"] = [{"uid": u} for u in uids] if self._args_are_objects() else list(uids)
+        r = await self._safe("evaluate_script", timeout=timeout, **kw)
+        m = re.search(r"```(?:json)?\s*\n(.*?)\n```", r.text, re.S)
+        blob = (m.group(1) if m else r.text).strip()
+        try:
+            return json.loads(blob)
+        except Exception:  # noqa: BLE001
+            m2 = re.search(r"(\{.*\}|\[.*\]|true|false|null|-?\d+(?:\.\d+)?|\"(?:[^\"\\]|\\.)*\")\s*$", blob, re.S)
+            if m2:
+                try:
+                    return json.loads(m2.group(1))
+                except Exception:  # noqa: BLE001
+                    pass
+            return blob
+
+    def _args_are_objects(self) -> bool:
+        """Some builds take args=[{uid}], others args=['uid'] - read the schema."""
+        try:
+            items = ((self.client.tools["evaluate_script"]["inputSchema"]["properties"]["args"]) or {}).get("items") or {}  # type: ignore[union-attr]
+            return items.get("type") == "object"
+        except Exception:  # noqa: BLE001
+            return True
+
+    # ------------------------------------------------------------------ diagnostics (no more blind-wait timeouts)
+    async def diagnose(self) -> tuple[str, dict[str, Any]]:
+        net: list[dict[str, Any]] = []
+        con: list[dict[str, Any]] = []
+        try:
+            net = parse_network((await self._tool("list_network_requests", 20)).text)
+        except McpError:
+            pass
+        try:
+            con = parse_console((await self._tool("list_console_messages", 20)).text)
+        except McpError:
+            pass
+        msg, data = summarize_diag(net, con)
+        self.last_diag = msg
+        self.stats["diagnostics"] += 1
+        return msg, data
+
+    # ------------------------------------------------------------------ observe
+    async def observe(self, req: dict[str, Any]) -> dict[str, Any]:
+        t0 = time.perf_counter()
+        max_el = int(req.get("max_elements") or 200)
+        settle = int(req.get("settle_ms") or 0)
+        async with self._lock:
+            if self.lost:
+                await self.restart("observe: link down")
+            if not self.pages:
+                await self.refresh_pages()
+            if settle:
+                end = time.time() + min(settle, 1500) / 1000
+                while time.time() < end:
+                    try:
+                        if await self.eval_js("() => document.readyState") == "complete":
+                            break
+                    except McpError:
+                        break
+                    await asyncio.sleep(0.12)
+            snap = (await self._safe("take_snapshot", timeout=60)).text
+            self.hello_cache["browser_pids"] = self._browser_pids()
+            nodes = parse_snapshot(snap)
+            els = select_elements(nodes, max_el)
+            self.epoch += 1
+            self.refs = {}
+            root = nodes[0] if nodes else {"name": "", "props": {}}
+            url = str(root["props"].get("url") or (next((p["url"] for p in self.pages if p["selected"]), "") or ""))
+            if url.startswith("http"):
+                self.last_url = url
+            # geometry: ONE batched evaluate_script for the first N elements (viewport CSS px); failure is non-fatal
+            rects: list[Any] = []
+            subset = els[:60]
+            if subset:
+                try:
+                    out = await self.eval_js("(...els) => els.map(e => { const r = e.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]; })",
+                                             [e["uid"] for e in subset], 20)
+                    rects = out if isinstance(out, list) else []
+                except McpError:
+                    rects = []
+            elements = []
+            for n, e in enumerate(els):
+                ref = f"@{self.epoch}:c{n + 1}"
+                self.refs[ref] = {"uid": e["uid"], "role": e["role"], "name": e["name"]}
+                rc = rects[n] if n < len(rects) and isinstance(rects[n], list) and len(rects[n]) == 4 else [0, n * 4, 0, 0]
+                elements.append({"ref_id": ref, "role": e["role"], "name": e["name"][:200], "value": e["value"], "rect": [int(v) for v in rc], "zone": e["zone"],
+                                 "stable_key": e["stable_key"], "states": e["states"], "patterns": ["mcp:uid"], "row": e["row"], "occluded": False, "url": e["url"]})
+            canvas_only = False
+            diag_msg = ""
+            diag: dict[str, Any] = {}
+            interactive = [e for e in els if e["role"].lower() not in ("heading", "img", "listitem", "row", "cell", "gridcell")]
+            if len(interactive) < 2:
+                try:
+                    canvas_only = int(await self.eval_js("() => document.querySelectorAll('canvas').length") or 0) > 0 and len(interactive) < 2
+                except (McpError, ValueError, TypeError):
+                    canvas_only = False
+                if len(nodes) <= 3 or canvas_only or len(interactive) == 0:
+                    diag_msg, diag = await self.diagnose()
+                    if canvas_only:
+                        diag_msg = "页面主要由 <canvas> 绘制，a11y 树无可操作节点 → 请 vision_inspect 切回 DXGI+deepseek-flash+DsNative61 物理点击；" + diag_msg
+            title = ""
+            try:
+                title = str(await self.eval_js("() => document.title") or "")[:200]
+            except McpError:
+                title = str(root.get("name") or "")
+            tel: dict[str, Any] = {"engine": "chrome-devtools-mcp", "snapshot_nodes": len(nodes), "elements": len(elements), "total_ms": round((time.perf_counter() - t0) * 1000, 1),
+                                   "page_id": self.page_id, "geometry_space": "viewport_css_px", "canvas_only": canvas_only}
+            if diag_msg:
+                tel["mcp_diagnostics"] = diag_msg
+                tel["diag"] = diag
+            return {"type": "observation", "id": req.get("id"), "ok": True, "channel": "cdp", "snapshot_epoch": self.epoch, "hwnd": 0, "title": title, "process": "",
+                    "url": url or None, "windows": [], "elements": elements, "settled": True, "inflight": 0, "uia_blind": bool(canvas_only), "telemetry": tel}
+
+    # ------------------------------------------------------------------ actions
+    def _res(self, req: dict[str, Any], ok: bool, code: str, msg: str, eff: dict[str, Any], t0: float) -> dict[str, Any]:
+        return {"type": "action_result", "id": req.get("id"), "action_id": req.get("action_id"), "ok": ok, "code": code, "message": msg, "effect": eff,
+                "idempotent_replay": False, "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
+
+    def _resolve(self, req: dict[str, Any], key: str = "ref") -> tuple[Optional[str], Optional[tuple[str, str]]]:
+        ref = str(req.get(key) or "")
+        if not ref:
+            return None, ("NOT_FOUND", f"{key} required")
+        m = re.match(r"@(\d+):", ref)
+        ee = req.get("expect_epoch")
+        if (m and int(m.group(1)) != self.epoch) or (ee is not None and int(ee) != self.epoch):
+            return None, ("STALE_EPOCH", f"ref {ref} 属于旧快照（当前 epoch={self.epoch}）；请重新观察")
+        info = self.refs.get(ref)
+        if not info:
+            return None, ("STALE_EPOCH", f"ref {ref} 不在当前快照中；请重新观察")
+        return info["uid"], None
+
+    async def action(self, req: dict[str, Any]) -> dict[str, Any]:
+        aid = str(req.get("action_id") or "")
+        if aid and aid in self.replay:
+            r = dict(self.replay[aid])
+            r["id"], r["idempotent_replay"] = req.get("id"), True
+            return r
+        light = str(req.get("action")) in ("tabs", "probe")
+        t0 = time.perf_counter()
+        try:
+            if light:
+                out = await self._action_inner(req, t0)
+            else:
+                async with self._lock:
+                    out = await self._action_inner(req, t0)
+        except McpTransportError as e:
+            out = await self._supervised(req, t0, str(e))
+        except McpError as e:
+            msg = str(e)
+            if HEAL_TEXT_RX.search(msg):
+                out = await self._supervised(req, t0, msg)
+            elif "timeout" in msg.lower():
+                dm, dd = await self._diag_safe()
+                out = self._res(req, False, "TIMEOUT", f"{msg}｜[诊断] {dm}", {"diagnostics": dd}, t0)
+            elif STALE_TEXT_RX.search(msg) and req.get("ref"):
+                out = self._res(req, False, "STALE_EPOCH", f"元素已失效（{msg[:160]}）；请重新观察后再操作", {}, t0)
+            else:
+                out = self._res(req, False, "INTERNAL", msg[:500], {}, t0)
+        if aid and out.get("code") != "STALE_EPOCH":
+            self.replay[aid] = out
+            if len(self.replay) > 512:
+                self.replay.pop(next(iter(self.replay)))
+        return out
+
+    async def _diag_safe(self) -> tuple[str, dict[str, Any]]:
+        try:
+            return await self.diagnose()
+        except Exception as e:  # noqa: BLE001
+            return f"诊断不可用: {e}", {}
+
+    SAFE_REPLAY = {"navigate", "new_tab", "key", "scroll", "scroll_into_view", "tabs", "switch_tab", "wait_selector", "wait_settled", "probe", "diagnose", "list_network", "list_console"}
+
+    async def _supervised(self, req: dict[str, Any], t0: float, why: str) -> dict[str, Any]:
+        try:
+            info = await self.restart(why)
+        except Exception as e:  # noqa: BLE001
+            return self._res(req, False, "INTERNAL", f"[MCP_SUPERVISOR] 重启失败：{e}", {}, t0)
+        if str(req.get("action")) in self.SAFE_REPLAY:
+            try:
+                async with self._lock:
+                    out = await self._action_inner(req, time.perf_counter())
+                out["effect"] = {**(out.get("effect") or {}), "self_healed": True, "heal": info}
+                return out
+            except McpError as e2:
+                return self._res(req, False, "INTERNAL", str(e2)[:400], {"healed": True}, t0)
+        return self._res(req, False, "STALE_EPOCH", f"浏览器连接已由 MCP Supervisor 自愈（epoch={self.epoch}，已按原 Profile 重启并恢复页面）；旧元素 ref 已失效，请重新观察后再操作", {"healed": True, "heal": info}, t0)
+
+    async def _page_state(self) -> dict[str, Any]:
+        try:
+            v = await self.eval_js("() => ({url: location.href, title: document.title})", None, 15)
+            return v if isinstance(v, dict) else {}
+        except McpError:
+            return {}
+
+    async def _action_inner(self, req: dict[str, Any], t0: float) -> dict[str, Any]:
+        a = str(req.get("action", ""))
+        healed: Optional[dict[str, Any]] = None
+        if self.lost:
+            healed = await self.restart(f"action {a}: link down")
+        if not self.pages:
+            await self.refresh_pages()
+        before = await self._page_state() if a not in ("tabs", "probe", "diagnose") else {}
+        eff: dict[str, Any] = {"url_before": before.get("url"), "title_before": before.get("title"), "epoch_before": self.epoch, "engine": "chrome-devtools-mcp"}
+        if healed:
+            eff.update(self_healed=True, heal=healed)
+
+        async def done(msg: str) -> dict[str, Any]:
+            after = await self._page_state() if a not in ("tabs", "probe", "diagnose") else {}
+            eff.update(url_after=after.get("url"), title_after=after.get("title"), page_changed=bool(after) and (after.get("url") != before.get("url") or after.get("title") != before.get("title")))
+            return self._res(req, True, "OK", msg, eff, t0)
+
+        if a == "navigate":
+            url = str(req.get("url", ""))
+            if not re.match(r"^https?://", url, re.I) and url != "about:blank":
+                return self._res(req, False, "SECURITY_DENIED", "only http(s) URLs may be navigated", eff, t0)
+            if self.page_id is None:
+                await self._safe("new_page", url=url)
+                await self.refresh_pages()
+            else:
+                await self._safe("navigate_page", type="url", url=url, timeout=int(req.get("timeout_ms") or 30000))
+            self.last_url = url
+            self.epoch += 1
+            return await done(f"navigated to {url}")
+        if a in ("new_tab", "new_page"):
+            url = str(req.get("url", "about:blank"))
+            if not re.match(r"^https?://", url, re.I) and url != "about:blank":
+                return self._res(req, False, "SECURITY_DENIED", "only http(s) URLs may be opened", eff, t0)
+            await self._safe("new_page", url=url)
+            await self.refresh_pages()
+            self.epoch += 1
+            return await done(f"opened new tab {url} (page {self.page_id})")
+        if a == "tabs":
+            await self.refresh_pages()
+            eff["tabs"] = [{"index": i + 1, "target_id": str(p["page_id"]), "url": p["url"], "selected": p["selected"]} for i, p in enumerate(self.pages)]
+            eff["active_target"] = str(self.page_id)
+            return self._res(req, True, "OK", f"{len(self.pages)} tab(s)", eff, t0)
+        if a == "switch_tab":
+            await self.refresh_pages()
+            pick = None
+            if req.get("target_id"):
+                pick = next((p for p in self.pages if str(p["page_id"]) == str(req["target_id"])), None)
+            elif req.get("url_contains"):
+                pick = next((p for p in self.pages if str(req["url_contains"]) in p["url"]), None)
+            elif req.get("index"):
+                i = int(req["index"]) - 1
+                pick = self.pages[i] if 0 <= i < len(self.pages) else None
+            if not pick:
+                return self._res(req, False, "NOT_FOUND", f"no such tab (have {len(self.pages)}): " + " | ".join(f"{i + 1}:{p['url'][:40]}" for i, p in enumerate(self.pages)), eff, t0)
+            await self._safe("select_page", pageId=pick["page_id"], bringToFront=True)
+            self.page_id = pick["page_id"]
+            self.epoch += 1
+            self.refs.clear()
+            eff["last_switch"] = {"to": pick["page_id"], "url": pick["url"]}
+            return await done(f"switched to tab {pick['page_id']} {pick['url'][:60]}")
+        if a == "probe":
+            needles = [str(x) for x in (req.get("needles") or [])]
+            js = ("() => { const nd = %s; const body = ((document.body && document.body.innerText) || '').slice(0, 300000);"
+                  " const needles = {}; for (const n of nd) needles[n] = body.includes(n);"
+                  " return {url: location.href, title: document.title, readyState: document.readyState, body_len: body.length,"
+                  " inputs: [...document.querySelectorAll('input,textarea')].map(e => e.value).filter(Boolean).slice(0, 12), needles,"
+                  " has_video_player: !!document.querySelector('video')}; }") % json.dumps(needles, ensure_ascii=False)
+            info = await self.eval_js(js, None, 30)
+            if isinstance(info, dict):
+                eff.update(info)
+            eff.update(tabs=len(self.pages), active_target=str(self.page_id))
+            return self._res(req, True, "OK", f"probe {str(eff.get('url', ''))[:80]}", eff, t0)
+        if a == "eval":
+            if self.env.get("DSCU_ALLOW_EVAL") != "1":
+                return self._res(req, False, "SECURITY_DENIED", "eval is disabled", eff, t0)
+            eff["value"] = await self.eval_js(str(req.get("expression", "() => null")) if str(req.get("expression", "")).lstrip().startswith(("(", "async", "function")) else f"() => ({req.get('expression', 'null')})")
+            return await done("eval ok")
+        if a in ("diagnose", "list_network", "list_console"):
+            msg, data = await self.diagnose()
+            eff["diagnostics"] = data
+            return self._res(req, True, "OK", f"[浏览器诊断] {msg}", eff, t0)
+        if a == "wait_settled":
+            end = time.time() + float(req.get("timeout_ms") or 2500) / 1000
+            while time.time() < end:
+                if await self.eval_js("() => document.readyState") == "complete":
+                    break
+                await asyncio.sleep(0.12)
+            return await done("settled check")
+        if a == "wait_selector":
+            sel, txt = str(req.get("selector", "")), str(req.get("text", ""))
+            tmo = int(req.get("timeout_ms") or 8000)
+            found = False
+            if txt and not sel and self.has_tool("wait_for"):
+                try:
+                    await self._tool("wait_for", tmo + 2000, text=[txt], timeout=tmo)
+                    found = True
+                except McpError as e:
+                    if "timeout" not in str(e).lower() and "timed out" not in str(e).lower():
+                        raise
+            else:
+                js = "() => { const t = %s; const el = document.querySelector(%s); return !!el && (!t || (el.innerText || '').includes(t)); }" % (json.dumps(txt), json.dumps(sel or "body"))
+                end = time.time() + tmo / 1000
+                while time.time() < end:
+                    if await self.eval_js(js, None, 15) is True:
+                        found = True
+                        break
+                    await asyncio.sleep(0.15)
+            if found:
+                return await done(f"selector/text present: {sel or txt}")
+            dm, dd = await self._diag_safe()
+            eff["diagnostics"] = dd
+            return self._res(req, False, "TIMEOUT", f"等待超时：{sel or txt}｜[网络/控制台诊断] {dm}", eff, t0)
+        if a == "key":
+            seq = to_puppeteer_keys(str(req.get("keys", "")))
+            for k in seq:
+                await self._safe("press_key", key=k)
+            return await done(f"keys {req.get('keys')}")
+        if a == "scroll":
+            sgn = -1 if req.get("direction") == "up" else 1
+            dy = sgn * int(req.get("amount") or 5) * 100
+            js = ("() => { const best = [...document.querySelectorAll('*')].filter(e => e.scrollHeight > e.clientHeight + 40 && ['auto','scroll','overlay'].includes(getComputedStyle(e).overflowY)"
+                  " && e.clientHeight > 120).sort((a, b) => b.clientHeight * b.clientWidth - a.clientHeight * a.clientWidth)[0];"
+                  " const el = best || document.scrollingElement || document.documentElement; const before = el.scrollTop; el.scrollBy({top: %d, behavior: 'instant'});"
+                  " return {before, after: el.scrollTop, target: best ? best.tagName + '.' + String(best.className).slice(0, 24) : 'window'}; }") % dy
+            v = await self.eval_js(js, None, 20)
+            moved = isinstance(v, dict) and v.get("before") != v.get("after")
+            eff["scroll"] = {**(v if isinstance(v, dict) else {}), "moved": moved}
+            if not moved:
+                return self._res(req, False, "NOT_FOUND", f"scroll 无效：容器/窗口均未移动（{v}）；页面可能已到达边界", eff, t0)
+            return await done(f"scrolled {req.get('direction')} ({v.get('target') if isinstance(v, dict) else ''})")
+        if a == "scroll_into_view":
+            if req.get("ref"):
+                uid, err = self._resolve(req)
+                if err or not uid:
+                    return self._res(req, False, err[0] if err else "NOT_FOUND", err[1] if err else "", eff, t0)
+                await self.eval_js("(el) => { el.scrollIntoView({block: 'center', inline: 'nearest'}); return true; }", [uid], 15)
+                return await done(f"scrollIntoView {req.get('ref')}")
+            ok = await self.eval_js("() => { const t = %s; if (!t) return false; const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let n;"
+                                    " while ((n = w.nextNode())) { if (n.nodeValue && n.nodeValue.includes(t) && n.parentElement) { n.parentElement.scrollIntoView({block: 'center'}); return true; } } return false; }"
+                                    % json.dumps(str(req.get("text", ""))), None, 20)
+            if ok is not True:
+                return self._res(req, False, "NOT_FOUND", f"scroll_into_view: 页面文本中未找到 {req.get('text')}", eff, t0)
+            return await done(f"scrollIntoView text={req.get('text')}")
+        if a == "click_at":
+            if not self.has_tool("click_at"):
+                return self._res(req, False, "UNSUPPORTED", "click_at 需要 --experimentalVision；请改用物理点击（vision_inspect → DXGI + DsNative61）", eff, t0)
+            await self._safe("click_at", x=int(req.get("x", 0)), y=int(req.get("y", 0)), dblClick=bool(req.get("double")))
+            return await done(f"click_at {req.get('x')},{req.get('y')}")
+        if a == "upload_file":
+            uid, err = self._resolve(req)
+            if err or not uid:
+                return self._res(req, False, err[0] if err else "NOT_FOUND", err[1] if err else "", eff, t0)
+            paths = req.get("paths") or ([req["path"]] if req.get("path") else [])
+            bad = [p for p in paths if not Path(str(p)).is_file()]
+            if not paths or bad:
+                return self._res(req, False, "NOT_FOUND", f"upload_file: 文件不存在 {bad or '（未提供 path）'}", eff, t0)
+            await self._safe("upload_file", uid=uid, filePaths=[str(p) for p in paths])
+            return await done(f"uploaded {len(paths)} file(s)")
+        if a == "drag":
+            u1, e1 = self._resolve(req, "ref")
+            u2, e2 = self._resolve(req, "to_ref")
+            if e1 or e2 or not u1 or not u2:
+                er = e1 or e2 or ("NOT_FOUND", "drag needs ref + to_ref")
+                return self._res(req, False, er[0], er[1], eff, t0)
+            await self._safe("drag", from_uid=u1, to_uid=u2)
+            return await done("dragged")
+        if a in ("click", "double_click", "right_click", "hover", "invoke", "type", "set_value"):
+            uid, err = self._resolve(req)
+            if err or not uid:
+                return self._res(req, False, err[0] if err else "NOT_FOUND", err[1] if err else "", eff, t0)
+            if a in ("type", "set_value"):
+                text = str(req.get("text", ""))
+                if req.get("clear", True) is not False:
+                    await self._safe("fill", uid=uid, value=text)
+                else:
+                    await self._safe("click", uid=uid)
+                    await self._safe("type_text", text=text)
+                try:
+                    rb = await self.eval_js("(el) => String(el.value !== undefined ? el.value : el.innerText).slice(0, 200)", [uid], 15)
+                    eff["readback"] = str(rb)
+                except McpError:
+                    pass
+                if req.get("enter"):
+                    await self._safe("press_key", key="Enter")
+                return await done(f"typed {len(text)} chars (MCP fill)")
+            if a == "hover":
+                await self._safe("hover", uid=uid)
+            elif a == "right_click":
+                await self.eval_js("(el) => { el.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, view: window, button: 2})); return true; }", [uid], 15)
+            else:
+                await self._safe("click", uid=uid, dblClick=(a == "double_click") or None)
+            return await done(f"{a} {req.get('ref')} (MCP uid {uid})")
+        return self._res(req, False, "UNSUPPORTED", f"unknown action {a}", eff, t0)
+
+    # ------------------------------------------------------------------ peer contract
+    def _browser_pids(self) -> list[int]:
+        ts, cached = self._pid_cache
+        if time.time() - ts < 3.0:
+            return cached
+        pids: list[int] = []
+        try:
+            import psutil
+
+            names = ("chrome.exe", "msedge.exe", "chrome", "chromium", "google-chrome")
+            for p in psutil.process_iter(["name"]):
+                if (p.info.get("name") or "").lower() in names:
+                    pids.append(p.pid)
+        except Exception:  # noqa: BLE001
+            pass
+        self._pid_cache = (time.time(), pids)
+        return pids
+
+    def _rss_mb(self) -> float:
+        try:
+            import psutil
+
+            tot = 0.0
+            if self.client and self.client.proc and self.client.proc.pid:
+                pr = psutil.Process(self.client.proc.pid)
+                tot += pr.memory_info().rss
+                for c in pr.children(recursive=True):
+                    tot += c.memory_info().rss
+            return round(tot / 1048576, 1)
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    async def hello(self, **_: Any) -> dict[str, Any]:
+        return {"type": "hello_ack", "ok": True, "peer": "chrome-devtools-mcp", "version": VERSION, "caps": ["take_snapshot_uid", "network_diag", "console_diag", "supervisor", "multi_page", "upload_file", "drag"],
+                "browser": f"chrome-devtools-mcp({self.mode})", "profile_mode": self.mode, "profile_dir": self._profile_dir(), "browser_pids": self._browser_pids(), "rss_mb": self._rss_mb(),
+                "server": (self.client.server_info if self.client else {}), "tools": len(self.client.tools) if self.client else 0, "privacy_flags": FORCED_FLAGS}
+
+    async def status(self) -> dict[str, Any]:
+        return {"type": "status", "ok": True, "reconnects": self.restarts, "crashes": self.crashes, "epoch": self.epoch, "browser": f"chrome-devtools-mcp({self.mode})",
+                "browser_pids": self._browser_pids(), "tabs": len(self.pages), "active_target": str(self.page_id), "last_diag": self.last_diag, "stats": dict(self.stats)}
+
+    async def heal(self, reason: str, force: bool = False) -> dict[str, Any]:
+        t0 = time.perf_counter()
+        if not force and not self.lost:
+            try:
+                await self.refresh_pages()
+                await self._tool("take_snapshot", 25)  # a healthy round-trip proves the page session is alive
+                return {"type": "heal_result", "ok": True, "healed": False, "epoch": self.epoch, "browser_pids": self._browser_pids()}
+            except McpError:
+                pass
+        info = await self.restart(reason or "heal", force)
+        return {"type": "heal_result", "ok": True, **info, "epoch": self.epoch, "browser_pids": self._browser_pids(), "ms": int((time.perf_counter() - t0) * 1000)}
+
+    async def call(self, obj: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
+        """NdjsonClient-compatible entry point used by DriverHub."""
+        from .ipc_client import IpcError
+
+        t = str(obj.get("type", ""))
+        try:
+            if t == "hello":
+                out = await asyncio.wait_for(self.hello(), timeout)
+            elif t == "status":
+                out = await self.status()
+            elif t == "heal":
+                out = await asyncio.wait_for(self.heal(str(obj.get("reason", "")), bool(obj.get("force"))), max(timeout, 90))
+            elif t == "observe":
+                out = await asyncio.wait_for(self.observe(obj), timeout)
+            elif t == "action":
+                out = await asyncio.wait_for(self.action(obj), timeout)
+            elif t == "shutdown":
+                await self.aclose()
+                out = {"type": "bye", "ok": True}
+            else:
+                out = {"type": "error", "ok": False, "code": "UNSUPPORTED", "message": f"unknown type {t}"}
+        except asyncio.TimeoutError:
+            raise IpcError(f"chrome-devtools-mcp: no reply to {t}/{obj.get('action')} within {timeout}s")
+        except McpTransportError as e:
+            raise IpcError(f"chrome-devtools-mcp: connection lost ({e})")
+        except McpError as e:
+            out = {"type": "error", "ok": False, "code": "INTERNAL", "message": str(e)[:500]}
+        out.setdefault("id", obj.get("id"))
+        return out
+
+    def close(self) -> None:  # sync, like NdjsonClient.close() (DriverHub calls it after the shutdown message)
+        if self.client and self.client.proc and self.client.proc.returncode is None:
+            try:
+                self.client.proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+'@
+Add-DscuFile 'agent_brain/input_guard.py' 'db616be4e4f2202a36e95b3316fc2d272da3ccbb4466f47361c5bcf9c08f2cb0' @'
+"""v16 InputGuard - precise own-input attribution + mouse-jitter dead-zone + 1.5 s quiet auto-resume.
+
+Why v15 deadlocked ([USER_ACTIVE] x10+ in task #8):
+  * `user_active()` compared GetLastInputInfo() with a single `last_own_tick` that was refreshed ONLY by the cursor-move helper.
+    Our own click / key / type / scroll SendInput calls (and UIA actions) were therefore attributed to "a human".
+  * the in-flight mouse check used an 8 px tolerance - DPI rounding of the 0..65535 absolute mapping already exceeds that
+    on scaled / multi-monitor desktops (task #7 coordinates reach x=2391).
+  * once tripped there was no quiet-period logic: every subsequent action re-tripped immediately.
+
+v16 model (pure logic, no ctypes -> unit-testable everywhere; the driver injects the Win32 probes):
+  * every SendInput / UIA action registers an *own span* (start, end); an input event whose OS timestamp falls inside a span (+grace) is ours
+  * a foreign event only counts when   (a) a key / mouse button is physically down, or  (b) the cursor moved > deadzone_px (default 15) from baseline
+    -> sub-15px tremor/jitter is filtered (stats['jitter_filtered'])
+  * a real foreign event arms `active_until = now + quiet_s` (1.5 s).  Past that instant the guard releases automatically.
+  * `wait_quiet()` lets the driver wait up to `max_wait_s` for the human to stop instead of failing the step.
+"""
+from __future__ import annotations
+
+import math
+import time
+from collections import Counter, deque
+from typing import Any, Callable, Deque, Optional, Tuple
+
+DEFAULT_DEADZONE_PX = 15
+DEFAULT_OWN_GRACE_MS = 350
+DEFAULT_QUIET_S = 1.5
+DEFAULT_MAX_WAIT_S = 4.0
+
+
+class InputGuard:
+    def __init__(self, deadzone_px: int = DEFAULT_DEADZONE_PX, own_grace_ms: int = DEFAULT_OWN_GRACE_MS, quiet_s: float = DEFAULT_QUIET_S,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.deadzone_px = max(15, int(deadzone_px))  # spec: dead-zone >= 15 px
+        self.own_grace_s = own_grace_ms / 1000.0
+        self.quiet_s = float(quiet_s)
+        self.clock = clock
+        self.spans: Deque[Tuple[float, float]] = deque(maxlen=256)
+        self.baseline: Optional[Tuple[int, int]] = None
+        self.last_seen_tick: Optional[int] = None
+        self.active_until = 0.0
+        self.stats: Counter[str] = Counter()
+
+    # ------------------------------------------------------------------ own-input bookkeeping
+    def mark_own(self, xy: Optional[Tuple[int, int]] = None, *, start: Optional[float] = None, end: Optional[float] = None) -> None:
+        """Register that WE generated input (call after every SendInput burst and after every UIA mutating action)."""
+        now = self.clock()
+        s = start if start is not None else now - 0.03
+        e = end if end is not None else now
+        self.spans.append((s, e))
+        if xy is not None:
+            self.baseline = (int(xy[0]), int(xy[1]))
+        self.stats["own_marks"] += 1
+
+    def set_baseline(self, xy: Tuple[int, int]) -> None:
+        self.baseline = (int(xy[0]), int(xy[1]))
+
+    def _is_own(self, event_t: float) -> bool:
+        tol = 0.06
+        for s, e in reversed(self.spans):
+            if s - tol <= event_t <= e + self.own_grace_s:
+                return True
+        return False
+
+    # ------------------------------------------------------------------ foreign-input detection
+    def observe(self, last_input_tick: int, tick_now: int, cursor_xy: Tuple[int, int], pressed_any: bool = False, now: Optional[float] = None) -> bool:
+        """Feed one probe sample (GetLastInputInfo.dwTime, GetTickCount, GetCursorPos, any key/button down). Returns True while a human is active."""
+        now = self.clock() if now is None else now
+        if self.baseline is None:
+            self.baseline = (int(cursor_xy[0]), int(cursor_xy[1]))
+        if last_input_tick != self.last_seen_tick:
+            self.last_seen_tick = last_input_tick
+            age_s = ((tick_now - last_input_tick) & 0xFFFFFFFF) / 1000.0
+            event_t = now - age_s
+            if self._is_own(event_t):
+                self.stats["own_attributed"] += 1
+                self.baseline = (int(cursor_xy[0]), int(cursor_xy[1]))
+            else:
+                moved = math.hypot(cursor_xy[0] - self.baseline[0], cursor_xy[1] - self.baseline[1])
+                if pressed_any or moved > self.deadzone_px:
+                    self.register_external(now, "key/button down" if pressed_any else f"cursor moved {moved:.0f}px")
+                else:
+                    self.stats["jitter_filtered"] += 1
+        return now < self.active_until
+
+    def register_external(self, now: Optional[float] = None, why: str = "") -> None:
+        now = self.clock() if now is None else now
+        self.active_until = now + self.quiet_s
+        self.stats["external_events"] += 1
+        self.last_reason = why
+
+    last_reason: str = ""
+
+    def active(self, now: Optional[float] = None) -> bool:
+        now = self.clock() if now is None else now
+        return now < self.active_until
+
+    def wait_quiet(self, poll: Callable[[], bool], max_wait_s: float = DEFAULT_MAX_WAIT_S, sleep: Callable[[float], None] = time.sleep) -> bool:
+        """Block (worker thread) until `poll()` is False. True = human stopped (>= quiet_s of silence), False = still active after max_wait_s."""
+        t0 = self.clock()
+        while poll():
+            if self.clock() - t0 >= max_wait_s:
+                self.stats["yield_timeouts"] += 1
+                return False
+            sleep(0.05)
+        if self.clock() - t0 > 0.01:
+            self.stats["auto_resumed"] += 1
+        return True
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"deadzone_px": self.deadzone_px, "quiet_s": self.quiet_s, "own_grace_ms": int(self.own_grace_s * 1000), **dict(self.stats)}
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# [OCCLUDED] blocker classification (pure -> unit-testable).  Used by py_native_driver.clear_occluders / ensure_visible_at.
+SHELL_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland"}
+
+
+def classify_blocker(blocker: Optional[dict[str, Any]], target: dict[str, Any], extra_shell: Optional[set[str]] = None) -> str:
+    """-> gone | same_app | own_console | shell | minimizable.
+    same_app    : popup / menu / tooltip of the target's own process -> not an occluder, never touch it
+    own_console : the agent's own terminal -> never minimized, the target is pinned HWND_TOPMOST for the duration of the action instead
+    shell       : desktop / taskbar -> cannot be minimized
+    minimizable : any other foreign window -> ShowWindow(SW_MINIMIZE) then re-verify visibility"""
+    if not blocker:
+        return "gone"
+    if blocker.get("own_console"):
+        return "own_console"
+    if (blocker.get("class") or blocker.get("cls") or "") in (SHELL_CLASSES | (extra_shell or set())):
+        return "shell"
+    bp, tp = blocker.get("pid"), target.get("pid")
+    if (bp and tp and bp == tp) or (blocker.get("process") and blocker.get("process") == target.get("process")):
+        return "same_app"
+    return "minimizable"
+'@
+Add-DscuFile 'scripts/install_mcp.ps1' 'bfd56ca7ecefd09edcdb5c6329d844414adbd38755e8615b95850e1adc7fb102' @'
+<#
+.SYNOPSIS
+  v16: install the official Google ChromeDevTools/chrome-devtools-mcp globally (browser perception/control engine of DeepSeek Computer Use v16).
+.DESCRIPTION
+  * requires Node >= 20.19 (the DSCU bootstrapper already requires >= 22.6)
+  * `npm i -g chrome-devtools-mcp@latest`, then a real `--help` round-trip to prove the binary starts
+  * DSCU ALWAYS launches it with  --no-usage-statistics --no-performance-crux  (privacy; cannot be disabled by configuration)
+  * connection mode (env DSCU_MCP_MODE, persisted with -Persist):
+      profile      (default) dedicated persistent --userDataDir (log in to Gmail/Douyin once)
+      isolated     throw-away profile (--isolated)
+      autoconnect  attach to YOUR already-logged-in Chrome 144+ (--autoConnect): open chrome://inspect/#remote-debugging and enable it first
+      browser-url  attach to http://127.0.0.1:9222 (start Chrome with --remote-debugging-port=9222)   [env DSCU_MCP_BROWSER_URL]
+  * DSCU_BROWSER_ENGINE=auto|mcp|legacy   (auto = MCP, falls back to the old cdp-daemon only if MCP cannot start)
+.EXAMPLE
+  pwsh -File scripts/install_mcp.ps1 -Mode autoconnect -Persist
+#>
+param([ValidateSet('profile', 'isolated', 'autoconnect', 'browser-url')][string]$Mode = 'profile', [switch]$Persist)
+$ErrorActionPreference = 'Stop'
+function Step($m) { Write-Host "▶ $m" -ForegroundColor Cyan }
+function Ok($m) { Write-Host "  ✓ $m" -ForegroundColor Green }
+function Warn($m) { Write-Host "  ⚠ $m" -ForegroundColor Yellow }
+$node = Get-Command node -ErrorAction SilentlyContinue
+if (-not $node) { throw '未找到 Node.js（需要 >= 20.19）。请先安装 Node LTS：winget install OpenJS.NodeJS.LTS' }
+$v = [version]((& node -v).TrimStart('v') -replace '^(\d+\.\d+).*', '$1')
+if ($v -lt [version]'20.19') { throw "Node $v 太旧，chrome-devtools-mcp 需要 >= 20.19" }
+Ok "Node $v"
+Step 'npm i -g chrome-devtools-mcp@latest'
+try { & npm install -g chrome-devtools-mcp@latest 2>&1 | ForEach-Object { "    $_" } } catch { Warn "npm 安装异常：$($_.Exception.Message)" }
+$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+$cmd = Get-Command chrome-devtools-mcp -ErrorAction SilentlyContinue
+if (-not $cmd) { throw 'chrome-devtools-mcp 未出现在 PATH：请重开终端，或检查 `npm prefix -g` 是否在 PATH 中。' }
+Ok "已安装：$($cmd.Source)"
+$help = & chrome-devtools-mcp --help 2>&1 | Out-String
+foreach ($flag in '--no-usage-statistics', '--autoConnect', '--browserUrl', '--isolated', '--userDataDir', '--experimentalVision') {
+    if ($help -match [regex]::Escape($flag.TrimStart('-').Replace('no-usage-statistics', 'usageStatistics'))) { Ok "支持 $flag" } else { Warn "当前版本帮助中未见 $flag（不影响 DSCU：未知参数不会被传递）" }
+}
+Write-Host '  隐私：DSCU 固定以 --no-usage-statistics --no-performance-crux 启动 chrome-devtools-mcp。' -ForegroundColor DarkGray
+$env:DSCU_MCP_MODE = $Mode
+if ($Persist) { [Environment]::SetEnvironmentVariable('DSCU_MCP_MODE', $Mode, 'User'); Ok "已持久化 DSCU_MCP_MODE=$Mode" }
+if ($Mode -eq 'autoconnect') { Warn '请在你的 Chrome（>=144）打开 chrome://inspect/#remote-debugging 并启用远程调试；首次连接会弹出授权对话框。' }
+if ($Mode -eq 'browser-url') { Warn 'Chrome 需以 --remote-debugging-port=9222 启动（必须带独立 --user-data-dir）。' }
+Ok "完成。启动 DSCU 后输入  v16 mcp  查看引擎状态。"
+'@
+Add-DscuFile 'tests/fake_mcp_server.py' 'fc1e1c33c70f7c06ace716fce4d5807910ed3d740358d6e53bac5ea436a054d8' @'
+"""Deterministic stand-in for `chrome-devtools-mcp` (stdio JSON-RPC, MCP 2025-06-18) used by tests/unit/test_v16.py and `v16 eval`.
+
+It speaks the REAL wire format of the official server (take_snapshot text lines `uid=<snap>_<n> role "name" props`, `reqid=N METHOD url [status]`,
+`msgid=N [type] text`, `## Pages\\n1: url [selected]`, evaluate_script fenced-json reply, pageId-routed schemas) so the Python engine is exercised without Chrome.
+Env: FAKE_ARGV_FILE (records argv + the client's roots/list answer).
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+
+PAGES = [{"id": 1, "url": "about:blank", "title": "", "sel": True}]
+STATE = {"sid": 0, "next_page": 2, "values": {}, "title_override": {}, "clicks": []}
+ARGV_FILE = os.environ.get("FAKE_ARGV_FILE", "")
+
+SCHEMA_PID = {"pageId": {"type": "number"}}
+
+
+def tool(name: str, props: dict, req: list | None = None) -> dict:
+    return {"name": name, "description": name, "inputSchema": {"type": "object", "properties": props, "required": req or []}}
+
+
+TOOLS = [
+    tool("list_pages", {}), tool("take_snapshot", {**SCHEMA_PID, "verbose": {"type": "boolean"}}, ["pageId"]),
+    tool("click", {**SCHEMA_PID, "uid": {"type": "string"}, "dblClick": {"type": "boolean"}}, ["pageId", "uid"]),
+    tool("hover", {**SCHEMA_PID, "uid": {"type": "string"}}), tool("fill", {**SCHEMA_PID, "uid": {"type": "string"}, "value": {"type": "string"}}),
+    tool("press_key", {**SCHEMA_PID, "key": {"type": "string"}}), tool("type_text", {**SCHEMA_PID, "text": {"type": "string"}}),
+    tool("navigate_page", {**SCHEMA_PID, "type": {"type": "string"}, "url": {"type": "string"}, "timeout": {"type": "integer"}}),
+    tool("new_page", {"url": {"type": "string"}, "background": {"type": "boolean"}}), tool("select_page", {**SCHEMA_PID, "bringToFront": {"type": "boolean"}}),
+    tool("wait_for", {**SCHEMA_PID, "text": {"type": "array"}, "timeout": {"type": "integer"}}),
+    tool("list_network_requests", {**SCHEMA_PID}), tool("list_console_messages", {**SCHEMA_PID}),
+    tool("upload_file", {**SCHEMA_PID, "uid": {"type": "string"}, "filePaths": {"type": "array"}}),
+    tool("drag", {**SCHEMA_PID, "from_uid": {"type": "string"}, "to_uid": {"type": "string"}}),
+    tool("evaluate_script", {**SCHEMA_PID, "function": {"type": "string"}, "args": {"type": "array", "items": {"type": "object"}}}),
+    tool("click_at", {**SCHEMA_PID, "x": {"type": "number"}, "y": {"type": "number"}}),
+]
+
+
+def page() -> dict:
+    return next(p for p in PAGES if p["sel"])
+
+
+def page_by_id(pid):
+    return next((p for p in PAGES if p["id"] == pid), page())
+
+
+def title_of(p: dict) -> str:
+    return STATE["title_override"].get(p["id"]) or (p["title"] or "")
+
+
+def snapshot_text(p: dict) -> str:
+    STATE["sid"] += 1
+    s = STATE["sid"]
+    u = p["url"]
+    if "rows" in u or "index" in u:
+        t = title_of(p) or "Inbox"
+        return (f'uid={s}_0 RootWebArea "{t}" url="{u}"\n  uid={s}_1 heading "Inbox" level="1"\n  uid={s}_2 textbox "search box" focusable\n'
+                f'  uid={s}_3 row "Mail one from alice"\n    uid={s}_4 checkbox "select r1" focusable\n    uid={s}_5 link "Mail one from alice" focusable url="{u}#r1"\n'
+                f'  uid={s}_6 row "Mail two from bob"\n    uid={s}_7 checkbox "select r2" focusable\n    uid={s}_8 link "Mail two from bob" focusable url="{u}#r2"\n'
+                f'  uid={s}_9 toolbar "actions"\n    uid={s}_10 button "Delete" focusable\n')
+    if "canvas" in u:
+        return f'uid={s}_0 RootWebArea "Canvas game" url="{u}"\n  uid={s}_1 canvas\n'
+    if "blank" in u or "broken" in u:
+        return f'uid={s}_0 RootWebArea "" url="{u}"\n'
+    return f'uid={s}_0 RootWebArea "{title_of(p) or "Page"}" url="{u}"\n  uid={s}_1 link "Home" focusable url="{u}"\n  uid={s}_2 button "Go" focusable\n'
+
+
+def uid_ok(uid: str) -> bool:
+    return str(uid).startswith(f"{STATE['sid']}_")
+
+
+def ok(text: str) -> dict:
+    return {"content": [{"type": "text", "text": text}]}
+
+
+def err(text: str) -> dict:
+    return {"content": [{"type": "text", "text": text}], "isError": True}
+
+
+def js_reply(v) -> dict:
+    return ok("Script ran on page and returned:\n```json\n" + json.dumps(v) + "\n```")
+
+
+def call(name: str, a: dict) -> dict:
+    p = page_by_id(a.get("pageId")) if a.get("pageId") else page()
+    if name == "list_pages":
+        return ok("## Pages\n" + "\n".join(f"{x['id']}: {x['url']}{' [selected]' if x['sel'] else ''}" for x in PAGES))
+    if name == "take_snapshot":
+        return ok("## Latest page snapshot\n" + snapshot_text(p))
+    if name in ("click", "hover", "fill", "upload_file"):
+        if not uid_ok(a.get("uid", "")):
+            return err("Could not find element with uid " + str(a.get("uid")) + " - take a new snapshot")
+        if name == "fill":
+            STATE["values"][a["uid"]] = a.get("value", "")
+        if name == "click":
+            STATE["clicks"].append(a["uid"])
+            if a["uid"].endswith("_10"):
+                STATE["title_override"][p["id"]] = "clicked"
+            if a["uid"].endswith(("_4", "_7")):
+                STATE["title_override"][p["id"]] = "checked:" + ",".join(sorted({"r1" if c.endswith("_4") else "r2" for c in STATE["clicks"] if c.endswith(("_4", "_7"))}))
+        return ok(f"Successfully {name}ed element")
+    if name == "drag":
+        return ok("dragged") if uid_ok(a.get("from_uid", "")) and uid_ok(a.get("to_uid", "")) else err("Could not find element with uid")
+    if name in ("press_key", "type_text"):
+        return ok("ok")
+    if name == "navigate_page":
+        p["url"] = a.get("url", p["url"])
+        p["title"] = "Page"
+        return ok("Successfully navigated to " + p["url"])
+    if name == "new_page":
+        for x in PAGES:
+            x["sel"] = False
+        PAGES.append({"id": STATE["next_page"], "url": a.get("url", "about:blank"), "title": "New", "sel": True})
+        STATE["next_page"] += 1
+        return ok("## Pages\n" + "\n".join(f"{x['id']}: {x['url']}{' [selected]' if x['sel'] else ''}" for x in PAGES))
+    if name == "select_page":
+        for x in PAGES:
+            x["sel"] = x["id"] == a.get("pageId")
+        return ok("selected")
+    if name == "wait_for":
+        txt = " ".join(map(str, a.get("text") or []))
+        if txt and (txt in snapshot_text(p) or txt in p["url"]):
+            return ok("Element matching one of " + txt + " found.")
+        return err("Timed out after " + str(a.get("timeout")) + "ms waiting for text")
+    if name == "list_network_requests":
+        if "broken" in p["url"]:
+            return ok("## Network requests\nreqid=1 GET " + p["url"] + " [404]\nreqid=2 GET http://x/app.js [500]\nreqid=3 GET http://x/ok.css [200]")
+        return ok("## Network requests\nreqid=1 GET " + p["url"] + " [200]")
+    if name == "list_console_messages":
+        if "broken" in p["url"]:
+            return ok("## Console messages\nmsgid=1 [error] Uncaught TypeError: x is not a function (1 args)")
+        return ok("## Console messages\n<no console messages found>")
+    if name == "click_at":
+        return ok("clicked at")
+    if name == "evaluate_script":
+        f = a.get("function", "")
+        if "getBoundingClientRect" in f and "map" in f:
+            return js_reply([[10, 20 + 30 * i, 120, 24] for i in range(len(a.get("args") or []))])
+        if "location.href" in f and "title" in f and "needles" not in f:
+            return js_reply({"url": p["url"], "title": title_of(p)})
+        if "needles" in f:
+            nd = re.search(r"const nd = (\[.*?\]);", f, re.S)
+            names = json.loads(nd.group(1)) if nd else []
+            return js_reply({"url": p["url"], "title": title_of(p), "readyState": "complete", "body_len": 99, "inputs": list(STATE["values"].values()),
+                             "needles": {n: ("alice" in n or n in p["url"]) for n in names}, "has_video_player": False})
+        if "readyState" in f:
+            return js_reply("complete")
+        if "querySelectorAll('canvas')" in f:
+            return js_reply(1 if "canvas" in p["url"] else 0)
+        if "scrollBy" in f:
+            return js_reply({"before": 0, "after": 300, "target": "window"})
+        if "el.value !== undefined" in f:
+            v = next(iter(STATE["values"].values()), "")
+            return js_reply(v)
+        if "document.title" in f:
+            return js_reply(title_of(p))
+        if "document.querySelector(" in f:
+            return js_reply(False)
+        return js_reply(True)
+    return err("unknown tool " + name)
+
+
+def send(o: dict) -> None:
+    sys.stdout.write(json.dumps(o) + "\n")
+    sys.stdout.flush()
+
+
+def main() -> None:
+    if ARGV_FILE:
+        with open(ARGV_FILE, "w", encoding="utf-8") as f:
+            json.dump({"argv": sys.argv[1:]}, f)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        m = json.loads(line)
+        meth, rid = m.get("method"), m.get("id")
+        if meth == "initialize":
+            caps = m["params"].get("capabilities", {})
+            STATE["roots_cap"] = "roots" in caps
+            send({"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "fake_chrome_devtools", "version": "0.0-test"}}})
+        elif meth == "notifications/initialized":
+            if STATE.get("roots_cap"):
+                send({"jsonrpc": "2.0", "id": "srv-roots-1", "method": "roots/list"})
+        elif meth == "tools/list":
+            send({"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}})
+        elif meth == "tools/call":
+            send({"jsonrpc": "2.0", "id": rid, "result": call(m["params"]["name"], m["params"].get("arguments") or {})})
+        elif rid == "srv-roots-1" and "result" in m and ARGV_FILE:
+            with open(ARGV_FILE + ".roots", "w", encoding="utf-8") as f:
+                json.dump(m["result"], f)
+        elif rid is not None and meth:
+            send({"jsonrpc": "2.0", "id": rid, "result": {}})
+
+
+if __name__ == "__main__":
+    main()
+'@
+Add-DscuFile 'tests/unit/test_v16.py' '830e4cdd4ad642935240ed9f3299a9ef819513964a1fa9b53488019fcb83f2e1' @'
+"""v16 regression tests - every case maps to a defect in runtime log 6f76f3c (or to the new official chrome-devtools-mcp engine).
+Run:  python -m unittest tests.unit.test_v16 -v      (or:  v14 regress  inside the prompt)
+Windows-only checks are skipped elsewhere; the engine is exercised against tests/fake_mcp_server.py (real MCP wire format, no Chrome needed)."""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from agent_brain import browser_mcp as B  # noqa: E402
+from agent_brain.input_guard import InputGuard, classify_blocker  # noqa: E402
+from agent_brain.state_machine import StableObjectRegistry  # noqa: E402
+from agent_brain.verifier import (IndependentVerifier, clause_events, delete_targets, task_polarity)  # noqa: E402
+
+FAKE = ROOT / "tests" / "fake_mcp_server.py"
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.t = 100.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+# --------------------------------------------------------------------------------------------------------------------- bug 1: verifier polarity
+class TestVerifierPolarity(unittest.TestCase):
+    TASK = "帮我把桌面上的bzm记事本删除，并且清空回收站里面的文件"
+
+    def test_polarity_classification(self) -> None:
+        self.assertEqual(task_polarity(self.TASK), "DELETE_OR_CLEAR")
+        self.assertEqual(task_polarity("新建一个记事本，输入今天过得怎么样，命名为bzm，保存在桌面"), "CREATE_OR_SAVE")
+        self.assertEqual(task_polarity("在桌面新建记事本命名为bzm，然后删除桌面上的bzm记事本"), "MIXED")
+        self.assertEqual(task_polarity("打开百度"), "NONE")
+
+    def test_delete_target_is_name_not_summary_path(self) -> None:
+        t = delete_targets(self.TASK, "已移入回收站 C:\\Users\\28013\\Desktop\\bzm.txt")
+        self.assertTrue(any(x[0] == "name" and x[2] == "bzm" for x in t), t)
+
+    def test_clause_order(self) -> None:
+        ev = clause_events("先新建bzm保存到桌面，然后删除桌面上的bzm文件")
+        self.assertEqual([p for p, _ in ev], ["CREATE_OR_SAVE", "DELETE_OR_CLEAR"])
+
+    def _verify(self, task: str, summary: str) -> object:
+        ver = IndependentVerifier(None, StableObjectRegistry())
+        st = SimpleNamespace(step=1, ledger=[])
+        return asyncio.run(ver.verify_done(task, summary, st, None))
+
+    def test_delete_task_accepts_missing_file(self) -> None:
+        """THE v15 BUG: file really gone + task says delete -> must be ACCEPTED (v15 rejected 3x with 'file_exists: 不存在')."""
+        with tempfile.TemporaryDirectory() as d, mock.patch("agent_brain.verifier.layer0.known_folder", return_value=Path(d)):
+            v = self._verify("帮我把桌面上的bzm记事本删除", f"已删除 {Path(d) / 'bzm.txt'}")
+            names = [c.name for c in v.checks]
+            self.assertIn("file_not_exists", names)
+            self.assertNotIn("file_exists", names)
+            self.assertTrue(v.ok, v.diagnosis)
+
+    def test_delete_task_rejects_file_still_there(self) -> None:
+        with tempfile.TemporaryDirectory() as d, mock.patch("agent_brain.verifier.layer0.known_folder", return_value=Path(d)):
+            (Path(d) / "bzm.txt").write_text("x")
+            v = self._verify("帮我把桌面上的bzm记事本删除", "已删除")
+            self.assertFalse(v.ok)
+            self.assertIn("仍有", v.diagnosis)
+
+    def test_create_task_still_requires_file(self) -> None:
+        with tempfile.TemporaryDirectory() as d, mock.patch("agent_brain.verifier.layer0.known_folder", return_value=Path(d)):
+            v = self._verify("新建一个记事本，命名为bzm，保存在桌面", "已保存")
+            self.assertFalse(v.ok)  # polarity not inverted: creation + missing file = reject
+            (Path(d) / "bzm.txt").write_text("hi", encoding="utf-8")
+            self.assertTrue(self._verify("新建一个记事本，命名为bzm，保存在桌面", "已保存").ok)
+
+    def test_mixed_create_then_delete(self) -> None:
+        with tempfile.TemporaryDirectory() as d, mock.patch("agent_brain.verifier.layer0.known_folder", return_value=Path(d)):
+            v = self._verify("在桌面新建记事本，命名为bzm，然后删除桌面上的bzm记事本", "done")
+            self.assertTrue(v.ok, v.diagnosis)
+            self.assertNotIn("file_exists", [c.name for c in v.checks])
+
+    def test_recycle_bin_assertion_uses_independent_sources(self) -> None:
+        fake = {"ok": True, "count": 0, "consistent": True, "sources": {"SHQueryRecycleBinW": 0, "COM.NameSpace(10)": 0}}
+        with mock.patch("agent_brain.safe_shell.wait_recycle_count", return_value=fake):
+            c = IndependentVerifier.assert_recycle_bin_empty()
+        self.assertTrue(c.ok)
+        self.assertEqual(c.name, "recycle_bin_empty")
+        with mock.patch("agent_brain.safe_shell.wait_recycle_count", return_value={**fake, "count": 3}):
+            self.assertFalse(IndependentVerifier.assert_recycle_bin_empty().ok)
+
+    def test_expected_not_found_probe_is_not_an_error(self) -> None:
+        """v15 task #2: last_action_ok failed because file_stat->NOT_FOUND (the expected result of a delete) counted as an error."""
+        led = SimpleNamespace(code="NOT_FOUND", effect="error", sig="file_stat:x", action={"action": "file_stat"})
+        out = IndependentVerifier._sanity(SimpleNamespace(ledger=[led]), None)
+        self.assertTrue(all(c.ok for c in out), [c.detail for c in out])
+
+
+# --------------------------------------------------------------------------------------------------------------------- bug 3: USER_ACTIVE guard
+class TestInputGuard(unittest.TestCase):
+    def setUp(self) -> None:
+        self.clk = Clock()
+        self.g = InputGuard(clock=self.clk)
+
+    def test_deadzone_is_at_least_15px(self) -> None:
+        self.assertGreaterEqual(InputGuard(deadzone_px=3).deadzone_px, 15)
+
+    def test_own_sendinput_is_never_user_active(self) -> None:
+        """v15 bug: own click/key/type input was attributed to a human.  Now every own span is whitelisted."""
+        self.g.mark_own(xy=(500, 500))
+        self.clk.t += 0.04  # event happened 40 ms ago
+        self.assertFalse(self.g.observe(last_input_tick=int(self.clk.t * 1000) - 40, tick_now=int(self.clk.t * 1000), cursor_xy=(500, 500)))
+        self.assertEqual(self.g.stats["own_attributed"], 1)
+
+    def test_jitter_below_deadzone_is_filtered(self) -> None:
+        self.g.set_baseline((300, 300))
+        for k, dx in enumerate((3, 7, 11, 14), start=1):  # tremor / DPI rounding
+            self.clk.t += 1.0
+            tick = int(self.clk.t * 1000)
+            self.assertFalse(self.g.observe(tick - 10, tick, (300 + dx, 300)), f"{dx}px must not trigger")
+        self.assertEqual(self.g.stats["jitter_filtered"], 4)
+
+    def test_real_foreign_motion_triggers_then_auto_resumes_after_1_5s(self) -> None:
+        self.g.set_baseline((300, 300))
+        self.clk.t += 5.0
+        tick = int(self.clk.t * 1000)
+        self.assertTrue(self.g.observe(tick - 20, tick, (420, 360)))  # >15px, no own span
+        self.clk.t += 1.0
+        self.assertTrue(self.g.active())  # still inside the quiet window
+        self.clk.t += 0.6  # 1.6 s of silence in total
+        self.assertFalse(self.g.active())  # auto-resume: no 10-round deadlock
+        self.assertFalse(self.g.observe(tick - 20, int(self.clk.t * 1000), (420, 360)))
+
+    def test_key_press_counts_even_without_motion(self) -> None:
+        self.g.set_baseline((10, 10))
+        self.clk.t += 3
+        tick = int(self.clk.t * 1000)
+        self.assertTrue(self.g.observe(tick - 5, tick, (10, 10), pressed_any=True))
+
+    def test_wait_quiet_resumes_instead_of_failing(self) -> None:
+        self.g.register_external(self.clk.t, "test")
+        sleeps: list[float] = []
+
+        def fake_sleep(s: float) -> None:
+            sleeps.append(s)
+            self.clk.t += 0.25
+
+        ok = self.g.wait_quiet(self.g.active, max_wait_s=4.0, sleep=fake_sleep)
+        self.assertTrue(ok)
+        self.assertLessEqual(len(sleeps) * 0.25, 1.9)
+        self.assertEqual(self.g.stats["auto_resumed"], 1)
+
+    def test_wait_quiet_gives_up_when_human_keeps_going(self) -> None:
+        def busy() -> bool:
+            self.g.register_external(self.clk.t, "still typing")
+            return True
+
+        self.assertFalse(self.g.wait_quiet(busy, max_wait_s=1.0, sleep=lambda s: setattr(self.clk, "t", self.clk.t + 0.3)))
+
+
+# --------------------------------------------------------------------------------------------------------------------- bug 2: occluder classification
+class TestBlockerClassification(unittest.TestCase):
+    T = {"hwnd": 10, "pid": 100, "process": "WeChat.exe"}
+
+    def test_classes(self) -> None:
+        self.assertEqual(classify_blocker(None, self.T), "gone")
+        self.assertEqual(classify_blocker({"own_console": True, "class": "CASCADIA_HOSTING_WINDOW_CLASS"}, self.T), "own_console")
+        self.assertEqual(classify_blocker({"class": "Shell_TrayWnd"}, self.T), "shell")
+        self.assertEqual(classify_blocker({"class": "Qt51514QWindowIcon", "pid": 100, "process": "WeChat.exe"}, self.T), "same_app")
+        self.assertEqual(classify_blocker({"class": "Notepad", "pid": 200, "process": "notepad.exe"}, self.T), "minimizable")
+
+    @unittest.skipUnless(sys.platform == "win32", "Win32 only")
+    def test_driver_has_v16_focus_sequence(self) -> None:
+        from agent_brain.py_native_driver import NativeDriver
+
+        for m in ("force_foreground", "_focus_sequence", "clear_occluders", "ensure_visible_at", "pin_topmost", "_visible_at", "user_active"):
+            self.assertTrue(hasattr(NativeDriver, m), m)
+
+
+# --------------------------------------------------------------------------------------------------------------------- bug 2: the real driver code paths, driven through a scripted fake Win32 (runs on any OS)
+class FakeUser32:
+    """Scripted desktop: target hwnd 10 (pid 100) is covered by `blocker` (hwnd 20).  SetForegroundWindow is 'locked' (never works) - exactly the v15 failure."""
+
+    def __init__(self, blocker_pid: int = 200) -> None:
+        self.minimized: set[int] = set()
+        self.topmost: set[int] = set()
+        self.calls: list[tuple] = []
+        self.pids = {10: 100, 20: blocker_pid, 30: 100}
+
+    def _wrap(self, name: str):
+        def f(*a):
+            self.calls.append((name, *[x for x in a if isinstance(x, (int, bool))]))
+            return 1
+        return f
+
+    def __getattr__(self, name: str):
+        return self._wrap(name)
+
+    def IsWindow(self, h): return 1
+    def IsIconic(self, h): return 0
+    def GetWindowLongW(self, h, i): return 0
+
+    def GetWindowThreadProcessId(self, h, ref):
+        if ref is not None and hasattr(ref, "_obj"):
+            ref._obj.value = self.pids.get(int(h or 0), 1)
+        return 70 + int(h or 0)
+
+    def ShowWindow(self, h, cmd):
+        self.calls.append(("ShowWindow", int(h), cmd))
+        if cmd == 6:
+            self.minimized.add(int(h))
+        return 1
+
+    def SetWindowPos(self, h, after, *rest):
+        v = int(getattr(after, "value", after) or 0)
+        v = v - (1 << 64) if v >= (1 << 63) else v  # c_void_p(-1) reads back unsigned
+        self.calls.append(("SetWindowPos", int(h), v))
+        if v == -1:
+            self.topmost.add(int(h))
+        return 1
+
+    def WindowFromPoint(self, pt):
+        if 10 in self.topmost or 20 in self.minimized:
+            return 10
+        return 20
+
+    def GetAncestor(self, w, flag): return int(w)
+
+
+class TestDriverOcclusionLogic(unittest.TestCase):
+    def _driver(self, blocker: dict):
+        import ctypes
+        from ctypes import wintypes
+
+        from agent_brain import py_native_driver as pnd
+
+        fake = FakeUser32(blocker.get("pid", 200))
+        k32 = SimpleNamespace(GetCurrentThreadId=lambda: 1)
+        patches = [mock.patch.object(pnd, "u32", fake, create=True), mock.patch.object(pnd, "k32", k32, create=True), mock.patch.object(pnd, "wt", wintypes, create=True),
+                   mock.patch.object(pnd.NativeDriver, "_fg", staticmethod(lambda: 99)), mock.patch.object(pnd.NativeDriver, "_confirm", lambda self, h, ms: False)]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        d = pnd.NativeDriver.__new__(pnd.NativeDriver)
+        d.guard, d._pinned = pnd.InputGuard(), set()
+        d.occlusion_stats = {"attempts": 0, "recovered": 0, "minimized": 0, "pinned": 0, "failed": 0}
+        tgt = {"hwnd": 10, "title": "微信", "process": "WeChat.exe", "pid": 100, "class": "Qt", "rect": [0, 0, 800, 600], "z": 5, "minimized": False, "cloaked": False, "own_console": False}
+        blk = {"hwnd": 20, "title": "无标题 - 记事本", "process": "notepad.exe", "pid": 200, "class": "Notepad", "rect": [0, 0, 900, 700], "z": 1, "minimized": False, "cloaked": False, "own_console": False, **blocker}
+        d.windows = lambda: [tgt, blk]  # type: ignore[method-assign]
+        return d, fake, ctypes
+
+    def test_foreign_cover_is_minimized_and_coordinate_recheck_passes(self) -> None:
+        d, fake, _ = self._driver({})
+        trace = d.ensure_visible_at(10, 100, 100)
+        self.assertTrue(d._visible_at(10, 100, 100)[0], trace)
+        self.assertTrue(any(t.startswith("focus:") for t in trace))
+        self.assertIn(("ShowWindow", 20, 6), fake.calls)  # SW_MINIMIZE on the occluder handle (whichever escalation round reached it)
+        self.assertGreaterEqual(d.occlusion_stats["minimized"], 1)
+        self.assertEqual(d.occlusion_stats["recovered"], 1)
+
+    def test_focus_sequence_order_matches_spec(self) -> None:
+        d, fake, _ = self._driver({})
+        d._focus_sequence(10)
+        names = [c[0] for c in fake.calls]
+        order = [names.index(n) for n in ("AttachThreadInput", "ShowWindow", "BringWindowToTop", "SetWindowPos", "SetForegroundWindow")]
+        self.assertEqual(order, sorted(order), names)
+        swp = [c for c in fake.calls if c[0] == "SetWindowPos"]
+        self.assertEqual([c[2] for c in swp], [-1, -2])  # HWND_TOPMOST then immediately HWND_NOTOPMOST
+        self.assertEqual(names.count("AttachThreadInput"), 4)  # attach x2, detach x2
+
+    def test_own_console_is_pinned_not_minimized(self) -> None:
+        d, fake, _ = self._driver({"own_console": True, "class": "CASCADIA_HOSTING_WINDOW_CLASS"})
+        d.ensure_visible_at(10, 100, 100)
+        self.assertNotIn(("ShowWindow", 20, 6), fake.calls)
+        self.assertTrue(d._visible_at(10, 100, 100)[0])
+
+    def test_same_process_popup_is_not_an_occluder(self) -> None:
+        d, fake, _ = self._driver({"pid": 100})
+        self.assertTrue(d._visible_at(10, 100, 100)[0])  # blocker shares the target's pid -> menu/tooltip, no recovery needed
+        self.assertEqual(d.ensure_visible_at(10, 100, 100), [])
+
+
+# --------------------------------------------------------------------------------------------------------------------- chrome-devtools-mcp engine
+class TestMcpParsing(unittest.TestCase):
+    SNAP = ('uid=3_0 RootWebArea "Inbox" url="https://mail.google.com/mail/u/0/#inbox"\n  uid=3_1 toolbar "Actions"\n    uid=3_2 button "Delete" focusable\n'
+            '  uid=3_3 row "Alice  Hello"\n    uid=3_4 checkbox "Select" focusable checked\n    uid=3_5 link "Hello" focusable url="https://x/y"\n  uid=3_6 StaticText "foot"\n')
+
+    def test_snapshot_to_elements(self) -> None:
+        nodes = B.parse_snapshot(self.SNAP)
+        self.assertEqual(nodes[0]["role"], "RootWebArea")
+        els = B.select_elements(nodes)
+        roles = [(e["role"], e["zone"]) for e in els]
+        self.assertIn(("button", "Toolbar"), roles)
+        cb = next(e for e in els if e["role"] == "checkbox")
+        self.assertEqual(cb["zone"], "Row")
+        self.assertIn("checked", cb["states"])
+        # stable_key must survive uid renumbering (new snapshot id) - StableObject identity
+        again = B.select_elements(B.parse_snapshot(self.SNAP.replace("uid=3_", "uid=9_")))
+        self.assertEqual([e["stable_key"] for e in els], [e["stable_key"] for e in again])
+
+    def test_diagnostics_extract_4xx_5xx_and_js_errors(self) -> None:
+        net = B.parse_network("reqid=1 GET https://a/b [404]\nreqid=2 POST https://a/c [500]\nreqid=3 GET https://a/d [200]")
+        con = B.parse_console("msgid=1 [error] Uncaught TypeError: x (1 args)\nmsgid=2 [log] hi (0 args)")
+        msg, data = B.summarize_diag(net, con)
+        self.assertIn("404", msg)
+        self.assertIn("500", msg)
+        self.assertIn("TypeError", msg)
+        self.assertEqual(len(data["bad_requests"]), 2)
+
+    def test_keys(self) -> None:
+        self.assertEqual(B.to_puppeteer_keys("ctrl+a"), ["Control+A"])
+        self.assertEqual(B.to_puppeteer_keys("tab tab enter"), ["Tab", "Tab", "Enter"])
+        self.assertEqual(B.to_puppeteer_keys("ctrl+shift+r"), ["Control+Shift+R"])
+
+    def test_privacy_flags_cannot_be_dropped(self) -> None:
+        for mode in ("profile", "isolated", "autoconnect", "browser-url"):
+            a = B.build_args(mode, profile_dir="C:/p", browser_url="http://127.0.0.1:9222")
+            self.assertIn("--no-usage-statistics", a)
+            self.assertIn("--no-performance-crux", a)
+        self.assertIn("--autoConnect", B.build_args("autoconnect"))
+        self.assertIn("--browserUrl", B.build_args("browser-url", browser_url="http://127.0.0.1:9222"))
+        self.assertIn("--isolated", B.build_args("isolated"))
+        eng = B.McpBrowserEngine(None, env={}, cmd=["x"], args=[])
+        self.assertIn("--no-usage-statistics", eng._argv())
+
+
+class TestMcpEngine(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.argv_file = str(Path(self.tmp) / "argv.json")
+        env = {**os.environ, "FAKE_ARGV_FILE": self.argv_file}
+        self.eng = B.McpBrowserEngine(None, env=env, cmd=[sys.executable, str(FAKE)], args=[])
+        await self.eng.start(30)
+
+    async def asyncTearDown(self) -> None:
+        await self.eng.aclose()
+
+    async def act(self, **kw: object) -> dict:
+        return await self.eng.action({"action_id": f"a{id(kw)}{len(self.eng.replay)}", **kw})
+
+    async def test_handshake_flags_roots_and_schema_adaptation(self) -> None:
+        argv = json.loads(Path(self.argv_file).read_text())["argv"]
+        self.assertIn("--no-usage-statistics", argv)
+        self.assertIn("--no-performance-crux", argv)
+        await asyncio.sleep(0.2)
+        roots = json.loads(Path(self.argv_file + ".roots").read_text())
+        self.assertIn("roots", roots)  # least-privilege file access answered via MCP roots/list
+        self.assertIn("pageId", self.eng.client.tools["take_snapshot"]["inputSchema"]["properties"])
+        self.assertEqual(self.eng._adapt("click", {"uid": "1_1", "bogus": 1})["pageId"], self.eng.page_id)  # injected, unknown kwarg dropped
+        self.assertNotIn("bogus", self.eng._adapt("click", {"uid": "1_1", "bogus": 1}))
+
+    async def test_observe_snapshot_uid_refs_and_epoch(self) -> None:
+        r = await self.act(action="navigate", url="http://x/rows.html")
+        self.assertTrue(r["ok"], r)
+        o = await self.eng.observe({"id": "o1", "max_elements": 50})
+        self.assertEqual(o["channel"], "cdp")
+        self.assertTrue(o["elements"])
+        self.assertTrue(all(e["ref_id"].startswith(f"@{o['snapshot_epoch']}:c") for e in o["elements"]))
+        self.assertTrue(any(e["role"] == "button" and e["zone"] == "Toolbar" for e in o["elements"]))
+        btn = next(e for e in o["elements"] if e["role"] == "button")
+        ok = await self.act(action="click", ref=btn["ref_id"], expect_epoch=o["snapshot_epoch"])
+        self.assertTrue(ok["ok"], ok)
+        o2 = await self.eng.observe({"id": "o2"})
+        self.assertEqual(o2["title"], "clicked")
+        stale = await self.act(action="click", ref=btn["ref_id"])  # ref from the previous epoch must fail closed
+        self.assertEqual(stale["code"], "STALE_EPOCH")
+
+    async def test_fill_type_key_probe_tabs(self) -> None:
+        await self.act(action="navigate", url="http://x/rows.html")
+        o = await self.eng.observe({"id": "o1"})
+        tb = next(e for e in o["elements"] if e["role"] == "textbox")
+        t = await self.act(action="type", ref=tb["ref_id"], text="hello", enter=True)
+        self.assertTrue(t["ok"] and t["effect"]["readback"] == "hello", t)
+        self.assertTrue((await self.act(action="key", keys="ctrl+a"))["ok"])
+        p = await self.act(action="probe", needles=["alice"])
+        self.assertTrue(p["effect"]["needles"]["alice"])
+        await self.act(action="new_tab", url="http://x/page_a.html")
+        tabs = await self.act(action="tabs")
+        self.assertEqual(len(tabs["effect"]["tabs"]), 2)
+        sw = await self.act(action="switch_tab", url_contains="rows")
+        self.assertTrue(sw["ok"], sw)
+
+    async def test_blind_wait_is_replaced_by_network_console_diagnostics(self) -> None:
+        await self.act(action="navigate", url="http://x/broken.html")
+        r = await self.act(action="wait_selector", selector="#never", timeout_ms=400)
+        self.assertEqual(r["code"], "TIMEOUT")
+        self.assertIn("404", r["message"])
+        self.assertIn("TypeError", r["message"])
+        o = await self.eng.observe({"id": "o3"})  # page not rendered -> diagnostics injected into the observation
+        self.assertIn("mcp_diagnostics", o["telemetry"])
+
+    async def test_canvas_page_hints_physical_fallback(self) -> None:
+        await self.act(action="navigate", url="http://x/canvas.html")
+        o = await self.eng.observe({"id": "o4"})
+        self.assertTrue(o["uia_blind"])
+        self.assertIn("DXGI", o["telemetry"]["mcp_diagnostics"])
+
+    async def test_supervisor_restarts_killed_server_no_cdp_unrecoverable(self) -> None:
+        await self.act(action="navigate", url="http://x/rows.html")
+        before = self.eng.restarts
+        self.eng.client.proc.kill()
+        await asyncio.sleep(0.4)
+        r = await self.act(action="navigate", url="http://x/page_a.html")
+        self.assertTrue(r["ok"], r)
+        self.assertGreater(self.eng.restarts, before)
+        self.assertNotIn("CDP_UNRECOVERABLE", json.dumps(r))
+        self.assertTrue(r["effect"].get("self_healed"))
+
+    async def test_navigation_scheme_guard(self) -> None:
+        r = await self.act(action="navigate", url="file:///C:/Windows/win.ini")
+        self.assertEqual(r["code"], "SECURITY_DENIED")
+
+    async def test_peer_contract_for_driver_hub(self) -> None:
+        h = await self.eng.call({"type": "hello"})
+        self.assertTrue(h["ok"] and h["peer"] == "chrome-devtools-mcp")
+        self.assertIn("--no-usage-statistics", h["privacy_flags"])
+        hl = await self.eng.call({"type": "heal", "reason": "unit"})
+        self.assertTrue(hl["ok"])
+        self.assertEqual((await self.eng.call({"type": "status"}))["type"], "status")
+
+
+if __name__ == "__main__":
+    unittest.main()
+'@
 Add-DscuFile 'requirements-native.txt' '92782cb09b442f44c902048d91e41dc68fba78decf134d7161312722a9f8c388' @'
 # Only needed when dscu-driver.exe is NOT built (py-native fallback tier): real DXGI via dxcam + UIA via uiautomation
 numpy
@@ -11800,11 +14180,24 @@ function Expand-Dscu {
     if ($bad.Count -gt 0) {
         Write-Host "✖ 以下 $($bad.Count) 个文件 SHA-256 校验失败（粘贴被终端截断/改写）：" -ForegroundColor Red
         $bad | ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
-        Write-Host '  建议：用 Windows Terminal 粘贴；或在网页上点「下载 .ps1」后执行  pwsh -File .\computer-use-v15.ps1' -ForegroundColor Yellow
+        Write-Host '  建议：用 Windows Terminal 粘贴；或在网页上点「下载 .ps1」后执行  pwsh -File .\computer-use-v16.ps1' -ForegroundColor Yellow
         throw 'integrity check failed'
     }
     Write-Host ("  ✓ Monorepo 已就绪：{0} 个文件校验通过（本次写入 {1} 个）→ {2}" -f $script:Manifest.Count, $written, $script:Root) -ForegroundColor Green
     return $written
+}
+
+function Ensure-DscuMcp {
+    # v16: official ChromeDevTools/chrome-devtools-mcp (global install; the brain launches it with --no-usage-statistics --no-performance-crux)
+    if ($env:DSCU_BROWSER_ENGINE -eq 'legacy') { return }
+    if (Get-Command chrome-devtools-mcp -ErrorAction SilentlyContinue) { return }
+    $npm = Get-Command npm -ErrorAction SilentlyContinue
+    if (-not $npm) { Write-Host '  ⚠ 未找到 npm：浏览器引擎将回退到 v15 cdp-daemon（安装 Node 后重启即可启用 chrome-devtools-mcp）' -ForegroundColor Yellow; return }
+    Write-Host '▶ 安装官方 chrome-devtools-mcp（npm i -g，仅首次）...' -ForegroundColor Cyan
+    try { & npm install -g chrome-devtools-mcp@latest 2>&1 | ForEach-Object { "    $_" } } catch { Write-Host "  ⚠ npm 安装失败：$($_.Exception.Message)（将回退到 cdp-daemon）" -ForegroundColor Yellow }
+    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (Get-Command chrome-devtools-mcp -ErrorAction SilentlyContinue) { Write-Host '  ✓ chrome-devtools-mcp 已就绪' -ForegroundColor Green }
+    else { Write-Host '  ⚠ 仍未在 PATH 找到 chrome-devtools-mcp：将使用 npx 兜底，失败则回退 cdp-daemon' -ForegroundColor Yellow }
 }
 
 function Test-DscuBuilt {
@@ -11824,12 +14217,13 @@ function Invoke-DscuBuild([int]$Changed) {
     if ($LASTEXITCODE -ne 0 -and -not (Test-DscuBuilt)) { throw '构建失败，请查看上方输出。' }
 }
 
-Write-Host "DeepSeek Computer Use v$script:DscuVersion · Step 3 · 自愈 CDP + 错误驱动恢复 + 受控安全原语 + 3 层可复现 Benchmark" -ForegroundColor Cyan
+Write-Host "DeepSeek Computer Use v$script:DscuVersion · Step 3+ · 官方 chrome-devtools-mcp 引擎 + 极性验证器 + 强力破遮挡 + USER_ACTIVE 防误触发 + v16 三层评测" -ForegroundColor Cyan
 $changed = Expand-Dscu
 if ($script:DscuMode -eq 'extract') { Write-Host "仅释放模式完成：$script:Root"; return }
 
 if (($env:DSCU_REBUILD -eq '1') -or (-not (Test-DscuBuilt)) -or ($changed -gt 0 -and -not (Test-Path (Join-Path $script:Root 'bin/build-info.json')))) { Invoke-DscuBuild $changed }
 
+Ensure-DscuMcp
 $vpy = Join-Path $script:Root '.venv/Scripts/python.exe'
 $env:DSCU_ROOT = $script:Root
 $env:PYTHONUTF8 = '1'
