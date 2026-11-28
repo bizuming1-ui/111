@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v16.0 (Step 3+) —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
+  DeepSeek Computer Use v16.1 (Step 3+) —— Clean-Chrome --browserUrl / Chrome146 --autoConnect 免风控登录 Gmail + PID 级 FG-Gate + 进程名 app_resolve + AUTH_WALL 1 步人工交接 + 零重启 MCP Supervisor —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
   直接整段粘贴到 PowerShell 7 → 输入 DeepSeek API Key → 出现「请输入任务」提示符即可使用（与 v12/v13/v14 的使用方式完全相同）。
 .DESCRIPTION
   本脚本是【自解压引导器】（与 v14 同构）：
@@ -17,10 +17,11 @@
     · evals/：Tier1 单动作微基准 · Tier2 复合任务+故障注入 · Tier3 WindowsAgentArena 风格任务 + 独立 Oracle + 可选 Behavior Best-of-N，全量归档 eval_runs/<时间戳>/
   环境变量（可选）：DEEPSEEK_API_KEY  DSCU_ROOT（安装目录，默认 ~\DeepSeekComputerUse\v16）  DSCU_BROWSER_ENGINE=auto|mcp|legacy  DSCU_MCP_MODE=profile|isolated|autoconnect|browser-url  DSCU_MCP_BROWSER_URL  DSCU_MCP_CHANNEL  DSCU_MCP_HEADLESS=1  DSCU_MODE=run|build|verify|verify2|regress|eval|selfcheck|extract
                     DSCU_REBUILD=1  DSCU_AUTOINSTALL=1  DSCU_WITH_RUST=1  DSCU_DRIVER_TOOLCHAIN=auto|msvc|gnu  DSCU_CDP_PROFILE=persistent|ephemeral
-  任务提示符内命令：help · v16 mcp · v16 guard · v16 eval tier1|tier2|waa|all · v15 status · v15 recycle · v15 eval tier1|tier2|waa|all · v15 compare a.json b.json · v14 bench · v14 verify2 · v14 regress · exit
+  v16.1 新增环境变量：DSCU_MCP_MODE=clean-browser-url(默认)|autoconnect|profile  DSCU_CLEAN_PORT(9222)  DSCU_CLEAN_PROFILE  DSCU_CHROME_EXE  DSCU_AUTH_WALL=0|1  DSCU_AUTH_POPUP=0|1  DSCU_GMAIL_TOKEN  DSCU_GMAIL_API=0|1
+  任务提示符内命令：v16 browser · help · v16 mcp · v16 guard · v16 eval tier1|tier2|waa|all · v15 status · v15 recycle · v15 eval tier1|tier2|waa|all · v15 compare a.json b.json · v14 bench · v14 verify2 · v14 regress · exit
 #>
 $ErrorActionPreference = 'Stop'
-$script:DscuVersion = '16.0.0'
+$script:DscuVersion = '16.1.0'
 if ($PSVersionTable.PSVersion.Major -lt 7) { Write-Host '需要 PowerShell 7+（pwsh）。请在 pwsh 中粘贴。' -ForegroundColor Red; return }
 $script:DscuMode = if ($env:DSCU_MODE) { $env:DSCU_MODE } else { 'run' }
 if (-not $IsWindows -and $script:DscuMode -ne 'extract') { Write-Host '本脚本只能在 Windows 上运行（DSCU_MODE=extract 可仅释放文件）。' -ForegroundColor Red; return }
@@ -179,7 +180,7 @@ Add-DscuFile 'agent_brain/__init__.py' 'ca4476193357506833a5305373129eb69fe30c98
 """DSCU unified agent brain (Python 3.12 asyncio): the single decision-maker over the Rust driver and the TS CDP daemon."""
 __version__ = "14.0.0"
 '@
-Add-DscuFile 'agent_brain/__main__.py' '4b210ef3a8d6b21108c04fb015b2af8f34c05fe7d85ce23585e0e6fb7132dcfa' @'
+Add-DscuFile 'agent_brain/__main__.py' '04f7fb1de5084c4b48b43b70aaadf09411fa1cf07069fd3d93cbd5959e47ddbe' @'
 """REPL entry:  python -m agent_brain [--cdp-profile persistent|ephemeral]   (same prompt/flow as v12/v13: 请输入任务 ...)"""
 from __future__ import annotations
 
@@ -212,8 +213,41 @@ HELP = """可用命令：
   v14 cli                  列出 CLI-Anything(cli-hub) 已发现的 Layer-0 工具
   v14 sidecar              查看本地 DirectML 视觉侧车状态（AMD Radeon 780M / onnxruntime-directml）
   v14 profile              查看/说明浏览器 Profile 模式（persistent 复用登录态；启动参数 --cdp-profile ephemeral 为沙箱模式）
+  v16 browser              v16.1：浏览器引擎诊断（clean-browser-url/autoconnect 模式、附着 PID、navigator.webdriver、FG-Gate 前台归属、Supervisor 计数、Gmail API）
+  v16 eval tier2           含 v16.1 三项新场景：Clean Chrome webdriver===false · PID 级 FG-Gate 放行记事本/Edge · AUTH_WALL 检测
   help / exit                （v13 前缀命令仍可使用）
 """
+
+
+async def browser_status(brain: Brain) -> None:
+    """v16.1 `v16 browser`: everything needed to see WHY Google accepts / rejects the browser and WHICH browser the FG-Gate trusts."""
+    from . import browser_mcp as bm, gmail_api
+
+    h = brain.hub
+    if not h.cdp_up:
+        brain.say("  ⏳ 正在启动 / 附着浏览器引擎（clean-browser-url 会原生拉起干净 Chrome）…")
+        await h.ensure_cdp()
+    hello = h.cdp_hello or {}
+    eng = getattr(h, "_mcp", None)
+    brain.say(f"  引擎: {hello.get('browser', 'n/a')} · 请求模式={hello.get('requested_mode') or os.environ.get('DSCU_MCP_MODE') or bm.DEFAULT_MODE} · 实际模式={hello.get('profile_mode')} · 调试端口={hello.get('debug_port')} · profile={hello.get('profile_dir')}")
+    if hello.get("clean_error"):
+        brain.say(f"  ⚠ Clean Chrome 启动失败，已降级：{hello['clean_error']}")
+    pids = hello.get("browser_pids") or []
+    brain.say(f"  附着浏览器: {hello.get('attached_browser_exe') or '-'}#{hello.get('attached_browser_pid') or 0} · PID 作用域={hello.get('scope_mode')} · 进程树 {len(pids)} 个进程")
+    wd = hello.get("webdriver")
+    brain.say("  navigator.webdriver = " + (f"{wd}  ✓ 干净（Google 不会因自动化标志拒绝登录）" if wd is False else f"{wd}  ✗ 会触发 signin/rejected → 请设置 DSCU_MCP_MODE=clean-browser-url 或 autoconnect 后重启" if wd is True else "未知（尚无页面）"))
+    try:
+        p = await h.drv_fg_probe()
+        pid, proc = int(p.get("pid") or 0), str(p.get("process") or "")
+        att = brain.perception.is_attached(pid, proc)
+        brain.say(f"  前台窗口: {proc}#{pid}「{str(p.get('title', ''))[:30]}」→ FG-Gate " + ("属于附着浏览器 → 跳过 UIA、走 MCP" if att else "不属于附着浏览器 → UIA/Vision 接管（不会误路由给 Chrome MCP）"))
+    except Exception as e:  # noqa: BLE001
+        brain.say(f"  前台探针不可用：{e}")
+    if eng is not None:
+        brain.say(f"  Supervisor: 重启 {eng.restarts} · 软自愈 {eng.stats['soft_heals']} · 瞬态重试 {eng.stats['transient_retries']} · 工具调用 {eng.stats['tool_calls']} · 上次重启原因={eng.last_restart_reason or '-'}")
+    api = gmail_api.GmailApiLayer0()
+    brain.say(f"  Gmail API Layer-0: {'已配置令牌 → 读/删邮件秒级直通' if api.available() else '未配置（走浏览器通道）'} · 令牌路径 {api.path}")
+    brain.say("  autoconnect 一次性设置：Chrome ≥144(建议146+) 打开 chrome://inspect/#remote-debugging → 开启 → 授权框点 Allow → set DSCU_MCP_MODE=autoconnect")
 
 
 async def status(brain: Brain) -> None:
@@ -263,6 +297,11 @@ async def amain() -> int:
     brain = Brain(cfg)
     await brain.start()
     brain.say(f"  🌐 浏览器 Profile 模式：{cfg.cdp_profile}" + (f" → {cfg.auth_profile_dir}（登录一次长期复用；严禁读取主浏览器目录）" if cfg.cdp_profile == "persistent" else "（临时目录，退出即销毁）"))
+    from . import browser_mcp as _bm
+
+    _mode = _bm.normalize_mode(os.environ.get("DSCU_MCP_MODE"))
+    brain.say(f"  🛡 浏览器引擎模式：{_mode}" + {"clean-browser-url": "（原生拉起干净 Chrome：无 --enable-automation，navigator.webdriver=false；MCP 仅 --browserUrl 附着；在 clean_profile 登录 Google 一次长期复用）",
+                                                    "autoconnect": "（Chrome 144+/146+ 直连日常已登录浏览器：chrome://inspect/#remote-debugging → Allow）"}.get(_mode, "") + " · 输入 v16 browser 查看诊断")
     try:
         if args and args[0] == "run" and len(args) > 1:
             await brain.run_task(" ".join(args[1:]))
@@ -283,6 +322,8 @@ async def amain() -> int:
                 print(HELP)
             elif low == "v14 status":
                 await status(brain)
+            elif low == "v14 browser":
+                await browser_status(brain)
             elif low == "v14 mcp":
                 print(json.dumps(await brain.hub.cdp_status(), ensure_ascii=False, indent=1, default=str)[:2400])
             elif low == "v14 guard":
@@ -1326,7 +1367,7 @@ Add-DscuFile 'agent_brain/native_driver.py' '7cbaa675053a4c39cd4586b283b898881b1
 from .py_native_driver import *  # noqa: F401,F403
 from .py_native_driver import NativeDriver, DxgiStream, _ahash, _ahash_np  # noqa: F401
 '@
-Add-DscuFile 'agent_brain/orchestrator.py' 'ff056b8c3ac5e072d52816a90f08857c3550a9d93f536b2779901b42a09bc939' @'
+Add-DscuFile 'agent_brain/orchestrator.py' 'a0eb78e54d98de13710a47823dcd94f63418797b721996a2204c7caf44d1a351' @'
 """The single live brain. Python asyncio owns: observation -> decision (DeepSeek) -> gated execution -> measured effect
 -> recovery. No placeholder telemetry: `cdp_up`, `uia_controls`, `stalled`, `blocked_streak`, `perception_channel` are all
 computed from real IPC replies every step (see choose_channel + TaskState.settle_last)."""
@@ -1344,7 +1385,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
-from . import layer0, safe_shell
+from . import gmail_api, layer0, procnames, safe_shell
+from .auth_wall import AuthWall, AuthWallGuard, banner as auth_banner, detect_auth_wall
 from .config import Config
 from .deepseek_client import ApiError, ApiKeyError, DeepSeek, Reply, extract_json, image_part
 from .ipc_client import DriverHub, IpcError
@@ -1605,6 +1647,10 @@ class Brain:
         self.lat["input"].append((time.perf_counter() - t0) * 1000)
         return r
 
+    def _cdp_route(self, b: Bundle) -> bool:
+        """v16.1: route keyboard/typing/scrolling to the page ONLY when the foreground really is the attached browser (never to Chrome while Edge/Notepad is in front)."""
+        return bool(b.channel == "cdp" and self.hub.cdp_up and not getattr(b, "fg_foreign", False))
+
     async def _cdp(self, action: str, **kw: Any) -> ActionResult:
         if not self.hub.cdp_up:
             await self.hub.ensure_cdp()
@@ -1717,18 +1763,18 @@ class Brain:
                     if r.ok and a.get("enter") and not sel.is_cdp:
                         await self._drv("key", b, keys="enter", expect_hwnd=eh)
                     return r
-                if b.channel == "cdp" and self.hub.cdp_up:
+                if self._cdp_route(b):
                     return ActionResult(ok=False, code=Code.NOT_FOUND, message="浏览器中 type 需要输入框 id")
                 r = await self._drv("type", b, text=text, clear=bool(a.get("clear", False)), expect_hwnd=eh)
                 if r.ok and a.get("enter"):
                     await self._drv("key", b, keys="enter", expect_hwnd=eh)
                 return r
             if name == "key":
-                if b.channel == "cdp" and self.hub.cdp_up:
+                if self._cdp_route(b):
                     return await self._cdp("key", keys=str(a.get("keys", "")))
                 return await self._drv("key", b, keys=str(a.get("keys", "")), expect_hwnd=eh)
             if name == "scroll":
-                if b.channel == "cdp" and self.hub.cdp_up:
+                if self._cdp_route(b):
                     return await self._cdp("scroll", direction=a.get("direction", "down"), amount=int(a.get("amount", 5)))
                 return await self._drv("scroll", b, direction=a.get("direction", "down"), amount=int(a.get("amount", 5)), expect_hwnd=eh)
             if name == "drag":
@@ -1922,12 +1968,138 @@ class Brain:
             b = vb
         return ActionResult(ok=False, code=Code.INTERNAL, message=f"select_rows 闭环未通过：期望 {sorted(want)}，实际 {sorted(checked)}")
 
+    # ------------------------------------------------------------------ v16.1: AUTH_WALL human hand-off
+    def _detect_wall(self, b: Bundle) -> Optional[AuthWall]:
+        o = b.obs
+        url = str(o.url or "")
+        if not url and (b.channel == "cdp" or getattr(b, "fg_attached", False)):
+            url = str(getattr(getattr(self.hub, "_mcp", None), "last_url", "") or "")  # latched vision turns carry no URL
+        if not url and not o.elements:
+            return None
+        if not (b.channel == "cdp" or getattr(b, "fg_attached", False) or o.url):
+            return None  # the wall is not what the agent is looking at (e.g. Notepad in front)
+        texts = [e.name for e in o.elements[:150] if e.name]
+        return detect_auth_wall(url, str(o.title or ""), texts)
+
+    @staticmethod
+    def _ask_enter() -> str:
+        try:
+            return input("  👉 请在浏览器中手动完成登录/2FA 后回到此处按【回车】继续（输入 s 回车 = 放弃本任务）：")
+        except (EOFError, KeyboardInterrupt):
+            return "s"
+
+    @staticmethod
+    def _auth_popup(wall: AuthWall) -> Optional[str]:
+        """Non-blocking always-on-top notice (Windows).  Closed automatically once the human pressed Enter in the terminal."""
+        if sys.platform != "win32" or os.environ.get("DSCU_AUTH_POPUP", "1") == "0":
+            return None
+        import ctypes
+        import threading
+
+        title = "DSCU · AUTH_WALL_HANDOFF"
+        msg = f"检测到 {wall.label}\n\n请在浏览器里手动完成一次登录 / 2FA，然后回到 PowerShell 按回车继续。\n（本窗口会在你按回车后自动关闭）"
+        threading.Thread(target=lambda: ctypes.windll.user32.MessageBoxW(0, msg, title, 0x40 | 0x40000), daemon=True).start()
+        return title
+
+    @staticmethod
+    def _auth_popup_close(title: Optional[str]) -> None:
+        if not title or sys.platform != "win32":
+            return
+        try:
+            import ctypes
+
+            h = ctypes.windll.user32.FindWindowW(None, title)
+            if h:
+                ctypes.windll.user32.PostMessageW(h, 0x10, 0, 0)
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _focus_attached_browser(self, b: Bundle) -> None:
+        try:
+            pids, apid, aexe = self.perception.scope()
+            ws = [{"hwnd": w.hwnd, "title": w.title, "class": w.cls or "", "process": w.process, "pid": w.pid, "rect": w.rect, "z": w.z, "minimized": bool(w.minimized),
+                   "cloaked": bool(w.cloaked), "own_console": bool(w.own_console)} for w in b.drv.windows]
+            cand = procnames.rank_main_window(ws, pids | ({apid} if apid else set()), {aexe} if aexe else set())
+            if cand:
+                await self._focus(b, hwnd=cand[0]["hwnd"])
+            elif aexe:
+                await self._drv("focus_window", b, title=aexe)
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _auth_wall_gate(self, st: TaskState, b: Bundle) -> Optional[tuple[Bundle, Optional[tuple[str, str]], str]]:
+        """AUTH_WALL_HANDOFF: the page is a login / account-chooser / 2FA wall or Google's `signin/rejected`.  Stop clicking (v16.0 burned 15 steps), ask the human ONCE,
+        re-snapshot, verify the wall is gone, continue.  Returns None when there is no wall, else (bundle, terminal-or-None, note-for-the-model)."""
+        if os.environ.get("DSCU_AUTH_WALL", "1") == "0":
+            return None
+        wall = self._detect_wall(b)
+        if wall is None:
+            return None
+        guard: AuthWallGuard = getattr(st, "auth_guard", None) or AuthWallGuard(max_handoffs=int(os.environ.get("DSCU_AUTH_MAX_HANDOFFS", "2")))
+        st.auth_guard = guard  # type: ignore[attr-defined]
+        interactive = sys.stdin is not None and sys.stdin.isatty() and os.environ.get("DSCU_NONINTERACTIVE") != "1"
+        cur = b
+        while wall is not None:
+            self.counters["auth_wall_detected"] += 1
+            if not guard.allow(wall):
+                msg = f"[AUTH_WALL] {wall.label} 仍未解除（已人工交接 {guard.handoffs} 次）。请先确认 `v16 browser`：navigator.webdriver 必须为 false；仍被拒绝请改用 DSCU_MCP_MODE=autoconnect。"
+                self.say(f"  🛑 {msg}")
+                return cur, ("blocked_needs_human", msg), ""
+            guard.record(wall)
+            self.counters["auth_wall_handoffs"] += 1
+            wd = (getattr(self.hub, "cdp_hello", {}) or {}).get("webdriver")
+            for ln in auth_banner(wall, mode=str((getattr(self.hub, "cdp_hello", {}) or {}).get("profile_mode", "")), webdriver=wd, attempt=guard.handoffs, maxn=guard.max_handoffs):
+                self.say(ln)
+            if not interactive:
+                msg = f"[AUTH_WALL_HANDOFF] {wall.label}：非交互终端，无法等待人工登录；请在浏览器中完成登录后重新下达任务。"
+                return cur, ("blocked_needs_human", msg), ""
+            await self._focus_attached_browser(cur)
+            pop = self._auth_popup(wall)
+            ans = await asyncio.to_thread(self._ask_enter)
+            self._auth_popup_close(pop)
+            if ans.strip().lower() in ("s", "skip", "q", "n", "放弃"):
+                return cur, ("blocked_needs_human", f"用户放弃 AUTH_WALL 人工登录（{wall.label}）"), ""
+            await asyncio.sleep(0.8)
+            cur = await self.observe(st, forced="cdp" if self.hub.cdp_up else None)
+            _, cur.els = render_elements(cur.obs)
+            wall = self._detect_wall(cur)
+        st.stalled_steps = st.blocked_streak = 0
+        st.loop_hits.clear()
+        st.masks.clear()
+        self.say("  ✓ AUTH_WALL 已解除（重新快照验证通过）→ 继续任务")
+        return cur, None, "[AUTH_WALL_RESOLVED] 用户已手动完成登录/验证，页面已离开登录墙；请在最新观察上继续原任务，不要再重复登录步骤。"
+
+    # ------------------------------------------------------------------ v16.1: Layer-0 Gmail API (optional)
+    async def _layer0_gmail(self, g: dict[str, Any], api: "gmail_api.GmailApiLayer0", st: TaskState) -> Optional[tuple[str, str]]:
+        say = self.say
+        say(f"  ⚡ Layer-0 Gmail API 快速通道：{g['intent']} · q={g['query']!r} · n={g['count']}（未配置/失败时自动回落浏览器通道）")
+        t0 = time.perf_counter()
+        try:
+            msgs = await asyncio.to_thread(api.list_messages, g["query"], g["count"])
+            self.counters["gmail_api_calls"] += api.stats["calls"]
+            if g["intent"] == "list":
+                for m in msgs:
+                    say(f"    · {'●' if m['unread'] else '○'} {m['from'][:30]} ｜ {m['subject'][:50]} ｜ {m['date'][:25]}")
+                return "done", f"Gmail API 读取 {len(msgs)} 封（{g['query']}），耗时 {time.perf_counter() - t0:.1f}s"
+            ids = [m["id"] for m in msgs]
+            if not ids:
+                return "done", f"没有匹配 {g['query']} 的邮件，无需删除"
+            await asyncio.to_thread(api.trash_messages, ids)
+            ok = await asyncio.to_thread(api.verify_trashed, ids)
+            self.counters["gmail_api_calls"] += api.stats["calls"]
+            if not ok:
+                return "failed", "Gmail API 已发出 trash 请求但复核未见 TRASH 标签"
+            return "done", f"Gmail API 已将 {len(ids)} 封邮件移入垃圾箱（可 30 天内恢复），已通过 labelIds 复核；耗时 {time.perf_counter() - t0:.1f}s"
+        except Exception as e:  # noqa: BLE001
+            say(f"  ⚠ Gmail API 不可用：{str(e)[:160]} → 回落浏览器通道")
+            return None
+
     async def _launch(self, target: str, args: str, b: Bundle, st: TaskState, activate_first: bool) -> ActionResult:
         if not target:
             return ActionResult(ok=False, code=Code.NOT_FOUND, message="缺少 target")
         info = layer0.resolve_app(target)
         proc_hint = (Path(str(info["target"])).stem if info and info["kind"] == "path" else target).lower()
-        al = {x.lower() for x in layer0.ALIASES.get(target, [])} | {proc_hint, target.lower()}
+        al = {x.lower() for x in layer0.ALIASES.get(target, [])} | {proc_hint, target.lower()} | {n.replace(".exe", "") for n in procnames.process_names_for(target)}
         match = lambda w: (not w.own_console) and (w.process.lower().replace(".exe", "") in al or any(x in w.title.lower() for x in al if len(x) > 1))  # noqa: E731
         existing = next((w for w in b.drv.windows if match(w)), None)
         if existing and (activate_first or True):
@@ -1936,6 +2108,12 @@ class Brain:
             if r.ok:
                 st.launched.add(existing.process.lower())
                 return r
+        if not existing and not re.match(r"^[a-z]+://|[\\/]", target, re.I):  # v16.1: title/process list had no match -> driver-side Win32 process-name lookup + AttachThreadInput focus
+            fr = await self._drv("focus_window", b, title=target)
+            if fr.ok:
+                st.launched.add(str(fr.effect.get("resolved_by", target)).lower())
+                fr.message = f"按进程名兜底找到已有窗口（{fr.effect.get('resolved_by', '')}）→ 不重复启动；" + fr.message
+                return fr
         if st.crashes.get(proc_hint + ".exe", 0) >= 2 or st.crashes.get(proc_hint, 0) >= 2:
             return ActionResult(ok=False, code=Code.SECURITY_DENIED, message=f"[UNSTABLE_APP] {target} 已崩溃 ≥2 次，禁止再次启动。请 fail 并说明需要人工修复。")
         tgt = str(info["target"]) if info else target
@@ -2001,6 +2179,13 @@ class Brain:
         rt = layer0.parse_recycle_task(st.task)
         if rt is not None:
             return await self._layer0_recycle(rt, st)
+        gm = gmail_api.parse_gmail_task(st.task)
+        if gm is not None and os.environ.get("DSCU_GMAIL_API", "1") != "0":
+            _api = gmail_api.GmailApiLayer0()
+            if _api.available():
+                _gr = await self._layer0_gmail(gm, _api, st)
+                if _gr is not None:
+                    return _gr
         plan: Optional[dict[str, Any]] = None
         last_result = ""
         self.registry = StableObjectRegistry()
@@ -2062,9 +2247,16 @@ class Brain:
             ch_label = {"cdp": f"CDP(nodes={len(b.obs.elements)}, inflight={b.obs.inflight})", "uia": f"UIA({len(b.obs.elements)} 个控件)", "dxgi_vision": f"Vision({self.cfg.vision_model})·DXGI"}[b.channel]
             if b.channel == "dxgi_vision" and b.latched:
                 ch_label += "·强制视觉轮(latch)" + (f"·crop+{b.shot_info.get('zoom', 1):.0f}x" if b.shot_info.get("zoom", 1) > 1.01 else "") + ("·SoM" if b.shot_info.get("som_boxes") else "")
-            gate_lbl = " · FG-Gate:跳过UIA" if b.gate else ""
+            gate_lbl = " · FG-Gate:跳过UIA" if b.gate else (f" · FG-Gate:PID不匹配→UIA/Vision接管（前台 {b.fg_proc}#{b.fg_pid} ≠ 附着浏览器）" if b.fg_foreign and self.hub.cdp_up else "")
             say(f"  [Perception: {ch_label}] 驱动={self.hub.driver_kind} 感知 {b.ms:.0f}ms{gate_lbl}" + (f" · {b.note}" if b.note else ""))
             self._dump_obs(step, b)
+            _aw = await self._auth_wall_gate(st, b)
+            if _aw is not None:
+                b, _term, _note = _aw
+                if _term:
+                    return _term
+                if _note:
+                    directive.text = (directive.text + "\n" if directive.text else "") + _note
             if directive.text:
                 for ln in directive.text.splitlines():
                     say("  " + ln)
@@ -2252,6 +2444,9 @@ class Brain:
         _m = getattr(self.hub, "_mcp", None)
         _o = getattr(getattr(self.hub, "_native", None), "occlusion_stats", None)
         say(f"  v16：浏览器引擎={'chrome-devtools-mcp' if _m else 'cdp-daemon(兜底)'}（Supervisor 重启 {getattr(_m, 'restarts', 0)} · 诊断注入 {_m.stats['diagnostics'] if _m else 0} · 工具调用 {_m.stats['tool_calls'] if _m else 0}） · 输入守卫 {(_g.snapshot() if _g else 'n/a')} · 破遮挡 {_o if _o else 'n/a'}")
+        _pst = self.perception.stats
+        say(f"  v16.1：AUTH_WALL 检测 {c['auth_wall_detected']} · 人工交接 {c['auth_wall_handoffs']} · PID 级 FG-Gate：前台非附着应用 {_pst['foreign_fg']} 次（其中浏览器 {_pst['foreign_browser']}）→ UIA/Vision 接管 · MCP 软自愈 {_m.stats['soft_heals'] if _m else 0} · 瞬态重试 {_m.stats['transient_retries'] if _m else 0} · "
+            f"附着 {getattr(_m, 'attached_browser_exe', '') or '-'}#{getattr(_m, 'attached_browser_pid', 0)}（{getattr(_m, 'mode', '-')}）· navigator.webdriver={(getattr(_m, 'stealth', {}) or {}).get('webdriver')} · Gmail API {c['gmail_api_calls']}")
         say(f"  v15：CDP 自愈 {getattr(self.hub, 'cdp_heals', 0)} 次（失败 {getattr(self.hub, 'cdp_heal_fail', 0)}，被迫降级 {getattr(self.hub, 'cdp_degraded', 0)}） · 遮挡自动恢复 {rs['occluded_recovered']}/{rs['occluded_fix']} · 安全拒绝→禁止列表+替代 {rs['security_alt_injected']}（安全终止 {rs['safe_terminate']}） · StableObject 命中 {dict(self.registry.hits) or 0}")
         parts = []
         for k in ("fg_probe", "capture", "uia", "cdp", "shot", "input", "network", "decision", "vision"):
@@ -2269,7 +2464,7 @@ class Brain:
         if st.llm_calls:
             say(f"  模型调用 {st.llm_calls} 次 · 输入 {st.tokens_in} tok（前缀缓存命中 {int(100 * st.cache_hit / max(1, st.tokens_in))}%）· 输出 {st.tokens_out} tok")
 '@
-Add-DscuFile 'agent_brain/perception.py' '11cb19c905910c1f7c19af194f41f5a411fafc3552cad450c68aa8853fcf7cf2' @'
+Add-DscuFile 'agent_brain/perception.py' '057a67f168eafd9189cc5390faf1a36fe3009ad1a876e996cbb00f8464f532f1' @'
 """Perception layer (Step 2).
 
  * Force-Vision Latch : `vision_inspect` arms `_force_vision_next_turn`.  The very next *main-loop* observation skips the CDP overlay,
@@ -2326,6 +2521,10 @@ class Bundle:
     gate: bool = False  # fast foreground gate passed => UIA scan skipped
     shot_detail: str = "low"
     shot_info: dict[str, Any] = field(default_factory=dict)
+    fg_pid: int = 0  # v16.1: foreground window owner pid / exe and its relation to the browser this engine is ATTACHED to
+    fg_proc: str = ""
+    fg_attached: bool = False  # foreground belongs to the attached browser process tree  -> CDP/MCP may drive it
+    fg_foreign: bool = False  # foreground is some OTHER app/browser (Edge, Notepad ...)    -> UIA / Vision must take over
 
 
 class Perception:
@@ -2335,7 +2534,7 @@ class Perception:
         self.vision_opts: dict[str, Any] = {}
         self._latch_fail = 0
         self._probe_ok = True
-        self.stats = {"latch_armed": 0, "latch_served": 0, "gate_hits": 0, "uia_skipped": 0, "uia_scans": 0, "auto_refocus": 0, "probe_ms": []}
+        self.stats = {"latch_armed": 0, "latch_served": 0, "gate_hits": 0, "uia_skipped": 0, "uia_scans": 0, "auto_refocus": 0, "probe_ms": [], "foreign_fg": 0, "foreign_browser": 0}
 
     # ------------------------------------------------------------------ latch
     def arm_force_vision(self, detail: str = "low", crop_region: Optional[list[int]] = None, zoom: Optional[float] = None, reason: str = "") -> None:
@@ -2376,10 +2575,36 @@ class Perception:
         proc = str(p.get("process", "")).lower()
         if proc not in BROWSERS or p.get("own_console") or p.get("system_popup") or p.get("occluded") or p.get("cloaked") or p.get("minimized"):
             return False
-        pids = {int(x) for x in (getattr(hub, "cdp_hello", {}) or {}).get("browser_pids", []) if x}
-        if pids and int(p.get("pid", 0)) not in pids:
-            return False  # a browser, but not the one the CDP daemon is attached to
-        return True
+        return self.is_attached(int(p.get("pid", 0) or 0), proc)
+
+    def scope(self) -> tuple[set[int], int, str]:
+        """(attached browser process-tree pids, attached main pid, attached exe) as published by the engine (live dict shared via hub.cdp_hello)."""
+        h = getattr(self.brain.hub, "cdp_hello", {}) or {}
+        pids = set()
+        for x in h.get("browser_pids", []) or []:
+            try:
+                pids.add(int(x))
+            except (TypeError, ValueError):
+                pass
+        try:
+            apid = int(h.get("attached_browser_pid") or 0)
+        except (TypeError, ValueError):
+            apid = 0
+        return pids, apid, str(h.get("attached_browser_exe") or "").lower()
+
+    def is_attached(self, pid: int, proc: str) -> bool:
+        """v16.1 PID-scoped FG-Gate.  True only when `pid` is inside the attached browser's process tree.
+        Known PID scope -> strict (Edge/other Chrome never qualify).  Only the exe is known -> exe match.  Nothing known (legacy daemon) -> any browser exe (v16.0 behaviour)."""
+        if not pid:
+            return False
+        pids, apid, aexe = self.scope()
+        if pid == apid or pid in pids:
+            return True
+        if pids or apid:
+            return False
+        if aexe:
+            return str(proc).lower() == aexe
+        return str(proc).lower() in BROWSERS
 
     @staticmethod
     def _find_work_window(drv: Observation, browser_pref: bool) -> Optional[int]:
@@ -2461,9 +2686,19 @@ class Perception:
             if await self._guard_focus(st, work):
                 await asyncio.sleep(0.12)
 
-        fg_is_browser = br._fg_is_browser(drv)
-        ch = "cdp" if (gate and cdp_task) else choose_channel(cdp_up=hub.cdp_up, fg_is_browser=fg_is_browser or bool(browser_task), uia_controls=len(drv.elements), stalled_steps=st.stalled_steps,
-                                                              blocked_streak=st.blocked_streak, forced=forced)
+        fgw = drv.fg_window()
+        fg_pid = int((fgw.pid if fgw and fgw.pid else 0) or (probe or {}).get("pid") or 0)
+        fg_proc = str((fgw.process if fgw else "") or (probe or {}).get("process") or "")
+        fg_cls = str((fgw.cls if fgw else "") or (probe or {}).get("class") or "")
+        fg_own = bool((fgw.own_console if fgw else False) or (probe or {}).get("own_console"))
+        fg_attached = bool(fg_pid) and not fg_own and self.is_attached(fg_pid, fg_proc)
+        fg_foreign = bool(fg_pid) and not fg_own and fg_cls not in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd") and not fg_attached
+        if fg_foreign:
+            self.stats["foreign_fg"] += 1
+            if fg_proc.lower() in BROWSERS:
+                self.stats["foreign_browser"] += 1  # e.g. Edge in front while MCP is attached to Chrome: UIA must take over (no 'type needs an input id' dead end)
+        ch = "cdp" if (gate and cdp_task) else choose_channel(cdp_up=hub.cdp_up, fg_is_browser=fg_attached or (bool(browser_task) and not fg_foreign), uia_controls=len(drv.elements),
+                                                              stalled_steps=st.stalled_steps, blocked_streak=st.blocked_streak, forced=forced)
         obs, epoch_cdp, shot, note = drv, None, None, ""
         cdp_obs: Optional[Observation] = None
 
@@ -2531,6 +2766,7 @@ class Perception:
                     self._force_vision_next_turn = False
         b = Bundle(obs=obs, drv=drv, channel=obs.channel, epoch_cdp=epoch_cdp, shot=shot, note=note, ms=(time.perf_counter() - t0) * 1000, latched=latched and bool(shot), gate=gate,
                    shot_detail=detail, shot_info=shot_info)
+        b.fg_pid, b.fg_proc, b.fg_attached, b.fg_foreign = fg_pid, fg_proc, fg_attached, fg_foreign
         st.perception_channel = b.channel
         return b
 
@@ -2625,7 +2861,7 @@ class Perception:
         except Exception:  # noqa: BLE001
             pass
 '@
-Add-DscuFile 'agent_brain/prompts.py' '567864212663daf58e9948c402d9485000bccda8d73decb8bd93c175a72e00f3' @'
+Add-DscuFile 'agent_brain/prompts.py' 'f9b3b642a98b6bd4b8cb6bc2fc3bdbc980b580712ae5c2ded244f427b5375a27' @'
 """Constant prompt prefix (KV-cache friendly: byte-identical across steps, tasks and sessions)."""
 
 SYSTEM_PREFIX = """你是 Windows 电脑操作代理的唯一决策大脑（Unified Agent Brain v16）。你看不到屏幕，你的「眼睛」是系统每轮提供的实时观察（来自 Rust 原生驱动 DXGI/UIA、TS CDP 守护进程；全部为实时采集，不是缓存）。
@@ -2659,6 +2895,8 @@ B) {"thought":"…","step":1,"expect":"…","actions":[{...},{...}]}  按顺序�
 3. 前台出现“错误报告/已停止工作/崩溃”窗口：先点它自带的“确定/关闭”（取消“重启”勾选）；同一应用累计崩溃≥3 次，直接 fail 并说明需要人工修复。
 4. 严禁 alt+f4 关闭你没启动的窗口；严禁对桌面/任务栏按 alt+f4（会弹出关机对话框）。win+r / win+l 被禁止。
 5. 目标窗口被遮挡时：focus_window → 若失败 minimize_blockers → app_resolve（激活已有窗口）→ vision_inspect；不要连续 focus_window。
+· AUTH_WALL：看到“登录/选择账号/2FA/此浏览器或应用可能不安全(signin/rejected)”页面时系统会自动触发 AUTH_WALL_HANDOFF 交给人工；你不要反复点击、不要填写任何凭据；收到 [AUTH_WALL_RESOLVED] 后直接继续原任务。
+· 浏览器 FG-Gate 是 PID 级：前台是 Edge/记事本等未附着应用时，系统用 UIA/视觉接管（type 可无 id 直接输入，key 走物理键盘）；focus_window/app_resolve 可直接用 "Microsoft Edge"/"Chrome"/"微信" 等应用名（按进程名兜底）。
 6. 控件很少（<6）或界面停滞时系统会切到 dxgi_vision：此时图上有屏幕坐标网格，坐标直接读图上刻度。
 7. 「勾选/删除/归档前 N 个」：先 select_rows，看到“闭环验证通过”后再单独一步 toolbar_action；已勾选数 ≠ N 时系统拒绝删除。
 8. 登录、验证码、支付、不可逆破坏：fail 并说明。宣布 done 前必须在【最新观察】里看到完成证据。
@@ -2875,7 +3113,7 @@ def parse_result(d: dict[str, Any]) -> ActionResult:
     d["code"] = code if code in Code._value2member_map_ else "INTERNAL"
     return ActionResult.model_validate(d)
 '@
-Add-DscuFile 'agent_brain/py_native_driver.py' '51eefcfffd257117fbdc852bb2fa7ae0eed300f4631bc3557f01e32f7cb46380' @'
+Add-DscuFile 'agent_brain/py_native_driver.py' '8dc6b7b9987a6b71fbd6a9fc209dd6c333080034b449fbf5db595642811f2de2' @'
 """py-native driver v14 (used when dscu-driver.exe is not built).  Step-2 upgrades: DXGI continuous-stream capture (no per-step
 SwapChain rebuild, zero-copy peek, lazy PIL conversion), <2 ms Win32 foreground probe (`fg_probe`), UIA RuntimeId/AutomationId export,
 focus-guard (re-activate the work window when the host console steals foreground).
@@ -2895,6 +3133,7 @@ import time
 from typing import Any, Optional
 
 from .input_guard import InputGuard, classify_blocker
+from .procnames import normalize as _norm_name, process_names_for, rank_main_window
 
 OWN_INPUT_HOOKS: list = []  # v16: every SendInput burst stamps an own-input span
 IS_WIN = sys.platform == "win32"
@@ -3209,6 +3448,22 @@ class NativeDriver:
         for w in out:
             w["occluded_by"] = []
         return out
+
+    def _find_by_process(self, query: str, wins: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """app_resolve / focus_window process-name fallback: 'Microsoft Edge' -> msedge.exe, '微信' -> WeChat.exe/Weixin.exe ... -> main visible window(s), best first."""
+        names = {n.lower() for n in process_names_for(query)}
+        if not names:
+            return []
+        pids: set[int] = set()
+        try:
+            import psutil
+
+            for p in psutil.process_iter(["name"]):
+                if str(p.info.get("name") or "").lower() in names:
+                    pids.add(int(p.pid))
+        except Exception:  # noqa: BLE001
+            pass
+        return rank_main_window(wins, pids, names)
 
     @staticmethod
     def _occluders(t: dict[str, Any], allw: list[dict[str, Any]]) -> list[int]:
@@ -3855,10 +4110,15 @@ class NativeDriver:
                 if req.get("hwnd"):
                     found = [w for w in wins if w["hwnd"] == req["hwnd"]]
                 else:
-                    q = str(req.get("title", "")).lower()
-                    found = [w for w in wins if q and not w["own_console"] and not w["cloaked"] and (q in w["title"].lower() or q.replace(".exe", "") == w["process"].lower().replace(".exe", "") or q in w["process"].lower())]
+                    q = _norm_name(str(req.get("title", "")))
+                    found = [w for w in wins if q and not w["own_console"] and not w["cloaked"] and (q in _norm_name(w["title"]) or q.replace(".exe", "") == w["process"].lower().replace(".exe", "") or q in w["process"].lower())]
+                if not found and not req.get("hwnd"):  # v16.1: browser titles become page titles -> resolve by owning process (GetWindowThreadProcessId + psutil)
+                    found = self._find_by_process(str(req.get("title", "")), wins)
+                    if found:
+                        eff["resolved_by"] = f"process:{found[0]['process']}#{found[0]['pid']}"
                 if not found:
-                    return R(False, "NOT_FOUND", f"no window matches {req.get('title')!r}")
+                    vis = "; ".join(f"{w['process']}「{w['title'][:18]}」" for w in wins if w["title"] and not w["own_console"] and w["class"] not in SHELL)[:300]
+                    return R(False, "NOT_FOUND", f"no window matches {req.get('title')!r}（已按标题 + 进程名双重查找）；当前可见窗口：{vis}")
                 if len(found) > 1 and not req.get("hwnd") and found[0]["process"] != found[1]["process"]:
                     return R(False, "AMBIGUOUS_TARGET", "; ".join(f"{w['hwnd']}:{w['title']}[{w['process']}]" for w in found[:5]))
                 tw = found[0]
@@ -11080,7 +11340,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 '@
-Add-DscuFile 'evals/tier2_composite.py' 'cf18ce8a012bc08310cdfd441a10d73b602e9b157bbd2400b37bc5d351e99823' @'
+Add-DscuFile 'evals/tier2_composite.py' '5554c811a4bc414f5b1babaf293a69c5754ef1d05aee7c465f429c1996afd803' @'
 """Tier 2 - composite multi-app tasks on the REAL machine.
 
  A) LLM-free scenario tests that drive the real components (real Chrome/Edge + cdp-daemon, real Explorer/Recycle Bin, real Paint) and are judged by independent probes:
@@ -11088,6 +11348,7 @@ Add-DscuFile 'evals/tier2_composite.py' 'cf18ce8a012bc08310cdfd441a10d73b602e9b1
       stable_object_reorder    rows are re-ordered by the page while the agent selects; only the ORIGINAL targets (by stable id) may end up checked
       recycle_com_verify       recycle a file via the controlled primitive, verify it through COM Shell.Application NameSpace(10); with --allow-destructive also empty + COM count 0
       paint_occlusion_recovery a topmost window covers Paint's canvas; the Recovery Playbook must clear the occluder and complete the click in place (self-drawn app scenario)
+ E) v16.1: v161_clean_launch_webdriver (navigator.webdriver === false, no --enable-automation) · v161_fg_gate_pid_scoped (Notepad/Edge in front => UIA/Vision, never Chrome MCP) · v161_auth_wall_detection
  B) LLM tasks from evals/tasks/tier2/*.json (file creation + Recycle Bin, multi-tab web) executed by the shared waa_runner harness with the independent oracle.
 Run:  python evals/tier2_composite.py [--scenarios-only] [--allow-destructive]
 """
@@ -11414,6 +11675,95 @@ async def s_v16_occlusion_recovery(brain: Any, trials: int = 8) -> dict[str, Any
         target.close()
 
 
+async def s_v161_clean_launch(brain: Any) -> dict[str, Any]:
+    """Clean Chrome launch: navigator.webdriver must be exactly `false` and the browser process must NOT carry --enable-automation (otherwise accounts.google.com answers signin/rejected)."""
+    hub = brain.hub
+    up = await hub.ensure_cdp()
+    eng = getattr(hub, "_mcp", None)
+    if not up or eng is None:
+        return result("v161_clean_launch_webdriver", "skipped", f"chrome-devtools-mcp unavailable ({hub.cdp_error})")
+    if not eng.pages:
+        await eng.refresh_pages()
+    wd = await eng.eval_js("() => navigator.webdriver")
+    pid, cmdline = int(eng.attached_browser_pid or 0), ""
+    try:
+        import psutil
+
+        cmdline = " ".join(psutil.Process(pid).cmdline()) if pid else ""
+    except Exception:  # noqa: BLE001
+        pass
+    no_flag = "--enable-automation" not in cmdline
+    good = wd is False and no_flag
+    return result("v161_clean_launch_webdriver", "pass" if good else "fail",
+                  f"mode={eng.mode} (requested {eng.requested_mode}) webdriver={wd!r} attached={eng.attached_browser_exe}#{pid} scope={eng.scope_mode} enable_automation_in_cmdline={not no_flag} clean_error={eng.clean_error or '-'}",
+                  webdriver=wd, attached_pid=pid)
+
+
+async def s_v161_fg_gate_pid(brain: Any) -> dict[str, Any]:
+    """Chrome attached; bring Notepad (and Edge, if it is running) to the front: the PID-scoped FG-Gate must hand control to UIA/Vision and must NOT route keys/typing to Chrome MCP."""
+    import subprocess
+
+    from agent_brain.state import TaskState
+
+    hub = brain.hub
+    up = await hub.ensure_cdp()
+    eng = getattr(hub, "_mcp", None)
+    if not up or eng is None or not getattr(eng, "attached_browser_pid", 0):
+        return result("v161_fg_gate_pid_scoped", "skipped", "no attached browser pid (chrome-devtools-mcp unavailable)")
+    st = TaskState("进入gmail")  # a browser-flavoured task: v16.0 forced the CDP channel here even with Edge/Notepad in front
+    b0 = await brain.observe(st)
+    await brain._focus_attached_browser(b0)
+    await asyncio.sleep(0.6)
+    b1 = await brain.observe(st)
+    chrome_ok = b1.fg_attached and not b1.fg_foreign
+    notepad = subprocess.Popen(["notepad.exe"])
+    np_hwnd = 0
+    try:
+        await asyncio.sleep(1.5)
+        r = await brain._drv("focus_window", b1, title="notepad")
+        await asyncio.sleep(0.6)
+        b2 = await brain.observe(st)
+        np_ok = bool(r.ok and b2.fg_foreign and not b2.gate and b2.channel != "cdp" and not brain._cdp_route(b2))
+        np_hwnd = next((w.hwnd for w in b2.drv.windows if w.process.lower() == "notepad.exe" and not w.own_console), 0)
+        edge_note = "edge=not-running"
+        e = next((w for w in b2.drv.windows if w.process.lower() == "msedge.exe" and not w.own_console), None)
+        edge_ok = True
+        if e is not None:
+            fr = await brain._drv("focus_window", b2, title="Microsoft Edge")  # title lookup fails (page titles) -> must resolve by process name
+            await asyncio.sleep(0.6)
+            b3 = await brain.observe(st)
+            edge_ok = bool(fr.ok and b3.fg_foreign and not b3.gate and not brain._cdp_route(b3))
+            edge_note = f"edge_focus_ok={fr.ok} resolved_by={fr.effect.get('resolved_by')} edge_foreign={b3.fg_foreign} edge_gate={b3.gate}"
+        good = chrome_ok and np_ok and edge_ok
+        return result("v161_fg_gate_pid_scoped", "pass" if good else "fail",
+                      f"chrome_front_attached={chrome_ok} notepad_front_foreign={np_ok} (channel={b2.channel}, gate={b2.gate}) {edge_note}", chrome_ok=chrome_ok, notepad_ok=np_ok, edge_ok=edge_ok)
+    finally:
+        try:
+            if np_hwnd:
+                await brain._drv("close_window", b1, hwnd=np_hwnd)
+            notepad.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def s_v161_auth_wall() -> dict[str, Any]:
+    from agent_brain import auth_wall as A
+
+    cases = [("https://accounts.google.com/v3/signin/rejected?x=1", "", [], "rejected"), ("https://accounts.google.com/v3/signin/identifier", "", [], "login"),
+             ("https://example.com", "", ["此浏览器或应用可能不安全"], "rejected"), ("https://mail.google.com/mail/u/0/#inbox", "收件箱", ["写邮件"], None), ("https://www.bing.com/", "必应", ["搜索"], None)]
+    bad = []
+    for url, title, texts, want in cases:
+        w = A.detect_auth_wall(url, title, texts)
+        if (w.kind if w else None) != want:
+            bad.append((url, want, w.kind if w else None))
+    g = A.AuthWallGuard(max_handoffs=2)
+    w0 = A.detect_auth_wall("https://accounts.google.com/v3/signin/rejected")
+    g.record(w0)
+    g.record(w0)
+    cap_ok = not g.allow(w0)
+    return result("v161_auth_wall_detection", "pass" if not bad and cap_ok else "fail", f"cases={len(cases)} mismatches={bad} handoff_cap_ok={cap_ok}")
+
+
 async def run_scenarios(allow_destructive: bool) -> list[dict[str, Any]]:
     from agent_brain.config import Config
     from agent_brain.orchestrator import Brain
@@ -11426,7 +11776,8 @@ async def run_scenarios(allow_destructive: bool) -> list[dict[str, Any]]:
     rows = []
     try:
         for fn in (lambda: s_cdp_closed(brain, port), lambda: s_stable_object(brain, port), lambda: s_recycle(brain, allow_destructive), lambda: s_paint_occlusion(brain),
-                   lambda: s_v16_delete_polarity(brain, allow_destructive), lambda: s_v16_mcp_browser(brain), lambda: s_v16_occlusion_recovery(brain)):
+                   lambda: s_v16_delete_polarity(brain, allow_destructive), lambda: s_v16_mcp_browser(brain), lambda: s_v16_occlusion_recovery(brain),
+                   lambda: s_v161_clean_launch(brain), lambda: s_v161_fg_gate_pid(brain), lambda: s_v161_auth_wall()):
             try:
                 r = await fn()
             except Exception as e:  # noqa: BLE001
@@ -11444,7 +11795,7 @@ async def amain(a: argparse.Namespace) -> dict[str, Any]:
     run_dir = Path(a.run_dir) if a.run_dir else ROOT / "eval_runs" / time.strftime("%Y%m%d-%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, Any] = {"tier": "tier2_composite", "ts": time.strftime("%F %T")}
-    out["scenarios"] = await run_scenarios(a.allow_destructive) if IS_WIN else [result("all", "skipped", "requires a real Windows desktop")]
+    out["scenarios"] = await run_scenarios(a.allow_destructive) if IS_WIN else [result("all", "skipped", "requires a real Windows desktop"), await s_v161_auth_wall()]
     out["tasks"] = []
     if not a.scenarios_only and os.environ.get("DEEPSEEK_API_KEY"):
         tasks = W.load_tasks(ROOT / "evals" / "tasks" / "tier2")
@@ -12265,7 +12616,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 '@
-Add-DscuFile 'agent_brain/browser_mcp.py' '41b1cbbf8b27c7c9d93e96a6cf9cc0582f92fb7ee507b7f977428450ee162fac' @'
+Add-DscuFile 'agent_brain/browser_mcp.py' '182de61e88df89cc1e68ca7c75eaec817b39836141d060b924cb8a0527c4b8a5' @'
 """v16 browser engine: official ChromeDevTools/chrome-devtools-mcp (Puppeteer/CDP) behind the SAME peer contract the brain already speaks.
 
 The brain's DriverHub talks to "the CDP peer" with  hello / status / heal / observe / action / shutdown  messages.  `McpBrowserEngine` implements that
@@ -12280,7 +12631,8 @@ and control channel becomes the official server:
   last URL, bump the epoch (stale refs fail closed with STALE_EPOCH) -> no more [CDP_UNRECOVERABLE].
 
 Privacy: `--no-usage-statistics --no-performance-crux` are ALWAYS passed (cannot be disabled by configuration).
-Connection modes (DSCU_MCP_MODE): profile (default: dedicated persistent --userDataDir) | isolated | autoconnect (Chrome 144+, chrome://inspect/#remote-debugging) | browser-url
+Connection modes (DSCU_MCP_MODE):  clean-browser-url (v16.1 DEFAULT: Python launches a CLEAN Chrome natively - no --enable-automation, navigator.webdriver=false - then the MCP server only attaches
+with --browserUrl)  |  autoconnect (Chrome 144+/146+, chrome://inspect/#remote-debugging -> your daily logged-in browser)  |  profile (stealth-stripped Puppeteer launch, fallback)  |  isolated  |  browser-url
 Only a tiny JSON-RPC 2.0 stdio client is used (newline-delimited JSON, MCP 2025-06-18), so no extra Python dependency is required.
 """
 from __future__ import annotations
@@ -12302,7 +12654,7 @@ from typing import Any, Optional
 IS_WIN = sys.platform == "win32"
 MCP_PROTOCOL = "2025-06-18"
 FORCED_FLAGS = ["--no-usage-statistics", "--no-performance-crux"]  # privacy: always on
-VERSION = "16.0.0"
+VERSION = "16.1.0"
 
 INTERACTIVE_ROLES = {
     "button", "link", "textbox", "searchbox", "combobox", "checkbox", "radio", "menuitem", "menuitemcheckbox", "menuitemradio", "tab", "option",
@@ -12319,8 +12671,8 @@ PROP_RX = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"|(\w+)')
 PAGE_RX = re.compile(r"^\s*(?:[-*]\s*)?(?:pageId[=: ]\s*)?(\d+):\s*(\S+)(?P<rest>.*)$")
 REQ_RX = re.compile(r"reqid=(\d+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]")
 CON_RX = re.compile(r"msgid=(\d+)\s+\[(\w+)\]\s+(.*?)(?:\s+\(\d+ args?\))?$")
-HEAL_TEXT_RX = re.compile(r"Target closed|Session closed|Protocol error|browser has disconnected|Browser is not connected|disconnected|ECONNRESET|"
-                          r"Connection closed|Execution context was destroyed|Navigating frame was detached|No target with given id|browser was restarted", re.I)
+HEAL_TEXT_RX = re.compile(r"Target closed|Session closed|Protocol error|browser has disconnected|Browser is not connected|ECONNRESET|"
+                          r"Connection closed|No target with given id|browser was restarted", re.I)  # v16.1: navigation noise moved to TRANSIENT_TEXT_RX
 STALE_TEXT_RX = re.compile(r"uid|snapshot|element.*(not found|no longer)|stale|Could not find", re.I)
 KEYMAP = {"ctrl": "Control", "control": "Control", "alt": "Alt", "shift": "Shift", "win": "Meta", "meta": "Meta", "cmd": "Meta", "enter": "Enter", "return": "Enter",
           "esc": "Escape", "escape": "Escape", "tab": "Tab", "space": "Space", "backspace": "Backspace", "delete": "Delete", "del": "Delete", "home": "Home", "end": "End",
@@ -12371,10 +12723,12 @@ def find_browser_executable() -> str:
 
 
 def build_args(mode: str = "profile", *, profile_dir: Optional[str] = None, browser_url: str = "", ws_endpoint: str = "", channel: str = "", headless: bool = False,
-               vision: bool = True, executable: str = "", extra: Optional[list[str]] = None) -> list[str]:
+               vision: bool = True, executable: str = "", extra: Optional[list[str]] = None, stealth: bool = True) -> list[str]:
     a = list(FORCED_FLAGS)
     mode = (mode or "profile").lower().replace("_", "-")
-    if mode in ("autoconnect", "auto-connect"):
+    if mode in _CLEAN_ALIASES:  # v16.1: pure DevTools client attached to the natively launched clean Chrome
+        a.append(f"--browserUrl={browser_url or f'http://127.0.0.1:{DEFAULT_PORT}'}")
+    elif mode in ("autoconnect", "auto-connect"):
         a.append("--autoConnect")
         if channel:
             a += ["--channel", channel]
@@ -12395,6 +12749,8 @@ def build_args(mode: str = "profile", *, profile_dir: Optional[str] = None, brow
         a += ["--executablePath", executable]
     if headless and mode in ("profile", "isolated"):
         a.append("--headless")
+    if stealth and mode in ("profile", "isolated"):  # Puppeteer launch fallback: strip the flag that makes Google answer signin/rejected
+        a += ["--ignore-default-chrome-arg=--enable-automation", "--chrome-arg=--disable-blink-features=AutomationControlled"]
     if vision:
         a.append("--experimentalVision")
     a += list(extra or [])
@@ -12717,6 +13073,263 @@ def to_puppeteer_keys(keys: str) -> list[str]:
 
 
 # --------------------------------------------------------------------------------------------------------------------- the engine (peer contract)
+# --------------------------------------------------------------------------------------------------------------------- v16.1: clean Chrome launcher / PID scope
+CLEAN_MODE = "clean-browser-url"
+_CLEAN_ALIASES = {"clean", "clean-browser", "cleanurl", "clean-url", "clean-browser-url", "cleanbrowserurl"}
+DEFAULT_MODE = CLEAN_MODE
+DEFAULT_PORT = 9222
+BROWSER_EXES = {"chrome.exe", "msedge.exe", "chrome", "chromium", "google-chrome", "msedge", "brave.exe"}
+# Transient navigation noise: the page is simply navigating (e.g. accounts.google.com redirects).  v16.0 treated these as "browser crashed" and respawned the
+# whole MCP server (3 restarts in 4 tasks).  v16.1: retry in place, never restart.
+TRANSIENT_TEXT_RX = re.compile(r"Execution context was destroyed|Navigating frame was detached|Cannot find context|Frame was detached|detached Frame|"
+                               r"Inspected target navigated|Target.*navigat|net::ERR_ABORTED|Most likely the page has been closed.*navigat", re.I)
+
+
+def normalize_mode(mode: Optional[str]) -> str:
+    m = (mode or "").strip().lower().replace("_", "-")
+    if not m:
+        return DEFAULT_MODE
+    if m in _CLEAN_ALIASES:
+        return CLEAN_MODE
+    if m in ("autoconnect", "auto-connect"):
+        return "autoconnect"
+    if m in ("browser-url", "browserurl"):
+        return "browser-url"
+    if m in ("ws", "ws-endpoint"):
+        return "ws"
+    if m in ("isolated", "profile"):
+        return m
+    return DEFAULT_MODE
+
+
+def clean_profile_dir(env: Optional[dict[str, str]] = None) -> str:
+    env = env if env is not None else dict(os.environ)
+    if env.get("DSCU_CLEAN_PROFILE"):
+        return env["DSCU_CLEAN_PROFILE"]
+    base = env.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
+    return str(Path(base) / "DeepSeekComputerUse" / "clean_profile")
+
+
+def clean_chrome_argv(exe: str, port: int, profile: str, extra: Optional[list[str]] = None) -> list[str]:
+    """Native Chrome launch line.  `--enable-automation` is NEVER passed (it sets navigator.webdriver=true and Google answers signin/rejected)."""
+    argv = [exe, f"--remote-debugging-port={port}", f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check", "--disable-blink-features=AutomationControlled"]
+    for x in extra or []:
+        if x and not x.startswith("--enable-automation") and x not in argv:
+            argv.append(x)
+    return argv
+
+
+def _http_json(url: str, timeout: float = 1.0) -> Optional[dict[str, Any]]:
+    try:
+        import urllib.request
+
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # loopback must bypass the system proxy (v2rayN etc.)
+        with op.open(url, timeout=timeout) as r:
+            v = json.loads(r.read().decode("utf-8", "replace"))
+            return v if isinstance(v, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def probe_debug_endpoint(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -> Optional[dict[str, Any]]:
+    return _http_json(f"http://{host}:{int(port)}/json/version", timeout)
+
+
+def _psutil() -> Any:
+    try:
+        import psutil
+
+        return psutil
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def pid_alive(pid: int) -> bool:
+    ps = _psutil()
+    if not ps or not pid:
+        return False
+    try:
+        return bool(ps.pid_exists(int(pid))) and ps.Process(int(pid)).status() != ps.STATUS_ZOMBIE
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def proc_name(pid: int) -> str:
+    ps = _psutil()
+    try:
+        return str(ps.Process(int(pid)).name()).lower() if ps and pid else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def root_browser_pid(pid: int) -> int:
+    """Walk up while the parent runs the same executable -> the browser (GUI) main process."""
+    ps = _psutil()
+    if not ps or not pid:
+        return pid
+    try:
+        p = ps.Process(int(pid))
+        name = p.name().lower()
+        if name not in BROWSER_EXES:
+            return int(pid)
+        while True:
+            par = p.parent()
+            if par is None or par.name().lower() != name:
+                break
+            p = par
+        return int(p.pid)
+    except Exception:  # noqa: BLE001
+        return pid
+
+
+def find_browser_pid_by_port(port: int) -> int:
+    """Who listens on the DevTools port?  (1) LISTEN socket owner  (2) a browser main process whose command line carries --remote-debugging-port=<port>."""
+    ps = _psutil()
+    if not ps or not port:
+        return 0
+    try:
+        for c in ps.net_connections(kind="tcp"):
+            if c.status == "LISTEN" and c.laddr and int(c.laddr.port) == int(port) and c.pid:
+                return root_browser_pid(int(c.pid))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        for p in ps.process_iter(["name", "cmdline"]):
+            nm, cl = str(p.info.get("name") or "").lower(), p.info.get("cmdline") or []
+            if nm in BROWSER_EXES and f"--remote-debugging-port={port}" in cl and not any(str(a).startswith("--type=") for a in cl):
+                return int(p.pid)
+    except Exception:  # noqa: BLE001
+        pass
+    return 0
+
+
+def process_tree_pids(pid: int) -> list[int]:
+    ps = _psutil()
+    if not ps or not pid:
+        return []
+    try:
+        p = ps.Process(int(pid))
+        return [int(pid), *[int(c.pid) for c in p.children(recursive=True)]]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def pids_by_exe(exe: str) -> list[int]:
+    ps = _psutil()
+    out: list[int] = []
+    if not ps or not exe:
+        return out
+    want = exe.lower()
+    try:
+        for p in ps.process_iter(["name"]):
+            if str(p.info.get("name") or "").lower() == want:
+                out.append(int(p.pid))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _channel_user_data_dir(channel: str = "") -> Path:
+    sub = {"stable": r"Google\Chrome", "beta": r"Google\Chrome Beta", "dev": r"Google\Chrome Dev", "canary": r"Google\Chrome SxS"}.get((channel or "stable").lower(), r"Google\Chrome")
+    return Path(os.environ.get("LOCALAPPDATA") or "") / sub / "User Data"
+
+
+def read_devtools_active_port(channel: str = "") -> Optional[tuple[int, str]]:
+    """Chrome 144+: after `chrome://inspect/#remote-debugging` is enabled the browser writes <user-data>/DevToolsActivePort (port + ws path)."""
+    try:
+        lines = (_channel_user_data_dir(channel) / "DevToolsActivePort").read_text(encoding="utf-8").splitlines()
+        return int(lines[0].strip()), (lines[1].strip() if len(lines) > 1 else "")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def autoconnect_hint(channel: str = "") -> str:
+    return "\n".join([
+        "🔌 autoconnect（Chrome 144+/146+ 直连你日常已登录的浏览器）一次性设置：",
+        "   1) 用日常 Chrome 打开  chrome://inspect/#remote-debugging",
+        "   2) 开启 “Allow remote debugging for this browser instance”（允许此浏览器实例远程调试）",
+        "   3) chrome-devtools-mcp 首次连接时 Chrome 会弹出授权框 → 点击 Allow（允许）",
+        "   4) 保持该 Chrome 运行（不是无痕窗口），回到本终端重新发送任务。",
+        f"   · 版本检查：chrome://version ≥ 144（建议 146+）；非稳定版通道请设置 DSCU_MCP_CHANNEL=beta|dev|canary（当前: {channel or 'stable'}）。",
+        "   · 不想改日常浏览器？改用默认模式 DSCU_MCP_MODE=clean-browser-url（独立 clean_profile，登录一次长期复用）。"])
+
+
+class CleanChromeLauncher:
+    """Spawns a *clean* Chrome (native Popen, no Puppeteer, no --enable-automation) with a DevTools port, records its pid, and is idempotent:
+    if the port already answers /json/version the running instance is adopted instead of launching a second one."""
+
+    def __init__(self, port: int = DEFAULT_PORT, profile: str = "", exe: str = "", extra: Optional[list[str]] = None) -> None:
+        self.port, self.profile, self.exe = int(port), profile or clean_profile_dir(), exe
+        self.extra = list(extra or [])
+        self.proc: Optional[subprocess.Popen[bytes]] = None
+        self.pid = 0
+        self.exe_name = ""
+        self.reused = False
+        self.launched_at = 0.0
+        self.argv_used: list[str] = []
+
+    def argv(self) -> list[str]:
+        return clean_chrome_argv(self.exe or find_browser_executable() or "chrome.exe", self.port, self.profile, self.extra_args())
+
+    @staticmethod
+    def extra_args() -> list[str]:
+        return shlex.split(os.environ.get("DSCU_CLEAN_CHROME_ARGS", ""), posix=not IS_WIN)
+
+    def ready(self) -> Optional[dict[str, Any]]:
+        return probe_debug_endpoint(self.port)
+
+    def ensure(self, timeout: float = 25.0) -> dict[str, Any]:
+        """Blocking (run in a thread).  Returns the /json/version document; sets pid / exe_name."""
+        info = self.ready()
+        if info:
+            self.reused = True
+            self.pid = find_browser_pid_by_port(self.port) or (self.proc.pid if self.proc else 0)
+            self.exe_name = proc_name(self.pid) or self.exe_name
+            return info
+        exe = self.exe or find_browser_executable()
+        if not exe:
+            raise McpError("未找到 Chrome/Edge 可执行文件：请安装 Chrome，或设置 DSCU_CHROME_EXE=<chrome.exe 完整路径>")
+        Path(self.profile).mkdir(parents=True, exist_ok=True)
+        self.argv_used = clean_chrome_argv(exe, self.port, self.profile, [*self.extra, *self.extra_args()])
+        assert not any(a.startswith("--enable-automation") for a in self.argv_used)
+        flags = (0x00000008 | 0x00000200) if IS_WIN else 0  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: Ctrl+C in the console must not kill the browser
+        self.proc = subprocess.Popen(self.argv_used, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags, close_fds=True)
+        self.launched_at = time.time()
+        end = time.time() + timeout
+        exited_at = 0.0
+        while time.time() < end:
+            info = self.ready()
+            if info:
+                break
+            if self.proc.poll() is not None and not exited_at:
+                exited_at = time.time()  # hand-off to an already running instance of the same profile? give the port a few more seconds
+            if exited_at and time.time() - exited_at > 6.0:
+                raise McpError(f"Chrome 进程已退出但调试端口 {self.port} 未开启：多半已有另一个 Chrome 正在使用同一 clean_profile（{self.profile}）且没带调试端口 → 关闭所有该 Profile 的 Chrome 窗口后重试，或设置 DSCU_CLEAN_PORT / DSCU_CLEAN_PROFILE")
+            time.sleep(0.2)
+        if not info:
+            raise McpError(f"Chrome 调试端口 http://127.0.0.1:{self.port}/json/version {timeout:.0f}s 内未就绪")
+        self.pid = find_browser_pid_by_port(self.port) or self.proc.pid
+        self.exe_name = proc_name(self.pid) or os.path.basename(exe).lower()
+        return info
+
+    def terminate(self) -> None:
+        pid = self.pid or (self.proc.pid if self.proc else 0)
+        ps = _psutil()
+        try:
+            if ps and pid:
+                p = ps.Process(pid)
+                kids = p.children(recursive=True)
+                p.terminate()
+                for c in kids:
+                    try:
+                        c.terminate()
+                    except Exception:  # noqa: BLE001
+                        pass
+        except Exception:  # noqa: BLE001
+            pass
+        self.pid = 0
+
+
 class McpBrowserEngine:
     """Drop-in replacement for the NDJSON `cdp-daemon` client: .lost / .call / .hello / .close  (+ explicit .start())."""
 
@@ -12738,7 +13351,16 @@ class McpBrowserEngine:
         self._lock = asyncio.Lock()
         self._heal_lock = asyncio.Lock()
         self._pid_cache: tuple[float, list[int]] = (0.0, [])
-        self.mode = (self.env.get("DSCU_MCP_MODE") or "profile").lower()
+        self.mode = normalize_mode(self.env.get("DSCU_MCP_MODE"))
+        self.requested_mode = self.mode
+        self.launcher: Optional[CleanChromeLauncher] = None
+        self.attached_browser_pid = 0  # v16.1: PID-scoped FG-Gate - only THIS browser's process tree may skip UIA
+        self.attached_browser_exe = ""
+        self.scope_mode = "unknown"  # pid-tree | exe | unknown
+        self.stealth: dict[str, Any] = {}
+        self.clean_error = ""
+        self.debug_port = 0
+        self.last_restart_reason = ""
         self.started_at = 0.0
         self.hello_cache: dict[str, Any] = {}  # live dict shared with DriverHub.cdp_hello (FG-Gate reads browser_pids from it)
 
@@ -12759,7 +13381,7 @@ class McpBrowserEngine:
         cmd = self._cmd_override or resolve_command(self.env)
         args = self._args_override if self._args_override is not None else build_args(
             self.mode, profile_dir=self._profile_dir(), browser_url=self.env.get("DSCU_MCP_BROWSER_URL", ""), ws_endpoint=self.env.get("DSCU_MCP_WS_ENDPOINT", ""),
-            channel=self.env.get("DSCU_MCP_CHANNEL", ""), headless=self.env.get("DSCU_MCP_HEADLESS") == "1", vision=self.env.get("DSCU_MCP_VISION", "1") != "0",
+            channel=self.env.get("DSCU_MCP_CHANNEL", ""), headless=self.env.get("DSCU_MCP_HEADLESS") == "1", vision=self.env.get("DSCU_MCP_VISION", "0" if self.mode in (CLEAN_MODE, "autoconnect") else "1") != "0", stealth=self.env.get("DSCU_MCP_STEALTH", "1") != "0",
             executable=self.env.get("DSCU_MCP_EXECUTABLE") or (find_browser_executable() if self.mode in ("profile", "isolated") and not self.env.get("DSCU_MCP_CHANNEL") else ""))
         for f in FORCED_FLAGS:  # privacy flags can never be dropped, even by overrides
             if f not in args:
@@ -12772,13 +13394,89 @@ class McpBrowserEngine:
         except Exception:  # noqa: BLE001
             return None
 
+    async def _prepare_browser(self) -> None:
+        """clean-browser-url: natively launch (or adopt) the clean Chrome BEFORE the MCP server attaches; the MCP server then never owns the browser process,
+        so restarting the MCP server can no longer kill the page / login state."""
+        if self._args_override is not None:  # explicit full argv (tests / expert override): the caller owns the browser
+            return
+        if self.mode == CLEAN_MODE:
+            port = int(self.env.get("DSCU_CLEAN_PORT") or DEFAULT_PORT)
+            if self.launcher is None:
+                self.launcher = CleanChromeLauncher(port, self.env.get("DSCU_CLEAN_PROFILE", "") or clean_profile_dir(self.env), self.env.get("DSCU_CHROME_EXE", ""))
+            try:
+                await asyncio.to_thread(self.launcher.ensure, 25.0)
+                self.debug_port = self.launcher.port
+                self.env["DSCU_MCP_BROWSER_URL"] = f"http://127.0.0.1:{self.launcher.port}"
+                self.attached_browser_pid, self.attached_browser_exe = self.launcher.pid, self.launcher.exe_name
+                self.clean_error = ""
+            except Exception as e:  # noqa: BLE001
+                self.clean_error = str(e)[:400]
+                self.mode = "profile"  # degrade to the stealth-stripped Puppeteer launch instead of failing the whole browser engine
+                self.stats["clean_fallbacks"] += 1
+        elif self.mode == "autoconnect":
+            ap = await asyncio.to_thread(read_devtools_active_port, self.env.get("DSCU_MCP_CHANNEL", ""))
+            if ap:
+                self.debug_port = ap[0]
+            else:
+                print(autoconnect_hint(self.env.get("DSCU_MCP_CHANNEL", "")), flush=True)
+        elif self.mode in ("browser-url", "ws"):
+            m = re.search(r":(\d{2,5})", self.env.get("DSCU_MCP_BROWSER_URL", ""))
+            self.debug_port = int(m.group(1)) if m else DEFAULT_PORT
+
+    def _attach_scope(self) -> None:
+        """Blocking (thread).  Decide WHICH browser process tree this engine controls.  FG-Gate trusts only that tree (never 'any chrome/msedge')."""
+        if self._args_override is not None:  # explicit full argv (tests / expert override): the caller owns the browser
+            return
+        pid, exe = 0, ""
+        if self.mode == CLEAN_MODE and self.launcher and self.launcher.pid:
+            pid, exe = self.launcher.pid, self.launcher.exe_name
+        elif self.mode in ("browser-url", "ws", "autoconnect") and self.debug_port:
+            pid = find_browser_pid_by_port(self.debug_port)
+            if not pid and self.mode == "autoconnect":
+                exe = "chrome.exe"
+        elif self.mode in ("profile", "isolated") and self.client and self.client.proc and self.client.proc.pid:
+            ps = _psutil()
+            try:
+                for c in (ps.Process(self.client.proc.pid).children(recursive=True) if ps else []):
+                    cl = c.cmdline()
+                    if c.name().lower() in BROWSER_EXES and not any(str(a).startswith("--type=") for a in cl):
+                        pid = int(c.pid)
+                        break
+            except Exception:  # noqa: BLE001
+                pass
+        if pid:
+            self.attached_browser_pid, self.attached_browser_exe, self.scope_mode = pid, (proc_name(pid) or exe), "pid-tree"
+        elif exe:
+            self.attached_browser_pid, self.attached_browser_exe, self.scope_mode = 0, exe, "exe"
+        self._pid_cache = (0.0, [])
+        self.hello_cache.update(self.scope_info())
+
+    async def _verify_stealth(self) -> None:
+        try:
+            v = await self.eval_js("() => ({webdriver: navigator.webdriver, ua: navigator.userAgent.slice(0, 90), langs: (navigator.languages || []).join(',')})", None, 15)
+            if isinstance(v, dict):
+                wd = v.get("webdriver")
+                self.stealth = {"webdriver": wd, "clean": wd is not True, "ua": v.get("ua", ""), "mode": self.mode}
+                if wd is True:
+                    self.stats["webdriver_true"] += 1
+        except Exception as e:  # noqa: BLE001
+            self.stealth = {"error": str(e)[:100]}
+
     async def start(self, timeout: float = 90.0) -> None:
+        t0 = time.perf_counter()
+        await self._prepare_browser()
         argv = self._argv()
         self.client = McpStdioClient(argv, self.env, self._log_path())
-        t0 = time.perf_counter()
-        await self.client.start(timeout)
-        self.started_at = time.time()
-        await self.refresh_pages()
+        try:
+            await self.client.start(timeout)
+            self.started_at = time.time()
+            await self.refresh_pages()
+        except Exception as e:  # noqa: BLE001
+            if self.mode == "autoconnect":
+                raise McpError(f"autoconnect 失败：{str(e)[:200]}\n{autoconnect_hint(self.env.get('DSCU_MCP_CHANNEL', ''))}") from e
+            raise
+        await asyncio.to_thread(self._attach_scope)
+        await self._verify_stealth()
         self.stats["start_ms"] = int((time.perf_counter() - t0) * 1000)
         self.hello_cache.update(await self.hello())
 
@@ -12795,8 +13493,11 @@ class McpBrowserEngine:
                 try:
                     if self.client:
                         await self.client.stop()
+                    if force_browser and self.launcher:
+                        await asyncio.to_thread(self.launcher.terminate)
                     await asyncio.sleep(0.5 * attempt)
                     await self.start()
+                    self.last_restart_reason = reason[:160]
                     self.restarts += 1
                     self.epoch += 1
                     self.refs.clear()
@@ -12839,16 +13540,58 @@ class McpBrowserEngine:
             self.epoch += 1
         return r
 
-    async def _safe(self, tool: str, **kw: Any) -> McpResult:
-        """Tool call with one supervisor-assisted retry on transport / browser-disconnect errors."""
+    async def soft_heal(self, reason: str) -> bool:
+        """Level-1 healing WITHOUT respawning the MCP server: re-list pages, re-select a live page (open about:blank if the browser has none), bump the epoch."""
+        if self.lost:
+            return False
         try:
-            return await self._tool(tool, **kw)
-        except (McpTransportError, McpToolError, McpError) as e:
-            if isinstance(e, McpTransportError) or HEAL_TEXT_RX.search(str(e)):
-                self.stats["supervised_retries"] += 1
-                await self.restart(f"{tool}: {e}")
+            await self.refresh_pages()
+            if not self.pages and self.has_tool("new_page"):
+                await self._tool("new_page", url="about:blank")
+                await self.refresh_pages()
+            if not self.pages:
+                return False
+            self.epoch += 1
+            self.refs.clear()
+            self.stats["soft_heals"] += 1
+            return True
+        except McpError:
+            return False
+
+    async def _safe(self, tool: str, **kw: Any) -> McpResult:
+        """Tool call with a 3-level ladder: (0) retry transient navigation noise in place  (1) soft heal (page list)  (2) respawn the MCP server - only if it is really dead."""
+        last: Optional[McpError] = None
+        for attempt in range(3):
+            try:
                 return await self._tool(tool, **kw)
-            raise
+            except McpTransportError as e:
+                last = e
+                break
+            except McpError as e:
+                msg = str(e)
+                if TRANSIENT_TEXT_RX.search(msg) and attempt < 2:
+                    self.stats["transient_retries"] += 1
+                    await asyncio.sleep(0.35 * (attempt + 1))
+                    continue
+                if HEAL_TEXT_RX.search(msg):
+                    last = e
+                    break
+                raise
+        assert last is not None
+        if not isinstance(last, McpTransportError) and not self.lost:
+            self.stats["supervised_retries"] += 1
+            if await self.soft_heal(f"{tool}: {last}"):
+                try:
+                    return await self._tool(tool, **kw)
+                except McpTransportError as e2:
+                    last = e2
+                except McpError as e2:
+                    if not HEAL_TEXT_RX.search(str(e2)):
+                        raise
+                    last = e2
+        self.stats["supervised_retries"] += 1
+        await self.restart(f"{tool}: {last}")
+        return await self._tool(tool, **kw)
 
     async def refresh_pages(self) -> list[dict[str, Any]]:
         r = await self._tool("list_pages", 40)
@@ -12922,7 +13665,7 @@ class McpBrowserEngine:
                         break
                     await asyncio.sleep(0.12)
             snap = (await self._safe("take_snapshot", timeout=60)).text
-            self.hello_cache["browser_pids"] = self._browser_pids()
+            self.hello_cache.update(self.scope_info())
             nodes = parse_snapshot(snap)
             els = select_elements(nodes, max_el)
             self.epoch += 1
@@ -13010,7 +13753,11 @@ class McpBrowserEngine:
             out = await self._supervised(req, t0, str(e))
         except McpError as e:
             msg = str(e)
-            if HEAL_TEXT_RX.search(msg):
+            if TRANSIENT_TEXT_RX.search(msg):
+                self.stats["transient_actions"] += 1
+                await asyncio.sleep(0.4)
+                out = self._res(req, False, "STALE_EPOCH", f"页面正在导航/刷新（瞬态：{msg[:100]}）；未重启浏览器引擎，请重新观察后再操作", {"transient": True}, t0)
+            elif HEAL_TEXT_RX.search(msg):
                 out = await self._supervised(req, t0, msg)
             elif "timeout" in msg.lower():
                 dm, dd = await self._diag_safe()
@@ -13035,7 +13782,10 @@ class McpBrowserEngine:
 
     async def _supervised(self, req: dict[str, Any], t0: float, why: str) -> dict[str, Any]:
         try:
-            info = await self.restart(why)
+            if not self.lost and await self.soft_heal(why):
+                info = {"healed": True, "level": "soft", "browser_respawned": False, "reason": why[:120]}
+            else:
+                info = await self.restart(why)
         except Exception as e:  # noqa: BLE001
             return self._res(req, False, "INTERNAL", f"[MCP_SUPERVISOR] 重启失败：{e}", {}, t0)
         if str(req.get("action")) in self.SAFE_REPLAY:
@@ -13251,21 +14001,30 @@ class McpBrowserEngine:
 
     # ------------------------------------------------------------------ peer contract
     def _browser_pids(self) -> list[int]:
+        """v16.1 PID scope: the attached browser's process tree ONLY (v16.0 returned every chrome.exe + msedge.exe -> an unattached Edge in the foreground skipped UIA)."""
         ts, cached = self._pid_cache
-        if time.time() - ts < 3.0:
+        if time.time() - ts < 1.5:
             return cached
         pids: list[int] = []
-        try:
-            import psutil
-
-            names = ("chrome.exe", "msedge.exe", "chrome", "chromium", "google-chrome")
-            for p in psutil.process_iter(["name"]):
-                if (p.info.get("name") or "").lower() in names:
-                    pids.append(p.pid)
-        except Exception:  # noqa: BLE001
-            pass
+        pid = self.attached_browser_pid
+        if pid and pid_alive(pid):
+            pids = process_tree_pids(pid)
+        else:
+            if self.mode in (CLEAN_MODE, "browser-url", "ws", "autoconnect") and (self.debug_port or self.mode == CLEAN_MODE):
+                np_ = find_browser_pid_by_port(self.debug_port or DEFAULT_PORT)  # the browser was relaunched -> new pid
+                if np_:
+                    self.attached_browser_pid, pids, self.scope_mode = np_, process_tree_pids(np_), "pid-tree"
+            if not pids and self.attached_browser_exe:
+                pids, self.scope_mode = pids_by_exe(self.attached_browser_exe), "exe"
         self._pid_cache = (time.time(), pids)
         return pids
+
+    def scope_info(self) -> dict[str, Any]:
+        pids = self._browser_pids()
+        return {"attached_browser_pid": self.attached_browser_pid, "attached_browser_exe": self.attached_browser_exe, "scope_mode": self.scope_mode, "browser_pids": pids}
+
+    def is_attached_pid(self, pid: int) -> bool:
+        return int(pid or 0) in set(self._browser_pids())
 
     def _rss_mb(self) -> float:
         try:
@@ -13282,13 +14041,16 @@ class McpBrowserEngine:
             return 0.0
 
     async def hello(self, **_: Any) -> dict[str, Any]:
-        return {"type": "hello_ack", "ok": True, "peer": "chrome-devtools-mcp", "version": VERSION, "caps": ["take_snapshot_uid", "network_diag", "console_diag", "supervisor", "multi_page", "upload_file", "drag"],
-                "browser": f"chrome-devtools-mcp({self.mode})", "profile_mode": self.mode, "profile_dir": self._profile_dir(), "browser_pids": self._browser_pids(), "rss_mb": self._rss_mb(),
+        return {"type": "hello_ack", "ok": True, "peer": "chrome-devtools-mcp", "version": VERSION, "caps": ["take_snapshot_uid", "network_diag", "console_diag", "supervisor", "multi_page", "upload_file", "drag", "pid_scope"],
+                "browser": f"chrome-devtools-mcp({self.mode})", "profile_mode": self.mode, "requested_mode": self.requested_mode,
+                "profile_dir": (self.launcher.profile if self.launcher else self._profile_dir()), "debug_port": self.debug_port, "clean_error": self.clean_error,
+                "webdriver": self.stealth.get("webdriver"), "stealth": self.stealth, **self.scope_info(), "rss_mb": self._rss_mb(),
                 "server": (self.client.server_info if self.client else {}), "tools": len(self.client.tools) if self.client else 0, "privacy_flags": FORCED_FLAGS}
 
     async def status(self) -> dict[str, Any]:
         return {"type": "status", "ok": True, "reconnects": self.restarts, "crashes": self.crashes, "epoch": self.epoch, "browser": f"chrome-devtools-mcp({self.mode})",
-                "browser_pids": self._browser_pids(), "tabs": len(self.pages), "active_target": str(self.page_id), "last_diag": self.last_diag, "stats": dict(self.stats)}
+                **self.scope_info(), "tabs": len(self.pages), "active_target": str(self.page_id), "last_diag": self.last_diag, "stats": dict(self.stats),
+                "mode": self.mode, "requested_mode": self.requested_mode, "webdriver": self.stealth.get("webdriver"), "last_restart_reason": self.last_restart_reason, "clean_error": self.clean_error}
 
     async def heal(self, reason: str, force: bool = False) -> dict[str, Any]:
         t0 = time.perf_counter()
@@ -13298,7 +14060,8 @@ class McpBrowserEngine:
                 await self._tool("take_snapshot", 25)  # a healthy round-trip proves the page session is alive
                 return {"type": "heal_result", "ok": True, "healed": False, "epoch": self.epoch, "browser_pids": self._browser_pids()}
             except McpError:
-                pass
+                if await self.soft_heal(reason or "heal"):
+                    return {"type": "heal_result", "ok": True, "healed": True, "level": "soft", "epoch": self.epoch, **self.scope_info()}
         info = await self.restart(reason or "heal", force)
         return {"type": "heal_result", "ok": True, **info, "epoch": self.epoch, "browser_pids": self._browser_pids(), "ms": int((time.perf_counter() - t0) * 1000)}
 
@@ -14148,6 +14911,854 @@ class TestMcpEngine(unittest.IsolatedAsyncioTestCase):
 if __name__ == "__main__":
     unittest.main()
 '@
+Add-DscuFile 'agent_brain/procnames.py' 'e57b98f2e1bc787688f09c3e7ac7c18f9389afe7b2c96893ed58e2c6b92184b6' @'
+"""v16.1 process-name resolution shared by the brain (orchestrator._launch) and the native driver (focus_window / app_resolve fallback).
+
+Why: browser window titles become the *page* title ("比较两个系统 和另外 3 个页面 - 个人 - Microsoft​ Edge" - note the zero-width space!), so
+`focus_window title='Microsoft Edge'` found nothing in v16.0.  The reliable identity of a window is its owning process (GetWindowThreadProcessId -> exe name).
+Pure python, zero dependencies, unit-tested on any OS.
+"""
+from __future__ import annotations
+
+import re
+
+_ZW = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00a0"), " ")
+
+PROC_ALIASES: dict[str, tuple[str, ...]] = {
+    "edge": ("msedge.exe",), "microsoft edge": ("msedge.exe",), "msedge": ("msedge.exe",), "edge浏览器": ("msedge.exe",), "微软浏览器": ("msedge.exe",),
+    "chrome": ("chrome.exe",), "google chrome": ("chrome.exe",), "谷歌浏览器": ("chrome.exe",), "谷歌": ("chrome.exe",), "chrome浏览器": ("chrome.exe",),
+    "firefox": ("firefox.exe",), "火狐": ("firefox.exe",), "brave": ("brave.exe",), "opera": ("opera.exe",), "vivaldi": ("vivaldi.exe",),
+    "微信": ("wechat.exe", "weixin.exe"), "wechat": ("wechat.exe", "weixin.exe"), "weixin": ("wechat.exe", "weixin.exe"),
+    "记事本": ("notepad.exe",), "notepad": ("notepad.exe",), "计算器": ("calculatorapp.exe", "calc.exe", "calculator.exe"), "calc": ("calculatorapp.exe", "calc.exe"),
+    "calculator": ("calculatorapp.exe", "calc.exe"), "画图": ("mspaint.exe",), "paint": ("mspaint.exe",), "mspaint": ("mspaint.exe",),
+    "资源管理器": ("explorer.exe",), "文件资源管理器": ("explorer.exe",), "explorer": ("explorer.exe",), "file explorer": ("explorer.exe",),
+    "word": ("winword.exe",), "excel": ("excel.exe",), "powerpoint": ("powerpnt.exe",), "ppt": ("powerpnt.exe",), "outlook": ("outlook.exe", "olk.exe"),
+    "qq": ("qq.exe",), "钉钉": ("dingtalk.exe",), "dingtalk": ("dingtalk.exe",), "vscode": ("code.exe",), "visual studio code": ("code.exe",),
+    "任务管理器": ("taskmgr.exe",), "终端": ("windowsterminal.exe",), "windows terminal": ("windowsterminal.exe",),
+}
+BROWSER_FAMILY = {"chrome.exe": "chrome", "msedge.exe": "edge", "firefox.exe": "firefox", "brave.exe": "brave", "opera.exe": "opera", "vivaldi.exe": "vivaldi"}
+SHELL_CLASSES = ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd")
+
+
+def normalize(q: str) -> str:
+    """lower-case, strip zero-width / nbsp characters and collapse whitespace."""
+    return re.sub(r"\s+", " ", str(q or "").translate(_ZW)).strip().lower()
+
+
+def process_names_for(query: str) -> list[str]:
+    """'Microsoft Edge' / 'edge浏览器' / 'msedge' -> ['msedge.exe'];  'foo.exe' -> ['foo.exe'];  unknown 'winword' -> ['winword.exe']."""
+    q = normalize(query)
+    if not q:
+        return []
+    if q in PROC_ALIASES:
+        return list(PROC_ALIASES[q])
+    if q.endswith(".exe"):
+        return [q]
+    hits: list[str] = []
+    for k in sorted(PROC_ALIASES, key=len, reverse=True):  # longest alias first so 'microsoft edge' wins over 'edge'
+        if len(k) >= 3 and k in q:
+            for n in PROC_ALIASES[k]:
+                if n not in hits:
+                    hits.append(n)
+            break
+    if hits:
+        return hits
+    if re.fullmatch(r"[a-z0-9_.\-]{2,40}", q):
+        return [q + ".exe"]
+    return []
+
+
+def browser_family(exe: str) -> str:
+    return BROWSER_FAMILY.get(normalize(exe), "")
+
+
+def rank_main_window(windows: list[dict], pids: set[int], names: set[str]) -> list[dict]:
+    """Pick the *main* visible window(s) of a process: owner pid / exe-name match, not the agent console, not a shell window; titled > untitled; larger first;
+    z-order (0 = top) breaks ties.  Input items are the driver's window dicts (hwnd,title,class,process,pid,rect,z,minimized,cloaked,own_console)."""
+    out = []
+    for w in windows:
+        if w.get("own_console") or w.get("cloaked") or (w.get("class") or "") in SHELL_CLASSES:
+            continue
+        if not (int(w.get("pid") or 0) in pids or normalize(w.get("process", "")) in names):
+            continue
+        r = w.get("rect") or [0, 0, 0, 0]
+        area = max(0, int(r[2])) * max(0, int(r[3]))
+        out.append((0 if w.get("title") else 1, 0 if not w.get("minimized") else 1, -area, int(w.get("z", 0)), w))
+    out.sort(key=lambda t: t[:4])
+    return [t[4] for t in out]
+'@
+Add-DscuFile 'agent_brain/auth_wall.py' '98142d42e2b93a9dd89c98e6b34e1cabf07598a561321716bab20ffdc1f8d125' @'
+"""v16.1 AUTH_WALL detection + 1-step human hand-off policy (no 15-step dead-end clicking on Google's `signin/rejected` page).
+
+An AUTH_WALL is a page the agent must NOT try to click through: a login / account-chooser / 2FA wall, or Google's browser-integrity rejection
+("此浏览器或应用可能不安全").  The orchestrator interrupts the step loop, asks the human to finish the login once (press Enter), re-snapshots and continues.
+Pure python, zero dependencies, unit-tested on any OS.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Iterable, Optional
+
+URL_RULES: list[tuple[str, str, "re.Pattern[str]"]] = [
+    ("rejected", "google", re.compile(r"accounts\.google\.com/(?:v\d+/)?signin/rejected", re.I)),
+    ("rejected", "google", re.compile(r"signin/rejected", re.I)),
+    ("login", "google", re.compile(r"accounts\.google\.com/v3/signin", re.I)),
+    ("login", "google", re.compile(r"accounts\.google\.com/(?:signin|servicelogin|accountchooser|interactivelogin|o/oauth2/(?:v2/)?auth)", re.I)),
+    ("captcha", "google", re.compile(r"google\.com/sorry/", re.I)),
+    ("login", "microsoft", re.compile(r"login\.microsoftonline\.com/|login\.live\.com/(?:login|oauth)", re.I)),
+]
+TEXT_RULES: list[tuple[str, "re.Pattern[str]"]] = [
+    ("rejected", re.compile(r"此浏览器或应用可能不安全|这个浏览器或应用可能不安全|This browser or app may not be secure", re.I)),
+]
+GOOGLE_ONLY_TEXT: list[tuple[str, "re.Pattern[str]"]] = [
+    ("rejected", re.compile(r"无法登录|Couldn.t sign you in|Can.t sign you in", re.I)),
+]
+
+
+@dataclass
+class AuthWall:
+    kind: str  # rejected | login | captcha
+    provider: str
+    evidence: str
+    url: str = ""
+
+    @property
+    def label(self) -> str:
+        return {"rejected": "Google 登录被拒绝（浏览器完整性风控 signin/rejected）", "login": "登录/账号选择/2FA 墙", "captcha": "人机验证（unusual traffic）"}.get(self.kind, self.kind)
+
+
+def detect_auth_wall(url: str = "", title: str = "", texts: Iterable[str] = ()) -> Optional[AuthWall]:
+    """URL first (cheap, unambiguous), then page text (a11y snapshot element names / vision text).  `rejected` outranks `login`."""
+    url = str(url or "")
+    blob = "\n".join([str(title or ""), *[str(t) for t in texts if t]])[:20000]
+    best: Optional[AuthWall] = None
+    for kind, prov, rx in URL_RULES:
+        m = rx.search(url)
+        if m:
+            cand = AuthWall(kind, prov, f"url~{m.group(0)[:60]}", url)
+            if best is None or (cand.kind == "rejected" and best.kind != "rejected"):
+                best = cand
+    for kind, rx in TEXT_RULES:
+        m = rx.search(blob)
+        if m:
+            return AuthWall(kind, "google", f"text~{m.group(0)[:60]}", url)
+    if "accounts.google.com" in url.lower() or (best and best.provider == "google"):
+        for kind, rx in GOOGLE_ONLY_TEXT:
+            m = rx.search(blob)
+            if m:
+                return AuthWall(kind, "google", f"text~{m.group(0)[:60]}", url)
+    return best
+
+
+@dataclass
+class AuthWallGuard:
+    """Per-task policy: at most `max_handoffs` human hand-offs, never repeat for the very same wall without the page having changed."""
+    max_handoffs: int = 2
+    handoffs: int = 0
+    last_sig: str = ""
+    history: list[str] = field(default_factory=list)
+
+    def sig(self, w: AuthWall) -> str:
+        return f"{w.kind}|{w.provider}|{re.sub(r'[?#].*$', '', w.url)[:120]}"
+
+    def allow(self, w: AuthWall) -> bool:
+        return self.handoffs < self.max_handoffs
+
+    def record(self, w: AuthWall) -> None:
+        self.handoffs += 1
+        self.last_sig = self.sig(w)
+        self.history.append(self.last_sig)
+
+
+def banner(w: AuthWall, *, mode: str = "", webdriver: Optional[object] = None, attempt: int = 1, maxn: int = 2) -> list[str]:
+    L = [f"🔐 AUTH_WALL_HANDOFF（第 {attempt}/{maxn} 次）：检测到 {w.label}", f"   证据: {w.evidence}", f"   URL : {w.url[:110]}"]
+    if w.kind == "rejected":
+        L.append("   说明: Google 认为当前浏览器是自动化环境。请确认 `v16 browser` 中 navigator.webdriver=false 且模式为 clean-browser-url / autoconnect。")
+        if webdriver is True:
+            L.append("   ⚠ 当前浏览器 navigator.webdriver=true（带了 --enable-automation）：请设置 DSCU_MCP_MODE=clean-browser-url 重启本程序。")
+        L.append("   在 clean_profile 窗口里手动登录一次即可：之后 Cookie 长期复用，不会再被拒绝（若仍被拒绝，改用 DSCU_MCP_MODE=autoconnect）。")
+    else:
+        L.append("   请在已置前的浏览器窗口中手动完成登录 / 选择账号 / 2FA（程序不会读取或填写你的密码）。")
+    L.append("   完成后回到本终端按【回车】继续；输入 s 回车 = 放弃本任务。")
+    return L
+'@
+Add-DscuFile 'agent_brain/gmail_api.py' 'e002faef2ff3a4b2179d880f0e93bc18f5f762863644f27fdf00c3914364975a' @'
+"""v16.1 optional Layer-0 Gmail API fast lane (reserved interface).
+
+If the user configured a Google OAuth2 token (env DSCU_GMAIL_TOKEN = path to a JSON file, default %LOCALAPPDATA%\\DeepSeekComputerUse\\gmail_token.json with
+{"access_token": "...", "refresh_token": "...", "client_id": "...", "client_secret": "...", "expires_at": 0}) the brain can read / list / trash mail through the
+Gmail REST API in ~1 s without any browser.  Without a token `available()` is False and the brain automatically uses the clean-browser-url / autoconnect browser lane.
+Only the standard library is used (urllib); `transport` can be injected for tests.  Deletion = move to Trash (reversible for 30 days); never permanent delete.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+API = "https://gmail.googleapis.com/gmail/v1/users/me"
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+Transport = Callable[[str, str, dict[str, str], Optional[bytes]], tuple[int, dict[str, Any]]]
+
+
+class GmailApiError(RuntimeError):
+    pass
+
+
+def default_token_path() -> Path:
+    if os.environ.get("DSCU_GMAIL_TOKEN"):
+        return Path(os.environ["DSCU_GMAIL_TOKEN"])
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
+    return Path(base) / "DeepSeekComputerUse" / "gmail_token.json"
+
+
+def _urllib_transport(method: str, url: str, headers: dict[str, str], body: Optional[bytes]) -> tuple[int, dict[str, Any]]:
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:  # system proxy honoured (Google APIs are often only reachable through it)
+            raw = r.read().decode("utf-8", "replace")
+            return r.status, (json.loads(raw) if raw.strip() else {})
+    except urllib.error.HTTPError as e:  # type: ignore[attr-defined]
+        raw = e.read().decode("utf-8", "replace")
+        try:
+            return e.code, json.loads(raw)
+        except Exception:  # noqa: BLE001
+            return e.code, {"error": raw[:300]}
+
+
+class GmailApiLayer0:
+    def __init__(self, token_path: Optional[Path] = None, transport: Optional[Transport] = None) -> None:
+        self.path = Path(token_path) if token_path else default_token_path()
+        self.transport: Transport = transport or _urllib_transport
+        self.tok: dict[str, Any] = {}
+        self.stats = {"calls": 0, "refreshes": 0}
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            self.tok = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            self.tok = {}
+        return self.tok
+
+    def available(self) -> bool:
+        t = self._load()
+        return bool(t.get("access_token") or (t.get("refresh_token") and t.get("client_id") and t.get("client_secret")))
+
+    def _refresh(self) -> None:
+        t = self.tok
+        if not (t.get("refresh_token") and t.get("client_id") and t.get("client_secret")):
+            raise GmailApiError("access_token 已过期且没有 refresh_token/client_id/client_secret，无法刷新")
+        body = urllib.parse.urlencode({"grant_type": "refresh_token", "refresh_token": t["refresh_token"], "client_id": t["client_id"], "client_secret": t["client_secret"]}).encode()
+        st, js = self.transport("POST", TOKEN_URL, {"Content-Type": "application/x-www-form-urlencoded"}, body)
+        if st != 200 or "access_token" not in js:
+            raise GmailApiError(f"token refresh failed: {st} {str(js)[:160]}")
+        t["access_token"], t["expires_at"] = js["access_token"], time.time() + int(js.get("expires_in", 3600)) - 60
+        self.stats["refreshes"] += 1
+        try:
+            self.path.write_text(json.dumps(t, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _call(self, method: str, path: str, params: Optional[dict[str, Any]] = None, body: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        if not self.tok:
+            self._load()
+        if not self.tok.get("access_token") or (self.tok.get("expires_at") and float(self.tok["expires_at"]) < time.time()):
+            self._refresh()
+        url = API + path + (("?" + urllib.parse.urlencode(params, doseq=True)) if params else "")
+        for attempt in (1, 2):
+            hdr = {"Authorization": f"Bearer {self.tok['access_token']}", "Accept": "application/json", "Content-Type": "application/json"}
+            st, js = self.transport(method, url, hdr, json.dumps(body).encode() if body is not None else None)
+            self.stats["calls"] += 1
+            if st == 401 and attempt == 1:
+                self._refresh()
+                continue
+            if st >= 400:
+                raise GmailApiError(f"Gmail API {st}: {str(js.get('error', js))[:200]}")
+            return js
+        raise GmailApiError("unreachable")
+
+    # ------------------------------------------------------------------ operations
+    def list_messages(self, query: str = "in:inbox", max_results: int = 10) -> list[dict[str, Any]]:
+        js = self._call("GET", "/messages", {"q": query, "maxResults": max(1, min(int(max_results), 50))})
+        out = []
+        for m in js.get("messages", []) or []:
+            d = self._call("GET", f"/messages/{m['id']}", {"format": "metadata", "metadataHeaders": ["Subject", "From", "Date"]})
+            h = {x["name"].lower(): x["value"] for x in (d.get("payload", {}).get("headers", []) or [])}
+            out.append({"id": m["id"], "threadId": d.get("threadId"), "subject": h.get("subject", ""), "from": h.get("from", ""), "date": h.get("date", ""), "snippet": d.get("snippet", ""),
+                        "unread": "UNREAD" in (d.get("labelIds") or [])})
+        return out
+
+    def trash_messages(self, ids: list[str]) -> list[str]:
+        done = []
+        for i in ids:
+            self._call("POST", f"/messages/{i}/trash")
+            done.append(i)
+        return done
+
+    def verify_trashed(self, ids: list[str]) -> bool:
+        return all("TRASH" in (self._call("GET", f"/messages/{i}", {"format": "minimal"}).get("labelIds") or []) for i in ids)
+
+
+_CN = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def parse_gmail_task(task: str) -> Optional[dict[str, Any]]:
+    """Map a natural-language mail task to an API intent, or None (=> browser lane).  Only unambiguous read/list/trash requests qualify."""
+    t = str(task or "")
+    if not re.search(r"gmail|谷歌邮箱|google\s*邮箱|邮箱|邮件", t, re.I):
+        return None
+    if re.search(r"发送|写邮件|回复|转发|附件|send|reply|compose|forward", t, re.I):
+        return None
+    n = 0
+    m = re.search(r"(\d+)\s*(?:封|条|个)", t)
+    if m:
+        n = int(m.group(1))
+    else:
+        m2 = re.search(r"([一二两三四五六七八九十])\s*(?:封|条|个)", t)
+        n = _CN.get(m2.group(1), 0) if m2 else 0
+    q = "in:inbox"
+    if re.search(r"未读|unread", t, re.I):
+        q = "is:unread in:inbox"
+    elif re.search(r"广告|推广|促销|promotion", t, re.I):
+        q = "category:promotions"
+    elif re.search(r"垃圾邮件|spam", t, re.I):
+        q = "in:spam"
+    if re.search(r"删除|清理|移到垃圾|trash|delete", t, re.I):
+        return {"intent": "trash", "query": q, "count": n or 5}
+    if re.search(r"读取|查看|看看|列出|最新|有没有|read|list|show|check", t, re.I) and not re.search(r"进入|打开|登录", t):
+        return {"intent": "list", "query": q, "count": n or 5}
+    return None
+'@
+Add-DscuFile 'tests/fake_chrome.py' 'aaa9eeedd0135e81f41c2a28f015fc8212454a9e94fade662d8f532d4f79fe04' @'
+"""Stand-in for chrome.exe used by tests/unit/test_v16_1.py: opens the DevTools port (GET /json/version) and records its argv under --user-data-dir/argv.json."""
+from __future__ import annotations
+
+import http.server
+import json
+import os
+import sys
+
+port = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--remote-debugging-port=")), 0)
+udd = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--user-data-dir=")), "")
+if udd:
+    os.makedirs(udd, exist_ok=True)
+    with open(os.path.join(udd, "argv.json"), "w", encoding="utf-8") as f:
+        json.dump(sys.argv[1:], f)
+
+
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802
+        body = json.dumps({"Browser": "FakeChrome/146.0", "Protocol-Version": "1.3", "webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/devtools/browser/fake"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a: object) -> None:
+        pass
+
+
+http.server.ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
+'@
+Add-DscuFile 'tests/unit/test_v16_1.py' 'bcd45d37b3c715718ddd99122fae3cc7af04af13d77b4a4148113b4057929256' @'
+"""v16.1 regression tests - every case maps to a defect in the v16.0 runtime log (Google signin/rejected, FG-Gate treating Edge as the attached Chrome,
+app_resolve failing on 'Microsoft Edge', 3 MCP supervisor restarts in 4 tasks, 15-step AUTH_WALL dead end).
+Run:  python -m unittest tests.unit.test_v16_1 -v      (or:  v16 regress  inside the prompt).   No Chrome / network needed (a fake Chrome + fake MCP server are used)."""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from agent_brain import auth_wall as A  # noqa: E402
+from agent_brain import browser_mcp as B  # noqa: E402
+from agent_brain import gmail_api as G  # noqa: E402
+from agent_brain import procnames as P  # noqa: E402
+from agent_brain.orchestrator import Brain  # noqa: E402
+from agent_brain.perception import Bundle, Perception  # noqa: E402
+from agent_brain.protocol import Observation  # noqa: E402
+from agent_brain.state import TaskState  # noqa: E402
+
+FAKE_CHROME = ROOT / "tests" / "fake_chrome.py"
+IS_WIN = sys.platform == "win32"
+
+
+def free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+def make_fake_chrome_exe(tmp: str) -> str:
+    if IS_WIN:
+        p = Path(tmp) / "fake_chrome.cmd"
+        p.write_text(f'@echo off\r\n"{sys.executable}" "{FAKE_CHROME}" %*\r\n', encoding="utf-8")
+    else:
+        p = Path(tmp) / "fake_chrome.sh"
+        p.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_CHROME}" "$@"\n', encoding="utf-8")
+        p.chmod(p.stat().st_mode | stat.S_IEXEC)
+    return str(p)
+
+
+def obs(url: str = "", title: str = "", names: tuple[str, ...] = ()) -> Observation:
+    els = [{"ref_id": f"@1:c{i}", "role": "link", "name": n, "rect": [0, i * 4, 10, 10], "zone": "Other", "stable_key": f"k{i}"} for i, n in enumerate(names)]
+    return Observation.model_validate({"type": "observation", "id": "t", "ok": True, "channel": "cdp", "snapshot_epoch": 1, "hwnd": 0, "url": url, "title": title, "elements": els})
+
+
+# --------------------------------------------------------------------------------------------------------------------- 1. clean launch
+class TestModesAndArgs(unittest.TestCase):
+    def test_default_mode_is_clean_browser_url(self) -> None:
+        self.assertEqual(B.normalize_mode(None), "clean-browser-url")
+        self.assertEqual(B.normalize_mode(""), "clean-browser-url")
+        self.assertEqual(B.normalize_mode("clean_browser_url"), "clean-browser-url")
+        self.assertEqual(B.normalize_mode("Auto_Connect"), "autoconnect")
+        self.assertEqual(B.normalize_mode("profile"), "profile")
+        self.assertEqual(B.normalize_mode("nonsense"), "clean-browser-url")
+
+    def test_clean_mode_mcp_args_are_exactly_the_spec(self) -> None:
+        a = B.build_args("clean-browser-url", browser_url="http://127.0.0.1:9222", vision=False)
+        self.assertEqual(a, ["--no-usage-statistics", "--no-performance-crux", "--browserUrl=http://127.0.0.1:9222"])
+
+    def test_autoconnect_args(self) -> None:
+        a = B.build_args("autoconnect", vision=False)
+        self.assertEqual(a[:3], ["--no-usage-statistics", "--no-performance-crux", "--autoConnect"])
+
+    def test_profile_fallback_strips_enable_automation(self) -> None:
+        a = B.build_args("profile", profile_dir="C:/p", vision=False)
+        self.assertIn("--ignore-default-chrome-arg=--enable-automation", a)
+        self.assertIn("--chrome-arg=--disable-blink-features=AutomationControlled", a)
+
+    def test_engine_argv_in_default_mode_has_browserurl_and_privacy_flags(self) -> None:
+        env = {"DSCU_MCP_CMD": "node mcp.js", "DSCU_MCP_BROWSER_URL": "http://127.0.0.1:9222"}
+        eng = B.McpBrowserEngine(None, env=env)
+        argv = eng._argv()
+        self.assertEqual(eng.mode, "clean-browser-url")
+        self.assertIn("--browserUrl=http://127.0.0.1:9222", argv)
+        self.assertIn("--no-usage-statistics", argv)
+        self.assertIn("--no-performance-crux", argv)
+        self.assertNotIn("--userDataDir", argv)  # the MCP server must NOT own/launch the browser
+
+    def test_clean_argv_never_contains_enable_automation(self) -> None:
+        argv = B.clean_chrome_argv("chrome.exe", 9222, r"C:\Users\x\AppData\Local\DeepSeekComputerUse\clean_profile", ["--enable-automation", "--foo", "--enable-automation=1"])
+        self.assertEqual(argv[:6], ["chrome.exe", "--remote-debugging-port=9222", r"--user-data-dir=C:\Users\x\AppData\Local\DeepSeekComputerUse\clean_profile", "--no-first-run",
+                                    "--no-default-browser-check", "--disable-blink-features=AutomationControlled"])
+        self.assertIn("--foo", argv)
+        self.assertFalse(any(x.startswith("--enable-automation") for x in argv))
+
+    def test_clean_profile_dir_default_is_localappdata(self) -> None:
+        d = B.clean_profile_dir({"LOCALAPPDATA": r"C:\Users\x\AppData\Local"})
+        self.assertTrue(d.replace("/", "\\").endswith(r"DeepSeekComputerUse\clean_profile"))
+
+    def test_autoconnect_hint_mentions_inspect_and_allow(self) -> None:
+        h = B.autoconnect_hint("")
+        self.assertIn("chrome://inspect/#remote-debugging", h)
+        self.assertIn("Allow", h)
+
+
+class TestCleanChromeLauncher(unittest.TestCase):
+    def test_launch_probe_pid_reuse_terminate(self) -> None:
+        tmp = tempfile.mkdtemp()
+        port = free_port()
+        prof = str(Path(tmp) / "clean_profile")
+        L = B.CleanChromeLauncher(port, prof, make_fake_chrome_exe(tmp))
+        try:
+            info = L.ensure(20)
+            self.assertIn("FakeChrome", info["Browser"])
+            self.assertGreater(L.pid, 0)
+            self.assertTrue(B.pid_alive(L.pid))
+            self.assertFalse(L.reused)
+            argv = json.loads((Path(prof) / "argv.json").read_text(encoding="utf-8"))
+            self.assertIn(f"--remote-debugging-port={port}", argv)
+            self.assertIn(f"--user-data-dir={prof}", argv)
+            self.assertIn("--disable-blink-features=AutomationControlled", argv)
+            self.assertIn("--no-first-run", argv)
+            self.assertIn("--no-default-browser-check", argv)
+            self.assertFalse(any("enable-automation" in a for a in argv))
+            pid1 = L.pid
+            L2 = B.CleanChromeLauncher(port, prof, make_fake_chrome_exe(tmp))  # second launcher: must ADOPT the running instance, not spawn another
+            L2.ensure(5)
+            self.assertTrue(L2.reused)
+            self.assertEqual(L2.pid, pid1)
+            self.assertIsNone(L2.proc)
+        finally:
+            L.terminate()
+        time.sleep(0.4)
+        self.assertIsNone(B.probe_debug_endpoint(port, timeout=0.3))
+
+    def test_probe_bypasses_system_proxy(self) -> None:
+        with mock.patch.dict(os.environ, {"HTTP_PROXY": "http://127.0.0.1:1", "http_proxy": "http://127.0.0.1:1"}):
+            tmp = tempfile.mkdtemp()
+            port = free_port()
+            L = B.CleanChromeLauncher(port, str(Path(tmp) / "p"), make_fake_chrome_exe(tmp))
+            try:
+                self.assertIsNotNone(L.ensure(20))
+            finally:
+                L.terminate()
+
+
+# --------------------------------------------------------------------------------------------------------------------- 2. PID scope
+class TestPidScope(unittest.TestCase):
+    def setUp(self) -> None:
+        self.a = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.b = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+    def tearDown(self) -> None:
+        for p in (self.a, self.b):
+            p.kill()
+            p.wait()
+
+    def test_browser_pids_are_scoped_to_attached_tree_not_every_browser(self) -> None:
+        eng = B.McpBrowserEngine(None, env={}, cmd=["x"], args=[])
+        eng.attached_browser_pid, eng.attached_browser_exe, eng.scope_mode = self.a.pid, "chrome.exe", "pid-tree"
+        pids = eng._browser_pids()
+        self.assertIn(self.a.pid, pids)
+        self.assertNotIn(self.b.pid, pids)  # v16.0 returned every chrome.exe/msedge.exe on the machine
+        self.assertTrue(eng.is_attached_pid(self.a.pid))
+        self.assertFalse(eng.is_attached_pid(self.b.pid))
+        info = eng.scope_info()
+        self.assertEqual(info["attached_browser_pid"], self.a.pid)
+        self.assertEqual(info["attached_browser_exe"], "chrome.exe")
+
+    def _perc(self, hello: dict) -> Perception:
+        return Perception(SimpleNamespace(hub=SimpleNamespace(cdp_up=True, cdp_hello=hello), lat={}))
+
+    def test_gate_passes_only_for_attached_pid(self) -> None:
+        p = self._perc({"browser_pids": [100, 101], "attached_browser_pid": 100, "attached_browser_exe": "chrome.exe"})
+        chrome = {"hwnd": 1, "pid": 100, "process": "chrome.exe", "class": "Chrome_WidgetWin_1"}
+        child = {"hwnd": 1, "pid": 101, "process": "chrome.exe", "class": "Chrome_WidgetWin_1"}
+        edge = {"hwnd": 2, "pid": 555, "process": "msedge.exe", "class": "Chrome_WidgetWin_1"}
+        other_chrome = {"hwnd": 3, "pid": 777, "process": "chrome.exe", "class": "Chrome_WidgetWin_1"}
+        notepad = {"hwnd": 4, "pid": 888, "process": "notepad.exe", "class": "Notepad"}
+        self.assertTrue(p._gate_passes(chrome))
+        self.assertTrue(p._gate_passes(child))
+        self.assertFalse(p._gate_passes(edge), "Edge in front must NOT be treated as the attached Chrome (log task #4)")
+        self.assertFalse(p._gate_passes(other_chrome), "a different Chrome instance is not the attached one either")
+        self.assertFalse(p._gate_passes(notepad))
+        self.assertFalse(p._gate_passes({**chrome, "own_console": True}))
+
+    def test_scope_fallbacks_exe_then_legacy(self) -> None:
+        self.assertTrue(self._perc({"attached_browser_exe": "chrome.exe"}).is_attached(5, "Chrome.exe"))
+        self.assertFalse(self._perc({"attached_browser_exe": "chrome.exe"}).is_attached(5, "msedge.exe"))
+        self.assertTrue(self._perc({}).is_attached(5, "msedge.exe"))  # legacy daemon without scope info keeps the v16.0 behaviour
+        self.assertFalse(self._perc({"browser_pids": [1]}).is_attached(0, "chrome.exe"))
+
+    def test_cdp_route_requires_attached_foreground(self) -> None:
+        br = Brain.__new__(Brain)
+        br.hub = SimpleNamespace(cdp_up=True)
+        ok = Bundle(obs=obs(), drv=obs(), channel="cdp")
+        self.assertTrue(br._cdp_route(ok))
+        ok.fg_foreign = True  # Edge in front: keys/typing must go to the physical driver, not to Chrome's page
+        self.assertFalse(br._cdp_route(ok))
+        ok.fg_foreign, ok.channel = False, "uia"
+        self.assertFalse(br._cdp_route(ok))
+
+
+# --------------------------------------------------------------------------------------------------------------------- 2b. app_resolve process-name fallback
+class TestProcessNames(unittest.TestCase):
+    def test_edge_title_with_zero_width_space(self) -> None:
+        self.assertEqual(P.process_names_for("Microsoft\u200b Edge"), ["msedge.exe"])
+        self.assertEqual(P.process_names_for("Microsoft Edge"), ["msedge.exe"])
+        self.assertEqual(P.process_names_for("Chrome"), ["chrome.exe"])
+        self.assertEqual(P.process_names_for("微信"), ["wechat.exe", "weixin.exe"])
+        self.assertEqual(P.process_names_for("WeChat.exe"), ["wechat.exe"])
+        self.assertEqual(P.process_names_for("winword"), ["winword.exe"])
+        self.assertEqual(P.process_names_for(""), [])
+
+    def test_rank_main_window_prefers_titled_big_visible(self) -> None:
+        wins = [
+            {"hwnd": 1, "title": "", "class": "X", "process": "msedge.exe", "pid": 10, "rect": [0, 0, 50, 50], "z": 1, "minimized": False, "cloaked": False, "own_console": False},
+            {"hwnd": 2, "title": "比较两个系统 - Microsoft\u200b Edge", "class": "Chrome_WidgetWin_1", "process": "msedge.exe", "pid": 10, "rect": [0, 0, 1200, 800], "z": 3, "minimized": False, "cloaked": False, "own_console": False},
+            {"hwnd": 3, "title": "PowerShell", "class": "CASCADIA", "process": "pwsh.exe", "pid": 99, "rect": [0, 0, 900, 700], "z": 0, "minimized": False, "cloaked": False, "own_console": True},
+            {"hwnd": 4, "title": "x", "class": "Chrome_WidgetWin_1", "process": "chrome.exe", "pid": 11, "rect": [0, 0, 1200, 800], "z": 2, "minimized": False, "cloaked": False, "own_console": False},
+        ]
+        r = P.rank_main_window(wins, {10}, {"msedge.exe"})
+        self.assertEqual([w["hwnd"] for w in r], [2, 1])
+        self.assertEqual(P.rank_main_window(wins, set(), {"nothing.exe"}), [])
+
+    def test_driver_has_process_fallback(self) -> None:
+        src = (ROOT / "agent_brain" / "py_native_driver.py").read_text(encoding="utf-8")
+        self.assertIn("_find_by_process", src)
+        self.assertIn("process_names_for", src)
+        self.assertIn("AttachThreadInput", src)
+
+
+# --------------------------------------------------------------------------------------------------------------------- 3. AUTH_WALL
+class TestAuthWallDetection(unittest.TestCase):
+    def test_signin_rejected_url(self) -> None:
+        w = A.detect_auth_wall("https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fmail.google.com")
+        self.assertIsNotNone(w)
+        self.assertEqual(w.kind, "rejected")
+
+    def test_v3_signin_is_login_wall(self) -> None:
+        self.assertEqual(A.detect_auth_wall("https://accounts.google.com/v3/signin/identifier?flowName=GlifWebSignIn").kind, "login")
+        self.assertEqual(A.detect_auth_wall("https://accounts.google.com/v3/signin/accountchooser").kind, "login")
+
+    def test_unsafe_browser_text_is_rejected_even_on_unknown_url(self) -> None:
+        w = A.detect_auth_wall("https://example.com/x", "", ["无法登录", "此浏览器或应用可能不安全", "重试"])
+        self.assertEqual(w.kind, "rejected")
+        self.assertEqual(A.detect_auth_wall("", "", ["This browser or app may not be secure"]).kind, "rejected")
+
+    def test_rejected_outranks_login(self) -> None:
+        w = A.detect_auth_wall("https://accounts.google.com/v3/signin/identifier", "", ["此浏览器或应用可能不安全"])
+        self.assertEqual(w.kind, "rejected")
+
+    def test_inbox_and_normal_pages_are_not_walls(self) -> None:
+        self.assertIsNone(A.detect_auth_wall("https://mail.google.com/mail/u/0/#inbox", "收件箱", ["写邮件", "收件箱"]))
+        self.assertIsNone(A.detect_auth_wall("https://www.bing.com/", "必应", ["搜索", "无法登录到本地网络"]))
+        self.assertIsNone(A.detect_auth_wall("", "", []))
+
+    def test_guard_limits_handoffs(self) -> None:
+        g = A.AuthWallGuard(max_handoffs=2)
+        w = A.detect_auth_wall("https://accounts.google.com/v3/signin/rejected")
+        self.assertTrue(g.allow(w))
+        g.record(w)
+        g.record(w)
+        self.assertFalse(g.allow(w))
+
+    def test_banner_mentions_enter_and_webdriver(self) -> None:
+        w = A.detect_auth_wall("https://accounts.google.com/v3/signin/rejected")
+        txt = "\n".join(A.banner(w, webdriver=True))
+        self.assertIn("回车", txt)
+        self.assertIn("navigator.webdriver=true", txt)
+
+
+class TestAuthWallGate(unittest.IsolatedAsyncioTestCase):
+    def mk(self, observe_results: list) -> tuple[Brain, list[str]]:
+        br = Brain.__new__(Brain)
+        said: list[str] = []
+        br.say = said.append  # type: ignore[method-assign]
+        br.counters = __import__("collections").defaultdict(int)
+        br.hub = SimpleNamespace(cdp_up=True, cdp_hello={"profile_mode": "clean-browser-url", "webdriver": False}, _mcp=None)
+        br.perception = SimpleNamespace(scope=lambda: (set(), 0, ""))
+        it = iter(observe_results)
+
+        async def observe(st, **kw):  # type: ignore[no-untyped-def]
+            return next(it)
+
+        async def focus(b, **kw):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(ok=True)
+
+        br.observe, br._focus = observe, focus  # type: ignore[method-assign]
+        return br, said
+
+    @staticmethod
+    def wall_bundle() -> Bundle:
+        o = obs("https://accounts.google.com/v3/signin/rejected", "无法登录", ("此浏览器或应用可能不安全", "重试"))
+        return Bundle(obs=o, drv=o, channel="cdp", fg_attached=True)
+
+    @staticmethod
+    def clear_bundle() -> Bundle:
+        o = obs("https://mail.google.com/mail/u/0/#inbox", "收件箱", ("写邮件",))
+        return Bundle(obs=o, drv=o, channel="cdp", fg_attached=True)
+
+    async def test_no_wall_returns_none(self) -> None:
+        br, _ = self.mk([])
+        st = TaskState("进入gmail")
+        self.assertIsNone(await br._auth_wall_gate(st, self.clear_bundle()))
+
+    async def test_noninteractive_blocks_after_exactly_one_handoff_no_clicks(self) -> None:
+        br, said = self.mk([])
+        st = TaskState("进入gmail")
+        with mock.patch.dict(os.environ, {"DSCU_NONINTERACTIVE": "1"}):
+            r = await br._auth_wall_gate(st, self.wall_bundle())
+        self.assertIsNotNone(r)
+        self.assertEqual(r[1][0], "blocked_needs_human")
+        self.assertEqual(br.counters["auth_wall_handoffs"], 1)
+        self.assertTrue(any("AUTH_WALL_HANDOFF" in s for s in said))
+
+    async def test_interactive_handoff_enter_then_resnapshot_resolves(self) -> None:
+        br, said = self.mk([self.clear_bundle()])
+        st = TaskState("进入gmail")
+        st.stalled_steps = 5
+        with mock.patch.dict(os.environ, {"DSCU_AUTH_POPUP": "0"}), mock.patch("sys.stdin") as si, mock.patch.object(Brain, "_ask_enter", staticmethod(lambda: "")):
+            si.isatty.return_value = True
+            r = await br._auth_wall_gate(st, self.wall_bundle())
+        self.assertIsNotNone(r)
+        b2, term, note = r
+        self.assertIsNone(term)
+        self.assertIn("AUTH_WALL_RESOLVED", note)
+        self.assertEqual(st.stalled_steps, 0)
+        self.assertEqual(br.counters["auth_wall_handoffs"], 1)
+        self.assertEqual(b2.obs.url, "https://mail.google.com/mail/u/0/#inbox")
+
+    async def test_wall_persisting_is_capped_never_15_steps(self) -> None:
+        br, said = self.mk([self.wall_bundle(), self.wall_bundle()])
+        st = TaskState("进入gmail")
+        with mock.patch.dict(os.environ, {"DSCU_AUTH_POPUP": "0"}), mock.patch("sys.stdin") as si, mock.patch.object(Brain, "_ask_enter", staticmethod(lambda: "")):
+            si.isatty.return_value = True
+            r = await br._auth_wall_gate(st, self.wall_bundle())
+        self.assertEqual(r[1][0], "blocked_needs_human")
+        self.assertEqual(br.counters["auth_wall_handoffs"], 2)
+
+    async def test_user_can_abort(self) -> None:
+        br, _ = self.mk([])
+        st = TaskState("进入gmail")
+        with mock.patch.dict(os.environ, {"DSCU_AUTH_POPUP": "0"}), mock.patch("sys.stdin") as si, mock.patch.object(Brain, "_ask_enter", staticmethod(lambda: "s")):
+            si.isatty.return_value = True
+            r = await br._auth_wall_gate(st, self.wall_bundle())
+        self.assertEqual(r[1][0], "blocked_needs_human")
+
+    async def test_wall_in_background_while_notepad_in_front_is_ignored(self) -> None:
+        br, _ = self.mk([])
+        o = obs("", "无标题 - 记事本", ())
+        b = Bundle(obs=o, drv=o, channel="uia", fg_attached=False, fg_foreign=True)
+        self.assertIsNone(await br._auth_wall_gate(TaskState("进入gmail"), b))
+
+
+# --------------------------------------------------------------------------------------------------------------------- 3b. supervisor stability + Gmail API
+class TestSupervisorStability(unittest.IsolatedAsyncioTestCase):
+    def eng(self) -> B.McpBrowserEngine:
+        e = B.McpBrowserEngine(None, env={}, cmd=["x"], args=[])
+        e.client = SimpleNamespace(alive=True, tools={"list_pages": {}, "new_page": {}}, dead_reason="", proc=None)  # type: ignore[assignment]
+        e.restart = mock.AsyncMock(return_value={"healed": True})  # type: ignore[method-assign]
+        return e
+
+    async def test_navigation_noise_never_restarts_the_server(self) -> None:
+        e = self.eng()
+        calls = {"n": 0}
+
+        async def tool(name, timeout=60.0, **kw):  # type: ignore[no-untyped-def]
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise B.McpToolError("click: Protocol error (Runtime.callFunctionOn): Execution context was destroyed, most likely because of a navigation.")
+            return B.McpResult("ok", [], False, {})
+
+        e._tool = tool  # type: ignore[method-assign]
+        r = await e._safe("click", uid="1_2")
+        self.assertEqual(r.text, "ok")
+        self.assertEqual(e.restart.await_count, 0)
+        self.assertEqual(e.stats["transient_retries"], 2)
+
+    async def test_target_closed_soft_heals_before_restart(self) -> None:
+        e = self.eng()
+        seq = iter([B.McpToolError("take_snapshot: Target closed"), B.McpResult("snap", [], False, {})])
+
+        async def tool(name, timeout=60.0, **kw):  # type: ignore[no-untyped-def]
+            v = next(seq)
+            if isinstance(v, Exception):
+                raise v
+            return v
+
+        async def refresh():  # type: ignore[no-untyped-def]
+            e.pages = [{"page_id": 1, "url": "https://a/", "selected": True}]
+            return e.pages
+
+        e._tool, e.refresh_pages = tool, refresh  # type: ignore[method-assign]
+        r = await e._safe("take_snapshot")
+        self.assertEqual(r.text, "snap")
+        self.assertEqual(e.restart.await_count, 0)
+        self.assertEqual(e.stats["soft_heals"], 1)
+
+    async def test_dead_transport_still_restarts(self) -> None:
+        e = self.eng()
+        seq = iter([B.McpTransportError("server exited"), B.McpResult("again", [], False, {})])
+
+        async def tool(name, timeout=60.0, **kw):  # type: ignore[no-untyped-def]
+            v = next(seq)
+            if isinstance(v, Exception):
+                raise v
+            return v
+
+        e._tool = tool  # type: ignore[method-assign]
+        r = await e._safe("take_snapshot")
+        self.assertEqual(r.text, "again")
+        self.assertEqual(e.restart.await_count, 1)
+
+    async def test_clean_mode_restart_keeps_browser(self) -> None:
+        """Restarting the MCP server in clean-browser-url mode must reuse the live Chrome (same pid) - tabs / cookies survive."""
+        tmp = tempfile.mkdtemp()
+        port = free_port()
+        env = {**os.environ, "DSCU_CLEAN_PORT": str(port), "DSCU_CLEAN_PROFILE": str(Path(tmp) / "cp"), "DSCU_CHROME_EXE": make_fake_chrome_exe(tmp), "FAKE_ARGV_FILE": str(Path(tmp) / "a.json")}
+        eng = B.McpBrowserEngine(None, env=env, cmd=[sys.executable, str(ROOT / "tests" / "fake_mcp_server.py")])
+        try:
+            await eng.start(40)
+            pid1 = eng.attached_browser_pid
+            self.assertGreater(pid1, 0)
+            self.assertEqual(eng.mode, "clean-browser-url")
+            self.assertEqual(eng.scope_mode, "pid-tree")
+            self.assertIn("--browserUrl=http://127.0.0.1:%d" % port, eng._argv())
+            await eng.restart("test")
+            self.assertEqual(eng.attached_browser_pid, pid1)
+            self.assertTrue(eng.launcher.reused)
+            self.assertEqual(eng.hello_cache["attached_browser_pid"], pid1)
+        finally:
+            await eng.aclose()
+            if eng.launcher:
+                eng.launcher.terminate()
+
+    async def test_clean_launch_failure_degrades_to_stealth_profile_not_crash(self) -> None:
+        env = {**os.environ, "DSCU_CHROME_EXE": str(ROOT / "tests" / "does_not_exist.exe"), "DSCU_CLEAN_PORT": str(free_port()), "DSCU_CLEAN_PROFILE": tempfile.mkdtemp()}
+        eng = B.McpBrowserEngine(None, env=env, cmd=[sys.executable, str(ROOT / "tests" / "fake_mcp_server.py")])
+        try:
+            await eng.start(40)
+            self.assertEqual(eng.mode, "profile")
+            self.assertEqual(eng.requested_mode, "clean-browser-url")
+            self.assertTrue(eng.clean_error)
+        finally:
+            await eng.aclose()
+
+
+class TestGmailApiLayer0(unittest.TestCase):
+    def test_parse_tasks(self) -> None:
+        self.assertEqual(G.parse_gmail_task("删除gmail里3封广告邮件"), {"intent": "trash", "query": "category:promotions", "count": 3})
+        self.assertEqual(G.parse_gmail_task("查看最新5封未读邮件")["intent"], "list")
+        self.assertIsNone(G.parse_gmail_task("进入gmail"))
+        self.assertIsNone(G.parse_gmail_task("给张三发送一封邮件"))
+        self.assertIsNone(G.parse_gmail_task("打开记事本"))
+
+    def test_unavailable_without_token_and_api_roundtrip_with_fake_transport(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.assertFalse(G.GmailApiLayer0(tmp / "none.json").available())
+        tok = tmp / "t.json"
+        tok.write_text(json.dumps({"access_token": "AT"}), encoding="utf-8")
+        seen: list[str] = []
+
+        def tr(method, url, headers, body):  # type: ignore[no-untyped-def]
+            seen.append(f"{method} {url.split('/v1/users/me')[-1][:40]}")
+            assert headers["Authorization"] == "Bearer AT"
+            if url.endswith("/trash"):
+                return 200, {"id": "m1", "labelIds": ["TRASH"]}
+            if "/messages/m1" in url and "format=minimal" in url:
+                return 200, {"id": "m1", "labelIds": ["TRASH"]}
+            if "/messages/m1" in url:
+                return 200, {"id": "m1", "threadId": "t", "snippet": "hi", "labelIds": ["UNREAD"], "payload": {"headers": [{"name": "Subject", "value": "S"}, {"name": "From", "value": "a@b"}]}}
+            return 200, {"messages": [{"id": "m1"}]}
+
+        api = G.GmailApiLayer0(tok, tr)
+        self.assertTrue(api.available())
+        ms = api.list_messages("in:inbox", 5)
+        self.assertEqual(ms[0]["subject"], "S")
+        self.assertTrue(ms[0]["unread"])
+        api.trash_messages(["m1"])
+        self.assertTrue(api.verify_trashed(["m1"]))
+        self.assertTrue(any(s.startswith("POST /messages/m1/trash") for s in seen))
+
+
+if __name__ == "__main__":
+    unittest.main()
+'@
 Add-DscuFile 'requirements-native.txt' '92782cb09b442f44c902048d91e41dc68fba78decf134d7161312722a9f8c388' @'
 # Only needed when dscu-driver.exe is NOT built (py-native fallback tier): real DXGI via dxcam + UIA via uiautomation
 numpy
@@ -14180,7 +15791,7 @@ function Expand-Dscu {
     if ($bad.Count -gt 0) {
         Write-Host "✖ 以下 $($bad.Count) 个文件 SHA-256 校验失败（粘贴被终端截断/改写）：" -ForegroundColor Red
         $bad | ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
-        Write-Host '  建议：用 Windows Terminal 粘贴；或在网页上点「下载 .ps1」后执行  pwsh -File .\computer-use-v16.ps1' -ForegroundColor Yellow
+        Write-Host '  建议：用 Windows Terminal 粘贴；或在网页上点「下载 .ps1」后执行  pwsh -File .\computer-use-v16.1.ps1' -ForegroundColor Yellow
         throw 'integrity check failed'
     }
     Write-Host ("  ✓ Monorepo 已就绪：{0} 个文件校验通过（本次写入 {1} 个）→ {2}" -f $script:Manifest.Count, $written, $script:Root) -ForegroundColor Green
@@ -14217,7 +15828,7 @@ function Invoke-DscuBuild([int]$Changed) {
     if ($LASTEXITCODE -ne 0 -and -not (Test-DscuBuilt)) { throw '构建失败，请查看上方输出。' }
 }
 
-Write-Host "DeepSeek Computer Use v$script:DscuVersion · Step 3+ · 官方 chrome-devtools-mcp 引擎 + 极性验证器 + 强力破遮挡 + USER_ACTIVE 防误触发 + v16 三层评测" -ForegroundColor Cyan
+Write-Host "DeepSeek Computer Use v$script:DscuVersion · Step 3+ · v16.1 · Clean-Chrome 免风控 + PID 级 FG-Gate + AUTH_WALL 交接 + 官方 chrome-devtools-mcp + 极性验证器 + 强力破遮挡 + v16 三层评测" -ForegroundColor Cyan
 $changed = Expand-Dscu
 if ($script:DscuMode -eq 'extract') { Write-Host "仅释放模式完成：$script:Root"; return }
 
