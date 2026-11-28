@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v18.0 (Unified Object Identity & Reliable Execution：UnifiedObjectRef 跨通道统一身份 · Target/Trigger 解耦门控 · WorldStateDiff 证据门控回退 · 真实微信校准 · 实时确定性控制环 · 8 维量化评测)；基于 v17.1 (Phase 12 治本收口版：异步 OCR 协程修通(RuntimeWarning 清零) · 通用 WebActionGoal(网页点击/下拉/跳转不再 unverified) · 确定性 WeChatSkill 5/5 闭环(UIA+DirectML+OCR) · Gmail 同 Snapshot-Epoch 冻结 + 去状态词身份 · 终端/开发标签页过滤 · 一键 Rust 激活 + verify164 --real 验收(DSCU_MODE=accept171)；基于 v17.0 (Qualitative Leap Release：真 Rust dscu-driver.exe 零 MSVC 自动激活(便携 llvm-mingw + gnullvm，驱动=rust-native) · 真训练 OmniParser icon_detect ONNX 绑定 Radeon 780M DmlExecutionProvider(SHA-256 固定) · Target/Trigger 解耦 ActionGate(工具栏删除不再被 OBJECT_IDENTITY_MISMATCH 误拦) · Explorer/回收站 UIA SelectionItemPattern 真选中并回读 · 回收站 Shell COM 单文件精准技能 · Shell.Application.Windows 窗口 Oracle · 无扩展名文件模糊解析 · DirectML 候选框+文本直连 deepseek-chat；基于 v16.4 (Critical Stabilization Sprint：WindowManager 点击/截图归属双校验 · 意图完整性门控 · AppWindow/FormField/MessageSend 强类型 GoalSchema · 强类型 Selector · Token/诊断/无进展熔断 · 驱动/DirectML 实证；基于 v16.3 Phase 2 修复：MCP `No page found` 透明重选页自愈（35 次降级清零）· 统一 DPI/视口/多屏负坐标坐标系 + 可验证滚动 scroll_container_verified · 真实故障注入验收 verify_phase2 · Rust GNU/MSVC 免痛激活 + DirectML 运行实证 · Gmail 一键授权向导 · SoM+文本锚点对象注册) 基于 v16.2 (Phase 0 & 1：可信成功标准 coverage=full 硬门槛 · StableObject 坐标反查 OBJECT_IDENTITY_MISMATCH · WAL 崩溃恢复 · 生产级 GmailSkill 两阶段闭环 + Windows DPAPI · chrome-devtools-mcp@1.14.0 锁版本) 基于 v16.1 (Step 3+) —— Clean-Chrome --browserUrl / Chrome146 --autoConnect 免风控登录 Gmail + PID 级 FG-Gate + 进程名 app_resolve + AUTH_WALL 1 步人工交接 + 零重启 MCP Supervisor —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
+  DeepSeek Computer Use v18.1 (Core Control-Loop Unification：GoalSpec · WorldModel · ActionTransaction · RecoveryPlanner) · v18.0 (Unified Object Identity & Reliable Execution：UnifiedObjectRef 跨通道统一身份 · Target/Trigger 解耦门控 · WorldStateDiff 证据门控回退 · 真实微信校准 · 实时确定性控制环 · 8 维量化评测)；基于 v17.1 (Phase 12 治本收口版：异步 OCR 协程修通(RuntimeWarning 清零) · 通用 WebActionGoal(网页点击/下拉/跳转不再 unverified) · 确定性 WeChatSkill 5/5 闭环(UIA+DirectML+OCR) · Gmail 同 Snapshot-Epoch 冻结 + 去状态词身份 · 终端/开发标签页过滤 · 一键 Rust 激活 + verify164 --real 验收(DSCU_MODE=accept171)；基于 v17.0 (Qualitative Leap Release：真 Rust dscu-driver.exe 零 MSVC 自动激活(便携 llvm-mingw + gnullvm，驱动=rust-native) · 真训练 OmniParser icon_detect ONNX 绑定 Radeon 780M DmlExecutionProvider(SHA-256 固定) · Target/Trigger 解耦 ActionGate(工具栏删除不再被 OBJECT_IDENTITY_MISMATCH 误拦) · Explorer/回收站 UIA SelectionItemPattern 真选中并回读 · 回收站 Shell COM 单文件精准技能 · Shell.Application.Windows 窗口 Oracle · 无扩展名文件模糊解析 · DirectML 候选框+文本直连 deepseek-chat；基于 v16.4 (Critical Stabilization Sprint：WindowManager 点击/截图归属双校验 · 意图完整性门控 · AppWindow/FormField/MessageSend 强类型 GoalSchema · 强类型 Selector · Token/诊断/无进展熔断 · 驱动/DirectML 实证；基于 v16.3 Phase 2 修复：MCP `No page found` 透明重选页自愈（35 次降级清零）· 统一 DPI/视口/多屏负坐标坐标系 + 可验证滚动 scroll_container_verified · 真实故障注入验收 verify_phase2 · Rust GNU/MSVC 免痛激活 + DirectML 运行实证 · Gmail 一键授权向导 · SoM+文本锚点对象注册) 基于 v16.2 (Phase 0 & 1：可信成功标准 coverage=full 硬门槛 · StableObject 坐标反查 OBJECT_IDENTITY_MISMATCH · WAL 崩溃恢复 · 生产级 GmailSkill 两阶段闭环 + Windows DPAPI · chrome-devtools-mcp@1.14.0 锁版本) 基于 v16.1 (Step 3+) —— Clean-Chrome --browserUrl / Chrome146 --autoConnect 免风控登录 Gmail + PID 级 FG-Gate + 进程名 app_resolve + AUTH_WALL 1 步人工交接 + 零重启 MCP Supervisor —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
   直接整段粘贴到 PowerShell 7 → 输入 DeepSeek API Key → 出现「请输入任务」提示符即可使用（与 v12/v13/v14 的使用方式完全相同）。
 .DESCRIPTION
   本脚本是【自解压引导器】（与 v14 同构）：
@@ -38,6 +38,16 @@
   v17.1 新增模式：DSCU_MODE=accept171(一键验收：回归门禁 PYTHONWARNINGS=error::RuntimeWarning → bootstrap-rust → verify164 --real --rounds 10 → audit_report.json；DSCU_ROUNDS=N)  regress171(仅回归门禁)
   v17.1 新增环境变量：DSCU_WECHAT_SKILL=0(关闭确定性微信技能) · DSCU_MSG_HITL=always|auto(发送前确认策略；DSCU_AUTO_CONFIRM=1 同样自动确认) · DSCU_ALLOW_DEV_TABS=1(不过滤开发/终端标签页) · DSCU_TERMINAL_IS_OWN=0
   v17.1 任务示例：打开微信，找到联系人老虎不抓鼠，给他发一条你好 · 点击第一个网站 · 点击招生就业 · 点击新生入学 · 在浏览器里面打开gmail，删除前面5条和后面3条邮件
+  ════════ v18.1 (Core Control-Loop Unification：Goal & Constraint Engine · Unified World Model · Action Transaction · Alternative-Route Recovery Planner) ════════
+  v18.1 新增（严格围绕统一核心控制架构，不堆新工具；日志 8388968 的两个致命问题治本）：
+    · [1] agent_brain/goal_engine.py     GoalSpec + CompositeSelector(by_name | by_ordinal | by_attribute)：「删除回收站前面两个」→ by_ordinal(head=2)（序数/数量词永远不会再变成文件名）；先枚举目标容器的有序对象列表再冻结 UnifiedObjectRef 集合；recompute_remaining_work 按身份重算剩余、精确续跑
+    · [2] agent_brain/world_model.py     唯一可信 WorldModel：UIA/CDP/DXGI+DirectML/OCR/WindowManager/FileSystem/Shell COM 只提交带 snapshot_epoch+时间戳的快照；规划/验证只读 WorldView；跨位置检索（桌面→文档→下载→回收站，授权作用域内）；按身份重定基（epoch 变化不再 STALE）
+    · [3] agent_brain/action_tx.py       Action Transaction：Precondition(身份/epoch) · IdempotencyKey · ExpectedWorldDelta(精确变化·无附带损伤) · Postcondition(独立 Oracle) · 不可逆操作=任务原文授权+冻结身份校验+(范围大才确认)；JSONL 事务账本
+    · [4] agent_brain/recovery_planner.py Alternative-Route Recovery Planner：任务级 RouteGraph + BlockedEdge；NOT_FOUND/SECURITY_DENIED/ACTION_NO_EFFECT → 立即换下一条合法路线；仅「真实阻塞(2FA/登录墙/歧义/用户拒绝)」或「合法路线穷尽」才交还用户；无进展熔断改为≤3 次自动换路
+    · [5] agent_brain/core_loop.py       薄胶水层：compile_goal → RecoveryPlanner → 事务 → WorldModel 复核 → 剩余工作重算 → 独立 Oracle 裁决；layer0_v17 只保留 open_view（删除/还原分支已并入核心，死代码 5 处已清理）
+  v18.1 新增模式：DSCU_MODE=regress181（离线端到端回归，免 API Key） · 任务提示符内：v18 regress181
+  v18.1 新增环境变量：DSCU_IRREVERSIBLE_CONFIRM=auto|always|never（不可逆操作确认策略；默认 auto=范围>5 或「全部」才确认；任务原文已明确授权才可执行） · DSCU_CORE_FORCE=1（仅测试：非 Windows 也启用核心环）
+  任务示例：删除回收站前面两个 · 删除回收站最后三条 · 删除回收站第3个 · 删除回收站第2到第4个 · 还原回收站最后一个 · 删除相机文件（桌面没有→自动查回收站→独立证据完成） · 彻底删除桌面上的相机（回收站→受控单对象清理）
   ════════ v18.0 (Unified Object Identity & Reliable Execution：把 7 套互相割裂的定位体系打通为高可靠统一执行系统) ════════
   v18.0 新增（严格 P0→P2，不堆新功能，只打通现有组件）：
     · [P0-1] agent_brain/unified_object.py  UnifiedObjectRef + ObjectFusionEngine（UIA/DOM/DirectML/OCR/SoM 经 IoU+空间包含+文本相似度融合为单一对象；动作只能引用 object_id+snapshot_epoch；纯视觉候选无破坏性授权）
@@ -52,7 +62,7 @@
   v18.0 新增环境变量：DSCU_WECHAT_DRYRUN=1(微信技能只做前 4 步并清空草稿，绝不发送) · DSCU_WECHAT_CONTACT · 任务提示符内：v18 eval18 · v18 regress18 · v18 wechat-calibrate <联系人> · v18 v18
 #>
 $ErrorActionPreference = 'Stop'
-$script:DscuVersion = '18.0.0'
+$script:DscuVersion = '18.1.0'
 if ($PSVersionTable.PSVersion.Major -lt 7) { Write-Host '需要 PowerShell 7+（pwsh）。请在 pwsh 中粘贴。' -ForegroundColor Red; return }
 $script:DscuMode = if ($env:DSCU_MODE) { $env:DSCU_MODE } else { 'run' }
 if (-not $IsWindows -and $script:DscuMode -ne 'extract') { Write-Host '本脚本只能在 Windows 上运行（DSCU_MODE=extract 可仅释放文件）。' -ForegroundColor Red; return }
@@ -209,12 +219,12 @@ Add-DscuFile 'schemas/protocol_v1.json' 'e1db2bfbfe3085f748112ff1c1a817cb3a86d0f
 }
 '@
 
-Add-DscuFile 'agent_brain/__init__.py' 'a9065dcf4e7bdacba7a70c82ebeb9fd080ce8284a355451eacc0b446f92f3af8' @'
+Add-DscuFile 'agent_brain/__init__.py' '846f0b91786f886e293dc71d2e56f438fe34e7a6a035994d99e69fa8db663a90' @'
 """DSCU unified agent brain (Python 3.12 asyncio): the single decision-maker over the Rust driver and the TS CDP daemon."""
-__version__ = "18.0.0"
+__version__ = "18.1.0"
 '@
 
-Add-DscuFile 'agent_brain/__main__.py' '9317b7ef5d835c221979539a032270742e88a13a56212a92bf75624b5448052e' @'
+Add-DscuFile 'agent_brain/__main__.py' '74523d5fbe21f630c8583162681f1050011185aa259d91c477f76c3501461a7e' @'
 """REPL entry:  python -m agent_brain [--cdp-profile persistent|ephemeral]   (same prompt/flow as v12/v13: 请输入任务 ...)"""
 from __future__ import annotations
 
@@ -253,6 +263,7 @@ HELP = """可用命令：
   v16 coords               v16.3：统一坐标系诊断（显示器/DPI/浏览器视口原点来源/几何缓存统计）
   v18 eval18 [--mode mock|real|export] [--tasks 100 --repeats 5]   v18：8 项量化指标评测 → eval_runs/v18_<ts>/metrics.json
   v18 regress18            v18：UnifiedObject/Target-Trigger/WorldStateDiff/实时控制器/Gmail/微信 离线回归
+  v18 regress181           v18.1：GoalEngine(序数选择器)/WorldModel/ActionTransaction/RecoveryPlanner 端到端回归（删除回收站前面两个 · 删除相机文件 换路 · 剩余工作重算）
   v18 wechat-calibrate <联系人>   v18：真实微信非破坏性校准（--dry-run-no-send：前 4 步，绝不发送）
   v18 v18                  v18 运行时统计（证据门控/路径关闭/Token 节省估计）
   v14 status               驱动/CDP/DXGI 流/FG-Gate/Profile/内存/回退原因 实时状态
@@ -455,6 +466,8 @@ async def amain() -> int:
             elif low.startswith("v15 eval"):
                 tiers = (low.split()[2:] or ["all"])
                 await asyncio.to_thread(subprocess.run, [sys.executable, "evals/runner.py", "run", *tiers], cwd=str(cfg.root), env=dict(os.environ, DEEPSEEK_API_KEY=cfg.api_key))
+            elif low.startswith("v14 regress181"):
+                await asyncio.to_thread(subprocess.run, [sys.executable, "tests/test_v18_1_core_loop.py"], cwd=str(cfg.root))
             elif low.startswith("v14 eval18") or low.startswith("v14 regress18"):
                 py = sys.executable
                 if "regress18" in low:
@@ -508,7 +521,7 @@ if __name__ == "__main__":
         sys.exit(130)
 '@
 
-Add-DscuFile 'agent_brain/cli_anything.py' 'c76614f9a59a34558e1e7ac0ed96336d58d25c7f0af2eae972c1a208b7671f8c' @'
+Add-DscuFile 'agent_brain/cli_anything.py' 'e5ab4a3dbe53acea2b64215cb6f45f996cd5223a8c13e382eb84734e6fda2842' @'
 """CLI-Anything (HKUDS/CLI-Anything, `cli-hub`) Layer-0 bridge.
 
 Agent-native CLIs published by CLI-Anything are executables named `cli-anything-<app>` (gimp, blender, inkscape, libreoffice, audacity, drawio ...)
@@ -589,15 +602,6 @@ def discover(refresh: bool = False) -> dict[str, ToolInfo]:
     if hub:
         _cache["hub"] = ToolInfo("hub", hub, "cli-hub")
     return dict(_cache)
-
-
-def match_for_task(task: str, tools: Optional[dict[str, ToolInfo]] = None) -> Optional[ToolInfo]:
-    tools = tools if tools is not None else discover()
-    low = task.lower()
-    for kw, tool in APP_HINTS.items():
-        if kw in low and tool in tools:
-            return tools[tool]
-    return None
 
 
 def _resolve(tool: str) -> Optional[ToolInfo]:
@@ -1509,7 +1513,7 @@ from .py_native_driver import *  # noqa: F401,F403
 from .py_native_driver import NativeDriver, DxgiStream, _ahash, _ahash_np  # noqa: F401
 '@
 
-Add-DscuFile 'agent_brain/orchestrator.py' '28ed659f645601fab68dff501a5ea76e725c15b5c1de363742c98379a6429a23' @'
+Add-DscuFile 'agent_brain/orchestrator.py' '5e95db7796987a963ff896ccb702ab6c9688f99f4c5adf8a1497fddc6a03021b' @'
 """The single live brain. Python asyncio owns: observation -> decision (DeepSeek) -> gated execution -> measured effect
 -> recovery. No placeholder telemetry: `cdp_up`, `uia_controls`, `stalled`, `blocked_streak`, `perception_channel` are all
 computed from real IPC replies every step (see choose_channel + TaskState.settle_last)."""
@@ -1544,6 +1548,7 @@ from .state_machine import Intervention, RecoveryPlaybook, StableObjectRegistry,
 from .verifier import IndependentVerifier, GmailTrashGoal, Check, Verdict, canonical_status, may_commit, terminal_from_verdict
 from .action_gate import IDENTITY, MAX_IDENTITY_STRIKES, IdentityGate
 from . import layer0_v17
+from .core_loop import CoreLoop  # v18.1: Goal & Constraint Engine · Unified World Model · Action Transaction · Alternative-Route Recovery Planner
 from .stable_object import freeze_same_epoch, lock_selection
 from .transaction import WalTransaction, WriteAheadLog, adjudicate, make_gmail_probe, recover as wal_recover
 from .skills import gmail_skill
@@ -1599,6 +1604,7 @@ class Brain:
         self.verifier = IndependentVerifier(self.hub, self.registry, self.say)
         self.v164 = V164(self)  # v16.4 WindowManager + intent gate + budgets (sets verifier.wm)
         self.v18 = V18Runtime(self)  # v18: WorldStateDiff + evidence-gated fallback + HITL fixes
+        self.core = CoreLoop(self)  # v18.1: unified control loop (GoalSpec → RouteGraph → ActionTransaction → WorldModel oracle)
         self._cur_state = None
         self.gmail: Optional[gmail_skill.GmailSkill] = None  # injectable (tests); default built lazily from the DPAPI token store
         self.wal_decisions: list[Any] = []
@@ -1641,7 +1647,7 @@ class Brain:
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
         hello = await self.hub.start_driver()
-        self.say(f"  🧠 统一大脑 v16 · 驱动={self.hub.driver_kind} · 版本 {hello.get('version')} · uiAccess={hello.get('uiaccess')} · 管理员={hello.get('elevated')}")
+        self.say(f"  🧠 统一大脑 v18.1（GoalEngine · WorldModel · ActionTx · RecoveryPlanner）· 驱动={self.hub.driver_kind} · 版本 {hello.get('version')} · uiAccess={hello.get('uiaccess')} · 管理员={hello.get('elevated')}")
         if hello.get("rust_error"):
             self.say(f"  ⚠ Rust 驱动未接管，原因：{hello['rust_error']}（已显式回退 py-native，功能等价、性能较低）")
         try:
@@ -1676,7 +1682,9 @@ class Brain:
         return bool(fg and fg.process.lower() in BROWSERS and not fg.own_console)
 
     async def observe(self, st: TaskState, *, forced: Optional[str] = None, want_shot: bool = False, main_loop: bool = False) -> Bundle:
-        return await self.perception.observe(st, forced=forced, want_shot=want_shot, main_loop=main_loop)
+        b = await self.perception.observe(st, forced=forced, want_shot=want_shot, main_loop=main_loop)
+        self.core.observe(getattr(b, "obs", None))  # v18.1: every channel commits its snapshot (epoch + timestamp) to the single WorldModel
+        return b
 
     _annotate = staticmethod(Perception.annotate)
 
@@ -2727,6 +2735,7 @@ class Brain:
         say = self.say
         self.v164.reset_task()
         self.v18.reset_task()
+        self.core.begin_task()
         self._cur_state = st
         _ig = self.v164.intent_gate(st)  # v16.4: messaging task without explicit recipient AND body -> needs_clarification, 0 model calls, 0 GUI actions
         if _ig is not None:
@@ -2745,7 +2754,10 @@ class Brain:
         rt = layer0.parse_recycle_task(st.task)
         if rt is not None:
             return await self._layer0_recycle(rt, st)
-        _l17 = await layer0_v17.run(self, st)  # v17: fuzzy Desktop file delete · open Shell views with oracle · single-item Recycle-Bin delete/restore
+        _core = await self.core.run(st) if (sys.platform == "win32" or os.environ.get("DSCU_CORE_FORCE") == "1") else None  # v18.1: GoalSpec → RouteGraph → transactions (replaces v17 file/bin branches)
+        if _core is not None:
+            return _core
+        _l17 = await layer0_v17.run(self, st)  # v17 (open_view only since v18.1): fuzzy Desktop file delete · open Shell views with oracle · single-item Recycle-Bin delete/restore
         if _l17 is not None:
             return _l17
         gm = gmail_skill.parse_gmail_task(st.task)
@@ -2777,6 +2789,14 @@ class Brain:
                 return "timeout", "超过任务时限"
             _trip = self.v164.budget.check()
             if _trip is not None:
+                _rr = self.core.on_budget_trip(_trip)  # v18.1: no_progress → alternative route (≤3 per task) instead of handing the task back
+                if _rr:
+                    self.v164.budget.tripped = None
+                    self.v164.budget.no_progress_streak = 0
+                    say(f"  🔀 无进展熔断 → 自动换路（不交还用户）：{_rr.splitlines()[-1][:160]}")
+                    self.core.directive = (self.core.directive + "\n" + _rr).strip()
+                    _trip = None
+            if _trip is not None:
                 self.tx.abort()
                 say(f"  🔌 {_trip.message}")
                 return _trip.status, _trip.message
@@ -2791,7 +2811,8 @@ class Brain:
             if settled is not None:
                 say(f"  ↳ 上一步效果核验：{settled.effect}（{(settled.display or settled.sig)[:64]}）")
             directive = self.ladder.evaluate(st, b.obs)
-            _note = (self.recovery.take_note() + ("\n" + _v18n if _v18n else "")).strip()
+            _cdv = self.core.take_directive()  # v18.1: BlockedEdge list + next legal route + frozen target identities
+            _note = (self.recovery.take_note() + ("\n" + _v18n if _v18n else "") + ("\n" + _cdv if _cdv else "")).strip()
             _deny = self.recovery.deny_summary()
             if _note or _deny:
                 directive.text = (directive.text + "\n" if directive.text else "") + "\n".join(x for x in (_note, _deny) if x)
@@ -2961,6 +2982,7 @@ class Brain:
                 self._dump_action(step, a, res, (time.perf_counter() - locals().get("_t_act", time.perf_counter())) * 1000)
                 ent = st.record(step, a, str(data.get("expect", "")), b.obs, res, b.els)
                 self.v164.budget.on_step(a, res.ok, ent.effect)
+                self.core.on_step_result(a, res.ok, res.code.value, res.message)  # v18.1: SECURITY_DENIED/NOT_FOUND/NO_EFFECT → structured BlockedEdge
                 if "x" in a and "y" in a:
                     ent.evidence["click_xy"] = (int(a["x"]), int(a["y"]))
                 elif sel_el is not None:
@@ -3092,6 +3114,7 @@ class Brain:
         for _ln in self.v164.summary_lines():
             say(_ln)
         say(self.v18.summary_line())
+        say(self.core.summary_line())
         say(runtime_status.settlement_line(self.hub, self.cfg))
         parts = []
         for k in ("fg_probe", "capture", "uia", "cdp", "shot", "input", "network", "decision", "vision"):
@@ -5457,7 +5480,7 @@ class EvidenceGatedFallback:
         return "；".join(parts) or "上下文变化（导航）→ 返回上一页即可"
 '@
 
-Add-DscuFile 'agent_brain/safe_shell.py' '1f1f22fba63c6bd3fbbc513cab545e339855db7fd394ba9bb79b85e1f96b36ff' @'
+Add-DscuFile 'agent_brain/safe_shell.py' 'e0056ee1093ac5eefb6b9921eac14752f14e8da18421e5f141ca4b78fc96748b' @'
 """v15 controlled desktop-safety primitives (whitelisted, the LLM never supplies a command line):
 
   open_known_folder(name)     - ShellExecute of explorer.exe with ONE hard-coded argument from a closed whitelist
@@ -5668,9 +5691,6 @@ def empty_recycle_bin() -> tuple[bool, str]:
     return False, f"SHEmptyRecycleBinW 失败 hr=0x{hr & 0xFFFFFFFF:08X}"
 
 
-def window_is_recycle(title: str) -> bool:
-    t = (title or "").lower()
-    return any(k in t for k in RECYCLE_TITLES)
 '@
 
 Add-DscuFile 'agent_brain/state.py' '4479ed4d075d206bf63ae5306a502e6f2604a4f1e8a925e58866b1257032c255' @'
@@ -17403,7 +17423,7 @@ if __name__ == "__main__":
     unittest.main()
 '@
 
-Add-DscuFile 'agent_brain/procnames.py' 'e57b98f2e1bc787688f09c3e7ac7c18f9389afe7b2c96893ed58e2c6b92184b6' @'
+Add-DscuFile 'agent_brain/procnames.py' '7ce06efcd84654e154e72513ab4168c0d6265926a749262cf3ec0b0416594314' @'
 """v16.1 process-name resolution shared by the brain (orchestrator._launch) and the native driver (focus_window / app_resolve fallback).
 
 Why: browser window titles become the *page* title ("比较两个系统 和另外 3 个页面 - 个人 - Microsoft​ Edge" - note the zero-width space!), so
@@ -17458,10 +17478,6 @@ def process_names_for(query: str) -> list[str]:
     if re.fullmatch(r"[a-z0-9_.\-]{2,40}", q):
         return [q + ".exe"]
     return []
-
-
-def browser_family(exe: str) -> str:
-    return BROWSER_FAMILY.get(normalize(exe), "")
 
 
 def rank_main_window(windows: list[dict], pids: set[int], names: set[str]) -> list[dict]:
@@ -25719,7 +25735,7 @@ if __name__ == "__main__":
     unittest.main(verbosity=2)
 '@
 
-Add-DscuFile 'agent_brain/skills/recycle_bin.py' 'a043f015b999074c68068f0af60e7b209637bbd76189451202ac432072280b48' @'
+Add-DscuFile 'agent_brain/skills/recycle_bin.py' '31d6fd4a9087504d108317fc75cd4945761de207f5405c25073ab92627c335c7' @'
 """
 v17 Layer 0 Recycle-Bin single-item skill  +  Shell-window oracle  +  fuzzy desktop-file resolver.
 
@@ -26158,12 +26174,6 @@ def verify_item_gone(item: BinItem, backend: ShellBackend, count_before: Optiona
     return rows
 
 
-def verify_item_present(item: BinItem, backend: ShellBackend) -> list[dict[str, Any]]:
-    cur = backend.list_items()
-    hit = [c for c in cur if (c.bin_path and c.bin_path == item.bin_path) or c.name == item.name]
-    return [_row("bin_item_present", bool(hit), f"NameSpace(10) {'包含' if hit else '不含'}「{item.name}」（共 {len(cur)} 项）", source="Shell.Application.NameSpace(10)")]
-
-
 def remove_item(item: BinItem, backend: ShellBackend) -> tuple[bool, str, list[dict[str, Any]]]:
     before = backend.count_api()
     ok, msg = backend.delete_store(item)
@@ -26338,15 +26348,12 @@ def _extract_name(t: str, verb_rx: str) -> str:
     return "" if ref in GENERIC else ref
 '@
 
-Add-DscuFile 'agent_brain/layer0_v17.py' 'c699a81c19f17741cc7354a9da77e0a26aac0f66d5850d223f96c128c89bce1e' @'
+Add-DscuFile 'agent_brain/layer0_v17.py' '608f1f9211d1fd358467fce570d0a0738d34e8079cd873e85094fdbe75ee2978' @'
 """
 v17 Layer 0 router: deterministic, LLM-free closures for the tasks that failed in the 8c4dfc4 log.
 
   打开回收站 / 打开桌面          -> open_known_folder + Shell-window oracle (Shell.Application.Windows + CabinetWClass + visible + foreground)
-  删除相机 / 把桌面上的相机文件删除[，并打开回收站]
-                                 -> fuzzy resolve Desktop\\相机.txt (unique-or-clarify) -> recycle_file -> oracle(file gone · bin +1 · item listed [· bin window open])
-  删除回收站里(面)的相机文件      -> NameSpace(10) find (exact-or-clarify) -> permanent delete of ONE item -> oracle(item gone · $R gone · bin -1)
-  还原回收站里的相机文件          -> undelete -> oracle(item gone from bin · restored to original path)
+  [v18.1] 删除 / 还原 / 序数(前面两个·最后三条·第3个) / 跨位置检索 / 遮挡换路 → agent_brain/core_loop.py (GoalEngine + WorldModel + ActionTransaction + RecoveryPlanner)；本模块只保留 open_view。
 
 Every flow ends in `completed_verified (coverage=full)` ONLY when every evaluated oracle row passed; otherwise `unverified`/`failed` with the failing rows.
 Returns None when the sentence is not one of these intents (the existing router / LLM takes over) or when the target cannot be resolved at all.
@@ -26355,10 +26362,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from pathlib import Path
 from typing import Any, Optional
 
-from . import safe_shell
 from .skills import recycle_bin as rb
 
 
@@ -26441,70 +26446,10 @@ async def run(orch: Any, st: Any) -> Optional[tuple[str, str]]:
         ok, rows = await open_view_with_oracle(orch, st, intent["view"], be, say)
         return finish(rows, f"已打开并独立核验 Shell 窗口（{intent['view']}）", 1)
 
-    # ------------------------------------------------------------------ delete a real file -> Recycle Bin
-    if kind == "file_delete":
-        res = await asyncio.to_thread(rb.resolve_user_file, intent["name"], intent.get("folder", ""))
-        if res.status == "none":
-            say(f"  ℹ 在 桌面/文档/下载 中没有找到与「{res.query}」匹配的文件 → 交给通用路径（LLM）处理")
-            return None
-        if res.status in ("ambiguous", "suggest"):
-            names = "；".join(f"{p.parent.name}\\{p.name}" for p in res.candidates[:6])
-            q = f"找到多个同样匹配的文件：{names}。请说明要删除哪一个（写出完整文件名）。" if res.status == "ambiguous" else f"没有名为「{res.query}」的文件；您是想删除：{names} 吗？请用完整文件名重新下达。"
-            say(f"  🛑 NEEDS_CLARIFICATION：{q}（为避免误删，不做模糊自动删除）")
-            return "needs_clarification", q
-        p = res.path
-        assert p is not None
-        say(f"  ↳ 模糊解析：「{res.query}」→ {p}（{res.folder_name}；匹配度 {res.score}；唯一）")
-        before = await asyncio.to_thread(safe_shell.recycle_bin_status)
-        c0 = int(before.get("count") or 0) if before.get("ok") else None
-        say(f"  动作: action=recycle_file path={p}")
-        ok, msg = await asyncio.to_thread(safe_shell.recycle_file, p, (orch.cfg.workspace,))
-        say(f"  结果: {'✅' if ok else '❌'} {msg}")
-        if not ok:
-            return "failed", msg
-        rows = [rb._row("file_not_exists", not p.exists(), f"{p} {'已不存在' if not p.exists() else '仍存在'}", "file", source="filesystem")]
-        if c0 is not None:
-            aft = await asyncio.to_thread(safe_shell.wait_recycle_count, c0 + 1, 6.0)
-            rows.append(rb._row("bin_count_plus_one", aft.get("count") == c0 + 1, f"回收站 {c0}→{aft.get('count')}（{aft.get('sources')}）", source="SHQueryRecycleBinW+NameSpace(10)"))
-        items = await asyncio.to_thread(be.list_items)
-        fr = rb.find_items(p.name, items)
-        rows.append(rb._row("bin_item_present", fr.status in ("unique", "ambiguous"), f"NameSpace(10) {'已列出' if fr.status in ('unique', 'ambiguous') else '未列出'}「{p.name}」（共 {len(items)} 项）",
-                            source="Shell.Application.NameSpace(10)"))
-        steps = 1
-        if intent.get("open_bin"):
-            steps += 1
-            say(f"── 第 {steps} 步 ──")
-            _ok, wrows = await open_view_with_oracle(orch, st, "recyclebin", be, say)
-            rows += wrows
-        return finish(rows, f"已将「{p.name}」移入回收站并独立核验", steps)
+    # v18.1: file_delete / bin_remove / bin_restore (and every ordinal / cross-location / recovery concern) moved to core_loop.CoreLoop:
+    # GoalSpec (agent_brain/goal_engine.py) · WorldModel (world_model.py) · ActionTransaction (action_tx.py) · RecoveryPlanner (recovery_planner.py).
+    return None
 
-    # ------------------------------------------------------------------ operations INSIDE the Recycle Bin
-    items = await asyncio.to_thread(be.list_items)
-    say(f"  回收站现有 {len(items)} 项（通道 {getattr(be, 'channel', '?')}）：{', '.join(i.name for i in items[:10])}")
-    if not items:
-        return "failed", "回收站为空，没有可操作的项目"
-    fr = rb.find_items(intent["name"], items)
-    if fr.status == "none":
-        q = f"回收站里没有名为「{fr.query}」的项目（现有：{', '.join(i.name for i in items[:8])}）。"
-        say(f"  🛑 {q}")
-        return "failed", q
-    if fr.status in ("ambiguous", "suggest"):
-        names = "；".join(i.brief() for i in fr.items[:5])
-        q = (f"回收站里有多个同名项目：{names}。请指明原位置或完整文件名。" if fr.status == "ambiguous"
-             else f"回收站没有精确名为「{fr.query}」的项目；您是想操作：{names} 吗？请用完整文件名重新下达。")
-        say(f"  🛑 NEEDS_CLARIFICATION：{q}（永久删除不可逆，不做模糊自动执行）")
-        return "needs_clarification", q
-    it = fr.items[0]
-    say(f"  ↳ 精确匹配（唯一）：{it.brief()}")
-    if kind == "bin_remove":
-        say(f"  动作: action=recycle_bin_remove_item name={it.name}（意图：在回收站内删除；永久、不可还原）")
-        ok, msg, rows = await asyncio.to_thread(rb.remove_item, it, be)
-        say(f"  结果: {'✅' if ok else '❌'} {msg}")
-        return finish(rows, f"已从回收站永久删除「{it.name}」并独立核验", 1)
-    say(f"  动作: action=recycle_bin_restore_item name={it.name}")
-    ok, msg, rows = await asyncio.to_thread(rb.restore_item, it, be)
-    say(f"  结果: {'✅' if ok else '❌'} {msg}")
-    return finish(rows, f"已还原「{it.name}」并独立核验", 1)
 '@
 
 Add-DscuFile 'scripts/bootstrap_rust.ps1' '35de86d1b3e1446a52aee6e14e70bb659ffc4e0351351404843d6baced1c3beb' @'
@@ -27843,7 +27788,7 @@ class WeChatWinIO:
 
 '@
 
-Add-DscuFile 'agent_brain/unified_object.py' '4e05197934f4cd8dd96cdde1edac56b0dc1650ca90f3a3624c9df692cee849a7' @'
+Add-DscuFile 'agent_brain/unified_object.py' '3d2c2827b72f419cab15005735c7e50862579012d7131912e1d8f77bb6e99c27' @'
 """v18.0 [P0-1] Unified Object Identity — ONE strongly-typed object model for the 7 formerly disconnected locating systems.
 
     UIA control  ┐
@@ -28277,10 +28222,6 @@ class ObjectRegistry:
         return ObjectDecision(True, "OK")
 
 
-def snapshot_digest(objs: Iterable[UnifiedObjectRef]) -> str:
-    """order-independent digest of what the UI contains (identity + name + state) — the basis of WorldStateDiff."""
-    parts = sorted(f"{o.object_id}|{norm(o.accessible_name)[:40]}|{sorted(o.state.items())}" for o in objs)
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 '@
 
 Add-DscuFile 'agent_brain/realtime_controller.py' 'd1060f183a55e0b6382c9006620119aa948f0f55b2f47ddf5e0940c7e4649e00' @'
@@ -30278,6 +30219,2666 @@ if __name__ == "__main__":
     unittest.main()
 '@
 
+Add-DscuFile 'agent_brain/world_model.py' 'e8c33cb435111001a9259a3dab1c75b770bbaab806cb657b9fafbfeb0a5c6b32' @'
+"""
+v18.1 Unified World Model — the single trusted source of "what is true right now".
+
+Before v18.1 the truth was scattered: UIA (`Observation.elements`), CDP (daemon/MCP), DXGI+DirectML (SoM boxes), OCR, WindowManager (HWND/PID/Z-order) and the
+file-system / Shell COM probes each kept their own picture, and Layer 0 tools answered questions from private caches (stale `STALE_EPOCH`, `OBJECT_IDENTITY_MISMATCH`).
+
+Contract
+  * Perception channels and Layer-0 tools ONLY `submit()` observation snapshots (monotonic per-channel `snapshot_epoch` + timestamp).  They never answer planning questions.
+  * Planner / verifier / Action-Transaction code READ through `WorldView` (a read-only facade) or an external oracle — never through a private cache.
+  * Object references are IDENTITY-based (`WorldObjectRef.identity`), not position/name based; an epoch bump re-bases a frozen ref by identity (`rebase`)
+    and an object that vanished or changed identity is reported, never silently replaced.
+  * Cross-location target search (`search`): “删除相机文件” with no folder → Desktop / Documents / Downloads / RecycleBin inside the AUTHORIZED scope, returning real path + state
+    + a classification (live_unique | live_ambiguous | bin_only | bin_ambiguous | suggest | none).
+
+Pure Python (providers are injected) → unit-testable on any OS; production providers wrap the existing recycle_bin.ComBackend and the Win32 known-folder resolver.
+"""
+from __future__ import annotations
+
+import os
+import re
+import threading
+import time
+import unicodedata
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Iterable, Optional, Protocol, Sequence
+
+LIVE_LOCATIONS = ("desktop", "documents", "downloads")
+ALL_LOCATIONS = LIVE_LOCATIONS + ("recyclebin",)
+CHANNELS = ("uia", "cdp", "dxgi_dml", "ocr", "window_manager", "filesystem", "shell_com")
+DEFAULT_TTL_S = {"uia": 2.0, "cdp": 2.0, "dxgi_dml": 1.5, "ocr": 3.0, "window_manager": 1.0, "filesystem": 3.0, "shell_com": 3.0}
+_LOC_CHANNEL = {"recyclebin": "shell_com", "desktop": "filesystem", "documents": "filesystem", "downloads": "filesystem"}
+_SKIP_NAMES = re.compile(r"^(?:desktop\.ini|thumbs\.db|\.ds_store)$|^~\$|\.(?:tmp|lnk\.tmp)$", re.I)
+
+
+def _norm_path(p: str) -> str:
+    return os.path.normcase(os.path.normpath(str(p))) if p else ""
+
+
+def parse_shell_time(text: str) -> Optional[float]:
+    """'2026/‎11/‎28 ‏‎18:10' (Explorer text with invisible LRM/RLM marks) → epoch seconds (local time).  None when unparsable."""
+    s = re.sub(r"[\u200e\u200f\u202a-\u202e]", "", str(text or ""))
+    m = re.search(r"(\d{4})[/\-.年](\d{1,2})[/\-.月](\d{1,2})日?\s*(?:(\d{1,2}):(\d{2}))?", s)
+    if not m:
+        return None
+    try:
+        import datetime as _dt
+
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        h, mi = int(m.group(4) or 0), int(m.group(5) or 0)
+        return _dt.datetime(y, mo, d, h, mi).timestamp()
+    except (ValueError, OverflowError):
+        return None
+
+
+# ====================================================================================================================== object identity
+@dataclass(frozen=True)
+class WorldObjectRef:
+    """A frozen, cross-channel object reference (the WorldModel's `UnifiedObjectRef`; `to_unified()` bridges to unified_object.UnifiedObjectRef)."""
+    location: str                  # desktop | documents | downloads | recyclebin
+    name: str
+    path: str = ""                 # live: absolute path · recyclebin: ORIGINAL path
+    bin_path: str = ""             # recyclebin: backing `$R….ext`
+    deleted_text: str = ""
+    time_ts: Optional[float] = None
+    size: int = 0
+    is_dir: bool = False
+    ordinal: int = 0               # 0-based position in the container's listing at `epoch`
+    epoch: int = 0                 # snapshot epoch of the listing this ref was read from
+    observed_at: float = 0.0
+    source: str = ""
+    fingerprint: str = ""          # live: "size:mtime" — object changed ⇒ fingerprint changed
+    extra: dict = field(default_factory=dict, compare=False, hash=False)
+
+    @property
+    def identity(self) -> str:
+        if self.location == "recyclebin":
+            if self.bin_path:
+                return "bin:" + _norm_path(self.bin_path)
+            return f"bin:{unicodedata.normalize('NFKC', self.name).lower()}|{_norm_path(self.path)}|{self.deleted_text}|{self.size}"
+        return "fs:" + _norm_path(self.path)
+
+    def brief(self) -> str:
+        if self.location == "recyclebin":
+            return f"{self.name}（回收站#{self.ordinal + 1}；原位置 {self.path or '未知'}；{self.size}B；删除于 {self.deleted_text or '?'}）"
+        return f"{self.name}（{self.location}；{self.path}；{self.size}B）"
+
+    def to_unified(self) -> Any:
+        """Bridge to the v18.0 cross-modal identity (unified_object.UnifiedObjectRef) so GUI-route fallbacks share ONE identity vocabulary."""
+        from .unified_object import UnifiedObjectRef  # lazy: keeps this module dependency-free
+
+        return UnifiedObjectRef(object_id=self.identity, application_id="explorer.exe", window_id=0, snapshot_epoch=self.epoch, semantic_role="listitem",
+                                accessible_name=self.name, business_identity=self.identity, dom_identity="", uia_identity="", visual_bbox=(0, 0, 0, 0),
+                                coordinate_space="screen_physical", confidence=1.0, last_seen=self.observed_at, state={"location": self.location},
+                                action_role="target", sources=("shell_com" if self.location == "recyclebin" else "filesystem",))
+
+
+# ====================================================================================================================== providers (oracles)
+class LocationProvider(Protocol):
+    def list(self, location: str) -> list[WorldObjectRef]: ...  # ordered exactly as the user would count them
+
+
+class FileSystemProvider:
+    """Lists FILES of the authorized live folders.  Order = Explorer's default (name, case-insensitive).  Never recurses; never follows reparse points."""
+
+    def __init__(self, roots: dict[str, Path]) -> None:
+        self.roots = {k: Path(v) for k, v in roots.items()}
+
+    def list(self, location: str) -> list[WorldObjectRef]:
+        root = self.roots.get(location)
+        if root is None or not root.is_dir():
+            return []
+        out: list[WorldObjectRef] = []
+        try:
+            entries = sorted(root.iterdir(), key=lambda p: unicodedata.normalize("NFKC", p.name).casefold())
+        except OSError:
+            return []
+        for p in entries:
+            try:
+                if _SKIP_NAMES.search(p.name) or p.is_symlink():
+                    continue
+                st = p.stat()
+                out.append(WorldObjectRef(location=location, name=p.name, path=str(p), time_ts=st.st_mtime, size=int(st.st_size), is_dir=p.is_dir(),
+                                          ordinal=len(out), source="filesystem", fingerprint=f"{int(st.st_size)}:{int(st.st_mtime)}"))
+            except OSError:
+                continue
+        return out
+
+
+class RecycleBinProvider:
+    """Recycle Bin through a recycle_bin.ShellBackend (production: ComBackend → Shell.Application.NameSpace(10); tests: FakeBackend)."""
+
+    def __init__(self, backend: Any) -> None:
+        self.backend = backend
+
+    def list(self, location: str) -> list[WorldObjectRef]:
+        if location != "recyclebin":
+            return []
+        out: list[WorldObjectRef] = []
+        for i, it in enumerate(self.backend.list_items()):
+            out.append(WorldObjectRef(location="recyclebin", name=it.name, path=it.original, bin_path=it.bin_path, deleted_text=it.deleted, time_ts=parse_shell_time(it.deleted),
+                                      size=int(it.size or 0), is_dir=bool(it.is_dir), ordinal=i, source="shell_com", extra={"item": it}))
+        return out
+
+
+class CompositeProvider:
+    def __init__(self, fs: Optional[LocationProvider], bin_: Optional[LocationProvider]) -> None:
+        self.fs, self.bin = fs, bin_
+
+    def list(self, location: str) -> list[WorldObjectRef]:
+        p = self.bin if location == "recyclebin" else self.fs
+        return p.list(location) if p is not None else []
+
+
+# ====================================================================================================================== snapshots
+@dataclass(frozen=True)
+class ObservationSnapshot:
+    channel: str
+    epoch: int
+    ts: float
+    payload: Any = None
+    hwnd: int = 0
+    note: str = ""
+
+
+@dataclass
+class AuthorizedScope:
+    """Where the agent may LOOK for and ACT on user files without asking.  Everything else needs an explicit path in the task text."""
+    roots: dict[str, Path]
+    locations: tuple[str, ...] = ALL_LOCATIONS
+
+    def allows_location(self, loc: str) -> bool:
+        return loc in self.locations
+
+    def allows_path(self, p: str | Path) -> bool:
+        q = _norm_path(str(p))
+        return any(q == _norm_path(str(r)) or q.startswith(_norm_path(str(r)) + os.sep) for loc, r in self.roots.items() if loc in self.locations)
+
+
+@dataclass
+class SearchHit:
+    ref: WorldObjectRef
+    score: float
+
+
+@dataclass
+class SearchReport:
+    status: str                    # live_unique | live_ambiguous | bin_only | bin_ambiguous | suggest | none
+    hits: list[SearchHit] = field(default_factory=list)
+    by_location: dict[str, int] = field(default_factory=dict)
+    queried: list[str] = field(default_factory=list)
+    errors: dict[str, str] = field(default_factory=dict)
+    query: str = ""
+
+    def refs(self) -> list[WorldObjectRef]:
+        return [h.ref for h in self.hits]
+
+    def describe(self) -> str:
+        loc = "，".join(f"{k}:{v}" for k, v in self.by_location.items())
+        return f"检索「{self.query}」→ {self.status}（已查 {'/'.join(self.queried)}；命中 {loc or '0'}）"
+
+
+@dataclass
+class ConsistencyReport:
+    ok: bool
+    epochs: dict[str, int]
+    stale: list[str]
+    skew_s: float
+    conflicts: list[str]
+
+    def describe(self) -> str:
+        return f"WorldModel 一致性：{'✓' if self.ok else '✗'} epochs={self.epochs} 过期通道={self.stale or '无'} 通道时间偏差={self.skew_s:.2f}s" + (f" 冲突={self.conflicts}" if self.conflicts else "")
+
+
+# ====================================================================================================================== the model
+class WorldModel:
+    def __init__(self, provider: Optional[LocationProvider] = None, scope: Optional[AuthorizedScope] = None, clock: Callable[[], float] = time.time,
+                 ttl: Optional[dict[str, float]] = None) -> None:
+        self.provider = provider
+        self.scope = scope or AuthorizedScope({})
+        self.clock = clock
+        self.ttl = dict(DEFAULT_TTL_S, **(ttl or {}))
+        self._lock = threading.RLock()
+        self._epochs: dict[str, int] = {c: 0 for c in CHANNELS}
+        self._snaps: dict[str, ObservationSnapshot] = {}
+        self._objects: dict[str, tuple[int, list[WorldObjectRef]]] = {}   # location → (epoch, ordered refs)
+        self._loc_epoch: dict[str, int] = {}
+        self.world_version = 0       # bumps on every committed mutation (note_mutation) — a cheap "anything changed?" counter
+        self.stats = {"submits": 0, "refreshes": 0, "rebases": 0, "stale_refs": 0, "searches": 0}
+
+    # ---------------------------------------------------------------- write side (perception + Layer-0 tools only)
+    def submit(self, channel: str, payload: Any = None, *, epoch: Optional[int] = None, hwnd: int = 0, note: str = "", ts: Optional[float] = None) -> ObservationSnapshot:
+        with self._lock:
+            if channel not in self._epochs:
+                self._epochs[channel] = 0
+            if epoch is None:
+                epoch = self._epochs[channel] + 1
+            if epoch < self._epochs[channel]:   # out-of-order / replayed snapshot: never move truth backwards
+                return self._snaps.get(channel) or ObservationSnapshot(channel, self._epochs[channel], self.clock(), None)
+            self._epochs[channel] = int(epoch)
+            snap = ObservationSnapshot(channel, int(epoch), self.clock() if ts is None else ts, payload, int(hwnd or 0), note)
+            self._snaps[channel] = snap
+            self.stats["submits"] += 1
+            return snap
+
+    def submit_observation(self, obs: Any) -> Optional[ObservationSnapshot]:
+        """Accept the existing protocol.Observation (duck-typed: channel / snapshot_epoch / hwnd / elements / windows / title)."""
+        if obs is None:
+            return None
+        ch = {"dxgi_vision": "dxgi_dml", "jab": "uia"}.get(str(getattr(obs, "channel", "") or ""), str(getattr(obs, "channel", "") or "uia"))
+        snap = self.submit(ch, {"title": getattr(obs, "title", ""), "url": getattr(obs, "url", ""), "n_elements": len(getattr(obs, "elements", []) or [])},
+                           epoch=int(getattr(obs, "snapshot_epoch", 0) or 0) or None, hwnd=int(getattr(obs, "hwnd", 0) or 0))
+        wins = getattr(obs, "windows", None)
+        if wins:
+            self.submit("window_manager", [{"hwnd": getattr(w, "hwnd", 0), "title": getattr(w, "title", ""), "pid": getattr(w, "pid", 0), "z": getattr(w, "z", 0)} for w in wins])
+        return snap
+
+    def note_mutation(self) -> int:
+        with self._lock:
+            self.world_version += 1
+            return self.world_version
+
+    def refresh(self, location: str) -> list[WorldObjectRef]:
+        """Read the container from its provider, stamp every object with a fresh epoch, publish the snapshot."""
+        if self.provider is None or not self.scope.allows_location(location):
+            return []
+        objs = self.provider.list(location)
+        with self._lock:
+            ch = _LOC_CHANNEL.get(location, "filesystem")
+            snap = self.submit(ch, [o.identity for o in objs], note=location)
+            now = self.clock()
+            stamped = [WorldObjectRef(**{**o.__dict__, "epoch": snap.epoch, "observed_at": now, "ordinal": i}) for i, o in enumerate(objs)]
+            self._objects[location] = (snap.epoch, stamped)
+            self._loc_epoch[location] = snap.epoch
+            self.stats["refreshes"] += 1
+            return list(stamped)
+
+    # ---------------------------------------------------------------- read side
+    def view(self) -> "WorldView":
+        return WorldView(self)
+
+    def epoch(self, channel: str) -> int:
+        return self._epochs.get(channel, 0)
+
+    def location_epoch(self, location: str) -> int:
+        return self._loc_epoch.get(location, 0)
+
+    def latest(self, channel: str) -> Optional[ObservationSnapshot]:
+        return self._snaps.get(channel)
+
+    def age(self, channel: str) -> float:
+        s = self._snaps.get(channel)
+        return float("inf") if s is None else max(0.0, self.clock() - s.ts)
+
+    def is_fresh(self, channel: str, max_age: Optional[float] = None) -> bool:
+        return self.age(channel) <= (self.ttl.get(channel, 2.0) if max_age is None else max_age)
+
+    def objects(self, location: str, *, fresh: bool = True) -> list[WorldObjectRef]:
+        """Ordered listing of one container.  `fresh=True` re-reads when the cached snapshot is older than its TTL (or missing)."""
+        ent = self._objects.get(location)
+        if ent is None or (fresh and not self.is_fresh(_LOC_CHANNEL.get(location, "filesystem"))):
+            return self.refresh(location)
+        return list(ent[1])
+
+    def identity_set(self, location: str, *, force: bool = True) -> set[str]:
+        return {o.identity for o in (self.refresh(location) if force else self.objects(location))}
+
+    def resolve_current(self, ref: WorldObjectRef, *, force: bool = True) -> Optional[WorldObjectRef]:
+        """Re-base a frozen ref onto the CURRENT listing by identity (epoch-bump self-heal).  None ⇒ the object is gone (or changed identity)."""
+        cur = self.refresh(ref.location) if force else self.objects(ref.location)
+        for o in cur:
+            if o.identity == ref.identity:
+                if o.epoch != ref.epoch:
+                    self.stats["rebases"] += 1
+                return o
+        self.stats["stale_refs"] += 1
+        return None
+
+    def check_ref(self, ref: WorldObjectRef) -> tuple[bool, str, str]:
+        """Precondition for an action on `ref` → (ok, code, detail).  Distinguishes 'gone' (NOT_FOUND) from 'same name, different object' (OBJECT_IDENTITY_MISMATCH)
+        and from 'object content changed since it was frozen' (STALE_EPOCH)."""
+        cur = self.resolve_current(ref)
+        if cur is None:
+            twin = [o for o in self.objects(ref.location, fresh=False) if o.name == ref.name]
+            if twin:
+                return False, "OBJECT_IDENTITY_MISMATCH", f"同名对象「{ref.name}」仍在，但已不是被冻结的那一个（身份 {ref.identity} 已不存在）"
+            return False, "NOT_FOUND", f"{ref.brief()} 已不在 {ref.location}"
+        if ref.fingerprint and cur.fingerprint and ref.fingerprint != cur.fingerprint:
+            return False, "STALE_EPOCH", f"对象内容在冻结后发生变化（{ref.fingerprint} → {cur.fingerprint}）"
+        return True, "OK", "身份与状态一致"
+
+    # ---------------------------------------------------------------- cross-location search
+    def search(self, query: str, scope: Optional[Sequence[str]] = None, *, min_score: float = 0.99) -> SearchReport:
+        """Locate a named target across the AUTHORIZED scope.  Live locations always win over the Recycle Bin (a live copy is the thing the user means)."""
+        from .skills import recycle_bin as rb
+
+        self.stats["searches"] += 1
+        q = rb.clean_reference(query)
+        rep = SearchReport("none", query=q)
+        if not q or q in rb.GENERIC:
+            return rep
+        locs = [l for l in (scope or ALL_LOCATIONS) if self.scope.allows_location(l)]
+        near: list[SearchHit] = []
+        live: list[SearchHit] = []
+        binh: list[SearchHit] = []
+        for loc in locs:
+            rep.queried.append(loc)
+            try:
+                objs = self.refresh(loc)
+            except Exception as e:  # noqa: BLE001  one broken oracle must not blind the others
+                rep.errors[loc] = f"{e.__class__.__name__}: {str(e)[:80]}"
+                continue
+            n = 0
+            for o in objs:
+                if o.is_dir:
+                    continue
+                s = rb._score(q, o.name)
+                if s >= min_score:
+                    (binh if loc == "recyclebin" else live).append(SearchHit(o, s))
+                    n += 1
+                elif s >= 0.86:
+                    near.append(SearchHit(o, s))
+            rep.by_location[loc] = n
+        if live:
+            top = max(h.score for h in live)
+            tied = [h for h in live if abs(h.score - top) < 0.02]
+            rep.hits = tied
+            rep.status = "live_unique" if len(tied) == 1 else "live_ambiguous"
+        elif binh:
+            top = max(h.score for h in binh)
+            tied = [h for h in binh if abs(h.score - top) < 0.02]
+            rep.hits = tied
+            rep.status = "bin_only" if len(tied) == 1 else "bin_ambiguous"
+        elif near:
+            rep.hits = sorted(near, key=lambda h: -h.score)[:5]
+            rep.status = "suggest"
+        return rep
+
+    # ---------------------------------------------------------------- consistency
+    def consistency(self, channels: Iterable[str] = ("uia", "cdp", "window_manager", "filesystem", "shell_com")) -> ConsistencyReport:
+        used = [c for c in channels if c in self._snaps]
+        stale = [c for c in used if not self.is_fresh(c)]
+        ts = [self._snaps[c].ts for c in used]
+        skew = (max(ts) - min(ts)) if len(ts) > 1 else 0.0
+        conflicts: list[str] = []
+        loc_ids = {l: {o.identity for o in objs} for l, (_, objs) in self._objects.items()}
+        for a in LIVE_LOCATIONS:
+            for b in ("recyclebin",):
+                both = {i.split(":", 1)[1] for i in loc_ids.get(a, set())} & {i.split(":", 1)[1] for i in loc_ids.get(b, set())}
+                if both:
+                    conflicts.append(f"{a} 与 {b} 同时包含 {sorted(both)[:2]}")
+        return ConsistencyReport(not stale and not conflicts, {c: self._epochs.get(c, 0) for c in used}, stale, skew, conflicts)
+
+
+class WorldView:
+    """Read-only facade handed to planners / verifiers / selectors.  No submit(), no refresh(), no mutation."""
+
+    def __init__(self, model: WorldModel) -> None:
+        self._m = model
+
+    objects = property(lambda self: self._m.objects)
+    latest = property(lambda self: self._m.latest)
+    epoch = property(lambda self: self._m.epoch)
+    location_epoch = property(lambda self: self._m.location_epoch)
+    is_fresh = property(lambda self: self._m.is_fresh)
+    resolve_current = property(lambda self: self._m.resolve_current)
+    identity_set = property(lambda self: self._m.identity_set)
+    search = property(lambda self: self._m.search)
+    consistency = property(lambda self: self._m.consistency)
+    check_ref = property(lambda self: self._m.check_ref)
+
+    @property
+    def world_version(self) -> int:
+        return self._m.world_version
+'@
+
+Add-DscuFile 'agent_brain/goal_engine.py' '92e6a5487bc11c0d2ebcc4989b2cceb7def9086c023f8e64b5e2f48238292607' @'
+"""
+v18.1 Goal & Constraint Engine — the ONLY authority on "what was asked" and "is it finished".
+
+Why (运行日志 8388968, 任务 #2):  “删除回收站前面两个” was parsed by the v17 regex as *a file called「前面两个」*  (positional/quantity words were
+treated as a name).  The fix is architectural, not another regex patch:
+
+    natural language ──compile──▶ GoalSpec( verb · container · CompositeSelector[ by_name | by_ordinal | by_attribute ] · constraints )
+    WorldModel.list(container) ──resolve_selection──▶ Selection( frozen WorldObjectRef set )       (enumerate FIRST, then apply ordinals)
+    every committed action     ──recompute_remaining_work──▶ RemainingWork( done · remaining · vanished )   (partial success → exact resume)
+
+Hard rules enforced here (and by tests/test_v18_1_core_loop.py + tests/golden/ordinal_cases.json):
+  * an ordinal / quantity phrase can NEVER become a file name (name residue is computed AFTER attribute+ordinal spans are removed);
+  * ordinals are applied to the ordered object list of the *target container* and frozen into identities BEFORE the first mutation, so deleting
+    item #1 can never shift “前面两个” onto a different pair;
+  * irreversible intent (permanent delete) is only ever *authorized* by explicit task text (回收站里…删除 / 永久 / 彻底), never inferred.
+
+Pure Python (no Windows / pydantic dependency) → unit-testable on any OS.
+"""
+from __future__ import annotations
+
+import hashlib
+import re
+import unicodedata
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from typing import Any, Iterable, Optional, Sequence
+
+from .skills import recycle_bin as _rb
+from .world_model import ALL_LOCATIONS, WorldObjectRef
+
+# ====================================================================================================================== numerals
+_CN = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "俩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_NUM = r"(?:\d+|[零〇一二两俩三四五六七八九十百]+)"
+_CL = r"(?:个文件|个项目|个|条|项|封|份|张|只|件|篇|行)?"
+
+
+def cn_to_int(s: str) -> Optional[int]:
+    """'3'→3 · '两'→2 · '十'→10 · '十二'→12 · '二十三'→23 · '一百零五'→105.  None when not a number."""
+    s = unicodedata.normalize("NFKC", str(s or "")).strip()
+    if not s:
+        return None
+    if s.isdigit():
+        return int(s)
+    total, cur, seen = 0, 0, False
+    for ch in s:
+        if ch in _CN:
+            cur, seen = _CN[ch], True
+        elif ch == "十":
+            total += (cur or 1) * 10
+            cur, seen = 0, True
+        elif ch == "百":
+            total += (cur or 1) * 100
+            cur, seen = 0, True
+        else:
+            return None
+    return (total + cur) if seen else None
+
+
+# ====================================================================================================================== selectors
+@dataclass(frozen=True)
+class OrdinalPart:
+    """One positional reference.  kind ∈ head | tail | index | range."""
+    kind: str
+    n: int = 0                       # head/tail count
+    index: Optional[int] = None      # 0-based (first = 0); with from_end=True it counts from the end (last = 0)
+    end_index: Optional[int] = None  # inclusive, for range
+    from_end: bool = False
+    order: str = "listing"           # listing | newest | oldest
+
+    def describe(self) -> str:
+        o = "" if self.order == "listing" else f",order={self.order}"
+        if self.kind == "head":
+            return f"head={self.n}{o}"
+        if self.kind == "tail":
+            return f"tail={self.n}{o}"
+        if self.kind == "index":
+            return f"index={'-' if self.from_end else ''}{self.index}{o}"
+        return f"range={self.index}..{self.end_index}{o}"
+
+    def pick(self, seq: Sequence[Any]) -> list[int]:
+        n = len(seq)
+        if self.kind == "head":
+            return list(range(min(self.n, n)))
+        if self.kind == "tail":
+            return list(range(max(0, n - self.n), n))
+        if self.kind == "index":
+            i = (n - 1 - int(self.index or 0)) if self.from_end else int(self.index or 0)
+            return [i] if 0 <= i < n else []
+        a, b = int(self.index or 0), int(self.end_index if self.end_index is not None else self.index or 0)
+        return [i for i in range(a, b + 1) if 0 <= i < n]
+
+    def requested(self) -> int:
+        if self.kind in ("head", "tail"):
+            return self.n
+        if self.kind == "range":
+            return int((self.end_index or 0) - (self.index or 0) + 1)
+        return 1
+
+
+@dataclass(frozen=True)
+class NameSelector:
+    text: str
+    exact: bool = False  # the user typed an explicit extension
+
+    def score(self, name: str) -> float:
+        return _rb._score(self.text, name)
+
+
+@dataclass(frozen=True)
+class AttributeSelector:
+    ext: str = ""
+    sender: str = ""
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None  # inclusive
+
+    def empty(self) -> bool:
+        return not (self.ext or self.sender or self.date_from or self.date_to)
+
+    def describe(self) -> str:
+        bits = []
+        if self.ext:
+            bits.append(f"ext=.{self.ext}")
+        if self.sender:
+            bits.append(f"sender={self.sender}")
+        if self.date_from:
+            bits.append(f"from={self.date_from}")
+        if self.date_to:
+            bits.append(f"to={self.date_to}")
+        return ",".join(bits)
+
+    def matches(self, ref: WorldObjectRef) -> bool:
+        if self.ext and not ref.name.lower().endswith("." + self.ext.lower()):
+            return False
+        if self.sender and self.sender.lower() not in str(ref.extra.get("sender", "")).lower():
+            return False
+        if self.date_from or self.date_to:
+            if not ref.time_ts:
+                return False
+            d = datetime.fromtimestamp(ref.time_ts).date()
+            if (self.date_from and d < self.date_from) or (self.date_to and d > self.date_to):
+                return False
+        return True
+
+
+@dataclass(frozen=True)
+class CompositeSelector:
+    by_name: Optional[NameSelector] = None
+    by_ordinal: tuple[OrdinalPart, ...] = ()
+    by_attribute: Optional[AttributeSelector] = None
+    select_all: bool = False
+
+    def describe(self) -> str:
+        parts = []
+        if self.by_name:
+            parts.append(f"by_name({self.by_name.text!r}{',exact' if self.by_name.exact else ''})")
+        if self.by_ordinal:
+            parts.append("by_ordinal(" + "+".join(o.describe() for o in self.by_ordinal) + ")")
+        if self.by_attribute and not self.by_attribute.empty():
+            parts.append(f"by_attribute({self.by_attribute.describe()})")
+        if self.select_all:
+            parts.append("select_all")
+        return " ∧ ".join(parts) or "（无选择器）"
+
+
+# ====================================================================================================================== ordinal parser
+def _num_ok(n: str, cl: str) -> Optional[int]:
+    """Chinese numerals need a classifier (前面两个 ✓ / 前面三 ✗ — never eats a real name); Arabic digits don't."""
+    v = cn_to_int(n)
+    if v is None or v <= 0:
+        return None
+    if not n.isdigit() and not cl:
+        return None
+    return v
+
+
+def _sub_all(rx: "re.Pattern[str]", text: str, handler: Any) -> str:
+    out, last = [], 0
+    for m in rx.finditer(text):
+        if not handler(m):
+            continue
+        out.append(text[last:m.start()])
+        out.append(" ")
+        last = m.end()
+    out.append(text[last:])
+    return "".join(out)
+
+
+def parse_ordinals(text: str) -> tuple[list[OrdinalPart], str, bool]:
+    """Extract positional references → (parts, text with those spans removed, select_all)."""
+    t = unicodedata.normalize("NFKC", text)
+    parts: list[OrdinalPart] = []
+
+    def add(p: OrdinalPart) -> bool:
+        parts.append(p)
+        return True
+
+    def h_last_idx(m: "re.Match[str]") -> bool:
+        v = _num_ok(m.group(1), m.group(2) or "个")
+        return add(OrdinalPart("index", index=v - 1, from_end=True)) if v else False
+
+    t = _sub_all(re.compile(rf"倒数第\s*({_NUM})\s*({_CL})"), t, h_last_idx)
+
+    def h_range(m: "re.Match[str]") -> bool:
+        a, b = _num_ok(m.group(1), "个"), _num_ok(m.group(2), m.group(3) or "个")
+        if not a or not b:
+            return False
+        lo, hi = sorted((a, b))
+        return add(OrdinalPart("range", index=lo - 1, end_index=hi - 1))
+
+    t = _sub_all(re.compile(rf"第\s*({_NUM})\s*(?:到|至|~|-|—|–)\s*第?\s*({_NUM})\s*({_CL})"), t, h_range)
+
+    def h_idx(m: "re.Match[str]") -> bool:
+        first = _num_ok(m.group(1), m.group(2) or "个")
+        if not first:
+            return False
+        add(OrdinalPart("index", index=first - 1))
+        for x in re.findall(_NUM, m.group(3) or ""):
+            v = _num_ok(x, "个")
+            if v:
+                add(OrdinalPart("index", index=v - 1))
+        return True
+
+    t = _sub_all(re.compile(rf"第\s*({_NUM})\s*({_CL})((?:\s*(?:、|,|，|和|及|与|跟|还有)\s*第?\s*{_NUM}\s*{_CL})*)"), t, h_idx)
+    for words, order in (("最新|最近|最晚", "newest"), ("最早|最旧|最老", "oldest")):
+        def h_t(m: "re.Match[str]", order: str = order) -> bool:
+            v = _num_ok(m.group(1), m.group(2))
+            return add(OrdinalPart("head", n=v, order=order)) if v else False
+
+        t = _sub_all(re.compile(rf"(?:{words})(?:的)?\s*({_NUM})\s*({_CL})"), t, h_t)
+
+    def h_tail(m: "re.Match[str]") -> bool:
+        v = _num_ok(m.group(1), m.group(2))
+        return add(OrdinalPart("tail", n=v)) if v else False
+
+    t = _sub_all(re.compile(rf"(?:最后面|最后|最末尾|最末|末尾|结尾|最底下|最下面|底部|后面|后)(?:的)?\s*({_NUM})\s*({_CL})"), t, h_tail)
+
+    def h_head(m: "re.Match[str]") -> bool:
+        v = _num_ok(m.group(1), m.group(2))
+        return add(OrdinalPart("head", n=v)) if v else False
+
+    t = _sub_all(re.compile(rf"(?:最前面|最前|前面|开头|最上面|最上|上面|顶部|头|前)(?:的)?\s*({_NUM})\s*({_CL})"), t, h_head)
+    # bare "最新的文件 / 最早的一个" (no count) → head=1 in that time order
+    for words, order in (("最新|最近|最晚", "newest"), ("最早|最旧|最老", "oldest")):
+        def h_b(m: "re.Match[str]", order: str = order) -> bool:
+            return add(OrdinalPart("head", n=1, order=order))
+
+        t = _sub_all(re.compile(rf"(?:{words})(?:的)?(?=文件|一个|一份|一条|$|\s)"), t, h_b)
+    sel_all = bool(re.search(r"全部|所有|整个列表|每一个|每个", t))
+    if sel_all:
+        t = re.sub(r"全部|所有|整个列表|每一个|每个", " ", t)
+    return parts, t, sel_all
+
+
+# ====================================================================================================================== attributes
+_EXTS = r"txt|pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|bmp|webp|zip|rar|7z|msix|msi|exe|mp[34]|mkv|avi|mov|csv|json|xml|md|log|py|js|ts|ini|bak|tmp|iso|apk"
+_DATE_WORDS = (("今天", 0), ("今日", 0), ("昨天", 1), ("昨日", 1), ("前天", 2))
+
+
+def parse_attributes(text: str, today: Optional[date] = None) -> tuple[AttributeSelector, str]:
+    t = unicodedata.normalize("NFKC", text)
+    today = today or date.today()
+    ext = sender = ""
+    d_from: Optional[date] = None
+    d_to: Optional[date] = None
+    # extension: a bare ".txt" token, or "txt文件/txt格式".  (A real name such as 相机.txt / readme.txt is left in the name selector.)
+    m = re.search(rf"(?:(?:^|\s)\.({_EXTS})\b|(?<![A-Za-z0-9.])({_EXTS})\s*(?:格式|类型)?(?:的)?\s*(?:文件|文档))", t, re.I)
+    if m:
+        ext = (m.group(1) or m.group(2)).lower()
+        t = t[:m.start()] + " " + t[m.end():]
+    m = re.search(r"(?:来自|发件人(?:是|为)?)\s*([^\s的，,。]+?)\s*(?:发来的|的)", t)
+    if m:
+        sender = m.group(1)
+        t = t[:m.start()] + " " + t[m.end():]
+    hit = False
+    for w, back in _DATE_WORDS:
+        if w in t:
+            d_from = d_to = today - timedelta(days=back)
+            t = t.replace(w, " ")
+            hit = True
+            break
+    if not hit:
+        m = re.search(rf"最近\s*({_NUM})\s*(天|日|周|小时)", t)
+        if m:
+            k = cn_to_int(m.group(1)) or 1
+            days = 1 if m.group(2) == "小时" else k * (7 if m.group(2) == "周" else 1)
+            d_from, d_to = today - timedelta(days=days), today
+            t = t[:m.start()] + " " + t[m.end():]
+    return AttributeSelector(ext=ext, sender=sender, date_from=d_from, date_to=d_to), t
+
+
+# ====================================================================================================================== GoalSpec
+_DEL = r"(?:永久删除|彻底删除|彻底清除|永久清除|删除掉|删除|删掉|移除|清除|干掉|delete|remove|erase)"
+_RESTORE = r"(?:还原|恢复|restore|undelete)"
+_RECYCLE_VERB = r"(?:移到|移入|放进|放入|扔进|扔到|丢进|丢到|拖到)回收站"
+_IN_BIN = r"回收站(?:里面|里边|里|中|内)?"
+_OPEN_BIN_TAIL = re.compile(r"[，,、]?\s*(?:并|然后|再|接着)?(?:把|将)?\s*(?:打开|显示|进入)(?:一下)?回收站.*$")
+_NOT_FILE_CTX = re.compile(r"邮件|邮箱|e-?mail|gmail|网页|网站|标签页|浏览器|微信|消息|聊天|选中的|所选|文字|文本框|段落|图层|画布|评论|对话", re.I)
+_FOLDERS = {"桌面": "desktop", "文档": "documents", "下载": "downloads"}
+_LOCATIVE = re.compile(r"(?:桌面|文档|下载)(?:文件夹)?(?:上的|里面的|里的|中的|内的|上|里面|里边|里|中|内)")
+_LEAD = re.compile(r"^(?:把|将|从|在|对|帮我|请|你先|你再|直接|一下|立即|马上|彻底|永久|的|(?:先|再|并|然后)(?=把|将|从|在|对))+")
+_CONNECTORS = {"和", "及", "与", "跟", "还有", "以及", "并", "并且", "先", "再", "然后", "还", "也"}
+_TAIL = re.compile(r"(?:一下|吧|掉|的)+$")
+
+BROAD_THRESHOLD = 5  # irreversible selections larger than this (or select_all) need an explicit human confirmation under DSCU_IRREVERSIBLE_CONFIRM=auto
+
+
+@dataclass(frozen=True)
+class GoalSpec:
+    raw_task: str
+    verb: str                         # delete | restore
+    container: str                    # auto | recyclebin | desktop | documents | downloads
+    selector: CompositeSelector
+    permanent: bool = False           # the object must not survive in the Recycle Bin either
+    authorized_irreversible: bool = False
+    open_bin_after: bool = False
+    folder_hint: str = ""
+
+    @property
+    def goal_id(self) -> str:
+        return hashlib.sha256(f"{self.raw_task}|{self.verb}|{self.container}".encode()).hexdigest()[:12]
+
+    @property
+    def scope(self) -> tuple[str, ...]:
+        return ALL_LOCATIONS if self.container == "auto" else (self.container,)
+
+    @property
+    def irreversible(self) -> bool:
+        return self.verb == "delete" and (self.permanent or self.container == "recyclebin")
+
+    @property
+    def kind(self) -> str:
+        """Name of the v17 Layer-0 intent this goal supersedes (back-compat for logs/tests)."""
+        if self.verb == "restore":
+            return "bin_restore"
+        return "bin_remove" if self.container == "recyclebin" else "file_delete"
+
+    def describe(self) -> str:
+        risk = ("不可逆·已由任务原文明确授权" if self.authorized_irreversible else "不可逆·未授权") if self.irreversible else "可恢复"
+        return f"verb={self.verb} · container={self.container} · selector={self.selector.describe()} · {risk}" + (" · permanent" if self.permanent else "") + (" · +打开回收站" if self.open_bin_after else "")
+
+    def completion_criteria(self) -> list[str]:
+        if self.verb == "restore":
+            return ["选中对象不再出现在回收站", "对象存在于其原位置"]
+        if self.container == "recyclebin" or self.permanent:
+            return ["选中对象不再出现在回收站", "后备存储($R/$I)已消失", "回收站计数恰好减少所选个数", "回收站内其它对象身份集合不变"]
+        return ["所选对象不再存在于授权作用域(桌面/文档/下载)", "对象已进入回收站（身份与原路径吻合）或本来就已处于已删除状态"]
+
+
+def _name_residue(rest: str, verb: str) -> str:
+    s = re.sub(_IN_BIN, " ", rest)
+    s = re.sub(_RECYCLE_VERB, " ", s)
+    s = re.sub(_DEL if verb == "delete" else _RESTORE, " ", s)
+    s = _LOCATIVE.sub(" ", s)
+    s = re.sub(r"[，,。；;！!？?、]+", " ", s)
+    toks = []
+    for tok in s.split():
+        tok = _LEAD.sub("", tok)
+        tok = _TAIL.sub("", tok)
+        for fw in _FOLDERS:  # bare '桌面相机' → 相机 (never '文档.txt' → '.txt')
+            if tok.startswith(fw) and len(tok) > len(fw) and not tok[len(fw):].startswith("."):
+                tok = tok[len(fw):]
+                break
+        if tok and tok not in _CONNECTORS:
+            toks.append(tok)
+    return _rb.clean_reference("".join(toks)) if toks else ""
+
+
+def compile_goal(task: str, today: Optional[date] = None) -> Optional[GoalSpec]:
+    """Natural language → GoalSpec.  None = not a file / Recycle-Bin goal (other routers or the LLM loop own it; pure 'open view' and 'empty bin' stay with their Layer 0)."""
+    t = unicodedata.normalize("NFKC", str(task or "")).strip()
+    if not t or _NOT_FILE_CTX.search(t):
+        return None
+    if re.search(r"清空|empty", t, re.I) and re.search(r"回收站|recycle", t, re.I):
+        return None
+    body = _OPEN_BIN_TAIL.sub("", t)
+    open_after = body != t and bool(re.search(_DEL, body))
+    is_restore = bool(re.search(_RESTORE, body))
+    is_delete = bool(re.search(_DEL, body)) or bool(re.search(_RECYCLE_VERB, body))
+    if is_restore == is_delete:   # neither verb, or conflicting verbs → refuse to guess
+        return None
+    verb = "restore" if is_restore else "delete"
+    folder = next((k for k in _FOLDERS if k in body), "")
+    in_bin = bool(re.search(_IN_BIN, body)) and not re.search(r"(?:桌面|文档|下载)(?:文件夹)?(?:上|里|中|内)", body) and not re.search(_RECYCLE_VERB, body)
+    container = "recyclebin" if (verb == "restore" or in_bin) else (_FOLDERS[folder] if folder else "auto")
+
+    attrs, rest = parse_attributes(body, today)          # dates / ext first (so “最近3天” is never an ordinal)
+    ords, rest, sel_all = parse_ordinals(rest)
+    name_txt = _name_residue(rest, verb)                  # AFTER spans are removed — task #2 root cause
+    name = None if (not name_txt or name_txt in _rb.GENERIC) else NameSelector(name_txt, bool(re.search(r"\.[a-z0-9]{1,6}$", name_txt)))
+    if name is None and not ords and not sel_all and attrs.empty():
+        return None
+    permanent_words = bool(re.search(r"永久|彻底", t))
+    permanent = verb == "delete" and (permanent_words or container == "recyclebin")
+    authorized = verb == "delete" and ((container == "recyclebin") or permanent_words)
+    return GoalSpec(raw_task=t, verb=verb, container=container, selector=CompositeSelector(name, tuple(ords), None if attrs.empty() else attrs, sel_all),
+                    permanent=permanent, authorized_irreversible=authorized, open_bin_after=open_after, folder_hint=folder)
+
+
+# ====================================================================================================================== selection resolution
+@dataclass
+class Selection:
+    status: str                       # ok | empty | ambiguous | suggest | short
+    refs: tuple[WorldObjectRef, ...] = ()
+    reason: str = ""
+    requested: int = 0
+    candidates_total: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "ok" and bool(self.refs)
+
+
+def _ordered(objs: list[WorldObjectRef], order: str) -> list[WorldObjectRef]:
+    if order == "newest":
+        return sorted(objs, key=lambda r: -(r.time_ts or 0.0))
+    if order == "oldest":
+        return sorted(objs, key=lambda r: (r.time_ts or 0.0))
+    return objs
+
+
+def resolve_selection(goal: GoalSpec, candidates: Sequence[WorldObjectRef]) -> Selection:
+    """CompositeSelector over the ORDERED list of ONE container: attribute filter → name filter → ordinal pick → frozen refs.
+    A name that is not an exact file name / stem is never auto-selected (suggest → needs_clarification)."""
+    sel = goal.selector
+    objs = [c for c in candidates if not c.is_dir]
+    total = len(objs)
+    if sel.by_attribute:
+        objs = [c for c in objs if sel.by_attribute.matches(c)]
+    if sel.by_name:
+        scored = sorted(((sel.by_name.score(c.name), i, c) for i, c in enumerate(objs)), key=lambda x: (-x[0], x[1]))
+        good = [x for x in scored if x[0] >= _rb.STRICT]
+        if not good:
+            near = [x[2] for x in scored if x[0] >= 0.86][:5]
+            if near:
+                return Selection("suggest", tuple(near), f"没有精确名为「{sel.by_name.text}」的对象", candidates_total=total)
+            return Selection("empty", (), f"容器中没有名为「{sel.by_name.text}」的对象", candidates_total=total)
+        top = good[0][0]
+        objs = [x[2] for x in sorted((x for x in good if abs(x[0] - top) < 0.02), key=lambda x: x[1])]
+        if not sel.by_ordinal and not sel.select_all and len(objs) > 1:
+            return Selection("ambiguous", tuple(objs), f"有 {len(objs)} 个同样匹配「{sel.by_name.text}」的对象", candidates_total=total)
+    if sel.by_ordinal:
+        chosen: dict[str, tuple[int, WorldObjectRef]] = {}
+        requested = 0
+        for part in sel.by_ordinal:
+            seq = _ordered(objs, part.order)
+            requested += part.requested()
+            for i in part.pick(seq):
+                chosen.setdefault(seq[i].identity, (objs.index(seq[i]), seq[i]))
+        pick = [r for _, r in sorted(chosen.values(), key=lambda x: x[0])]
+        if not pick:
+            return Selection("empty", (), f"序数 {'+'.join(p.describe() for p in sel.by_ordinal)} 在 {len(objs)} 个对象中没有命中", requested=requested, candidates_total=total)
+        if len(pick) < requested:
+            return Selection("short", tuple(pick), f"要求 {requested} 个，容器里只有 {len(objs)} 个可选对象", requested=requested, candidates_total=total)
+        return Selection("ok", tuple(pick), "", requested=requested, candidates_total=total)
+    if sel.select_all:
+        return Selection("ok", tuple(objs), "", requested=len(objs), candidates_total=total) if objs else Selection("empty", (), "容器为空", candidates_total=total)
+    if not objs:
+        return Selection("empty", (), "没有匹配对象", candidates_total=total)
+    return Selection("ok", (objs[0],), "", requested=1, candidates_total=total)
+
+
+# ====================================================================================================================== remaining work
+@dataclass
+class RemainingWork:
+    done: tuple[WorldObjectRef, ...] = ()       # committed by an Action Transaction (independent evidence recorded)
+    vanished: tuple[WorldObjectRef, ...] = ()   # gone from the container without our commit → goal-wise satisfied (user / earlier run did it)
+    remaining: tuple[WorldObjectRef, ...] = ()
+    total: int = 0
+
+    @property
+    def complete(self) -> bool:
+        return not self.remaining
+
+    def summary(self) -> str:
+        return (f"总计 {self.total} · 已完成 {len(self.done)} · 已被外部消除 {len(self.vanished)} · 剩余 {len(self.remaining)}"
+                + ("：" + "，".join(r.name for r in self.remaining[:6]) if self.remaining else ""))
+
+
+def recompute_remaining_work(goal: GoalSpec, frozen: Iterable[WorldObjectRef], current: Sequence[WorldObjectRef], committed: Iterable[str] = ()) -> RemainingWork:
+    """Call after EVERY action with the WorldModel's FRESH listing of the container.  Identity-based (never name/position-based):
+    a frozen object is finished when it is no longer listed in its container; committed identities are never re-executed (exact resume after partial success)."""
+    cur_ids = {c.identity for c in current}
+    com = set(committed)
+    done: list[WorldObjectRef] = []
+    vanished: list[WorldObjectRef] = []
+    remaining: list[WorldObjectRef] = []
+    frozen = list(frozen)
+    for r in frozen:
+        if r.identity in com:
+            done.append(r)
+        elif r.identity not in cur_ids:
+            vanished.append(r)
+        else:
+            remaining.append(r)
+    return RemainingWork(tuple(done), tuple(vanished), tuple(remaining), len(frozen))
+'@
+
+Add-DscuFile 'agent_brain/action_tx.py' '3b18b6d7c40727ed7a39b81fb813b43658e9f171f95be5546fc0627fef227472' @'
+"""
+v18.1 Action Transaction — every side effect is a strongly-typed 2-phase transaction.
+
+    PREPARE   : preconditions (object identity/epoch via WorldModel, foreground/HWND hooks) + authorization policy + idempotency check     → nothing has changed yet
+    COMMIT    : journal(prepared) → execute → journal(executed) → ExpectedWorldDelta + Postcondition oracle rows                          → committed | no_effect | failed
+    A transaction only reports `committed` when INDEPENDENT evidence proves the world changed exactly as declared (no collateral change).
+
+Key properties
+  * IdempotencyKey = sha256(goal_id | op | target identity) — a replay of an already-committed key never re-executes; for IRREVERSIBLE ops a replay whose oracle no longer holds is refused.
+  * Safety balance (用户授予最高权限，但不可逆操作仍须身份校验)：reversible work is never refused; irreversible work (permanent delete / send / pay) needs (a) explicit
+    authorization compiled from the task text, (b) the target identity ∈ the goal's frozen set, (c) a human confirmation only when the selection is broad (DSCU_IRREVERSIBLE_CONFIRM=auto|always|never).
+  * The system never "reaches completion" by altering the target or skipping a step: a failed oracle is `ACTION_NO_EFFECT`, not success.
+  * Append-only JSONL ledger (flush+fsync per phase) → crash forensics; complements the v16.2 WAL.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import re
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Optional
+
+from .world_model import WorldObjectRef
+
+Rows = list[dict[str, Any]]
+
+
+class TxStatus(str, Enum):
+    COMMITTED = "committed"
+    REPLAYED = "replayed"
+    PRECONDITION_FAILED = "precondition_failed"
+    DENIED = "denied"
+    DECLINED = "declined"
+    NO_EFFECT = "no_effect"
+    FAILED = "failed"
+
+
+class Reversibility(str, Enum):
+    REVERSIBLE = "reversible"
+    IRREVERSIBLE = "irreversible"
+
+
+def row(name: str, ok: bool, detail: str, *, evaluated: bool = True, source: str = "") -> dict[str, Any]:
+    """Same row shape as recycle_bin._row so Layer-0 oracles and transactions share one evidence vocabulary."""
+    return {"name": name, "ok": ok, "detail": detail, "kind": "tx", "evaluated": evaluated, "source": source}
+
+
+def idempotency_key(goal_id: str, op: str, target_identity: str) -> str:
+    return hashlib.sha256(f"{goal_id}|{op}|{target_identity}".encode()).hexdigest()[:24]
+
+
+@dataclass
+class Precondition:
+    name: str
+    check: Callable[[], tuple[bool, str, str]]   # → (ok, ErrorCode, detail)
+
+
+@dataclass
+class ExpectedWorldDelta:
+    """The declared change of ONE container: exactly `removed` identities leave, exactly `added` identities arrive, nothing else moves."""
+    container: str
+    snapshot: Callable[[], set[str]]
+    removed: frozenset = frozenset()
+    added: frozenset = frozenset()
+    allow_added: bool = True      # unrelated arrivals (another app dropping a file) must not turn a proven deletion into a failure; collateral REMOVALS always fail
+
+    def verify(self, before: set[str], after: set[str]) -> dict[str, Any]:
+        got_removed, got_added = before - after, after - before
+        ok = got_removed == set(self.removed) and (self.allow_added or got_added == set(self.added))
+        extra = (got_removed - set(self.removed)) | ((got_added - set(self.added)) if not self.allow_added else set())
+        miss = (set(self.removed) - got_removed) | (set(self.added) - got_added)
+        return row("world_delta_exact", ok, f"{self.container}: 预期 -{len(self.removed)}/+{len(self.added)}；实际 -{len(got_removed)}/+{len(got_added)}"
+                   + (f"；意外变化 {sorted(extra)[:2]}" if extra else "") + (f"；缺失变化 {sorted(miss)[:2]}" if miss else ""), source="WorldModel")
+
+
+@dataclass
+class ActionTransaction:
+    goal_id: str
+    op: str                                              # recycle_file | bin_purge | bin_restore | ...
+    target: Optional[WorldObjectRef]
+    execute: Callable[[], tuple[bool, str]]
+    reversibility: Reversibility = Reversibility.REVERSIBLE
+    preconditions: list[Precondition] = field(default_factory=list)
+    delta: Optional[ExpectedWorldDelta] = None
+    before: Optional[Callable[[], Any]] = None           # captured after PREPARE, handed to `postcondition`
+    postcondition: Optional[Callable[[Any], Rows]] = None
+    note: str = ""
+
+    @property
+    def key(self) -> str:
+        return idempotency_key(self.goal_id, self.op, self.target.identity if self.target else self.note)
+
+
+@dataclass
+class TxResult:
+    status: TxStatus
+    code: str = "OK"
+    message: str = ""
+    rows: Rows = field(default_factory=list)
+    key: str = ""
+    latency_ms: float = 0.0
+
+    @property
+    def ok(self) -> bool:
+        return self.status in (TxStatus.COMMITTED, TxStatus.REPLAYED)
+
+    def failed_rows(self) -> Rows:
+        return [r for r in self.rows if r.get("evaluated", True) and not r.get("ok")]
+
+
+# ====================================================================================================================== authorization
+@dataclass
+class AuthDecision:
+    kind: str          # allow | confirm | deny
+    code: str = "OK"
+    reason: str = ""
+
+
+class AuthorizationPolicy:
+    """Reversible → allow.  Irreversible → explicit text authorization ∧ identity ∈ frozen set ∧ (broad selection → human confirmation)."""
+
+    def __init__(self, mode: Optional[str] = None, broad_threshold: int = 5) -> None:
+        m = (mode or os.environ.get("DSCU_IRREVERSIBLE_CONFIRM", "auto")).strip().lower()
+        self.mode = m if m in ("auto", "always", "never") else "auto"
+        self.broad = broad_threshold
+
+    def decide(self, tx: ActionTransaction, *, authorized_text: bool, frozen_ids: set[str], selection_size: int, select_all: bool = False) -> AuthDecision:
+        if tx.reversibility is Reversibility.REVERSIBLE:
+            return AuthDecision("allow")
+        if not authorized_text:
+            return AuthDecision("deny", "SECURITY_DENIED", f"{tx.op} 不可逆，但任务原文没有明确授权（需要『回收站里…删除』/『永久』/『彻底』等明确措辞）")
+        if tx.target is None or tx.target.identity not in frozen_ids:
+            return AuthDecision("deny", "OBJECT_IDENTITY_MISMATCH", "目标对象不在本目标冻结的身份集合内，拒绝执行不可逆操作（绝不通过换目标来凑完成）")
+        if self.mode == "always" or (self.mode == "auto" and (select_all or selection_size > self.broad)):
+            return AuthDecision("confirm", "NEEDS_CONFIRMATION", f"不可逆操作涉及 {selection_size} 个对象{'（全选）' if select_all else ''}，需要人工确认一次")
+        return AuthDecision("allow")
+
+
+# ====================================================================================================================== ledger
+class TxLedger:
+    """Append-only journal; `committed(key)` powers idempotency.  File optional (tests use memory only)."""
+
+    def __init__(self, path: Optional[Path] = None) -> None:
+        self.path = Path(path) if path else None
+        self.mem: list[dict[str, Any]] = []
+        self._committed: dict[str, dict[str, Any]] = {}
+        if self.path and self.path.exists():
+            try:
+                for ln in self.path.read_text(encoding="utf-8").splitlines():
+                    r = json.loads(ln)
+                    if r.get("phase") == "committed":
+                        self._committed[r["key"]] = r
+            except (OSError, ValueError):
+                pass
+
+    def append(self, phase: str, tx: ActionTransaction, **kw: Any) -> None:
+        rec = {"t": round(time.time(), 3), "phase": phase, "key": tx.key, "goal": tx.goal_id, "op": tx.op, "target": tx.target.identity if tx.target else tx.note,
+               "rev": tx.reversibility.value, **kw}
+        self.mem.append(rec)
+        if phase == "committed":
+            self._committed[tx.key] = rec
+        if self.path:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+            except OSError:
+                pass
+
+    def committed(self, key: str) -> Optional[dict[str, Any]]:
+        return self._committed.get(key)
+
+    def committed_ids(self, goal_id: str) -> set[str]:
+        return {r["target"] for r in self._committed.values() if r.get("goal") == goal_id}
+
+
+ConfirmFn = Callable[[str], Awaitable[bool]]
+
+
+def _code_from_message(msg: str) -> str:
+    m = re.search(r"\[([A-Z_]{4,32})\]", msg or "")
+    return m.group(1) if m else "INTERNAL"
+
+
+class TxEngine:
+    def __init__(self, ledger: Optional[TxLedger] = None, policy: Optional[AuthorizationPolicy] = None, confirm: Optional[ConfirmFn] = None) -> None:
+        self.ledger = ledger or TxLedger()
+        self.policy = policy or AuthorizationPolicy()
+        self.confirm = confirm
+        self.confirmed_goals: set[str] = set()
+        self.stats = {"committed": 0, "replayed": 0, "precondition_failed": 0, "denied": 0, "declined": 0, "no_effect": 0, "failed": 0}
+
+    def _finish(self, tx: ActionTransaction, st: TxStatus, code: str, msg: str, rows: Rows, t0: float) -> TxResult:
+        self.stats[st.value] = self.stats.get(st.value, 0) + 1
+        self.ledger.append(st.value if st is not TxStatus.COMMITTED else "committed", tx, code=code, msg=msg[:200])
+        return TxResult(st, code, msg, rows, tx.key, (time.perf_counter() - t0) * 1000)
+
+    async def run(self, tx: ActionTransaction, *, authorized_text: bool = False, frozen_ids: Optional[set[str]] = None, selection_size: int = 1, select_all: bool = False) -> TxResult:
+        t0 = time.perf_counter()
+        # ---------------- idempotency
+        prev = self.ledger.committed(tx.key)
+        if prev is not None:
+            if tx.postcondition is not None:
+                try:
+                    rows = await asyncio.to_thread(tx.postcondition, None)
+                except Exception:  # noqa: BLE001
+                    rows = []
+                if rows and all(r["ok"] for r in rows if r.get("evaluated", True)):
+                    self.stats["replayed"] += 1
+                    return TxResult(TxStatus.REPLAYED, "OK", "幂等重放：该事务已提交且独立 Oracle 仍成立，不重复执行", rows, tx.key, 0.0)
+            if tx.reversibility is Reversibility.IRREVERSIBLE:
+                return self._finish(tx, TxStatus.DENIED, "IRREVERSIBLE_REPLAY", "不可逆事务已提交过，拒绝重放（防止重复删除/发送）", [], t0)
+        # ---------------- PREPARE
+        for pc in tx.preconditions:
+            ok, code, detail = await asyncio.to_thread(pc.check)
+            if not ok:
+                return self._finish(tx, TxStatus.PRECONDITION_FAILED, code, f"前置条件 {pc.name} 未满足：{detail}", [row(pc.name, False, detail, source="WorldModel")], t0)
+        dec = self.policy.decide(tx, authorized_text=authorized_text, frozen_ids=frozen_ids or set(), selection_size=selection_size, select_all=select_all)
+        if dec.kind == "deny":
+            return self._finish(tx, TxStatus.DENIED, dec.code, dec.reason, [row("authorization", False, dec.reason, source="AuthorizationPolicy")], t0)
+        if dec.kind == "confirm" and tx.goal_id not in self.confirmed_goals:
+            ok = bool(await self.confirm(dec.reason)) if self.confirm else False
+            if not ok:
+                return self._finish(tx, TxStatus.DECLINED, "USER_DECLINED", "用户未确认不可逆操作 → 不执行", [row("human_confirmation", False, dec.reason, source="HITL")], t0)
+            self.confirmed_goals.add(tx.goal_id)
+        ctx = await asyncio.to_thread(tx.before) if tx.before else None
+        ids_before = await asyncio.to_thread(tx.delta.snapshot) if tx.delta else None
+        self.ledger.append("prepared", tx)
+        # ---------------- COMMIT
+        try:
+            ok, msg = await asyncio.to_thread(tx.execute)
+        except Exception as e:  # noqa: BLE001
+            ok, msg = False, f"[INTERNAL] {e.__class__.__name__}: {str(e)[:160]}"
+        self.ledger.append("executed", tx, ok=ok, msg=str(msg)[:160])
+        rows: Rows = []
+        if tx.postcondition is not None:
+            try:
+                rows += await asyncio.to_thread(tx.postcondition, ctx)
+            except Exception as e:  # noqa: BLE001
+                rows.append(row("postcondition", False, f"oracle 异常 {e.__class__.__name__}: {str(e)[:100]}"))
+        if tx.delta is not None and ids_before is not None:
+            after = await asyncio.to_thread(tx.delta.snapshot)
+            rows.append(tx.delta.verify(ids_before, after))
+        bad = [r for r in rows if r.get("evaluated", True) and not r["ok"]]
+        if not ok:
+            code = _code_from_message(str(msg))
+            if not bad:   # executor said no but the world did change as declared → trust the oracle, report the discrepancy
+                return self._finish(tx, TxStatus.COMMITTED, "OK", f"执行器报告失败（{str(msg)[:80]}）但独立 Oracle 证明世界已按预期变化", rows, t0)
+            return self._finish(tx, TxStatus.FAILED, code, str(msg), rows, t0)
+        if bad:
+            return self._finish(tx, TxStatus.NO_EFFECT, "ACTION_NO_EFFECT", "动作执行成功但独立 Oracle 未证明世界变化：" + "；".join(f"{r['name']}:{str(r['detail'])[:60]}" for r in bad), rows, t0)
+        return self._finish(tx, TxStatus.COMMITTED, "OK", str(msg), rows, t0)
+'@
+
+Add-DscuFile 'agent_brain/recovery_planner.py' '0c54be55dda9037c957c52a30489bbea2abe8f891795ac60c1f4a3d74321ab86' @'
+"""
+v18.1 Alternative-Route Recovery Planner — replaces “4 consecutive no-progress steps → hand the task back to the user”.
+
+Log 8388968 task #3: `删除相机文件` → Desktop NOT_FOUND → the model tried a permanent Recycle-Bin delete → SECURITY_DENIED → no alternative existed in its head → 4 idle steps → paused_for_user.
+Now every task owns a RouteGraph; a failed edge is recorded as a structured BlockedEdge and the planner IMMEDIATELY selects the next LEGAL route:
+
+    file delete  : Layer0 Desktop/Documents/Downloads locate → recycle_file   ─┐  NOT_FOUND / SECURITY_DENIED / ACTION_NO_EFFECT
+                   Recycle-Bin COM locate → already-deleted evidence (or authorized controlled single-item purge)   ─┤  = BlockedEdge → next route
+                   controlled GUI (LLM loop with frozen identities + forbidden list + this directive)               ─┘
+    web          : API/CLI → CDP/MCP → UIA → DirectML+OCR+SoM
+
+Only two things end a task in a hand-back:  (1) a REAL blocker no route can pass (2FA / login wall / captcha / ambiguous destructive target / user declined),
+(2) every legal route is exhausted — and then the report lists every BlockedEdge with its structured reason.  Illegal routes (irreversible without explicit
+authorization) are never offered: the planner cannot "find a way" around the safety policy.
+"""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+REAL_BLOCKERS = {"AUTH_WALL", "TWO_FA", "CAPTCHA", "UAC_PROMPT", "USER_DECLINED", "NEEDS_CLARIFICATION", "AMBIGUOUS_TARGET", "OBJECT_IDENTITY_MISMATCH"}
+BLOCKING_CODES = {"SECURITY_DENIED", "NOT_FOUND", "ACTION_NO_EFFECT", "UNSUPPORTED", "INTERNAL", "TIMEOUT", "STALE_EPOCH", "OCCLUDED", "UIPI_DENIED", "FOREGROUND_FAILED"}
+
+
+@dataclass(frozen=True)
+class Route:
+    route_id: str
+    label: str
+    layer: int                     # 0 deterministic primitive · 1 API/CLI · 2 structured UI (CDP/UIA) · 3 vision / controlled GUI
+    kind: str                      # fs_recycle | bin_evidence | bin_purge | bin_restore | gui_controlled | api_cli | cdp_mcp | uia | dml_ocr_som
+    needs_auth: bool = False       # irreversible: only legal when the GoalSpec is explicitly authorized
+    llm: bool = False              # executed by the model loop (constrained by the directive) instead of a deterministic primitive
+    requires: str = ""             # fact name; planner skips the route (without blocking it) when facts[requires] is False
+
+
+@dataclass
+class BlockedEdge:
+    route_id: str
+    code: str
+    detail: str
+    ts: float = field(default_factory=time.time)
+
+    def render(self) -> str:
+        return f"{self.route_id}⇒{self.code}（{self.detail[:90]}）"
+
+
+@dataclass
+class Decision:
+    action: str                    # run | handoff
+    route: Optional[Route] = None
+    reason: str = ""
+    real_blocker: bool = False
+    human_message: str = ""
+
+
+class RouteGraph:
+    def __init__(self, routes: list[Route]) -> None:
+        self.routes = {r.route_id: r for r in routes}
+        self.order = [r.route_id for r in routes]
+
+    def successors(self, rid: str) -> list[str]:
+        i = self.order.index(rid) if rid in self.order else -1
+        return self.order[i + 1:]
+
+    @staticmethod
+    def for_goal(goal: Any) -> "RouteGraph":
+        fs = Route("fs_recycle", "Layer 0：桌面/文档/下载 定位 → recycle_file（可恢复）" + ("→ 受控单文件清理" if getattr(goal, "permanent", False) else ""), 0, "fs_recycle",
+                   needs_auth=bool(getattr(goal, "permanent", False)))
+        evid = Route("bin_evidence", "回收站 COM 定位 → 已处于删除状态的独立证据", 0, "bin_evidence")
+        purge = Route("bin_purge", "回收站 COM → 受控单对象清理（身份冻结·不可逆）", 0, "bin_purge", needs_auth=True)
+        restore = Route("bin_restore", "回收站 COM → 还原（undelete 动词）", 0, "bin_restore")
+        gui = Route("gui_controlled", "受控 GUI（模型循环：冻结身份 + 禁止列表 + 换路指令）", 3, "gui_controlled", llm=True)
+        gui_auth = Route("gui_controlled", gui.label, 3, "gui_controlled", needs_auth=True, llm=True)
+        verb, cont = getattr(goal, "verb", "delete"), getattr(goal, "container", "auto")
+        if verb == "restore":
+            return RouteGraph([restore, gui])
+        if cont == "recyclebin":
+            return RouteGraph([purge, gui_auth])
+        if getattr(goal, "permanent", False):
+            return RouteGraph([fs, purge, gui_auth])
+        return RouteGraph([fs, evid, gui])
+
+    @staticmethod
+    def for_web() -> "RouteGraph":
+        return RouteGraph([Route("api_cli", "API / CLI（确定性，无 GUI）", 1, "api_cli"), Route("cdp_mcp", "CDP / chrome-devtools-mcp（DOM 语义）", 2, "cdp_mcp"),
+                           Route("uia", "UIA 控件树", 2, "uia"), Route("dml_ocr_som", "DXGI + DirectML + OCR + SoM（视觉）", 3, "dml_ocr_som", llm=True)])
+
+
+def channel_of(action: dict[str, Any]) -> str:
+    """Which web-route a model action belongs to (for BlockedEdge attribution in the LLM loop)."""
+    n = str(action.get("action", ""))
+    if n in ("run_powershell", "cli_run", "gmail_api") or n.startswith("cli_"):
+        return "api_cli"
+    if n.startswith("cdp_") or n in ("scroll_to", "select_rows", "toolbar_action"):
+        return "cdp_mcp"
+    if n.startswith("uia_") or n in ("invoke", "set_value", "focus_window"):
+        return "uia"
+    return "dml_ocr_som"
+
+
+class RecoveryPlanner:
+    def __init__(self, goal: Any = None, graph: Optional[RouteGraph] = None, max_retries: int = 1, max_reroutes: int = 6) -> None:
+        self.goal = goal
+        self.graph = graph or (RouteGraph.for_goal(goal) if goal is not None else RouteGraph.for_web())
+        self.max_retries = max_retries
+        self.max_reroutes = max_reroutes
+        self.blocked: list[BlockedEdge] = []
+        self.attempted: list[str] = []
+        self.retries: dict[str, int] = {}
+        self.skipped: dict[str, str] = {}
+        self.reroutes = 0
+        self.handoffs = 0
+        self.current: Optional[str] = None
+
+    # ------------------------------------------------------------------ legality
+    def legal(self, r: Route) -> bool:
+        if r.needs_auth and not bool(getattr(self.goal, "authorized_irreversible", False)):
+            return False
+        return True
+
+    def blocked_ids(self) -> set[str]:
+        return {b.route_id for b in self.blocked}
+
+    # ------------------------------------------------------------------ decisions
+    def next_route(self, facts: Optional[dict[str, Optional[bool]]] = None) -> Decision:
+        facts = facts or {}
+        real = [b for b in self.blocked if b.code in REAL_BLOCKERS]
+        if real:
+            return self._handoff(f"真实阻塞：{real[-1].render()}", real=True)
+        if self.reroutes > self.max_reroutes:
+            return self._handoff(f"换路次数已达上限 {self.max_reroutes}")
+        blocked = self.blocked_ids()
+        for rid in self.graph.order:
+            r = self.graph.routes[rid]
+            if rid in blocked:
+                continue
+            if not self.legal(r):
+                self.skipped[rid] = "不合法：不可逆路线缺少任务原文的明确授权"
+                continue
+            if r.requires and facts.get(r.requires) is False:
+                self.skipped[rid] = f"不适用：{r.requires}=False"
+                continue
+            if rid in self.attempted and self.retries.get(rid, 0) > self.max_retries:
+                continue
+            if self.current is not None and rid != self.current:
+                self.reroutes += 1
+            self.current = rid
+            if rid not in self.attempted:
+                self.attempted.append(rid)
+            return Decision("run", r, f"{'重试' if self.retries.get(rid) else '选择'}路线 {rid}：{r.label}")
+        return self._handoff("所有合法替代路线已穷尽：" + "；".join(b.render() for b in self.blocked[-4:]) if self.blocked else "没有可用的合法路线")
+
+    def _handoff(self, why: str, real: bool = False) -> Decision:
+        self.handoffs += 1
+        return Decision("handoff", None, why, real, self.human_report(why))
+
+    def record(self, route_id: str, code: str, detail: str = "") -> Optional[BlockedEdge]:
+        """Record a failure on `route_id`.  ACTION_NO_EFFECT/TIMEOUT/STALE_EPOCH get ONE retry on the same route; everything else closes the edge immediately."""
+        if code in ("ACTION_NO_EFFECT", "TIMEOUT", "STALE_EPOCH") and self.retries.get(route_id, 0) < self.max_retries:
+            self.retries[route_id] = self.retries.get(route_id, 0) + 1
+            return None
+        edge = BlockedEdge(route_id, code, detail)
+        if route_id not in self.blocked_ids():
+            self.blocked.append(edge)
+        return edge
+
+    def block_if_new(self, route_id: str, code: str, detail: str = "") -> Optional[BlockedEdge]:
+        return None if route_id in self.blocked_ids() else self.record(route_id, code, detail)
+
+    # ------------------------------------------------------------------ reporting / LLM directive
+    def remaining_routes(self) -> list[Route]:
+        b = self.blocked_ids()
+        return [self.graph.routes[r] for r in self.graph.order if r not in b and self.legal(self.graph.routes[r])]
+
+    def human_report(self, why: str = "") -> str:
+        lines = [why] if why else []
+        if self.blocked:
+            lines.append("已关闭的路线：" + " | ".join(b.render() for b in self.blocked))
+        if self.skipped:
+            lines.append("未提供的路线：" + " | ".join(f"{k}（{v}）" for k, v in self.skipped.items()))
+        return "\n".join(lines)
+
+    def directive_text(self) -> str:
+        """Injected into the next model prompt: what is closed, what is still legal, and the exact next primitive to try."""
+        if not self.blocked and not self.remaining_routes():
+            return ""
+        rem = self.remaining_routes()
+        t = ["【自动换路 · Recovery Planner】"]
+        if self.blocked:
+            t.append("已关闭的路线（不要再尝试）：" + "；".join(b.render() for b in self.blocked))
+        if rem:
+            t.append("仍然合法的下一条路线：" + " → ".join(f"{r.route_id}（{r.label}）" for r in rem))
+            t.append("请立即改用上述第一条路线；不要重复已失败的原语，不要诊断命令空转；每次只做一件事并读回独立证据。")
+        else:
+            t.append("没有剩余合法路线：请 action=fail 并如实说明已尝试的路线与失败原因。")
+        return "\n".join(t)
+
+    def summary(self) -> str:
+        return f"路线 {'→'.join(self.attempted) or '-'} · BlockedEdge {len(self.blocked)} · 换路 {self.reroutes} · 交还人工 {self.handoffs}"
+'@
+
+Add-DscuFile 'agent_brain/core_loop.py' '46a39cea28a71dbc19ea9eefa9a9c1ed03511b6303b57606bb0861edad015fe0' @'
+"""
+v18.1 Core Control Loop (the thin glue that replaces layer0_v17's file/bin branches and the "4 idle steps → give up" reflex).
+
+    compile_goal(task) ─▶ GoalSpec ─▶ RecoveryPlanner(RouteGraph) ─▶ route executor ─▶ ActionTransaction(s) ─▶ WorldModel refresh ─▶ recompute_remaining_work ─▶ … ─▶ verdict
+                                         ▲                               │ BlockedEdge(NOT_FOUND | SECURITY_DENIED | ACTION_NO_EFFECT)
+                                         └───────────── next legal route ◀┘
+
+`CoreLoop.run(st)` returns (status, summary) when a deterministic route closed the task (completed_verified only with full independent evidence), or None to fall through to
+the model loop — in which case `take_directive()` carries the planner's blocked-edge / next-route directive and the frozen target identities into the next prompt.
+During the model loop `on_step_result()` records BlockedEdges and `on_budget_trip()` converts a "no progress" trip into an alternative route while a legal one remains.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+from . import action_tx as atx
+from .goal_engine import GoalSpec, RemainingWork, Selection, compile_goal, recompute_remaining_work, resolve_selection
+from .recovery_planner import Decision, RecoveryPlanner, RouteGraph, channel_of
+from .skills import recycle_bin as rb
+from .world_model import LIVE_LOCATIONS, AuthorizedScope, CompositeProvider, FileSystemProvider, RecycleBinProvider, WorldModel, WorldObjectRef
+
+Say = Callable[[str], None]
+
+
+# ====================================================================================================================== effectors (the only place that touches the OS)
+class SystemEffectors:
+    """Production effectors: Shell COM / SHFileOperation through the existing safe_shell + recycle_bin primitives."""
+
+    def __init__(self, backend: Optional[rb.ShellBackend] = None, workspace: Optional[Path] = None) -> None:
+        self.backend = backend or rb.ComBackend()
+        self.workspace = workspace
+
+    def recycle_file(self, path: Path) -> tuple[bool, str]:
+        from . import safe_shell
+
+        return safe_shell.recycle_file(path, (self.workspace,) if self.workspace else ())
+
+    def bin_count(self) -> Optional[int]:
+        from . import safe_shell
+
+        st = safe_shell.recycle_bin_status()
+        return int(st["count"]) if st.get("ok") and st.get("count") is not None else None
+
+    def wait_bin_count(self, expected: int, timeout: float = 6.0) -> Optional[int]:
+        from . import safe_shell
+
+        r = safe_shell.wait_recycle_count(expected, timeout)
+        return int(r["count"]) if r.get("count") is not None else None
+
+    def path_exists(self, p: Path) -> bool:
+        return Path(p).exists()
+
+
+# ====================================================================================================================== outcome of one route attempt
+@dataclass
+class RouteOutcome:
+    status: str                    # done | blocked | clarify | failed | partial
+    code: str = "OK"
+    detail: str = ""
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    summary: str = ""
+
+
+def _fmt(rows: list[dict[str, Any]], limit: int = 12) -> str:
+    return " ; ".join(f"{'✓' if r['ok'] else '✗'}{r['name']}({str(r['detail'])[:80]}{'' if r.get('evaluated', True) else ' · 未评估'})" for r in rows[:limit]) + (f" …(+{len(rows) - limit})" if len(rows) > limit else "")
+
+
+def _coverage(rows: list[dict[str, Any]]) -> str:
+    ev = [r for r in rows if r.get("evaluated", True)]
+    if not ev or not all(r["ok"] for r in ev):
+        return "none"
+    return "full" if len(ev) == len(rows) else "partial"
+
+
+class CoreLoop:
+    def __init__(self, orch: Any = None, world: Optional[WorldModel] = None, effectors: Any = None, ledger: Optional[atx.TxLedger] = None,
+                 open_view: Optional[Callable[..., Any]] = None, confirm: Optional[atx.ConfirmFn] = None, say: Optional[Say] = None) -> None:
+        self.orch = orch
+        self._say = say
+        self.world = world or self._default_world()
+        self.effectors = effectors
+        self.open_view = open_view
+        data_dir = getattr(getattr(orch, "cfg", None), "data_dir", None)
+        self.ledger = ledger or atx.TxLedger(Path(data_dir) / "tx_v181.jsonl" if data_dir else None)
+        self.engine = atx.TxEngine(self.ledger, atx.AuthorizationPolicy(), confirm or self._confirm)
+        self.goal: Optional[GoalSpec] = None
+        self.planner: Optional[RecoveryPlanner] = None
+        self.gui_planner = RecoveryPlanner(None, RouteGraph.for_web())
+        self.directive = ""
+        self.stats = {"goals": 0, "route_runs": 0, "blocked_edges": 0, "reroutes": 0, "handoffs": 0, "llm_fallthrough": 0, "budget_reroutes": 0, "ordinal_goals": 0}
+        self._consec_fail: dict[str, int] = {}
+        self._tried_channels: list[str] = []
+        self._budget_reroutes = 0
+        self._good: list[dict[str, Any]] = []
+
+    # ------------------------------------------------------------------ plumbing
+    @staticmethod
+    def _default_world() -> WorldModel:
+        try:
+            roots = rb.user_roots()
+        except Exception:  # noqa: BLE001
+            roots = {}
+        fs = FileSystemProvider({"desktop": roots.get("桌面", Path.home() / "Desktop"), "documents": roots.get("文档", Path.home() / "Documents"),
+                                 "downloads": roots.get("下载", Path.home() / "Downloads")})
+        return WorldModel(CompositeProvider(fs, RecycleBinProvider(rb.ComBackend())),
+                          AuthorizedScope({"desktop": fs.roots["desktop"], "documents": fs.roots["documents"], "downloads": fs.roots["downloads"]}))
+
+    def say(self, msg: str) -> None:
+        (self._say or getattr(self.orch, "say", None) or print)(msg)
+
+    def _fx(self) -> Any:
+        if self.effectors is None:
+            self.effectors = SystemEffectors(workspace=getattr(getattr(self.orch, "cfg", None), "workspace", None))
+        return self.effectors
+
+    def _backend(self) -> Any:
+        return self._fx().backend
+
+    async def _confirm(self, question: str) -> bool:
+        hitl = getattr(self.orch, "_hitl", None)
+        if hitl is None:
+            return os.environ.get("DSCU_AUTO_CONFIRM") == "1"
+        return bool(await hitl(["  🛑 不可逆操作需要确认（用户已授权该类操作，但本次选择范围较大）："], question + " 输入 y 确认 / n 取消："))
+
+    def begin_task(self) -> None:
+        self.goal = None
+        self.planner = None
+        self.gui_planner = RecoveryPlanner(None, RouteGraph.for_web())
+        self.directive = ""
+        self._consec_fail.clear()
+        self._tried_channels.clear()
+        self._budget_reroutes = 0
+
+    def take_directive(self) -> str:
+        d, self.directive = self.directive, ""
+        return d
+
+    def observe(self, obs: Any) -> None:
+        try:
+            self.world.submit_observation(obs)
+        except Exception:  # noqa: BLE001  perception must never be broken by the world bus
+            pass
+
+    # ================================================================================================================== deterministic core
+    async def run(self, st: Any) -> Optional[tuple[str, str]]:
+        goal = compile_goal(getattr(st, "task", ""))
+        if goal is None:
+            return None
+        self.begin_task()
+        self.goal = goal
+        self.stats["goals"] += 1
+        self.stats["ordinal_goals"] += 1 if goal.selector.by_ordinal else 0
+        planner = self.planner = RecoveryPlanner(goal)
+        say = self.say
+        say("── 第 1 步 ──")
+        say(f"  [Core v18.1: GoalSpec] {goal.describe()}")
+        say(f"  🎯 完成标准（唯一裁决依据）：{'；'.join(goal.completion_criteria())}")
+        say("  🧭 路线图：" + " → ".join(f"{r.route_id}{'(需授权)' if r.needs_auth else ''}" for r in planner.graph.routes.values()))
+        frozen: list[WorldObjectRef] = []
+        self._good = []   # evidence rows of COMMITTED transactions only: a superseded failed attempt must not poison the final verdict
+        all_rows = self._good
+        facts: dict[str, Optional[bool]] = {}
+        guard = 0
+        while guard < 12:
+            guard += 1
+            dec = planner.next_route(facts)
+            if dec.action == "handoff":
+                return self._handoff(dec, goal, all_rows)
+            route = dec.route
+            assert route is not None
+            say(f"  ➜ {dec.reason}")
+            self.stats["route_runs"] += 1
+            if route.llm:
+                return self._fallthrough(goal, planner, frozen)
+            ex = {"fs_recycle": self._route_fs_recycle, "bin_evidence": self._route_bin_evidence, "bin_purge": self._route_bin_purge,
+                  "bin_restore": self._route_bin_restore}.get(route.kind)
+            if ex is None:
+                planner.record(route.route_id, "UNSUPPORTED", f"no executor for {route.kind}")
+                continue
+            out: RouteOutcome = await ex(goal, frozen, facts, {})
+            if out.status == "done":
+                return await self._finish(goal, self._good + out.rows, out.summary)
+            if out.status == "clarify":
+                say(f"  🛑 NEEDS_CLARIFICATION：{out.detail}")
+                return "needs_clarification", out.detail
+            if out.status == "failed":
+                say(f"  🛑 {out.detail}")
+                return "failed", out.detail
+            edge = planner.record(route.route_id, out.code, out.detail)
+            if edge is not None:
+                self.stats["blocked_edges"] += 1
+                say(f"  ⛔ BlockedEdge：{edge.render()} → 自动规划下一条合法路线（不交还用户）")
+            else:
+                say(f"  ↻ {route.route_id} 返回 {out.code}（{out.detail[:80]}）→ 同路线重试 1 次")
+        return self._handoff(Decision("handoff", None, "路线循环保护触发"), goal, all_rows)
+
+    # ------------------------------------------------------------------ shared helpers
+    def _live_scope(self, goal: GoalSpec) -> list[str]:
+        return [l for l in goal.scope if l in LIVE_LOCATIONS]
+
+    def _freeze(self, frozen: list[WorldObjectRef], sel: Selection, goal: GoalSpec) -> None:
+        frozen[:] = list(sel.refs)
+        self.say(f"  🧊 目标冻结（{len(frozen)} 个 UnifiedObjectRef；先枚举容器有序列表，再按选择器取子集；之后列表怎么变化都不会改变目标身份）：")
+        for r in frozen[:12]:
+            self.say(f"     · #{r.ordinal + 1} {r.brief()}")
+        if len(frozen) > 12:
+            self.say(f"     …另有 {len(frozen) - 12} 个")
+
+    def _progress(self, goal: GoalSpec, frozen: list[WorldObjectRef], location: str) -> RemainingWork:
+        cur = self.world.refresh(location)
+        rw = recompute_remaining_work(goal, [r for r in frozen if r.location == location], cur, self.ledger.committed_ids(goal.goal_id))
+        self.say(f"  📊 剩余工作重算（WorldModel epoch={self.world.location_epoch(location)}）：{rw.summary()}")
+        return rw
+
+    def _clarify_selection(self, sel: Selection, goal: GoalSpec) -> RouteOutcome:
+        names = "；".join(r.brief() for r in sel.refs[:5])
+        if sel.status == "ambiguous":
+            return RouteOutcome("clarify", "AMBIGUOUS_TARGET", f"{sel.reason}：{names}。请说明要处理哪一个（写出完整文件名或原位置）。")
+        if sel.status == "suggest":
+            return RouteOutcome("clarify", "NEEDS_CLARIFICATION", f"{sel.reason}；您是想操作：{names} 吗？请用完整文件名重新下达。")
+        return RouteOutcome("clarify", "NEEDS_CLARIFICATION", f"{sel.reason}。为避免误删，不自动缩小/放大范围，请确认数量后重新下达。" + (f"（可选对象：{names}）" if names else ""))
+
+    def _policy_args(self, goal: GoalSpec, frozen: list[WorldObjectRef]) -> dict[str, Any]:
+        return {"authorized_text": goal.authorized_irreversible, "frozen_ids": {r.identity for r in frozen}, "selection_size": len(frozen), "select_all": goal.selector.select_all}
+
+    def _tx_failed(self, goal: GoalSpec, res: atx.TxResult) -> RouteOutcome:
+        if res.status is atx.TxStatus.DECLINED:
+            return RouteOutcome("clarify", "USER_DECLINED", "您未确认不可逆操作，已取消，未做任何修改。")
+        return RouteOutcome("blocked", res.code, res.message)
+
+    # ------------------------------------------------------------------ route: live locate → recycle_file  (+ controlled purge when the goal is permanent)
+    async def _route_fs_recycle(self, goal: GoalSpec, frozen: list[WorldObjectRef], facts: dict, done: dict) -> RouteOutcome:
+        say, fx = self.say, self._fx()
+        locs = self._live_scope(goal)
+        if not frozen:
+            if goal.container == "auto" and not goal.selector.by_name:
+                return RouteOutcome("clarify", "NEEDS_CLARIFICATION", "任务没有说明位置（桌面/文档/下载/回收站），无法确定“前面几个/最近几个”指哪个容器。请补充位置，如：删除桌面前面两个文件。")
+            cands: list[WorldObjectRef] = []
+            for loc in locs:
+                cands += await asyncio.to_thread(self.world.refresh, loc)
+            sel = resolve_selection(goal, cands)
+            say(f"  🔭 WorldModel 跨位置检索（{'/'.join(locs)}）→ 候选 {sel.candidates_total} 个 · 选择结果 {sel.status}")
+            if sel.status in ("ambiguous", "suggest", "short"):
+                return self._clarify_selection(sel, goal)
+            if not sel.ok:
+                nm = goal.selector.by_name.text if goal.selector.by_name else ""
+                if nm:
+                    rep = await asyncio.to_thread(self.world.search, nm, ("recyclebin",))
+                    facts["bin_found"] = rep.status in ("bin_only", "bin_ambiguous")
+                return RouteOutcome("blocked", "NOT_FOUND", f"{'/'.join(locs)} 中没有匹配「{nm or goal.selector.describe()}」的文件" + (f"（回收站检索：{rep.status}）" if nm else ""))
+            self._freeze(frozen, sel, goal)
+        rows: list[dict[str, Any]] = []
+        for ref in list(frozen):
+            if ref.location not in LIVE_LOCATIONS:
+                continue
+            rw = recompute_remaining_work(goal, [ref], await asyncio.to_thread(self.world.refresh, ref.location), self.ledger.committed_ids(goal.goal_id))
+            if not rw.remaining:
+                continue
+            cur = await asyncio.to_thread(self.world.resolve_current, ref) or ref
+            p = Path(cur.path)
+
+            def before(p=p) -> dict[str, Any]:
+                return {"count": fx.bin_count(), "ids": {i.bin_path or i.name for i in self._backend().list_items()}}
+
+            def post(ctx: Any, p=p, cur=cur) -> list[dict[str, Any]]:
+                out = [atx.row("file_not_exists", not fx.path_exists(p), f"{p} {'已不存在' if not fx.path_exists(p) else '仍存在'}", source="filesystem")]
+                c0 = (ctx or {}).get("count")
+                if c0 is not None:
+                    aft = fx.wait_bin_count(c0 + 1, 6.0)
+                    out.append(atx.row("bin_count_plus_one", aft == c0 + 1, f"回收站 {c0}→{aft}", source="SHQueryRecycleBinW+NameSpace(10)"))
+                its = self._backend().list_items()
+                hit = [i for i in its if rb._score(cur.name, i.name) >= 0.99 and (not i.original or rb.norm(i.original) == rb.norm(str(p)))]
+                out.append(atx.row("bin_item_present", bool(hit), f"NameSpace(10) {'已列出' if hit else '未列出'}「{cur.name}」（共 {len(its)} 项）", source="Shell.Application.NameSpace(10)"))
+                return out
+
+            tx = atx.ActionTransaction(goal.goal_id, "recycle_file", cur, lambda p=p: fx.recycle_file(p), atx.Reversibility.REVERSIBLE,
+                                       [atx.Precondition("target_identity", lambda cur=cur: self.world.check_ref(cur))],
+                                       atx.ExpectedWorldDelta(cur.location, lambda loc=cur.location: self.world.identity_set(loc), frozenset({cur.identity})), before, post)
+            say(f"  动作: action=recycle_file path={p}（事务 {tx.key[:10]} · 前置=身份/epoch · 后置=文件消失+回收站+1+身份集合精确变化）")
+            res = await self.engine.run(tx, **self._policy_args(goal, frozen))
+            say(f"  结果: {'✅' if res.ok else '❌'} [{res.code}] {res.message[:160]}")
+            rows += res.rows
+            if not res.ok:
+                if res.status is atx.TxStatus.PRECONDITION_FAILED and res.code == "NOT_FOUND":
+                    continue  # vanished between freeze and act → recompute treats it as externally satisfied
+                return RouteOutcome("blocked", res.code, res.message, rows)
+            self._good += res.rows
+            self.world.note_mutation()
+            if goal.permanent:  # controlled single-file purge: find EXACTLY the item this transaction created
+                po = await self._purge_created(goal, frozen, cur, p)
+                rows += po.rows
+                if po.status != "done":
+                    return RouteOutcome(po.status, po.code, po.detail, rows)
+
+        rws = [recompute_remaining_work(goal, [r], await asyncio.to_thread(self.world.refresh, r.location), self.ledger.committed_ids(goal.goal_id)) for r in frozen if r.location in LIVE_LOCATIONS]
+        left = [x for rw in rws for x in rw.remaining]
+        say(f"  📊 剩余工作重算：冻结 {len(frozen)} · 剩余 {len(left)}")
+        if left:
+            return RouteOutcome("blocked", "ACTION_NO_EFFECT", f"仍有 {len(left)} 个目标未消失：{'，'.join(r.name for r in left[:4])}", rows)
+        names = "、".join(r.name for r in frozen[:6])
+        what = f"已将 {len(frozen)} 个文件（{names}）{'彻底删除（经回收站→受控单对象清理）' if goal.permanent else '移入回收站'}并独立核验"
+        return RouteOutcome("done", "OK", "", [], what)
+
+    async def _purge_created(self, goal: GoalSpec, frozen: list[WorldObjectRef], live: WorldObjectRef, p: Path) -> RouteOutcome:
+        """After recycle_file for a *permanent* goal: locate the one bin item whose original path == p, purge it as an irreversible transaction."""
+        bin_refs = await asyncio.to_thread(self.world.refresh, "recyclebin")
+        hit = [b for b in bin_refs if rb.norm(b.path) == rb.norm(str(p)) and rb._score(live.name, b.name) >= 0.99]
+        hit.sort(key=lambda b: -(b.time_ts or 0.0))
+        if not hit:
+            return RouteOutcome("blocked", "NOT_FOUND", "回收站里没有找到刚移入的对象（原路径不匹配）")
+        newest = [h for h in hit if h.deleted_text == hit[0].deleted_text]
+        if len(newest) != 1:
+            return RouteOutcome("blocked", "AMBIGUOUS_TARGET", "回收站里有多个原路径相同且删除时间相同的对象，无法唯一确定要清理哪一个")
+        return await self._purge_one(goal, newest[0], {r.identity for r in frozen} | {newest[0].identity}, len(frozen))
+
+    async def _purge_one(self, goal: GoalSpec, ref: WorldObjectRef, frozen_ids: set[str], n: int) -> RouteOutcome:
+        be = self._backend()
+        cur = await asyncio.to_thread(self.world.resolve_current, ref) or ref
+        item = cur.extra.get("item")
+        if item is None:
+            return RouteOutcome("blocked", "UNSUPPORTED", "该对象没有可用的回收站后备存储信息")
+        tx = atx.ActionTransaction(goal.goal_id, "bin_purge", cur, lambda: be.delete_store(item), atx.Reversibility.IRREVERSIBLE,
+                                   [atx.Precondition("target_identity", lambda: self.world.check_ref(cur))],
+                                   atx.ExpectedWorldDelta("recyclebin", lambda: self.world.identity_set("recyclebin"), frozenset({cur.identity})),
+                                   lambda: be.count_api(), lambda ctx: rb.verify_item_gone(item, be, ctx, 6.0))
+        self.say(f"  动作: action=recycle_bin_remove_item name={cur.name}（不可逆·事务 {tx.key[:10]} · 目标身份 {cur.identity[:48]}）")
+        res = await self.engine.run(tx, authorized_text=goal.authorized_irreversible, frozen_ids=frozen_ids, selection_size=n, select_all=goal.selector.select_all)
+        self.say(f"  结果: {'✅' if res.ok else '❌'} [{res.code}] {res.message[:160]}")
+        if not res.ok:
+            out = self._tx_failed(goal, res)
+            out.rows = res.rows
+            return out
+        self._good += res.rows
+        self.world.note_mutation()
+        return RouteOutcome("done", "OK", "", [])
+
+    # ------------------------------------------------------------------ route: Recycle Bin COM → already-deleted evidence
+    async def _route_bin_evidence(self, goal: GoalSpec, frozen: list[WorldObjectRef], facts: dict, done: dict) -> RouteOutcome:
+        say = self.say
+        nm = goal.selector.by_name.text if goal.selector.by_name else ""
+        if not nm:
+            return RouteOutcome("blocked", "NOT_FOUND", "没有名称选择器，无法在回收站按名称取证")
+        rep = await asyncio.to_thread(self.world.search, nm, ("desktop", "documents", "downloads", "recyclebin"))
+        say(f"  🔭 {rep.describe()}")
+        if rep.status in ("live_unique", "live_ambiguous"):   # the file appeared on a live location meanwhile → go back to the reversible primitive
+            facts["live_found"] = True
+            return RouteOutcome("blocked", "ROUTE_NOT_APPLICABLE", "检索时发现活动副本（不属于“已删除”证据路线），应使用 recycle_file 路线")
+        if rep.status not in ("bin_only", "bin_ambiguous"):
+            facts["bin_found"] = False
+            return RouteOutcome("blocked", "NOT_FOUND", f"桌面/文档/下载/回收站 均没有「{nm}」（检索 {rep.status}）")
+        bin_now = await asyncio.to_thread(self.world.refresh, "recyclebin")
+        rows: list[dict[str, Any]] = []
+        for loc in LIVE_LOCATIONS:
+            live = [o for o in await asyncio.to_thread(self.world.refresh, loc) if rb._score(nm, o.name) >= rb.STRICT]
+            rows.append(atx.row(f"live_copy_absent[{loc}]", not live, f"{loc} 中{'没有' if not live else '仍有'}「{nm}」的活动副本", source="filesystem"))
+        ids = {b.identity for b in bin_now}
+        for h in rep.refs():
+            rows.append(atx.row("bin_item_present", h.identity in ids, f"NameSpace(10) 列出 {h.brief()}", source="Shell.Application.NameSpace(10)"))
+            if h.path:
+                ex = self._fx().path_exists(Path(h.path))
+                rows.append(atx.row("original_path_vacated", not ex, f"原位置 {h.path} {'已不存在' if not ex else '仍存在'}", source="filesystem"))
+        bad = [r for r in rows if not r["ok"]]
+        if bad:
+            return RouteOutcome("blocked", "ACTION_NO_EFFECT", "取证未通过：" + "；".join(f"{r['name']}" for r in bad), rows)
+        first = rep.refs()[0]
+        say(f"  ✓ 目标已处于“已删除”状态：{first.brief()}；授权作用域内没有任何活动副本。")
+        say("  ℹ 未做永久删除：任务原文没有“彻底/永久/回收站里删除”的授权（如需彻底删除请说：彻底删除回收站里的" + nm + "）。")
+        extra = f"（回收站共 {len(rep.refs())} 个同名项）" if len(rep.refs()) > 1 else ""
+        return RouteOutcome("done", "OK", "", rows, f"「{first.name}」已处于已删除状态：位于回收站（原位置 {first.path or '未知'}，删除于 {first.deleted_text or '?'}），桌面/文档/下载无活动副本{extra}；未执行永久删除（任务未授权）")
+
+    # ------------------------------------------------------------------ route: Recycle Bin COM → controlled purge / restore of the frozen set
+    async def _bin_select(self, goal: GoalSpec, frozen: list[WorldObjectRef], what: str) -> Optional[RouteOutcome]:
+        if frozen:
+            return None
+        items = await asyncio.to_thread(self.world.refresh, "recyclebin")
+        self.say(f"  回收站现有 {len(items)} 项（通道 {getattr(self._backend(), 'channel', '?')}）：" + "，".join(f"#{i.ordinal + 1} {i.name}" for i in items[:10]))
+        if not items:
+            cnt = await asyncio.to_thread(self._fx().bin_count)
+            if cnt:  # COM listing failed while the independent counter says non-empty → a different route may still work
+                return RouteOutcome("blocked", "INTERNAL", f"COM 枚举为空但 SHQueryRecycleBinW={cnt}：枚举通道异常")
+            return RouteOutcome("failed", "NOT_FOUND", "回收站为空，没有可操作的项目")
+        sel = resolve_selection(goal, items)
+        if sel.status == "empty":
+            return RouteOutcome("failed", "NOT_FOUND", f"回收站里没有匹配项：{sel.reason}（现有：{', '.join(i.name for i in items[:8])}）。")
+        if sel.status in ("ambiguous", "suggest", "short"):
+            return self._clarify_selection(sel, goal)
+        self._freeze(frozen, sel, goal)
+        return None
+
+    async def _route_bin_purge(self, goal: GoalSpec, frozen: list[WorldObjectRef], facts: dict, done: dict) -> RouteOutcome:
+        pre = await self._bin_select(goal, frozen, "purge")
+        if pre is not None:
+            return pre
+        rows: list[dict[str, Any]] = []
+        ids = {r.identity for r in frozen}
+        for ref in list(frozen):
+            rw = recompute_remaining_work(goal, [ref], await asyncio.to_thread(self.world.refresh, "recyclebin"), self.ledger.committed_ids(goal.goal_id))
+            if not rw.remaining:
+                continue
+            out = await self._purge_one(goal, ref, ids, len(frozen))
+            rows += out.rows
+            if out.status != "done":
+                return RouteOutcome(out.status, out.code, out.detail, rows)
+            await asyncio.to_thread(self._progress, goal, frozen, "recyclebin")
+        rw = await asyncio.to_thread(self._progress, goal, frozen, "recyclebin")
+        if rw.remaining:
+            return RouteOutcome("blocked", "ACTION_NO_EFFECT", f"仍有 {len(rw.remaining)} 个目标留在回收站", rows)
+        names = "、".join(r.name for r in frozen[:6])
+        return RouteOutcome("done", "OK", "", [], f"已从回收站永久删除 {len(frozen)} 个对象（{names}）并独立核验（身份集合精确变化、后备存储消失、计数-{len(frozen)}）")
+
+    async def _route_bin_restore(self, goal: GoalSpec, frozen: list[WorldObjectRef], facts: dict, done: dict) -> RouteOutcome:
+        pre = await self._bin_select(goal, frozen, "restore")
+        if pre is not None:
+            return pre
+        be, fx = self._backend(), self._fx()
+        rows: list[dict[str, Any]] = []
+        for ref in list(frozen):
+            rw = recompute_remaining_work(goal, [ref], await asyncio.to_thread(self.world.refresh, "recyclebin"), self.ledger.committed_ids(goal.goal_id))
+            if not rw.remaining:
+                continue
+            cur = await asyncio.to_thread(self.world.resolve_current, ref) or ref
+            item = cur.extra.get("item")
+            if item is None:
+                return RouteOutcome("blocked", "UNSUPPORTED", "该对象没有可用的回收站项信息")
+
+            def post(ctx: Any, item=item, cur=cur) -> list[dict[str, Any]]:
+                out = rb.verify_item_gone(item, be, None)
+                if cur.path:
+                    ex = fx.path_exists(Path(cur.path))
+                    out.append(atx.row("restored_to_original", ex, f"{cur.path} {'已存在' if ex else '不存在'}", source="filesystem"))
+                return out
+
+            tx = atx.ActionTransaction(goal.goal_id, "bin_restore", cur, lambda item=item: be.restore(item), atx.Reversibility.REVERSIBLE,
+                                       [atx.Precondition("target_identity", lambda cur=cur: self.world.check_ref(cur))],
+                                       atx.ExpectedWorldDelta("recyclebin", lambda: self.world.identity_set("recyclebin"), frozenset({cur.identity})), None, post)
+            self.say(f"  动作: action=recycle_bin_restore_item name={cur.name}（事务 {tx.key[:10]}）")
+            res = await self.engine.run(tx, **self._policy_args(goal, frozen))
+            self.say(f"  结果: {'✅' if res.ok else '❌'} [{res.code}] {res.message[:160]}")
+            rows += res.rows
+            if not res.ok:
+                return RouteOutcome("blocked", res.code, res.message, rows)
+            self._good += res.rows
+            self.world.note_mutation()
+            await asyncio.to_thread(self._progress, goal, frozen, "recyclebin")
+        rw = await asyncio.to_thread(self._progress, goal, frozen, "recyclebin")
+        if rw.remaining:
+            return RouteOutcome("blocked", "ACTION_NO_EFFECT", f"仍有 {len(rw.remaining)} 个目标留在回收站", rows)
+        return RouteOutcome("done", "OK", "", [], f"已还原 {len(frozen)} 个对象（{'、'.join(r.name for r in frozen[:6])}）并独立核验")
+
+    # ------------------------------------------------------------------ finishing / handing off
+    async def _finish(self, goal: GoalSpec, rows: list[dict[str, Any]], what: str) -> tuple[str, str]:
+        say = self.say
+        steps = 1
+        if goal.open_bin_after and self.open_view is not None:
+            steps += 1
+            say(f"── 第 {steps} 步 ──")
+            try:
+                _ok, wrows = await self.open_view("recyclebin")
+                rows = rows + list(wrows)
+            except Exception as e:  # noqa: BLE001
+                rows = rows + [atx.row("shell_window_open", False, f"{e.__class__.__name__}: {str(e)[:80]}")]
+        cov = _coverage(rows)
+        say(f"  🔎 独立 Oracle：{_fmt(rows)}")
+        c = getattr(self.orch, "counters", None)
+        if cov == "full":
+            if c is not None:
+                c["verifier_pass"] += 1
+            summary = f"{what}（coverage=full，{len(rows)} 项独立证据全部通过；Core v18.1 共 {steps} 步，0 次 LLM 调用，0 次无故交还用户；{self.planner.summary() if self.planner else ''}）"
+            say(f"✔ 完成（completed_verified · coverage=full · GoalEngine 裁决 + 独立 Oracle）: {summary}")
+            return "completed_verified", summary
+        bad = [r for r in rows if r.get("evaluated", True) and not r["ok"]]
+        if c is not None:
+            c["verifier_rejects"] += 1
+        say(f"⚠ 未能完全验证（coverage={cov}）：{'; '.join(r['name'] + ':' + str(r['detail'])[:60] for r in bad) or '部分证据未评估'}")
+        return ("partially_completed" if cov == "partial" else "failed"), f"{what}（coverage={cov}）：{_fmt(bad) if bad else '部分证据未评估'}"
+
+    def _handoff(self, dec: Decision, goal: GoalSpec, rows: list[dict[str, Any]]) -> tuple[str, str]:
+        self.stats["handoffs"] += 1
+        msg = dec.human_message or dec.reason
+        self.say(f"  🛑 {'真实阻塞' if dec.real_blocker else '所有合法替代路线已穷尽'} → 交还用户（附完整 BlockedEdge 清单）：\n{msg}")
+        return ("needs_clarification" if dec.real_blocker else "paused_for_user"), msg
+
+    def _fallthrough(self, goal: GoalSpec, planner: RecoveryPlanner, frozen: list[WorldObjectRef]) -> None:
+        self.stats["llm_fallthrough"] += 1
+        parts = [planner.directive_text()]
+        if frozen:
+            parts.append("目标冻结集合（只允许操作这些身份，不得更换目标）：" + "；".join(r.brief() for r in frozen[:8]))
+        parts.append(f"GoalSpec：{goal.describe()}")
+        if goal.irreversible and not goal.authorized_irreversible:
+            parts.append("安全约束：任务未授权不可逆操作，禁止永久删除；只允许可恢复的动作。")
+        self.directive = "\n".join(p for p in parts if p)
+        self.say("  ↪ 确定性路线已全部处理完毕 → 以【冻结目标 + 已关闭路线 + 下一合法路线】约束交给模型循环（最后一条受控 GUI 路线）")
+        return None
+
+    # ================================================================================================================== model-loop hooks (alternative-route recovery during the LLM loop)
+    def on_step_result(self, action: dict[str, Any], ok: bool, code: str, message: str) -> None:
+        name = str(action.get("action", ""))
+        ch = channel_of(action)
+        if ch not in self._tried_channels:
+            self._tried_channels.append(ch)
+        if ok:
+            self._consec_fail[ch] = 0
+            return
+        if code == "SECURITY_DENIED" or code == "NOT_FOUND" or code == "ACTION_NO_EFFECT" or code in ("OCCLUDED", "UIPI_DENIED"):
+            if self.planner is not None:   # goal-driven task: the *primitive* is closed (SECURITY_DENIED ⇒ never offered again), route stays open
+                e = self.planner.block_if_new(f"tool:{name}", code, message[:120])
+                if e is not None:
+                    self.stats["blocked_edges"] += 1
+                    self.directive = self.planner.directive_text()
+            self._consec_fail[ch] = self._consec_fail.get(ch, 0) + 1
+            if self._consec_fail[ch] >= 2 and self.planner is None:
+                e = self.gui_planner.block_if_new(ch, code, message[:120])
+                if e is not None:
+                    self.stats["blocked_edges"] += 1
+                    self.directive = self.gui_planner.directive_text()
+
+    def on_budget_trip(self, trip: Any) -> Optional[str]:
+        """no_progress trip → alternative route instead of handing the task back (bounded: ≤ 3 reroutes per task, and only while a legal untried route remains)."""
+        if getattr(trip, "kind", "") != "no_progress" or self._budget_reroutes >= 3:
+            return None
+        pl = self.planner or self.gui_planner
+        cur = self._tried_channels[-1] if self._tried_channels else ""
+        if self.planner is None and cur:
+            pl.block_if_new(cur, "ACTION_NO_EFFECT", "连续无进展")
+        untried = [r for r in pl.remaining_routes() if r.route_id not in self._tried_channels or r.llm]
+        if self.planner is not None:
+            nxt = [r for r in pl.remaining_routes() if r.llm]
+        else:
+            nxt = [r for r in untried if r.route_id != cur]
+        if not nxt:
+            return None
+        self._budget_reroutes += 1
+        self.stats["budget_reroutes"] += 1
+        self.stats["reroutes"] += 1
+        d = pl.directive_text() or f"【自动换路】请改用路线 {nxt[0].route_id}（{nxt[0].label}）。"
+        return d + f"\n（无进展熔断已转为第 {self._budget_reroutes}/3 次自动换路：下一条路线 {nxt[0].route_id}）"
+
+    def summary_line(self) -> str:
+        s = self.stats
+        wm = self.world
+        pl = self.planner.summary() if self.planner else self.gui_planner.summary()
+        return (f"  v18.1：GoalSpec {s['goals']}（序数选择器 {s['ordinal_goals']}）· 路线执行 {s['route_runs']} · BlockedEdge {s['blocked_edges']} · 换路 {s['reroutes']}（熔断转换路 {s['budget_reroutes']}）"
+                f" · 无故交还 {s['handoffs']} · 事务 提交 {self.engine.stats['committed']}/重放 {self.engine.stats['replayed']}/拒绝 {self.engine.stats['denied']}/无效果 {self.engine.stats['no_effect']}"
+                f" · WorldModel 提交 {wm.stats['submits']} 次/重定基 {wm.stats['rebases']}/世界版本 {wm.world_version} · {pl}")
+'@
+
+Add-DscuFile 'tests/test_v18_1_core_loop.py' '0ae69b1dd3222216a9cc9c32b92c8bef658d45087a2bfebaf4e889852116a188' @'
+"""v18.1 core-loop acceptance.  Run:   python tests/test_v18_1_core_loop.py        (DSCU_MODE=regress181 does exactly that; no model calls, no GUI, no Windows needed)
+
+Proves the four hubs end-to-end against the facts of run-log 8388968:
+  1. “删除回收站前面两个”  → by_ordinal(head=2) (NEVER a file named「前面两个」), frozen BEFORE the first mutation, both items removed, the other four untouched
+  2. “删除相机文件”          → Desktop NOT_FOUND → BlockedEdge → Recycle-Bin COM evidence route → completed_verified, 0 permanent deletes, 0 hand-backs
+  3. SECURITY_DENIED / NO_EFFECT / partial success → alternative route / exact resume; irreversible work stays gated by text authorization + identity + confirmation
+  4. GoalEngine.recompute_remaining_work ⟷ WorldModel consistency (identity-based, epoch re-basing, stale/collateral detection)
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+import warnings
+from collections import defaultdict
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+warnings.simplefilter("error", RuntimeWarning)
+
+from agent_brain import action_tx as atx  # noqa: E402
+from agent_brain.core_loop import CoreLoop  # noqa: E402
+from agent_brain.goal_engine import GoalSpec, compile_goal, cn_to_int, recompute_remaining_work, resolve_selection  # noqa: E402
+from agent_brain.recovery_planner import RecoveryPlanner, RouteGraph, channel_of  # noqa: E402
+from agent_brain.skills import recycle_bin as rb  # noqa: E402
+from agent_brain.world_model import AuthorizedScope, CompositeProvider, FileSystemProvider, RecycleBinProvider, WorldModel  # noqa: E402
+
+GOLDEN = ROOT / "tests" / "golden" / "ordinal_cases.json"
+BIN6 = ["EdgeGameAssist.msix", "EdgeGameAssist.msix", "VERSION", "相机.txt", "你好你好你好.txt", "VERSION"]  # the exact bin of the 8388968 log
+
+
+# ====================================================================================================================== fakes (the only OS surface)
+class FakeBin(rb.ShellBackend):
+    def __init__(self, names: list[str] | None = None, desktop: Path | None = None) -> None:
+        self.items: list[rb.BinItem] = []
+        self.delete_calls: list[str] = []
+        self.restore_calls: list[str] = []
+        self.fail_delete: dict[str, list[str]] = {}   # name → queue of behaviours: 'deny' | 'noop'
+        self.channel = "fake.NameSpace(10)"
+        self._n = 0
+        for nm in names or []:
+            self.add(nm, str(desktop / nm) if desktop else f"C:\\Users\\u\\Downloads\\{nm}")
+
+    def add(self, name: str, original: str, deleted: str = "2026/11/28 18:10") -> rb.BinItem:
+        self._n += 1
+        it = rb.BinItem(name=name, original=original, bin_path=f"C:\\$Recycle.Bin\\S-1-5-21\\$R{self._n:04d}{Path(name).suffix}", size=6 + self._n, deleted=deleted)
+        self.items.append(it)
+        return it
+
+    def list_items(self) -> list[rb.BinItem]:
+        return [rb.BinItem(i.name, i.original, i.bin_path, i.size, i.deleted, i.is_dir) for i in self.items]
+
+    def windows(self) -> list[rb.ShellWin]:
+        return []
+
+    def count_api(self) -> int:
+        return len(self.items)
+
+    def delete_store(self, item: rb.BinItem) -> tuple[bool, str]:
+        self.delete_calls.append(item.bin_path)
+        q = self.fail_delete.get(item.name)
+        if q:
+            mode = q.pop(0)
+            if mode == "deny":
+                return False, "[SECURITY_DENIED] 回收站后备存储受系统策略保护"
+            if mode == "noop":
+                return True, "已永久删除（假装）"
+        self.items = [i for i in self.items if i.bin_path != item.bin_path]
+        return True, "已永久删除回收站后备存储（$R + $I）"
+
+    def restore(self, item: rb.BinItem) -> tuple[bool, str]:
+        self.restore_calls.append(item.bin_path)
+        self.items = [i for i in self.items if i.bin_path != item.bin_path]
+        if item.original:
+            Path(item.original).parent.mkdir(parents=True, exist_ok=True)
+            Path(item.original).write_text("restored", encoding="utf-8")
+        return True, "已还原"
+
+
+class FakeFx:
+    def __init__(self, backend: FakeBin) -> None:
+        self.backend = backend
+        self.recycled: list[str] = []
+
+    def recycle_file(self, path: Path) -> tuple[bool, str]:
+        p = Path(path)
+        self.recycled.append(str(p))
+        size = p.stat().st_size
+        p.unlink()
+        it = self.backend.add(p.name, str(p), "2026/11/28 19:00")
+        it.size = size
+        return True, f"已移入回收站 {p.name}"
+
+    def bin_count(self) -> int:
+        return self.backend.count_api()
+
+    def wait_bin_count(self, expected: int, timeout: float = 6.0) -> int:
+        return self.backend.count_api()
+
+    def path_exists(self, p: Path) -> bool:
+        return Path(p).exists()
+
+
+class Env:
+    def __init__(self, bin_names: list[str] | None = None, desktop_files: list[str] | None = None, confirm: bool = True, bin_original_on_desktop: bool = False) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="dscu181_"))
+        self.roots = {k: self.tmp / k for k in ("desktop", "documents", "downloads")}
+        for r in self.roots.values():
+            r.mkdir()
+        for f in desktop_files or []:
+            (self.roots["desktop"] / f).write_text("x" * 6, encoding="utf-8")
+        self.backend = FakeBin(bin_names, self.roots["desktop"] if bin_original_on_desktop else None)
+        self.fx = FakeFx(self.backend)
+        self.world = WorldModel(CompositeProvider(FileSystemProvider(self.roots), RecycleBinProvider(self.backend)), AuthorizedScope(self.roots))
+        self.lines: list[str] = []
+        self.orch = SimpleNamespace(say=self.lines.append, counters=defaultdict(int))
+        self.confirm_calls: list[str] = []
+
+        async def _confirm(q: str) -> bool:
+            self.confirm_calls.append(q)
+            return confirm
+
+        self.core = CoreLoop(self.orch, self.world, self.fx, confirm=_confirm, say=self.lines.append)
+
+    def run(self, task: str) -> tuple[str, str] | None:
+        return asyncio.run(self.core.run(SimpleNamespace(task=task)))
+
+    def bin_names(self) -> list[str]:
+        return [i.name for i in self.backend.items]
+
+    def close(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+def describe_parts(g: GoalSpec) -> list[str]:
+    return [o.describe() for o in g.selector.by_ordinal]
+
+
+# ====================================================================================================================== 1. GoalEngine compiler
+class TestGoalEngine(unittest.TestCase):
+    def test_numerals(self) -> None:
+        for s, v in {"3": 3, "两": 2, "十": 10, "十二": 12, "二十三": 23, "一百零五": 105, "俩": 2}.items():
+            self.assertEqual(cn_to_int(s), v, s)
+        self.assertIsNone(cn_to_int("abc"))
+
+    def test_golden_vectors(self) -> None:
+        cases = json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"]
+        self.assertGreaterEqual(len(cases), 30)
+        for c in cases:
+            g = compile_goal(c["task"])
+            if "compile" in c:
+                self.assertIsNone(g, c["task"])
+                continue
+            self.assertIsNotNone(g, c["task"])
+            assert g is not None
+            self.assertEqual(g.verb, c["verb"], c["task"])
+            self.assertEqual(g.container, c["container"], c["task"])
+            self.assertEqual(describe_parts(g), c["ordinals"], c["task"])
+            got_name = g.selector.by_name.text if g.selector.by_name else None
+            self.assertEqual(got_name, c["name"], c["task"])
+            if "ext" in c:
+                self.assertEqual(g.selector.by_attribute.ext if g.selector.by_attribute else "", c["ext"], c["task"])
+            self.assertEqual(g.open_bin_after, bool(c.get("open_bin_after")), c["task"])
+            self.assertEqual(g.permanent and c["container"] != "recyclebin", bool(c.get("permanent")), c["task"])
+            self.assertEqual(g.selector.select_all, bool(c.get("select_all")), c["task"])
+
+    def test_task2_is_ordinal_not_a_name(self) -> None:
+        g = compile_goal("删除回收站前面两个")
+        assert g is not None
+        self.assertIsNone(g.selector.by_name)   # the 8388968 bug: name == '前面两个'
+        self.assertEqual(describe_parts(g), ["head=2"])
+        self.assertEqual((g.kind, g.container, g.authorized_irreversible, g.irreversible), ("bin_remove", "recyclebin", True, True))
+
+    def test_selection_is_positional_over_ordered_listing(self) -> None:
+        env = Env(BIN6)
+        try:
+            objs = env.world.refresh("recyclebin")
+            pick = lambda t: [r.ordinal for r in resolve_selection(compile_goal(t), objs).refs]  # noqa: E731
+            self.assertEqual(pick("删除回收站前面两个"), [0, 1])
+            self.assertEqual(pick("删除回收站最后三条"), [3, 4, 5])
+            self.assertEqual(pick("删除回收站第3个"), [2])
+            self.assertEqual(pick("删除回收站倒数第二个"), [4])
+            self.assertEqual(pick("删除回收站第2到第4个"), [1, 2, 3])
+            self.assertEqual(pick("删除回收站前两个和最后一个"), [0, 1, 5])
+            self.assertEqual(len({r.identity for r in objs}), 6)   # the two EdgeGameAssist.msix are DISTINCT objects
+        finally:
+            env.close()
+
+    def test_short_and_empty_are_not_silently_widened(self) -> None:
+        env = Env(["a.txt"])
+        try:
+            objs = env.world.refresh("recyclebin")
+            self.assertEqual(resolve_selection(compile_goal("删除回收站前面两个"), objs).status, "short")
+            self.assertEqual(resolve_selection(compile_goal("删除回收站第9个"), objs).status, "empty")
+        finally:
+            env.close()
+
+
+# ====================================================================================================================== 2. task #2 end-to-end
+class TestTask2OrdinalDelete(unittest.TestCase):
+    def test_delete_first_two_exactly(self) -> None:
+        env = Env(BIN6)
+        try:
+            first_two = [i.bin_path for i in env.backend.items[:2]]
+            r = env.run("删除回收站前面两个")
+            self.assertIsNotNone(r)
+            assert r is not None
+            self.assertEqual(r[0], "completed_verified", r)
+            self.assertEqual(env.backend.delete_calls, first_two)                       # exactly the two frozen objects, in order, once each
+            self.assertEqual(env.bin_names(), ["VERSION", "相机.txt", "你好你好你好.txt", "VERSION"])  # the shift of the list never re-targeted
+            self.assertEqual(env.core.stats["handoffs"], 0)
+            self.assertTrue(any("🧊 目标冻结" in l for l in env.lines))
+            self.assertTrue(any("by_ordinal(head=2)" in l for l in env.lines))
+            self.assertEqual(env.orch.counters["verifier_pass"], 1)
+        finally:
+            env.close()
+
+    def test_tail_and_index(self) -> None:
+        env = Env(BIN6)
+        try:
+            self.assertEqual(env.run("删除回收站最后三条")[0], "completed_verified")  # type: ignore[index]
+            self.assertEqual(env.bin_names(), ["EdgeGameAssist.msix", "EdgeGameAssist.msix", "VERSION"])
+            self.assertEqual(env.run("删除回收站第2个")[0], "completed_verified")  # type: ignore[index]
+            self.assertEqual(env.bin_names(), ["EdgeGameAssist.msix", "VERSION"])
+        finally:
+            env.close()
+
+    def test_short_selection_asks_instead_of_guessing(self) -> None:
+        env = Env(["a.txt"])
+        try:
+            r = env.run("删除回收站前面两个")
+            assert r is not None
+            self.assertEqual(r[0], "needs_clarification")
+            self.assertEqual(env.bin_names(), ["a.txt"])
+            self.assertEqual(env.backend.delete_calls, [])
+        finally:
+            env.close()
+
+    def test_broad_irreversible_selection_requires_confirmation(self) -> None:
+        env = Env([f"f{i}.txt" for i in range(7)], confirm=False)
+        try:
+            r = env.run("删除回收站前面六个")
+            assert r is not None
+            self.assertEqual(r[0], "needs_clarification")      # declined → nothing deleted
+            self.assertEqual(len(env.confirm_calls), 1)
+            self.assertEqual(env.backend.delete_calls, [])
+        finally:
+            env.close()
+        env = Env([f"f{i}.txt" for i in range(7)], confirm=True)
+        try:
+            r = env.run("删除回收站前面六个")
+            assert r is not None
+            self.assertEqual(r[0], "completed_verified")
+            self.assertEqual(env.bin_names(), ["f6.txt"])
+            self.assertEqual(len(env.confirm_calls), 1)         # asked ONCE for the whole goal, not per item
+        finally:
+            env.close()
+
+    def test_restore_last_one(self) -> None:
+        env = Env(["a.txt", "b.txt"], bin_original_on_desktop=True)
+        try:
+            r = env.run("还原回收站最后一个")
+            assert r is not None
+            self.assertEqual(r[0], "completed_verified", r)
+            self.assertEqual(env.bin_names(), ["a.txt"])
+            self.assertTrue((env.roots["desktop"] / "b.txt").exists())
+        finally:
+            env.close()
+
+
+# ====================================================================================================================== 3. task #3 end-to-end (alternative routes)
+class TestTask3AlternativeRoutes(unittest.TestCase):
+    def test_not_found_on_desktop_switches_to_recycle_bin_evidence(self) -> None:
+        env = Env(BIN6, bin_original_on_desktop=True)
+        try:
+            r = env.run("删除相机文件")
+            assert r is not None
+            self.assertEqual(r[0], "completed_verified", r)
+            self.assertIn("已处于已删除状态", r[1])
+            pl = env.core.planner
+            assert pl is not None
+            self.assertEqual([(b.route_id, b.code) for b in pl.blocked], [("fs_recycle", "NOT_FOUND")])    # structured BlockedEdge
+            self.assertEqual(pl.attempted, ["fs_recycle", "bin_evidence"])
+            self.assertEqual(env.backend.delete_calls, [])                                                   # NO permanent delete without authorization
+            self.assertEqual(env.core.stats["handoffs"], 0)                                                  # 0 pointless hand-backs
+            self.assertEqual(len(env.backend.items), 6)                                                      # world untouched
+            self.assertEqual(env.orch.counters["verifier_pass"], 1)
+        finally:
+            env.close()
+
+    def test_live_copy_goes_to_recycle_bin_with_independent_oracle(self) -> None:
+        env = Env(desktop_files=["相机.txt", "其它.txt"])
+        try:
+            r = env.run("删除相机文件")
+            assert r is not None
+            self.assertEqual(r[0], "completed_verified", r)
+            self.assertFalse((env.roots["desktop"] / "相机.txt").exists())
+            self.assertTrue((env.roots["desktop"] / "其它.txt").exists())     # no collateral
+            self.assertEqual(env.bin_names(), ["相机.txt"])
+            self.assertEqual(env.core.stats["blocked_edges"], 0)
+        finally:
+            env.close()
+
+    def test_open_bin_after_runs_second_step(self) -> None:
+        env = Env(desktop_files=["相机.txt"])
+        calls: list[str] = []
+
+        async def ov(view: str) -> tuple[bool, list[dict]]:
+            calls.append(view)
+            return True, [atx.row("shell_window_open", True, "fake window")]
+
+        env.core.open_view = ov
+        try:
+            r = env.run("把桌面上的相机文件删除，并打开回收站")
+            assert r is not None
+            self.assertEqual(r[0], "completed_verified", r)
+            self.assertEqual(calls, ["recyclebin"])
+        finally:
+            env.close()
+
+    def test_nothing_anywhere_falls_through_to_controlled_gui_with_directive(self) -> None:
+        env = Env()
+        try:
+            r = env.run("删除相机文件")
+            self.assertIsNone(r)    # → model loop (last legal route), NOT a hand-back
+            d = env.core.take_directive()
+            self.assertIn("fs_recycle⇒NOT_FOUND", d)
+            self.assertIn("bin_evidence⇒NOT_FOUND", d)
+            self.assertIn("gui_controlled", d)
+            self.assertEqual(env.core.stats["handoffs"], 0)
+            self.assertEqual(env.core.stats["llm_fallthrough"], 1)
+        finally:
+            env.close()
+
+    def test_security_denied_on_purge_reroutes_not_hands_back(self) -> None:
+        env = Env(["相机.txt", "VERSION"], bin_original_on_desktop=True)
+        env.backend.fail_delete["相机.txt"] = ["deny"]
+        try:
+            r = env.run("删除回收站里的相机文件")
+            self.assertIsNone(r)                     # purge edge closed by SECURITY_DENIED → next legal route (controlled GUI) instead of 4 idle steps
+            pl = env.core.planner
+            assert pl is not None
+            self.assertEqual([(b.route_id, b.code) for b in pl.blocked], [("bin_purge", "SECURITY_DENIED")])
+            self.assertIn("bin_purge⇒SECURITY_DENIED", env.core.take_directive())
+            self.assertEqual(env.core.stats["handoffs"], 0)
+            self.assertEqual(env.bin_names(), ["相机.txt", "VERSION"])   # nothing else was touched
+        finally:
+            env.close()
+
+    def test_permanent_live_file_uses_controlled_single_file_purge(self) -> None:
+        env = Env(desktop_files=["相机.txt", "keep.txt"])
+        try:
+            r = env.run("彻底删除桌面上的相机")
+            assert r is not None
+            self.assertEqual(r[0], "completed_verified", r)
+            self.assertEqual(env.bin_names(), [])                           # recycled then purged — only THIS object
+            self.assertTrue((env.roots["desktop"] / "keep.txt").exists())
+            self.assertEqual(len(env.backend.delete_calls), 1)
+        finally:
+            env.close()
+
+    def test_partial_failure_resumes_exactly_without_repeating_done_items(self) -> None:
+        env = Env(["a.txt", "b.txt", "c.txt"])
+        env.backend.fail_delete["b.txt"] = ["noop"]          # first attempt: executor says OK, world did not change → ACTION_NO_EFFECT → one retry on the same route
+        try:
+            ids = [i.bin_path for i in env.backend.items]
+            r = env.run("删除回收站前面两个")
+            assert r is not None
+            self.assertEqual(r[0], "completed_verified", r)
+            self.assertEqual(env.bin_names(), ["c.txt"])
+            self.assertEqual(env.backend.delete_calls, [ids[0], ids[1], ids[1]])      # a once, b twice (retry), NEVER a again, NEVER c
+            self.assertEqual(env.core.planner.retries.get("bin_purge"), 1)           # type: ignore[union-attr]
+        finally:
+            env.close()
+
+    def test_planner_security_denied_picks_legal_alternative_only(self) -> None:
+        g = compile_goal("删除相机文件")
+        assert g is not None
+        self.assertFalse(g.authorized_irreversible)
+        pl = RecoveryPlanner(g)
+        self.assertNotIn("bin_purge", pl.graph.routes)                       # an unauthorized irreversible route is never even in the graph
+        d1 = pl.next_route()
+        self.assertEqual(d1.route.route_id, "fs_recycle")                   # type: ignore[union-attr]
+        pl.record("fs_recycle", "NOT_FOUND", "desktop/documents/downloads empty")
+        d2 = pl.next_route({"bin_found": True})
+        self.assertEqual(d2.route.route_id, "bin_evidence")                 # type: ignore[union-attr]
+        pl.record("bin_evidence", "SECURITY_DENIED", "x")
+        d3 = pl.next_route()
+        self.assertEqual(d3.route.route_id, "gui_controlled")               # type: ignore[union-attr]
+        pl.record("gui_controlled", "NOT_FOUND", "y")
+        d4 = pl.next_route()
+        self.assertEqual(d4.action, "handoff")                              # only after EVERY legal route is exhausted
+        self.assertFalse(d4.real_blocker)
+        self.assertIn("fs_recycle⇒NOT_FOUND", d4.human_message)
+
+    def test_real_blockers_hand_back_immediately(self) -> None:
+        pl = RecoveryPlanner(compile_goal("删除相机文件"))
+        pl.next_route()
+        pl.record("fs_recycle", "AMBIGUOUS_TARGET", "两个相机.txt")
+        d = pl.next_route()
+        self.assertEqual((d.action, d.real_blocker), ("handoff", True))
+        w = RecoveryPlanner(None, RouteGraph.for_web())
+        w.next_route()
+        w.record("api_cli", "TWO_FA", "需要二次验证")
+        self.assertTrue(w.next_route().real_blocker)
+
+    def test_ambiguous_live_names_ask_the_user(self) -> None:
+        env = Env(desktop_files=["相机.txt"])
+        (env.roots["documents"] / "相机.txt").write_text("y", encoding="utf-8")
+        try:
+            r = env.run("删除相机文件")
+            assert r is not None
+            self.assertEqual(r[0], "needs_clarification")
+            self.assertTrue((env.roots["desktop"] / "相机.txt").exists() and (env.roots["documents"] / "相机.txt").exists())
+        finally:
+            env.close()
+
+    def test_budget_no_progress_trip_becomes_reroute(self) -> None:
+        from agent_brain.budget import BudgetTrip
+
+        core = CoreLoop(SimpleNamespace(say=lambda m: None, counters=defaultdict(int)), WorldModel(), SimpleNamespace(), say=lambda m: None)
+        core.begin_task()
+        core.on_step_result({"action": "cdp_click"}, False, "NOT_FOUND", "no such node")
+        core.on_step_result({"action": "cdp_click"}, False, "NOT_FOUND", "no such node")
+        self.assertIn("cdp_mcp⇒NOT_FOUND", core.take_directive())
+        trip = BudgetTrip("no_progress", "x", "paused_for_user")
+        d = core.on_budget_trip(trip)
+        self.assertIsNotNone(d)
+        self.assertIn("uia", d or "")
+        for _ in range(5):
+            core.on_budget_trip(trip)
+        self.assertIsNone(core.on_budget_trip(trip))    # bounded: ≤ 3 reroutes per task, then (and only then) the old behaviour
+        self.assertIsNone(core.on_budget_trip(BudgetTrip("tokens", "x", "failed")))
+        self.assertEqual(channel_of({"action": "run_powershell"}), "api_cli")
+        self.assertEqual(channel_of({"action": "click", "x": 1, "y": 2}), "dml_ocr_som")
+
+
+# ====================================================================================================================== 4. Action Transaction
+class TestActionTransaction(unittest.TestCase):
+    def _tx(self, calls: list[str], rev: atx.Reversibility = atx.Reversibility.REVERSIBLE, ok_world: bool = True, target=None):
+        state = {"v": 1}
+        w = WorldModel()
+
+        def execute() -> tuple[bool, str]:
+            calls.append("exec")
+            if ok_world:
+                state["v"] = 0
+            return True, "ok"
+
+        return atx.ActionTransaction("g1", "op", target, execute, rev, [], None, None, lambda ctx: [atx.row("state_changed", state["v"] == 0, f"v={state['v']}")], note="n1"), w
+
+    def test_idempotent_replay_never_reexecutes(self) -> None:
+        calls: list[str] = []
+        eng = atx.TxEngine()
+        tx, _ = self._tx(calls)
+        self.assertEqual(asyncio.run(eng.run(tx)).status, atx.TxStatus.COMMITTED)
+        r2 = asyncio.run(eng.run(tx))
+        self.assertEqual((r2.status, calls), (atx.TxStatus.REPLAYED, ["exec"]))
+
+    def test_no_effect_is_not_success(self) -> None:
+        calls: list[str] = []
+        tx, _ = self._tx(calls, ok_world=False)
+        r = asyncio.run(atx.TxEngine().run(tx))
+        self.assertEqual((r.status, r.code), (atx.TxStatus.NO_EFFECT, "ACTION_NO_EFFECT"))
+
+    def test_irreversible_needs_text_authorization_and_identity(self) -> None:
+        env = Env(["a.txt"])
+        try:
+            ref = env.world.refresh("recyclebin")[0]
+            calls: list[str] = []
+            tx, _ = self._tx(calls, atx.Reversibility.IRREVERSIBLE, target=ref)
+            eng = atx.TxEngine()
+            r = asyncio.run(eng.run(tx, authorized_text=False, frozen_ids={ref.identity}))
+            self.assertEqual((r.status, r.code, calls), (atx.TxStatus.DENIED, "SECURITY_DENIED", []))
+            r = asyncio.run(eng.run(tx, authorized_text=True, frozen_ids={"bin:other"}))
+            self.assertEqual((r.status, r.code, calls), (atx.TxStatus.DENIED, "OBJECT_IDENTITY_MISMATCH", []))    # never swap the target to "finish"
+            r = asyncio.run(eng.run(tx, authorized_text=True, frozen_ids={ref.identity}))
+            self.assertEqual((r.status, calls), (atx.TxStatus.COMMITTED, ["exec"]))
+        finally:
+            env.close()
+
+    def test_collateral_damage_is_detected(self) -> None:
+        env = Env(["a.txt", "b.txt", "c.txt"])
+        try:
+            refs = env.world.refresh("recyclebin")
+            be = env.backend
+
+            def evil() -> tuple[bool, str]:   # deletes a.txt (target) AND b.txt (collateral)
+                be.items = [i for i in be.items if i.name == "c.txt"]
+                return True, "ok"
+
+            tx = atx.ActionTransaction("g", "bin_purge", refs[0], evil, atx.Reversibility.REVERSIBLE, [], atx.ExpectedWorldDelta("recyclebin", lambda: env.world.identity_set("recyclebin"), frozenset({refs[0].identity})))
+            r = asyncio.run(atx.TxEngine().run(tx))
+            self.assertEqual(r.status, atx.TxStatus.NO_EFFECT)
+            self.assertTrue(any(x["name"] == "world_delta_exact" and not x["ok"] for x in r.rows))
+        finally:
+            env.close()
+
+    def test_ledger_is_durable_and_survives_restart(self) -> None:
+        d = Path(tempfile.mkdtemp())
+        try:
+            calls: list[str] = []
+            tx, _ = self._tx(calls)
+            eng = atx.TxEngine(atx.TxLedger(d / "tx.jsonl"))
+            asyncio.run(eng.run(tx))
+            lines = (d / "tx.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual([json.loads(x)["phase"] for x in lines], ["prepared", "executed", "committed"])
+            self.assertIsNotNone(atx.TxLedger(d / "tx.jsonl").committed(tx.key))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+# ====================================================================================================================== 5. WorldModel + remaining-work consistency
+class TestWorldModel(unittest.TestCase):
+    def test_epochs_monotonic_and_out_of_order_ignored(self) -> None:
+        w = WorldModel()
+        a = w.submit("uia", {"n": 1})
+        b = w.submit("uia", {"n": 2})
+        self.assertEqual((a.epoch, b.epoch), (1, 2))
+        w.submit("uia", {"n": 99}, epoch=1)           # replayed/old snapshot must never move truth backwards
+        self.assertEqual((w.epoch("uia"), w.latest("uia").payload), (2, {"n": 2}))   # type: ignore[union-attr]
+        obs = SimpleNamespace(channel="dxgi_vision", snapshot_epoch=7, hwnd=5, title="t", url="", elements=[1, 2], windows=[SimpleNamespace(hwnd=5, title="t", pid=1, z=0)])
+        w.submit_observation(obs)
+        self.assertEqual((w.epoch("dxgi_dml"), w.latest("window_manager").payload[0]["hwnd"]), (7, 5))
+
+    def test_staleness_uses_injected_clock(self) -> None:
+        t = {"now": 100.0}
+        w = WorldModel(clock=lambda: t["now"])
+        w.submit("filesystem", [])
+        self.assertTrue(w.is_fresh("filesystem"))
+        t["now"] += 10
+        self.assertFalse(w.is_fresh("filesystem"))
+        self.assertIn("filesystem", w.consistency(("filesystem",)).stale)
+
+    def test_rebase_by_identity_after_external_change(self) -> None:
+        env = Env(BIN6)
+        try:
+            frozen = env.world.refresh("recyclebin")[3]                     # 相机.txt, ordinal 3
+            env.backend.items.pop(0)                                         # something else leaves the bin → every ordinal shifts
+            cur = env.world.resolve_current(frozen)
+            assert cur is not None
+            self.assertEqual((cur.identity, cur.ordinal), (frozen.identity, 2))   # SAME object, new position
+            self.assertGreater(cur.epoch, frozen.epoch)
+            env.backend.items = [i for i in env.backend.items if i.bin_path != frozen.bin_path]
+            env.backend.add("相机.txt", "C:\\Users\\u\\Desktop\\相机.txt")          # a NEW object with the same name appears
+            ok, code, _ = env.world.check_ref(frozen)
+            self.assertEqual((ok, code), (False, "OBJECT_IDENTITY_MISMATCH"))    # a same-NAMED object remains, but it is not the frozen one
+        finally:
+            env.close()
+
+    def test_stale_fingerprint_detected(self) -> None:
+        env = Env(desktop_files=["a.txt"])
+        try:
+            ref = env.world.refresh("desktop")[0]
+            p = env.roots["desktop"] / "a.txt"
+            p.write_text("changed-content-longer", encoding="utf-8")
+            ok, code, _ = env.world.check_ref(ref)
+            self.assertEqual((ok, code), (False, "STALE_EPOCH"))
+        finally:
+            env.close()
+
+    def test_cross_location_search_classification(self) -> None:
+        env = Env(["相机.txt"], desktop_files=[], bin_original_on_desktop=True)
+        try:
+            self.assertEqual(env.world.search("相机").status, "bin_only")
+            (env.roots["downloads"] / "相机.txt").write_text("x", encoding="utf-8")
+            rep = env.world.search("相机")
+            self.assertEqual((rep.status, rep.hits[0].ref.location), ("live_unique", "downloads"))   # a live copy always wins over the bin
+            (env.roots["documents"] / "相机.txt").write_text("x", encoding="utf-8")
+            self.assertEqual(env.world.search("相机").status, "live_ambiguous")
+            self.assertEqual(env.world.search("完全不存在的东西").status, "none")
+            self.assertEqual(env.world.search("相").status, "suggest")   # a fragment is only ever a SUGGESTION (→ clarification), never an auto-match
+        finally:
+            env.close()
+
+    def test_scope_is_enforced(self) -> None:
+        env = Env(desktop_files=["a.txt"])
+        try:
+            self.assertTrue(env.world.scope.allows_path(env.roots["desktop"] / "a.txt"))
+            self.assertFalse(env.world.scope.allows_path(Path("C:/Windows/System32/x.dll")))
+            narrow = WorldModel(env.world.provider, AuthorizedScope(env.roots, ("desktop",)))
+            self.assertEqual(narrow.refresh("recyclebin"), [])               # outside the authorized scope the model reports nothing
+        finally:
+            env.close()
+
+    def test_remaining_work_is_identity_based_and_consistent_with_world(self) -> None:
+        env = Env(BIN6)
+        try:
+            g = compile_goal("删除回收站前面两个")
+            assert g is not None
+            sel = resolve_selection(g, env.world.refresh("recyclebin"))
+            frozen = list(sel.refs)
+            rw0 = recompute_remaining_work(g, frozen, env.world.refresh("recyclebin"))
+            self.assertEqual((rw0.total, len(rw0.remaining), rw0.complete), (2, 2, False))
+            env.backend.items = [i for i in env.backend.items if i.bin_path != frozen[0].bin_path]   # first one removed by ANYONE
+            rw1 = recompute_remaining_work(g, frozen, env.world.refresh("recyclebin"))
+            self.assertEqual(([r.identity for r in rw1.vanished], [r.identity for r in rw1.remaining]), ([frozen[0].identity], [frozen[1].identity]))
+            rw2 = recompute_remaining_work(g, frozen, env.world.refresh("recyclebin"), committed={frozen[1].identity})
+            self.assertEqual(len(rw2.done), 1)                                  # committed ids are never re-executed
+            env.backend.items = [i for i in env.backend.items if i.bin_path != frozen[1].bin_path]
+            rw3 = recompute_remaining_work(g, frozen, env.world.refresh("recyclebin"))
+            self.assertTrue(rw3.complete)
+            self.assertEqual(env.world.consistency(("shell_com",)).conflicts, [])
+        finally:
+            env.close()
+
+    def test_unified_ref_bridge(self) -> None:
+        env = Env(["a.txt"])
+        try:
+            ref = env.world.refresh("recyclebin")[0]
+            try:
+                u = ref.to_unified()
+            except ImportError:
+                self.skipTest("unified_object needs pydantic/httpx in this interpreter")
+            self.assertEqual((u.object_id, u.business_identity), (ref.identity, ref.identity))
+        finally:
+            env.close()
+
+
+# ====================================================================================================================== 6. orchestrator wiring (source-level; the full Brain needs Windows drivers)
+class TestOrchestratorPatch(unittest.TestCase):
+    def test_hooks_present(self) -> None:
+        src = (ROOT / "agent_brain" / "orchestrator.py").read_text(encoding="utf-8")
+        for needle in ("from .core_loop import CoreLoop", "self.core = CoreLoop(self)", "await self.core.run(st)", "self.core.on_budget_trip(", "self.core.on_step_result(",
+                       "self.core.observe(", "self.core.take_directive()", "self.core.summary_line()", "self.core.begin_task()"):
+            self.assertIn(needle, src, needle)
+        self.assertLess(src.index("await self.core.run(st)"), src.index("await layer0_v17.run(self, st)"))   # the unified core is consulted BEFORE the legacy router
+        l17 = (ROOT / "agent_brain" / "layer0_v17.py").read_text(encoding="utf-8")
+        self.assertNotIn('kind == "file_delete"', l17)                                                     # dead duplicated branches removed
+        self.assertNotIn('kind == "bin_remove"', l17)
+
+
+class TestOrchestratorIntegration(unittest.TestCase):
+    """The REAL Brain._run drives the unified core (fake hub, fake OS effectors): the 8388968 task #2 sentence, through the production control flow."""
+
+    def _brain(self, env: Env):
+        from agent_brain.config import Config
+        from agent_brain.orchestrator import Brain
+
+        os.environ["DSCU_ROOT"] = str(env.tmp / "root")
+        os.environ["DSCU_CORE_FORCE"] = "1"
+        hub = SimpleNamespace(driver_kind="fake", cdp_up=False, cdp_error=None, procs={}, driver_hello={"version": "t"})
+        brain = Brain(Config(), say=env.lines.append, llm=None, hub=hub)
+        brain.core = CoreLoop(brain, env.world, env.fx, say=env.lines.append)
+        return brain
+
+    def test_task2_through_brain_run(self) -> None:
+        from agent_brain.state import TaskState
+
+        env = Env(BIN6)
+        try:
+            brain = self._brain(env)
+            status, summary = asyncio.run(brain._run(TaskState("删除回收站前面两个", max_steps=5)))
+            self.assertEqual(status, "completed_verified", summary)
+            self.assertEqual(env.bin_names(), ["VERSION", "相机.txt", "你好你好你好.txt", "VERSION"])
+            self.assertIn("v18.1：GoalSpec 1", brain.core.summary_line())
+        finally:
+            os.environ.pop("DSCU_CORE_FORCE", None)
+            env.close()
+
+    def test_task3_through_brain_run(self) -> None:
+        from agent_brain.state import TaskState
+
+        env = Env(["相机.txt"], bin_original_on_desktop=True)
+        try:
+            brain = self._brain(env)
+            status, summary = asyncio.run(brain._run(TaskState("删除相机文件", max_steps=5)))
+            self.assertEqual(status, "completed_verified", summary)
+            self.assertEqual(brain.core.stats["handoffs"], 0)
+            self.assertEqual(env.backend.delete_calls, [])
+        finally:
+            os.environ.pop("DSCU_CORE_FORCE", None)
+            env.close()
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
+'@
+
+Add-DscuFile 'tests/golden/ordinal_cases.json' 'd485f0932d996773c5d1f06cae7c5ccdaf3063818b6a8ef44681264f8060a439' @'
+{
+  "_comment": "Language-neutral golden vectors for the v18.1 GoalEngine selector compiler. A Rust / TypeScript port of the compiler must reproduce every row. verb/container/ordinals/name/ext are the expected GoalSpec fields; name=null means NO by_name selector (positional words must never become a file name).",
+  "cases": [
+    {"task": "删除回收站前面两个", "verb": "delete", "container": "recyclebin", "ordinals": ["head=2"], "name": null},
+    {"task": "删除回收站前两个", "verb": "delete", "container": "recyclebin", "ordinals": ["head=2"], "name": null},
+    {"task": "删除回收站里面的前面三个文件", "verb": "delete", "container": "recyclebin", "ordinals": ["head=3"], "name": null},
+    {"task": "删除回收站最前面的5项", "verb": "delete", "container": "recyclebin", "ordinals": ["head=5"], "name": null},
+    {"task": "删除回收站开头2个", "verb": "delete", "container": "recyclebin", "ordinals": ["head=2"], "name": null},
+    {"task": "删除回收站最后三条", "verb": "delete", "container": "recyclebin", "ordinals": ["tail=3"], "name": null},
+    {"task": "删除回收站最后一个", "verb": "delete", "container": "recyclebin", "ordinals": ["tail=1"], "name": null},
+    {"task": "删除回收站后面两个", "verb": "delete", "container": "recyclebin", "ordinals": ["tail=2"], "name": null},
+    {"task": "删除回收站里的第3个", "verb": "delete", "container": "recyclebin", "ordinals": ["index=2"], "name": null},
+    {"task": "删除回收站第一个", "verb": "delete", "container": "recyclebin", "ordinals": ["index=0"], "name": null},
+    {"task": "删除回收站第十二个", "verb": "delete", "container": "recyclebin", "ordinals": ["index=11"], "name": null},
+    {"task": "删除回收站里倒数第二个", "verb": "delete", "container": "recyclebin", "ordinals": ["index=-1"], "name": null},
+    {"task": "删除回收站第2到第4个", "verb": "delete", "container": "recyclebin", "ordinals": ["range=1..3"], "name": null},
+    {"task": "删除回收站第一个和第三个", "verb": "delete", "container": "recyclebin", "ordinals": ["index=0", "index=2"], "name": null},
+    {"task": "删除回收站前两个和最后一个", "verb": "delete", "container": "recyclebin", "ordinals": ["tail=1", "head=2"], "name": null},
+    {"task": "删除回收站里最新的两个", "verb": "delete", "container": "recyclebin", "ordinals": ["head=2,order=newest"], "name": null},
+    {"task": "删除回收站里最早的一个", "verb": "delete", "container": "recyclebin", "ordinals": ["head=1,order=oldest"], "name": null},
+    {"task": "还原回收站最后一个", "verb": "restore", "container": "recyclebin", "ordinals": ["tail=1"], "name": null},
+    {"task": "还原回收站里的相机文件", "verb": "restore", "container": "recyclebin", "ordinals": [], "name": "相机"},
+    {"task": "删除桌面上前3个txt文件", "verb": "delete", "container": "desktop", "ordinals": ["head=3"], "name": null, "ext": "txt"},
+    {"task": "删除下载里面的前面两个文件", "verb": "delete", "container": "downloads", "ordinals": ["head=2"], "name": null},
+    {"task": "删除下载里最旧的文件", "verb": "delete", "container": "downloads", "ordinals": ["head=1,order=oldest"], "name": null},
+    {"task": "删除相机文件", "verb": "delete", "container": "auto", "ordinals": [], "name": "相机"},
+    {"task": "把桌面上的相机文件删除，并打开回收站", "verb": "delete", "container": "desktop", "ordinals": [], "name": "相机", "open_bin_after": true},
+    {"task": "删除桌面相机.txt", "verb": "delete", "container": "desktop", "ordinals": [], "name": "相机.txt"},
+    {"task": "删除回收站里的再见.txt", "verb": "delete", "container": "recyclebin", "ordinals": [], "name": "再见.txt"},
+    {"task": "删除回收站里的我的文档.txt", "verb": "delete", "container": "recyclebin", "ordinals": [], "name": "我的文档.txt"},
+    {"task": "先把相机文件删除", "verb": "delete", "container": "auto", "ordinals": [], "name": "相机"},
+    {"task": "彻底删除桌面上的相机", "verb": "delete", "container": "desktop", "ordinals": [], "name": "相机", "permanent": true},
+    {"task": "删除回收站所有txt文件", "verb": "delete", "container": "recyclebin", "ordinals": [], "name": null, "ext": "txt", "select_all": true},
+    {"task": "打开回收站", "compile": null},
+    {"task": "清空回收站", "compile": null},
+    {"task": "删除微信里的消息", "compile": null},
+    {"task": "你好", "compile": null}
+  ]
+}
+'@
+
 #endregion
 
 #region ===================== 引导器：校验 → 释放 → 构建 → 启动 =====================
@@ -30401,7 +33002,7 @@ function Invoke-DscuBuild([int]$Changed) {
     if ($LASTEXITCODE -ne 0 -and -not (Test-DscuBuilt)) { throw '构建失败，请查看上方输出。' }
 }
 
-Write-Host "DeepSeek Computer Use v$script:DscuVersion · Unified Object Identity & Reliable Execution（UnifiedObjectRef 统一身份 · Target/Trigger 门控 · WorldStateDiff 证据门控 · 真实微信校准 · 实时控制环 · 8 维评测） · v17.1 Phase 12 治本收口（异步 OCR 修通 · WebActionGoal · WeChatSkill 5/5 · Gmail 同 Epoch 冻结 · Rust 激活） · v17.0 Qualitative Leap（真 Rust 驱动零 MSVC · 真训练 OmniParser DirectML@Radeon 780M · Target/Trigger 解耦门控 · 回收站 Shell COM 单文件技能 · Shell 窗口 Oracle） · v16.4 Critical Stabilization（WindowManager 点击/截图归属 · 意图完整性 · 强类型目标/选择器 · 预算熔断 · 驱动/DirectML 实证） · Step 3+ · v16.3 Phase2（No page found 透明自愈 · 统一坐标系 · 可验证滚动 · 故障注入验收 · Rust/DirectML 实证） · v16.2 Phase0/1（coverage=full 硬门槛 · 坐标身份反查 · WAL 崩溃恢复 · GmailSkill + DPAPI · MCP 锁版本） · v16.1 · Clean-Chrome 免风控 + PID 级 FG-Gate + AUTH_WALL 交接 + 官方 chrome-devtools-mcp + 极性验证器 + 强力破遮挡 + v16 三层评测" -ForegroundColor Cyan
+Write-Host "DeepSeek Computer Use v$script:DscuVersion · Core Control-Loop Unification（GoalSpec 序数选择器 · WorldModel 唯一真相源 · Action Transaction · 自动换路 Recovery Planner） · v18.0 Unified Object Identity & Reliable Execution（UnifiedObjectRef 统一身份 · Target/Trigger 门控 · WorldStateDiff 证据门控 · 真实微信校准 · 实时控制环 · 8 维评测） · v17.1 Phase 12 治本收口（异步 OCR 修通 · WebActionGoal · WeChatSkill 5/5 · Gmail 同 Epoch 冻结 · Rust 激活） · v17.0 Qualitative Leap（真 Rust 驱动零 MSVC · 真训练 OmniParser DirectML@Radeon 780M · Target/Trigger 解耦门控 · 回收站 Shell COM 单文件技能 · Shell 窗口 Oracle） · v16.4 Critical Stabilization（WindowManager 点击/截图归属 · 意图完整性 · 强类型目标/选择器 · 预算熔断 · 驱动/DirectML 实证） · Step 3+ · v16.3 Phase2（No page found 透明自愈 · 统一坐标系 · 可验证滚动 · 故障注入验收 · Rust/DirectML 实证） · v16.2 Phase0/1（coverage=full 硬门槛 · 坐标身份反查 · WAL 崩溃恢复 · GmailSkill + DPAPI · MCP 锁版本） · v16.1 · Clean-Chrome 免风控 + PID 级 FG-Gate + AUTH_WALL 交接 + 官方 chrome-devtools-mcp + 极性验证器 + 强力破遮挡 + v16 三层评测" -ForegroundColor Cyan
 $changed = Expand-Dscu
 if ($script:DscuMode -eq 'extract') { Write-Host "仅释放模式完成：$script:Root"; return }
 
@@ -30416,7 +33017,7 @@ $vpy = Join-Path $script:Root '.venv/Scripts/python.exe'
 $env:DSCU_ROOT = $script:Root
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
-if ([string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY) -and ($script:DscuMode -notin @('verify162', 'verify163', 'verify164', 'regress8', 'gmail-auth', 'gmail-status', 'build-driver', 'bootstrap-rust', 'dml', 'dml-init', 'regress171', 'accept171', 'regress18', 'eval18', 'wechat-calibrate'))) {
+if ([string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY) -and ($script:DscuMode -notin @('verify162', 'verify163', 'verify164', 'regress8', 'gmail-auth', 'gmail-status', 'build-driver', 'bootstrap-rust', 'dml', 'dml-init', 'regress171', 'accept171', 'regress18', 'regress181', 'eval18', 'wechat-calibrate'))) {
     while ($true) {
         $k = Read-Host '请输入 DeepSeek API Key（输入时不显示，直接粘贴后按回车）' -MaskInput
         if (-not [string]::IsNullOrWhiteSpace($k)) { $env:DEEPSEEK_API_KEY = $k.Trim(); break }
@@ -30437,6 +33038,7 @@ try {
         'accept171' { & (Join-Path $script:Root 'scripts/accept_v171.ps1') -Root $script:Root -Rounds $(if ($env:DSCU_ROUNDS) { [int]$env:DSCU_ROUNDS } else { 10 }) }
         'regress8' { & $vpy tests/regress_log8.py }
         'regress18' { & $vpy -m unittest discover -s tests/unit -p 'test_v18.py' -v }
+        'regress181' { & $vpy tests/test_v18_1_core_loop.py }
         'eval18' { $va = @(); if ($env:DSCU_VERIFY_ARGS) { $va = @($env:DSCU_VERIFY_ARGS -split '\s+' | Where-Object { $_ }) }; & $vpy evals/suite_v18.py @va }
         'wechat-calibrate' { if ([string]::IsNullOrWhiteSpace($env:DSCU_WECHAT_CONTACT)) { Write-Host '请先设置联系人昵称：$env:DSCU_WECHAT_CONTACT = "老虎不抓鼠"' -ForegroundColor Yellow } else { & $vpy -m agent_brain.skills.wechat_real --contact $env:DSCU_WECHAT_CONTACT --dry-run-no-send } }
         'verify163' { $va = @(); if ($env:DSCU_VERIFY_ARGS) { $va = @($env:DSCU_VERIFY_ARGS -split '\s+' | Where-Object { $_ }) }; & $vpy tests/verify_phase2.py @va }
