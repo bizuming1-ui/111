@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v17.0 (Qualitative Leap Release：真 Rust dscu-driver.exe 零 MSVC 自动激活(便携 llvm-mingw + gnullvm，驱动=rust-native) · 真训练 OmniParser icon_detect ONNX 绑定 Radeon 780M DmlExecutionProvider(SHA-256 固定) · Target/Trigger 解耦 ActionGate(工具栏删除不再被 OBJECT_IDENTITY_MISMATCH 误拦) · Explorer/回收站 UIA SelectionItemPattern 真选中并回读 · 回收站 Shell COM 单文件精准技能 · Shell.Application.Windows 窗口 Oracle · 无扩展名文件模糊解析 · DirectML 候选框+文本直连 deepseek-chat；基于 v16.4 (Critical Stabilization Sprint：WindowManager 点击/截图归属双校验 · 意图完整性门控 · AppWindow/FormField/MessageSend 强类型 GoalSchema · 强类型 Selector · Token/诊断/无进展熔断 · 驱动/DirectML 实证；基于 v16.3 Phase 2 修复：MCP `No page found` 透明重选页自愈（35 次降级清零）· 统一 DPI/视口/多屏负坐标坐标系 + 可验证滚动 scroll_container_verified · 真实故障注入验收 verify_phase2 · Rust GNU/MSVC 免痛激活 + DirectML 运行实证 · Gmail 一键授权向导 · SoM+文本锚点对象注册) 基于 v16.2 (Phase 0 & 1：可信成功标准 coverage=full 硬门槛 · StableObject 坐标反查 OBJECT_IDENTITY_MISMATCH · WAL 崩溃恢复 · 生产级 GmailSkill 两阶段闭环 + Windows DPAPI · chrome-devtools-mcp@1.14.0 锁版本) 基于 v16.1 (Step 3+) —— Clean-Chrome --browserUrl / Chrome146 --autoConnect 免风控登录 Gmail + PID 级 FG-Gate + 进程名 app_resolve + AUTH_WALL 1 步人工交接 + 零重启 MCP Supervisor —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
+  DeepSeek Computer Use v17.1 (Phase 12 治本收口版：异步 OCR 协程修通(RuntimeWarning 清零) · 通用 WebActionGoal(网页点击/下拉/跳转不再 unverified) · 确定性 WeChatSkill 5/5 闭环(UIA+DirectML+OCR) · Gmail 同 Snapshot-Epoch 冻结 + 去状态词身份 · 终端/开发标签页过滤 · 一键 Rust 激活 + verify164 --real 验收(DSCU_MODE=accept171)；基于 v17.0 (Qualitative Leap Release：真 Rust dscu-driver.exe 零 MSVC 自动激活(便携 llvm-mingw + gnullvm，驱动=rust-native) · 真训练 OmniParser icon_detect ONNX 绑定 Radeon 780M DmlExecutionProvider(SHA-256 固定) · Target/Trigger 解耦 ActionGate(工具栏删除不再被 OBJECT_IDENTITY_MISMATCH 误拦) · Explorer/回收站 UIA SelectionItemPattern 真选中并回读 · 回收站 Shell COM 单文件精准技能 · Shell.Application.Windows 窗口 Oracle · 无扩展名文件模糊解析 · DirectML 候选框+文本直连 deepseek-chat；基于 v16.4 (Critical Stabilization Sprint：WindowManager 点击/截图归属双校验 · 意图完整性门控 · AppWindow/FormField/MessageSend 强类型 GoalSchema · 强类型 Selector · Token/诊断/无进展熔断 · 驱动/DirectML 实证；基于 v16.3 Phase 2 修复：MCP `No page found` 透明重选页自愈（35 次降级清零）· 统一 DPI/视口/多屏负坐标坐标系 + 可验证滚动 scroll_container_verified · 真实故障注入验收 verify_phase2 · Rust GNU/MSVC 免痛激活 + DirectML 运行实证 · Gmail 一键授权向导 · SoM+文本锚点对象注册) 基于 v16.2 (Phase 0 & 1：可信成功标准 coverage=full 硬门槛 · StableObject 坐标反查 OBJECT_IDENTITY_MISMATCH · WAL 崩溃恢复 · 生产级 GmailSkill 两阶段闭环 + Windows DPAPI · chrome-devtools-mcp@1.14.0 锁版本) 基于 v16.1 (Step 3+) —— Clean-Chrome --browserUrl / Chrome146 --autoConnect 免风控登录 Gmail + PID 级 FG-Gate + 进程名 app_resolve + AUTH_WALL 1 步人工交接 + 零重启 MCP Supervisor —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
   直接整段粘贴到 PowerShell 7 → 输入 DeepSeek API Key → 出现「请输入任务」提示符即可使用（与 v12/v13/v14 的使用方式完全相同）。
 .DESCRIPTION
   本脚本是【自解压引导器】（与 v14 同构）：
@@ -35,9 +35,12 @@
   v17.0 新增模式：DSCU_MODE=bootstrap-rust(一键零 MSVC 构建 Rust 驱动；别名 build-driver) · dml-init(下载+SHA-256 校验 OmniParser ONNX 并在 DirectML 上基准) · verify164(真机验收：DSCU_VERIFY_ARGS='--real --rounds 10')
   v17.0 新增环境变量：DSCU_GH_PROXY(GitHub 镜像前缀，如 https://ghfast.top/) · DSCU_HF_ENDPOINT(HuggingFace 镜像，默认依次尝试 huggingface.co 与 hf-mirror.com) · DSCU_DML_MODEL_URL · DSCU_DML_DEVICE_ID · DSCU_OCR=0 · DSCU_RUST=0(跳过 Rust 自动激活)
   v17.0 任务示例(Layer 0 免 LLM)：删除相机 · 把桌面上的相机文件删除，并打开回收站 · 打开回收站 · 删除回收站里面的相机文件 · 还原回收站里的相机文件
+  v17.1 新增模式：DSCU_MODE=accept171(一键验收：回归门禁 PYTHONWARNINGS=error::RuntimeWarning → bootstrap-rust → verify164 --real --rounds 10 → audit_report.json；DSCU_ROUNDS=N)  regress171(仅回归门禁)
+  v17.1 新增环境变量：DSCU_WECHAT_SKILL=0(关闭确定性微信技能) · DSCU_MSG_HITL=always|auto(发送前确认策略；DSCU_AUTO_CONFIRM=1 同样自动确认) · DSCU_ALLOW_DEV_TABS=1(不过滤开发/终端标签页) · DSCU_TERMINAL_IS_OWN=0
+  v17.1 任务示例：打开微信，找到联系人老虎不抓鼠，给他发一条你好 · 点击第一个网站 · 点击招生就业 · 点击新生入学 · 在浏览器里面打开gmail，删除前面5条和后面3条邮件
 #>
 $ErrorActionPreference = 'Stop'
-$script:DscuVersion = '17.0.0'
+$script:DscuVersion = '17.1.0'
 if ($PSVersionTable.PSVersion.Major -lt 7) { Write-Host '需要 PowerShell 7+（pwsh）。请在 pwsh 中粘贴。' -ForegroundColor Red; return }
 $script:DscuMode = if ($env:DSCU_MODE) { $env:DSCU_MODE } else { 'run' }
 if (-not $IsWindows -and $script:DscuMode -ne 'extract') { Write-Host '本脚本只能在 Windows 上运行（DSCU_MODE=extract 可仅释放文件）。' -ForegroundColor Red; return }
@@ -1475,7 +1478,7 @@ from .py_native_driver import *  # noqa: F401,F403
 from .py_native_driver import NativeDriver, DxgiStream, _ahash, _ahash_np  # noqa: F401
 '@
 
-Add-DscuFile 'agent_brain/orchestrator.py' '7f1e7b0def1dffc8b9a9f2a8bf235a4771204661d8f029db24d5190ee1f706f1' @'
+Add-DscuFile 'agent_brain/orchestrator.py' '1df83639102ee845083098e2abcbe686631f17978f9cf0e888f4f2b60c3a116f' @'
 """The single live brain. Python asyncio owns: observation -> decision (DeepSeek) -> gated execution -> measured effect
 -> recovery. No placeholder telemetry: `cdp_up`, `uia_controls`, `stalled`, `blocked_streak`, `perception_channel` are all
 computed from real IPC replies every step (see choose_channel + TaskState.settle_last)."""
@@ -1509,7 +1512,7 @@ from .state_machine import Intervention, RecoveryPlaybook, StableObjectRegistry,
 from .verifier import IndependentVerifier, GmailTrashGoal, Check, Verdict, canonical_status, may_commit, terminal_from_verdict
 from .action_gate import IDENTITY, MAX_IDENTITY_STRIKES, IdentityGate
 from . import layer0_v17
-from .stable_object import lock_selection
+from .stable_object import freeze_same_epoch, lock_selection
 from .transaction import WalTransaction, WriteAheadLog, adjudicate, make_gmail_probe, recover as wal_recover
 from .skills import gmail_skill
 from . import cli_anything
@@ -2531,16 +2534,114 @@ class Brain:
         say(f"╰─ 任务 #{self.task_no} 结束（{status}）──────────\n")
         return status
 
+    async def _epoch_freeze(self, st: TaskState, b: Bundle, segments: list[dict[str, Any]], step: int) -> list:
+        """v17.1 (log task #14): freeze head/tail targets on ONE CDP snapshot.  The 250-control cap used to cut the list, so `tail 3` was the last 3 of a TRUNCATED
+        list and the checked rows changed identity (state words) -> self-inflicted OBJECT_IDENTITY_MISMATCH.  Now: refuse empty/stale sets; extend the snapshot when truncated."""
+        say = self.say
+        obs = b.obs
+        must = "mail.google.com" if re.search(r"gmail|谷歌邮|google\s*mail", st.task, re.I) else ""
+        res = freeze_same_epoch(self.registry, list(obs.elements), segments, "gone", step, epoch=int(getattr(obs, "snapshot_epoch", 0) or 0), channel=str(obs.channel),
+                                url=str(obs.url or ""), url_must_contain=must, cap=250)
+        if not res.ok and res.truncated and self.hub.cdp_up:
+            try:
+                full = await self.hub.cdp_observe(max_elements=900)  # extended snapshot = a NEW epoch; freeze from THAT one
+                res = freeze_same_epoch(self.registry, list(full.elements), segments, "gone", step, epoch=int(full.snapshot_epoch), channel="cdp", url=str(full.url or ""), url_must_contain=must, cap=900)
+                say(f"  🧊 扩展快照 epoch={full.snapshot_epoch}（{len(full.elements)} 控件）用于冻结尾部目标")
+            except Exception as e:  # noqa: BLE001
+                say(f"  ⚠ 扩展快照失败：{str(e)[:80]}")
+        if not res.ok:
+            say(f"  ⏳ 目标冻结推迟：{res.reason}")
+            return []
+        st.freeze_epoch = res.epoch  # type: ignore[attr-defined]
+        say(f"  🧊 同一快照 epoch={res.epoch} 内完成列表提取 + 目标冻结（{res.rows_seen} 行 → {len(res.targets)} 个目标；身份=去状态词内容签名/thread_id，与勾选无关）")
+        return res.targets
+
+    async def _epoch_select(self, st: TaskState, targets: list) -> None:
+        """After the HITL confirmation: ONE fresh snapshot, re-resolve every frozen identity inside it, tick exactly those rows in the SAME epoch (fail-closed)."""
+        say = self.say
+        if not self.hub.cdp_up or not targets:
+            return
+        try:
+            snap = await self.hub.cdp_observe(max_elements=900)
+            els = list(snap.elements)
+            self.registry.observe_rows(els, st.step)
+            rows = {sid: r for r, sid in self.registry.last_rows.items()}
+            missing = [o for o in targets if o.stable_id not in rows]
+            if missing:
+                say(f"  🛑 同快照勾选中止：{len(missing)} 个冻结目标不在最新快照（{'；'.join(o.label[:16] for o in missing[:3])}）→ 保持 fail-closed，不勾选任何行")
+                return
+            groups = self.registry.row_groups(els)
+            done = 0
+            for o in targets:
+                cb = next((e for e in groups.get(rows[o.stable_id], []) if e.role.lower() == "checkbox"), None)
+                if cb is None:
+                    continue
+                if "checked" in cb.states:
+                    done += 1
+                    continue
+                r = await self._cdp("click", ref=cb.ref_id, expect_epoch=int(snap.snapshot_epoch))
+                done += 1 if r.ok else 0
+            say(f"  ☑ 同一快照 epoch={snap.snapshot_epoch} 内已勾选 {done}/{len(targets)} 个冻结目标（下一轮观察会回读 checked 状态）")
+        except Exception as e:  # noqa: BLE001
+            say(f"  ⚠ 同快照勾选未完成：{type(e).__name__}: {str(e)[:100]}（模型仍可用 select_rows）")
+
+    async def _run_wechat_skill(self, st: TaskState) -> Optional[tuple[str, str]]:
+        """v17.1: deterministic WeChatSkill (0 LLM calls).  None => not applicable / could not start -> the model loop (with all send gates) continues."""
+        from .skills import message_send as _ms
+
+        sess = getattr(st, "msg_session", None)
+        if sess is None or os.environ.get("DSCU_WECHAT_SKILL", "1") == "0" or not _ms.is_wechat_request(st.task):
+            return None
+        from .skills import wechat_io as _wio
+
+        say = self.say
+        self.counters["wechat_skill_runs"] = self.counters.get("wechat_skill_runs", 0) + 1
+        say("── WeChatSkill（确定性闭环：Ctrl+F 搜索 → 联系人冻结 → 单聊核验 → 草稿读回 → HITL → 发送 → 右半区气泡核验；0 次模型调用）──")
+        skill = _ms.WeChatSkill(_wio.WeChatWinIO(self), sess, say)
+        try:
+            res = await skill.run()
+        except Exception as e:  # noqa: BLE001
+            say(f"  ⚠ WeChatSkill 异常 {type(e).__name__}: {str(e)[:120]} → 回退到模型循环（发送门控仍然生效）")
+            return None
+        if res.status == "fallback":
+            say(f"  ↩ WeChatSkill 未能自动完成：{res.reason} → 回退到模型循环（发送门控仍然生效）")
+            return None
+        if res.status == "aborted":
+            return "aborted", res.reason
+        if res.status != "sent_verified":
+            say(f"✖ 失败（WeChatSkill）：{res.reason}")
+            return "failed", res.reason
+        self.registry = StableObjectRegistry()
+        self.verifier.reg = self.registry
+        self.verifier.rejections = 0
+        self.gate.rebind(self.registry)
+        verdict = await self.verifier.verify_done(st.task, res.summary, st, None, None)
+        say(f"  🔎 独立验证器：{'放行 ✓' if verdict.ok else '拒绝 ✗'} · 覆盖={verdict.coverage} · {verdict.render()[:420]}")
+        if verdict.ok and may_commit(verdict):
+            self.counters["verifier_pass"] += 1
+            say(f"✔ 完成（completed_verified · 覆盖=full · 必需后置条件 {verdict.required_passed}/{verdict.required_total} 全部独立通过）: {res.summary}")
+            return "completed_verified", res.summary
+        self.counters["verifier_unverified"] += 1
+        say(f"⚠ 未完全验证（覆盖={verdict.coverage}）: {verdict.diagnosis[:200]}")
+        return ("partially_completed" if verdict.coverage == "partial" else "failed"), f"{res.summary}（{verdict.diagnosis[:120]}）"
+
     async def _run(self, st: TaskState) -> tuple[str, str]:
         say = self.say
         self.v164.reset_task()
         _ig = self.v164.intent_gate(st)  # v16.4: messaging task without explicit recipient AND body -> needs_clarification, 0 model calls, 0 GUI actions
         if _ig is not None:
             return _ig
+        _wr = await self._run_wechat_skill(st)  # v17.1: deterministic WeChatSkill (None => fall through to the model loop)
+        if _wr is not None:
+            return _wr
         l0 = layer0.parse_file_task(st.task)
         if l0:
             return await self._layer0_file(l0, st)
         self.recovery.reset()
+        try:  # v17.1 WebActionGoal: (url, title, expanded_states, dom_text_digest) BEFORE the first action
+            await self.verifier.capture_web_baseline(st.task)
+        except Exception:  # noqa: BLE001
+            pass
         rt = layer0.parse_recycle_task(st.task)
         if rt is not None:
             return await self._layer0_recycle(rt, st)
@@ -2616,13 +2717,14 @@ class Brain:
                 return "blocked_needs_human", directive.reason
             _, b.els = render_elements(b.obs)
             self.gate.note_observation(b.obs, step)
+            self.verifier.web.sample(b.obs, step)  # v17.1: observation-level before/after states
             if b.obs.elements and b.obs.channel in ("cdp", "uia", "dxgi_vision"):
                 self.registry.observe_rows(b.obs.elements, step, b.obs.channel)
                 _gs = getattr(st, "gmail_spec", None)
                 _need_freeze = bool(st.quantity or (_gs and _gs.get("selection"))) and not self.registry.targets_locked
                 if _need_freeze and re.search(r"删除|delete|归档|archive|移除|勾选|选中|select|标记", st.task, re.I):
                     if _gs and _gs.get("intent") == "trash" and _gs.get("selection"):
-                        tg = lock_selection(self.registry, b.obs.elements, _gs["selection"], "gone", step)  # v16.2: composite first_n + last_n frozen from the DOM
+                        tg = await self._epoch_freeze(st, b, _gs["selection"], step)  # v17.1: freeze on ONE snapshot epoch (never an empty / stale / truncated set)
                         if tg:
                             st.quantity = len(tg)
                     else:
@@ -2636,6 +2738,7 @@ class Brain:
                                 self.tx.abort()
                                 return "aborted", "用户在目标冻结确认环节拒绝执行"
                             self.tx.freeze_gui = True  # type: ignore[attr-defined]
+                            await self._epoch_select(st, tg)  # v17.1: tick the frozen rows inside ONE fresh snapshot epoch
                 if destructive_step == step - 1:
                     mm = self.registry.mismatches()
                     if mm:
@@ -2673,6 +2776,10 @@ class Brain:
                 name = a.get("action", "")
                 brief = " ".join(f"{kk}={str(v)[:40]}" for kk, v in a.items() if kk not in ("thought", "step", "expect", "action", "actions"))
                 say(f"  动作{'' if len(actions) == 1 else f' {k}/{len(actions)}'}: action={name} {brief}")
+                if name in ("click", "double_click", "check", "select", "toolbar_action") and a.get("id") is not None:
+                    _se = b.els.get(a.get("id"))
+                    if _se is not None:
+                        self.verifier.web.note_click(getattr(_se, "name", "") or "", getattr(_se, "role", ""))  # v17.1: clicked-control names for WebActionGoal intent match
                 if name == "done":
                     ledger_bad = st.ledger and st.ledger[-1].effect in ("none", "error") and st.ledger[-1].action.get("action") not in ("wait", "inspect", "vision_inspect", "file_stat", "dir_list", "recycle_bin_status", "recycle_bin_find", "verify_text_file", "minimize_blockers")
                     if ledger_bad and not getattr(st, "_done_rejected", False):
@@ -2900,7 +3007,7 @@ class Brain:
             say(f"  模型调用 {st.llm_calls} 次 · 输入 {st.tokens_in} tok（前缀缓存命中 {int(100 * st.cache_hit / max(1, st.tokens_in))}%）· 输出 {st.tokens_out} tok")
 '@
 
-Add-DscuFile 'agent_brain/perception.py' 'f44b0904c965f62d667edd7e8b5755406de50d0e645ab085810d741f00df85bd' @'
+Add-DscuFile 'agent_brain/perception.py' '97b1f7a6923854f8b165479da0a9aec7a6268c4f28bbb963945d9d8cfe5902c1' @'
 """Perception layer (Step 2).
 
  * Force-Vision Latch : `vision_inspect` arms `_force_vision_next_turn`.  The very next *main-loop* observation skips the CDP overlay,
@@ -3077,6 +3184,10 @@ class Perception:
         if latched:
             forced, want_shot = "dxgi_vision", True
         browser_task = st.target_hint in ("browser", "msedge", "chrome") or re.search(r"https?://|gmail|浏览器|网页|网站|抖音|bilibili|youtube|淘宝|百度", st.task, re.I) is not None
+        # v17.1 (log task #8): a relative reference ("点击第一个", "点击第三个视频") with NO app named refers to the work window / attached browser, never to the agent's own terminal
+        relref = re.search(r"^\s*(?:请|帮我)?(?:点击|点开|单击|选择|打开)?\s*(?:第\s*[一二三四五六七八九十两\d]+\s*(?:个|条|项|篇|行|页|位)|最后一个)", st.task) is not None
+        if relref and hub.cdp_up and not re.search(r"微信|记事本|文件|桌面|终端|powershell|资源管理器|设置", st.task, re.I):
+            browser_task = True
         if browser_task and not hub.cdp_up:
             await hub.ensure_cdp()
 
@@ -3085,7 +3196,7 @@ class Perception:
         work = getattr(st, "work_hwnd", 0)
         if probe and probe.get("hwnd") and not probe.get("own_console") and probe.get("class") not in ("Progman", "WorkerW", "Shell_TrayWnd"):
             st.work_hwnd = work = int(probe["hwnd"])  # type: ignore[attr-defined]
-        if probe and probe.get("own_console") and work and (st.step >= 2 or latched):
+        if probe and probe.get("own_console") and work and (st.step >= 2 or latched or relref):
             if await self._guard_focus(st, work):
                 probe = await self._fg_probe() or probe
         gate = self._gate_passes(probe) and forced in (None, "cdp")
@@ -3118,7 +3229,7 @@ class Perception:
             w = self._find_work_window(drv, bool(browser_task))
             if w and not work:
                 st.work_hwnd = work = w  # type: ignore[attr-defined]
-        if latched and (drv.fg_window() and drv.fg_window().own_console) and work:  # type: ignore[union-attr]
+        if (latched or relref) and (drv.fg_window() and drv.fg_window().own_console) and work:  # type: ignore[union-attr]
             if await self._guard_focus(st, work):
                 await asyncio.sleep(0.12)
 
@@ -3586,7 +3697,7 @@ def parse_result(d: dict[str, Any]) -> ActionResult:
     return ActionResult.model_validate(d)
 '@
 
-Add-DscuFile 'agent_brain/py_native_driver.py' 'ba898e08d8a72d45358f72dadd51b79baaf99524219d877087a62c185407fb1f' @'
+Add-DscuFile 'agent_brain/py_native_driver.py' '1bdbf79210e193ae95f859809fa59af33f1aaebbcc04a0592e57587465abd3ad' @'
 """py-native driver v14 (used when dscu-driver.exe is not built).  Step-2 upgrades: DXGI continuous-stream capture (no per-step
 SwapChain rebuild, zero-copy peek, lazy PIL conversion), <2 ms Win32 foreground probe (`fg_probe`), UIA RuntimeId/AutomationId export,
 focus-guard (re-activate the work window when the host console steals foreground).
@@ -3842,7 +3953,23 @@ class DxgiStream:
         self.started = False
 
 
+# v17.1 (log task #8 `点击第一个` clicked the tabs of the agent's OWN Windows Terminal): the terminal HOST (WindowsTerminal.exe / OpenConsole / conhost) is not always an
+# ancestor of this process (single-instance WT, `wt -w 0`), so PID-ancestry alone cannot recognise it.  Class/process of a terminal host => own console (opt-out DSCU_TERMINAL_IS_OWN=0).
+TERM_HOST_CLASSES = {"CASCADIA_HOSTING_WINDOW_CLASS", "ConsoleWindowClass", "PseudoConsoleWindow", "VirtualConsoleClass"}
+TERM_HOST_PROCS = {"windowsterminal.exe", "openconsole.exe", "conhost.exe", "wt.exe", "windowsterminalpreview.exe"}
+
+
+def is_terminal_host(cls: str, proc: str) -> bool:
+    if os.environ.get("DSCU_TERMINAL_IS_OWN") == "0":
+        return False
+    return (cls or "") in TERM_HOST_CLASSES or (proc or "").lower() in TERM_HOST_PROCS
+
+
 class NativeDriver:
+    def _is_own(self, pid: int, cls: str) -> bool:
+        """own console = ancestor process OR terminal host window (v17.1)."""
+        return pid in self.own or is_terminal_host(cls, self._proc(pid))
+
     def __init__(self, own_pid: int) -> None:
         self.own: set[int] = {own_pid}
         try:
@@ -3914,7 +4041,7 @@ class NativeDriver:
             except Exception:
                 pass
             out.append({"hwnd": h, "title": t.value, "class": c.value, "process": self._proc(pid.value), "pid": pid.value, "rect": rect, "z": idx,
-                        "minimized": bool(u32.IsIconic(h)), "topmost": bool(ex & 0x8), "cloaked": cl.value != 0, "own_console": pid.value in self.own})
+                        "minimized": bool(u32.IsIconic(h)), "topmost": bool(ex & 0x8), "cloaked": cl.value != 0, "own_console": self._is_own(pid.value, c.value)})
             return True
 
         u32.EnumWindows(WNDENUMPROC(cb), None)
@@ -4202,7 +4329,7 @@ class NativeDriver:
         u32.GetClassNameW(h, c, 128)
         t = ctypes.create_unicode_buffer(256)
         u32.GetWindowTextW(h, t, 256)
-        out.update(pid=pid.value, process=self._proc(pid.value), **{"class": c.value}, title=t.value, own_console=pid.value in self.own, minimized=bool(u32.IsIconic(h)))
+        out.update(pid=pid.value, process=self._proc(pid.value), **{"class": c.value}, title=t.value, own_console=self._is_own(pid.value, c.value), minimized=bool(u32.IsIconic(h)))
         cl = ctypes.c_int(0)
         try:
             ctypes.windll.dwmapi.DwmGetWindowAttribute(ctypes.c_void_p(h), 14, ctypes.byref(cl), 4)
@@ -5599,7 +5726,7 @@ class RecoveryLadder:
         return d
 '@
 
-Add-DscuFile 'agent_brain/state_machine.py' '932194992f464535ec4ba6e799b916abd0eda566c51f5b5f686d3111d329347e' @'
+Add-DscuFile 'agent_brain/state_machine.py' '075dc570550bde5c7fd3ab368c57df49adbbf32ee3bcbfecb9d0189878468d57' @'
 """Step-2 transactional state machine:
   * StableObject / StableObjectRegistry  - business objects are tracked by *stable identity*, never by volatile row numbers (R1, R2 ...)
   * TaskTransaction                      - journal of side-effecting actions (irreversible actions run at most once, recoverable after a crash)
@@ -5651,6 +5778,28 @@ def _extra(e: Element, name: str) -> str:
 
 
 # ================================================================================ stable object identity
+# ---- v17.1: row identity must NOT depend on transient UI state words.
+# v17.0 log task #14: the row accessible name is "未講， Sender , Subject" before ticking and "已經揀選， 未讀， Sender , Subject" after ticking -> a different
+# signature -> a different stable_id -> "[OBJECT_IDENTITY_MISMATCH] 已勾选行中有 5 个不在授权目标集".  Identity is now computed from state-stripped text.
+_STATE_WORDS = (r"已經揀選|已选择|已選取|已選擇|已勾选|已勾選|已被選取|未讀|未读|已讀|已读|已加星號|已加星标|已加星|未加星號|未加星标|加星號|加星标|已標示為重要|已标记为重要|標示為重要|标记为重要|不重要|重要|"
+                r"selected|unselected|unread|read|starred|not starred|important|not important|muted|snoozed|checked|unchecked|"
+                r"選取|选取|选中|選擇|已存檔|已归档|已封存")
+_STATE_PREFIX_RX = re.compile(rf"^\s*(?:(?:{_STATE_WORDS})\s*[，,、:：;；]\s*)+", re.I)
+_STATE_ONLY_RX = re.compile(rf"^\s*(?:(?:{_STATE_WORDS})\s*[，,、:：;；]?\s*)+$", re.I)
+
+
+def norm_row_text(s: str) -> str:
+    """Strip leading state words (selected / unread / starred / important in zh-TW, zh-CN, en) and collapse whitespace. '' => the part was pure state."""
+    s = " ".join((s or "").split())
+    if _STATE_ONLY_RX.match(s):
+        return ""
+    prev = None
+    while prev != s:
+        prev = s
+        s = _STATE_PREFIX_RX.sub("", s).strip()
+    return s
+
+
 @dataclass
 class StableObject:
     stable_id: str
@@ -5714,11 +5863,13 @@ class StableObjectRegistry:
         for e in group:
             aid = _extra(e, "automation_id")
             if e.role.lower() in ("listitem", "dataitem") and (e.name or "").strip() and not aid:
-                parts.append((e.name or "").strip()[:120])  # v15: UIA list item (Explorer file / Recycle-Bin row / mail row) identity = its content name
+                _nm = norm_row_text(e.name or "")  # v17.1: state words (已經揀選 / 未讀 ...) are not identity
+                if _nm:
+                    parts.append(_nm[:120])  # v15: UIA list item (Explorer file / Recycle-Bin row / mail row) identity = its content name
                 continue
             if e.role.lower() in ("checkbox", "switch"):
                 continue
-            nm = (e.name or "").strip()
+            nm = norm_row_text(e.name or "")  # v17.1
             if not nm or ACTION_WORDS.match(nm):
                 continue
             parts.append(nm[:120])
@@ -5730,7 +5881,9 @@ class StableObjectRegistry:
     def observe_rows(self, elements: Iterable[Element], step: int = 0, channel: str = "") -> list[StableObject]:
         """Register/refresh row objects after EVERY list observation; detects disappearance of tracked objects."""
         self.step = step or self.step
+        elements = list(elements)
         groups = self.row_groups(elements)
+        _trunc = len(elements) >= 240 and any(getattr(e, "is_cdp", False) for e in elements[:6])  # v17.1: capped snapshot => the tail is simply not visible
         seen: dict[str, int] = {}
         dup: dict[str, int] = {}
         cur_rows: dict[int, str] = {}
@@ -5754,7 +5907,7 @@ class StableObjectRegistry:
             out.append(o)
         if groups and self.baseline_rows is None:
             self.baseline_rows = len(groups)
-        if groups:  # an empty/transitional list must not mark everything "gone"
+        if groups and not _trunc:  # an empty/transitional/TRUNCATED list must not mark everything "gone"
             for sid, o in self.objects.items():
                 if o.kind == "web_row" and sid not in seen and o.current_state != "gone":
                     o.set_state("gone", step)
@@ -6014,7 +6167,7 @@ class RecoveryPlaybook:
                             [{"action": "key", "keys": "esc"}] + ([{"action": "key", "keys": "ctrl+z"}] if action.get("action") == "type" else []))
 '@
 
-Add-DscuFile 'agent_brain/verifier.py' '4fc3b8f4536b78d8ef8cdad8a9a48e5070d79844a1fef479a3c97c1c8745fa15' @'
+Add-DscuFile 'agent_brain/verifier.py' '168350bcd2dbb2875c17d19e83019d3e23383dd6e37cfa0b89e08dbf117b7a35' @'
 """Independent Post-State Verifier.
 
 The model saying `done` is a *claim*, never evidence.  Before a task may finish, this module re-derives programmatic checks from the TASK TEXT
@@ -6032,6 +6185,8 @@ v16.2 HARD INVARIANT (fixes the 5/7 "UNVERIFIED but counted as done" false-succe
   * unverified          <=>  coverage == "none"    (the transaction is NOT committed; the task is never reported as completed)
 """
 from __future__ import annotations
+
+import hashlib
 
 import asyncio
 import re
@@ -6162,6 +6317,7 @@ class IndependentVerifier:
         self.rejections = 0
         self.passes = 0
         self.last: Optional[Verdict] = None
+        self.web = WebStateTracker()  # v17.1 WebActionGoal before/after states
 
     # ------------------------------------------------------------------ files
     @staticmethod
@@ -6448,6 +6604,10 @@ class IndependentVerifier:
                 _ag = gc.derive_app_goal(task)
                 if _ag:
                     goals.append(AppWindowGoal(_ag["query"], tuple(_ag["process_names"])))
+                else:
+                    _wa = derive_web_action(task)  # v17.1: plain web click / open / expand / jump (tasks #9/#10/#11)
+                    if _wa and (self.web.base is not None or self.web.samples):
+                        goals.append(WebActionGoal(_wa["intent"], _wa["target"]))
         return goals
 
     async def _v164_checks(self, goals: list["GoalSchema"], st: Any, obs: Any) -> list[Check]:
@@ -6462,9 +6622,60 @@ class IndependentVerifier:
                     rows += await gc.check_form_field(self, g.field_kind, g.field_hint, g.expected, st, obs)
                 elif isinstance(g, MessageSendGoal):
                     rows += await gc.check_message_send(self, g.recipient, g.body, st, obs)
+                elif isinstance(g, WebActionGoal):
+                    for c in await self._web_action_checks(g, st, obs):
+                        rows.append({"name": c.name, "ok": c.ok, "detail": c.detail, "kind": c.kind, "evaluated": c.evaluated, "source": c.source})
             except Exception as e:  # noqa: BLE001  an oracle crash must never become a pass
                 rows.append(gc.row(g.required_postconditions()[0], True, f"oracle 异常 {type(e).__name__}: {str(e)[:80]}（未评估）", g.oracle_kind(), evaluated=False, source="error"))
         return [Check(r["name"], r["ok"], r["detail"], r["kind"], evaluated=r["evaluated"], source=r["source"]) for r in rows]
+
+    # ------------------------------------------------------------------ v17.1 WebActionGoal oracle
+    async def capture_web_baseline(self, task: str) -> Optional[WebState]:
+        """Called ONCE before the first action of a web-interaction task: (url, title, expanded_states, dom_text_digest) through the CDP/MCP probe."""
+        self.web.reset()
+        wa = derive_web_action(task)
+        if wa is None or not getattr(self.hub, "cdp_up", False):
+            return None
+        pr = await self.probe_cdp([wa["target"]] if wa["target"] else [])
+        s = self.web.from_probe(pr, 0)
+        if s is not None:
+            self.web.base = s
+        return s
+
+    async def _web_action_checks(self, g: "WebActionGoal", st: Any, obs: Any) -> list[Check]:
+        pr = await self.probe_cdp([g.target] if g.target else [])
+        after = self.web.from_probe(pr, getattr(st, "step", 0))
+        last = self.web.last()
+        before = self.web.base or (self.web.samples[0] if self.web.samples else None)
+        if after is None and last is not None:
+            after = last
+        if before is None or after is None:
+            why = "没有动作前的页面快照" if before is None else "动作后页面不可读"
+            return [Check("web_page_sane", True, f"{why}（未评估）", "cdp", evaluated=False, source="cdp_probe"),
+                    Check("web_state_transition", True, f"{why}（未评估）", "cdp", evaluated=False, source="cdp_probe")]
+        # a11y-snapshot corroboration is compared like-with-like (first vs last observation of THIS task)
+        first_obs, last_obs = (self.web.samples[0], self.web.samples[-1]) if self.web.samples else (None, None)
+        tr = web_transitions(before, after, self.web.clicks)
+        if first_obs is not None and last_obs is not None and first_obs is not last_obs:
+            tr2 = web_transitions(first_obs, last_obs, self.web.clicks)
+            for k in ("dom_mutated", "aria_expanded_true", "url_changed", "tab_switched", "title_changed"):
+                tr[k] = bool(tr[k] or tr2[k])
+            tr["added"], tr["removed"] = max(tr["added"], tr2["added"]), max(tr["removed"], tr2["removed"])
+        url, title = after.url, after.title
+        bad = url.startswith(("chrome-error://", "about:blank", "edge-error://", "devtools://", "chrome-extension://")) or not url or bool(re.search(r"ERR_[A-Z_]+|无法访问此网站|can.?t be reached|404 not found|DNS_PROBE|chrome-devtools-mcp", title, re.I))
+        out = [Check("web_page_sane", not bad, f"url={url[:70] or '空'} title={title[:30]!r}", "cdp", source=after.source or "cdp_probe")]
+        strong = tr["url_changed"] or tr["aria_expanded_true"] or tr["tab_switched"]
+        hay = " ".join([url, title, " ".join(after.expanded), " ".join(sorted(after.names))[:6000], " ".join(self.web.clicks)])
+        tgt = (g.target or "").strip()
+        tgt_hit = (not tgt) or (len(tgt) < 2) or (tgt.lower() in unquote(hay).lower())
+        ok = (strong or tr["dom_mutated"]) and not bad and (strong or tgt_hit)
+        if g.intent == "expand":
+            ok = ok and (tr["aria_expanded_true"] or tr["dom_mutated"])
+        detail = web_evidence_text(tr) + f" · 控件 +{tr['added']}/-{tr['removed']}" + (f" · 展开={tr['new_expanded'][:2]}" if tr["new_expanded"] else "") + (f" · 目标「{tgt}」{'✓' if tgt_hit else '✗未出现在页面/点击记录'}" if tgt else "")
+        if tr["url_changed"]:
+            detail += f" · {before.url[:42]} → {after.url[:60]}"
+        out.append(Check("web_state_transition", bool(ok), detail, "cdp", source=(before.source or "") + "→" + (after.source or "")))
+        return out
 
     async def _goal_extra_checks(self, goals: list["GoalSchema"]) -> list[Check]:
         out: list[Check] = []
@@ -6665,6 +6876,22 @@ class GmailTrashGoal(GoalSchema):
 
 
 @dataclass(frozen=True)
+class WebActionGoal(GoalSchema):
+    """v17.1: ordinary web interaction (open site / click a link / expand a dropdown / jump to a sub-page / switch tab).
+    v17.0 log tasks #9/#10/#11 were really done but ended `unverified` (coverage=none) because no goal owned them.
+    The oracle is a REAL state transition observed on the page through chrome-devtools-mcp: (url, title, expanded_states, dom_text_digest) before vs after."""
+    intent: str = "click"  # click | expand | navigate | tab
+    target: str = ""
+    kind: str = "web_action"
+
+    def required_postconditions(self) -> tuple[str, ...]:
+        return ("web_page_sane", "web_state_transition")
+
+    def oracle_kind(self) -> str:
+        return "cdp"
+
+
+@dataclass(frozen=True)
 class AppWindowGoal(GoalSchema):
     """v16.4: `打开微信 / 打开记事本` — process exists, main window visible, in the foreground, key UIA features loaded (v16.3 task #1/#3 stayed `unverified`)."""
     query: str = ""
@@ -6706,6 +6933,136 @@ class MessageSendGoal(GoalSchema):
 
     def oracle_kind(self) -> str:
         return "message"
+
+
+
+# ============================================================================================ v17.1 WebActionGoal machinery
+WEB_VERB_RX = re.compile(r"点击|点开|点一下|单击|双击|按下|展开|下拉|打开|进入|跳转|切换到?|选择|选中|访问|前往|click|open|expand|go to|switch to|visit", re.I)
+WEB_EXCLUDE_RX = re.compile(r"微信|wechat|weixin|记事本|notepad|文件夹|文件|回收站|桌面|word|excel|ppt|powershell|终端|cmd|资源管理器|设置|邮件|邮箱|gmail|删除|发送|输入|填写|搜索|搜一下|search|登录|登陆|保存|新建|创建|关闭|退出", re.I)
+WEB_EXPAND_RX = re.compile(r"展开|下拉|菜单|折叠|expand|dropdown|collapse", re.I)
+WEB_TAB_RX = re.compile(r"标签页|标签|选项卡|tab\b", re.I)
+WEB_NAV_RX = re.compile(r"打开|进入|跳转|访问|前往|官网|网站|链接|首页|open|go to|visit", re.I)
+_ORD_RX = re.compile(r"第\s*[一二三四五六七八九十两\d]+\s*(?:个|条|项|篇|行|页|张|位)?|最后一个|最后一条|the\s+(?:first|second|third|last)", re.I)
+_FILLER_RX = re.compile(r"一下|一个|这个|那个|页面上的|页面|里面|里的|的|按钮|链接|菜单|选项|栏目|网站|网页|标签页|标签|请|帮我|然后|并且|并|，|,|。|\s+")
+
+
+def derive_web_action(task: str) -> Optional[dict[str, str]]:
+    """None => not a plain web interaction.  NEVER claims tasks that other goals own (search / form fill / file / messaging / gmail / delete ...)."""
+    t = (task or "").strip()
+    if not t or not WEB_VERB_RX.search(t) or WEB_EXCLUDE_RX.search(t):
+        return None
+    if URL_RX.search(t):
+        return None  # explicit URL navigation is a NavigationGoal
+    intent = "expand" if WEB_EXPAND_RX.search(t) else "tab" if WEB_TAB_RX.search(t) and re.search(r"切换|switch", t, re.I) else "navigate" if WEB_NAV_RX.search(t) and not re.search(r"点击|点开|click", t, re.I) else "click"
+    tgt = WEB_VERB_RX.sub("", t)
+    tgt = _ORD_RX.sub("", tgt)
+    tgt = _FILLER_RX.sub("", tgt).strip("：:，,。 ")
+    return {"intent": intent, "target": tgt[:40]}
+
+
+def _norm_url(u: str) -> str:
+    u = (u or "").strip()
+    return u.split("#", 1)[0].rstrip("/") if u else ""
+
+
+def _jacc_dist(a: Any, b: Any) -> float:
+    sa, sb = set(a or ()), set(b or ())
+    if not sa and not sb:
+        return 0.0
+    return 1.0 - len(sa & sb) / float(len(sa | sb))
+
+
+@dataclass
+class WebState:
+    """One (url, title, expanded_states, dom_text_digest) sample of the attached page."""
+    url: str = ""
+    title: str = ""
+    expanded: tuple = ()
+    digest: str = ""
+    lines: frozenset = frozenset()  # hashed visible text lines (probe)
+    names: frozenset = frozenset()  # role|name of observed controls (a11y snapshot)
+    tabs: int = 0
+    active_target: str = ""
+    source: str = ""
+    step: int = 0
+
+
+class WebStateTracker:
+    """Collects BEFORE/AFTER page states for WebActionGoal.  Baseline = first sample of the task (probe at task start, else the step-1 observation)."""
+
+    def __init__(self) -> None:
+        self.samples: list[WebState] = []
+        self.base: Optional[WebState] = None
+        self.clicks: list[str] = []
+        self.dev_tab_hits = 0
+
+    def reset(self) -> None:
+        self.samples, self.base, self.clicks = [], None, []
+
+    @staticmethod
+    def from_probe(pr: Optional[dict[str, Any]], step: int = 0) -> Optional[WebState]:
+        if not isinstance(pr, dict) or "error" in pr or not pr.get("url"):
+            return None
+        return WebState(url=str(pr.get("url", "")), title=str(pr.get("title", "")), expanded=tuple(sorted(str(x) for x in (pr.get("expanded") or []))),
+                        digest=str(pr.get("text_digest") or ""), lines=frozenset(pr.get("line_hashes") or ()), tabs=int(pr.get("tabs") or 0),
+                        active_target=str(pr.get("active_target") or ""), source="cdp_probe", step=step)
+
+    @staticmethod
+    def from_obs(obs: Any, step: int = 0) -> Optional[WebState]:
+        url = str(getattr(obs, "url", "") or "")
+        if not url.startswith(("http://", "https://")):
+            return None
+        els = list(getattr(obs, "elements", []) or [])
+        if not els or str(getattr(obs, "channel", "")) != "cdp":
+            return None
+        names = frozenset(f"{str(getattr(e, 'role', '')).lower()}|{str(getattr(e, 'name', ''))[:60]}" for e in els if getattr(e, "name", ""))
+        exp = tuple(sorted(str(getattr(e, "name", ""))[:40] for e in els if "expanded" in (getattr(e, "states", None) or [])))
+        return WebState(url=url, title=str(getattr(obs, "title", "") or ""), expanded=exp, digest=hashlib.sha1("\n".join(sorted(names)).encode()).hexdigest()[:16], names=names,
+                        source="a11y_snapshot", step=step)
+
+    def sample(self, obs: Any, step: int) -> None:
+        s = self.from_obs(obs, step)
+        if s is None:
+            return
+        self.samples.append(s)
+        if len(self.samples) > 60:
+            self.samples.pop(1 if len(self.samples) > 2 else 0)
+        if self.base is None:
+            self.base = s
+
+    def note_click(self, name: str, role: str = "") -> None:
+        n = " ".join(str(name or "").split())
+        if n:
+            self.clicks.append(n[:60])
+            del self.clicks[:-12]
+
+    def merged_base(self) -> Optional[WebState]:
+        return self.base
+
+    def last(self) -> Optional[WebState]:
+        return self.samples[-1] if self.samples else None
+
+
+def web_transitions(before: WebState, after: WebState, clicks: Optional[list[str]] = None) -> dict[str, Any]:
+    """Objective, reproducible state-transition evidence (no model involved)."""
+    url_changed = _norm_url(before.url) != _norm_url(after.url)
+    title_changed = bool(before.title and after.title and before.title != after.title)
+    tab_switched = bool(before.active_target and after.active_target and before.active_target != after.active_target)
+    new_expanded = [x for x in after.expanded if x not in before.expanded]
+    aria_expanded_true = bool(new_expanded) or (len(after.expanded) > len(before.expanded))
+    d_lines = _jacc_dist(before.lines, after.lines) if (before.lines and after.lines) else 0.0
+    added_names = len(after.names - before.names) if (before.names and after.names) else 0
+    removed_names = len(before.names - after.names) if (before.names and after.names) else 0
+    d_names = _jacc_dist(before.names, after.names) if (before.names and after.names) else 0.0
+    digest_diff = bool(before.digest and after.digest and before.digest != after.digest and before.source == after.source)
+    dom_mutated = d_lines >= 0.02 or d_names >= 0.03 or (added_names + removed_names) >= 2 or (digest_diff and before.source == "cdp_probe" and d_lines >= 0.01)
+    return {"url_changed": url_changed, "title_changed": title_changed, "tab_switched": tab_switched, "aria_expanded_true": aria_expanded_true, "dom_mutated": dom_mutated,
+            "d_lines": round(d_lines, 3), "d_names": round(d_names, 3), "added": added_names, "removed": removed_names, "new_expanded": new_expanded[:4]}
+
+
+def web_evidence_text(tr: dict[str, Any]) -> str:
+    order = ("dom_mutated", "url_changed", "aria_expanded_true", "tab_switched", "title_changed")
+    return " · ".join(f"{'✓' if tr[k] else '✗'}{k}" for k in order)
 
 
 _CNP = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
@@ -6766,8 +7123,8 @@ Add-DscuFile 'sidecar/__init__.py' '2061a24c6a2e7099db8fe7ed7a9f718bcc46de25a89e
 """Optional local vision sidecars (never required; the unified brain runs fully without them)."""
 '@
 
-Add-DscuFile 'sidecar/dml_detector.py' 'cec9fdb4de3966921655c6bdb90c475f1b92beb3ccef2b76972b1046863d61ec' @'
-"""v17.0 Local UI-element detector on the AMD Radeon 780M iGPU:  REAL trained model  +  onnxruntime-directml  +  runtime evidence.
+Add-DscuFile 'sidecar/dml_detector.py' '8848f644e31ef700f6896fc4b905f505b289f09fafdbae3e9172f635f1900685' @'
+"""v17.1 (OCR await fixed · IoU fusion) / v17.0 Local UI-element detector on the AMD Radeon 780M iGPU:  REAL trained model  +  onnxruntime-directml  +  runtime evidence.
 
 What changed vs v16.3/16.4 (log 8c4dfc4 printed `DirectML=disabled/heuristic_only · builtin_untrained_saliency`):
   * The 741-byte untrained Sobel "saliency" graph is GONE.  The detector is Microsoft OmniParser V2 `icon_detect` (YOLOv8, single class = interactable
@@ -6975,29 +7332,68 @@ def _intersects(a: list[int], b: list[int]) -> float:
     return ((ex - ix) * (ey - iy)) / max(1, aw * ah)
 
 
+
+def _area(r: list[int]) -> int:
+    return max(1, int(r[2])) * max(1, int(r[3]))
+
+
+def _inter(a: list[int], b: list[int]) -> int:
+    ix, iy = max(a[0], b[0]), max(a[1], b[1])
+    ex, ey = min(a[0] + a[2], b[0] + b[2]), min(a[1] + a[3], b[1] + b[3])
+    return 0 if ex <= ix or ey <= iy else (ex - ix) * (ey - iy)
+
+
+def iou(a: list[int], b: list[int]) -> float:
+    i = _inter(a, b)
+    return i / float(_area(a) + _area(b) - i) if i else 0.0
+
+
 def label_boxes(cands: list[dict[str, Any]], texts: list[tuple[list[int], str, str]], max_label: int = 40) -> list[dict[str, Any]]:
-    """Attach text to detector boxes.  `texts` = [(rect[x,y,w,h], text, source)] (source: uia | ocr).  A text belongs to the box that covers >= 50% of it;
-    UIA names win over OCR (accessibility names are exact, OCR is probabilistic).  Text-only items (no detector box) are appended so nothing readable is lost."""
-    out: list[dict[str, Any]] = []
-    used: set[int] = set()
-    for c in cands:
-        best: Optional[tuple[int, float, str, str]] = None
-        for j, (r, t, src) in enumerate(texts):
-            cov = _intersects(r, c["box"])
-            if cov >= 0.5 or (_intersects(c["box"], r) >= 0.6):
-                rank = (1 if src == "uia" else 0, cov)
-                if best is None or rank > (1 if best[3] == "uia" else 0, best[1]):
-                    best = (j, cov, t, src)
-        item = dict(c)
-        if best:
-            used.add(best[0])
-            item["text"], item["text_src"] = best[2][:max_label], best[3]
-        else:
-            item["text"], item["text_src"] = "", ""
-        out.append(item)
+    """v17.1 IoU / spatial-containment fusion of detector boxes and text (UIA names or local OCR lines), all in SCREEN coordinates.
+
+    Assignment rule (1 text -> at most 1 box):  a text goes to the TIGHTEST box that contains >= 50 % of the text area (ties: higher IoU).  A box that is itself
+    >= 60 % covered by a wide text line (icon sitting inside a text run) also qualifies.  Several OCR fragments inside one box are concatenated in reading order.
+    UIA names always win over OCR (accessibility names are exact, OCR is probabilistic).  Unassigned readable text is kept as text-only items, de-duplicated."""
+    assign: dict[int, list[tuple[int, float, float, str, str, list[int]]]] = {}
+    taken: set[int] = set()
     for j, (r, t, src) in enumerate(texts):
-        if j not in used and t.strip():
-            out.append({"box": list(r), "score": 0.0, "cls": -1, "text": t[:max_label], "text_src": src})
+        if not t or not t.strip() or len(r) != 4:
+            continue
+        best: Optional[tuple[float, float, int, int]] = None  # (contains-flag, iou, -area, box index)
+        for i, c in enumerate(cands):
+            b = c["box"]
+            cov_t = _inter(r, b) / float(_area(r))
+            cov_b = _inter(r, b) / float(_area(b))
+            if cov_t >= 0.5 or cov_b >= 0.6:
+                key = (1.0 if cov_t >= 0.5 else 0.0, iou(r, b), -_area(b), i)  # prefer: box contains the text > larger IoU > tighter box
+                if best is None or key[:3] > best[:3]:
+                    best = key
+        if best is not None:
+            assign.setdefault(best[3], []).append((j, best[0], best[1], t, src, list(r)))
+            taken.add(j)
+    out: list[dict[str, Any]] = []
+    for i, c in enumerate(cands):
+        item = dict(c)
+        got = assign.get(i, [])
+        if got:
+            uia = [g for g in got if g[4] == "uia"]
+            use = uia or got
+            use = sorted(use, key=lambda g: (g[5][1] // 12, g[5][0]))  # reading order (row band, then x)
+            txt = " ".join(" ".join(g[3].split()) for g in use)
+            item["text"], item["text_src"] = txt[:max_label], ("uia" if uia else use[0][4])
+            item["iou"] = round(max(g[2] for g in use), 3)
+        else:
+            item["text"], item["text_src"], item["iou"] = "", "", 0.0
+        out.append(item)
+    seen_txt: list[tuple[list[int], str]] = []
+    for j, (r, t, src) in enumerate(texts):
+        if j in taken or not t or not t.strip() or len(r) != 4:
+            continue
+        key = " ".join(t.split())
+        if any(k == key and iou(r, rr) > 0.6 for rr, k in seen_txt):
+            continue
+        seen_txt.append((list(r), key))
+        out.append({"box": list(r), "score": 0.0, "cls": -1, "text": key[:max_label], "text_src": src, "iou": 0.0})
     out.sort(key=lambda d: (d["box"][1] // 24, d["box"][0]))
     return out
 
@@ -7007,7 +7403,8 @@ def format_structured(items: list[dict[str, Any]], limit: int = 90) -> str:
     rows = []
     for i, it in enumerate(items[:limit], 1):
         x, y, w, h = it["box"]
-        t = it.get("text") or ("(icon)" if it.get("cls", 0) >= 0 else "")
+        t = it.get("text") or ""
+        t = f'"{t}"' if t else ("(icon)" if it.get("cls", 0) >= 0 else "")  # v17.1: `[id] Box(x,y,w,h) "text"`
         rows.append(f"[{i}] Box({x},{y},{w},{h}) {t}".rstrip())
     return "\n".join(rows)
 
@@ -7029,7 +7426,61 @@ def ambiguity(items: list[dict[str, Any]]) -> tuple[bool, str]:
     return False, f"候选 {n} · 带文本 {labelled}"
 
 
+
 # ===================================================================================== OCR (optional; never fatal)
+# v17.1 ROOT CAUSE of `dml_detector.py:314 RuntimeWarning: coroutine 'ocr_words.<locals>.run' was never awaited`:
+#   ocr_words() is called synchronously from code that runs INSIDE the orchestrator's event loop.  `asyncio.run(<coro>)` then raises
+#   "asyncio.run() cannot be called from a running event loop" AFTER the coroutine object was created -> the coroutine is never awaited, the
+#   generic `except Exception: return []` hid the error, and DirectML boxes silently lost ALL their local OCR text.
+# FIX: one persistent daemon thread owns ONE private event loop; every OCR coroutine is scheduled on it with run_coroutine_threadsafe(...).result().
+#      That is a real `await` on a loop that is never the caller's loop -> legal from sync code, from inside a running loop and from worker threads.
+import asyncio  # noqa: E402
+import io  # noqa: E402
+
+OCR_TIMEOUT_S = 20.0
+_OCR_STATS: dict[str, Any] = {"calls": 0, "ok": 0, "errors": 0, "lines": 0, "last_error": "", "ms_total": 0.0, "backend": ""}
+
+
+class _OcrLoopThread:
+    """Persistent single-thread event loop dedicated to WinRT OCR (the WinRT OcrEngine is created once per thread and reused)."""
+
+    def __init__(self) -> None:
+        self.loop = asyncio.new_event_loop()
+        self._ready = threading.Event()
+        self.thread = threading.Thread(target=self._main, name="dscu-ocr-loop", daemon=True)
+        self.thread.start()
+        self._ready.wait(5.0)
+
+    def _main(self) -> None:
+        asyncio.set_event_loop(self.loop)
+        self._ready.set()
+        self.loop.run_forever()
+
+    def run(self, coro: Any, timeout: float = OCR_TIMEOUT_S) -> Any:
+        try:
+            fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        except BaseException:
+            coro.close()  # scheduling failed -> the coroutine object must still be finalised (no 'never awaited' warning)
+            raise
+        try:
+            return fut.result(timeout)
+        except BaseException:
+            fut.cancel()
+            raise
+
+
+_OCR_BRIDGE: Optional[_OcrLoopThread] = None
+_OCR_BRIDGE_LOCK = threading.Lock()
+
+
+def _ocr_bridge() -> _OcrLoopThread:
+    global _OCR_BRIDGE
+    with _OCR_BRIDGE_LOCK:
+        if _OCR_BRIDGE is None or not _OCR_BRIDGE.thread.is_alive():
+            _OCR_BRIDGE = _OcrLoopThread()
+        return _OCR_BRIDGE
+
+
 def _ocr_available() -> bool:
     try:
         import winrt.windows.media.ocr  # noqa: F401  # type: ignore[import-not-found]
@@ -7039,48 +7490,97 @@ def _ocr_available() -> bool:
         return False
 
 
-def ocr_words(image: Any) -> list[tuple[list[int], str, str]]:
-    """Windows.Media.Ocr through the `winrt-*` projection packages.  Returns [] (silently) when unavailable - UIA names remain the text source."""
-    if sys.platform != "win32" or os.environ.get("DSCU_OCR") == "0":
+_WINRT_ENGINE: Any = None
+
+
+async def _winrt_recognize(png: bytes) -> list[tuple[list[int], str, str]]:
+    """Windows.Media.Ocr over the `winrt-*` projection.  Runs ONLY on the dedicated OCR loop (see _OcrLoopThread)."""
+    global _WINRT_ENGINE
+    from winrt.windows.graphics.imaging import BitmapDecoder  # type: ignore[import-not-found]
+    from winrt.windows.media.ocr import OcrEngine  # type: ignore[import-not-found]
+    from winrt.windows.storage.streams import DataWriter, InMemoryRandomAccessStream  # type: ignore[import-not-found]
+
+    if _WINRT_ENGINE is None:
+        eng = OcrEngine.try_create_from_user_profile_languages()
+        if eng is None:  # user profile has no OCR language pack -> try the common ones explicitly
+            try:
+                from winrt.windows.globalization import Language  # type: ignore[import-not-found]
+
+                for tag in ("zh-Hans-CN", "zh-CN", "en-US"):
+                    lang = Language(tag)
+                    if OcrEngine.is_language_supported(lang):
+                        eng = OcrEngine.try_create_from_language(lang)
+                        if eng is not None:
+                            break
+            except Exception:  # noqa: BLE001
+                eng = None
+        _WINRT_ENGINE = eng
+    eng = _WINRT_ENGINE
+    if eng is None:
         return []
+    stream = InMemoryRandomAccessStream()
+    w = DataWriter(stream)
+    w.write_bytes(png)
+    await w.store_async()
+    stream.seek(0)
+    dec = await BitmapDecoder.create_async(stream)
+    bmp = await dec.get_software_bitmap_async()
+    res = await eng.recognize_async(bmp)
+    out: list[tuple[list[int], str, str]] = []
+    for ln in res.lines:
+        words = list(ln.words)
+        if not words:
+            continue
+        x0 = min(w_.bounding_rect.x for w_ in words)
+        y0 = min(w_.bounding_rect.y for w_ in words)
+        x1 = max(w_.bounding_rect.x + w_.bounding_rect.width for w_ in words)
+        y1 = max(w_.bounding_rect.y + w_.bounding_rect.height for w_ in words)
+        out.append(([int(x0), int(y0), int(x1 - x0), int(y1 - y0)], ln.text, "ocr"))
+    return out
+
+
+def _png_bytes(image: Any) -> bytes:
+    buf = io.BytesIO()
+    image.convert("RGB").save(buf, "PNG")
+    return buf.getvalue()
+
+
+async def ocr_words_async(image: Any, recognizer: Any = None) -> list[tuple[list[int], str, str]]:
+    """Async twin: use from `async def` code — plain `await`, no thread bridge needed (the WinRT call still runs on the OCR loop)."""
+    if os.environ.get("DSCU_OCR") == "0":
+        return []
+    png = _png_bytes(image)
+    rec = recognizer or _winrt_recognize
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: _ocr_bridge().run(rec(png)))
+
+
+def ocr_words(image: Any, recognizer: Any = None) -> list[tuple[list[int], str, str]]:
+    """Windows OCR -> [(rect[x,y,w,h] in IMAGE pixels, text, "ocr")].  Safe from sync code, from inside a running event loop and from threads.
+    `recognizer` (async fn: png_bytes -> list) is a test seam; production uses `_winrt_recognize`.  Returns [] (counted in _OCR_STATS) when OCR is unavailable."""
+    if os.environ.get("DSCU_OCR") == "0":
+        return []
+    if recognizer is None and (sys.platform != "win32" or not _ocr_available()):
+        return []
+    t0 = time.perf_counter()
+    _OCR_STATS["calls"] += 1
     try:
-        import asyncio
-        import io
-
-        from winrt.windows.graphics.imaging import BitmapDecoder  # type: ignore[import-not-found]
-        from winrt.windows.media.ocr import OcrEngine  # type: ignore[import-not-found]
-        from winrt.windows.storage.streams import DataWriter, InMemoryRandomAccessStream  # type: ignore[import-not-found]
-
-        buf = io.BytesIO()
-        image.convert("RGB").save(buf, "PNG")
-
-        async def run() -> list[tuple[list[int], str, str]]:
-            eng = OcrEngine.try_create_from_user_profile_languages()
-            if eng is None:
-                return []
-            stream = InMemoryRandomAccessStream()
-            w = DataWriter(stream)
-            w.write_bytes(buf.getvalue())
-            await w.store_async()
-            stream.seek(0)
-            dec = await BitmapDecoder.create_async(stream)
-            bmp = await dec.get_software_bitmap_async()
-            res = await eng.recognize_async(bmp)
-            out = []
-            for ln in res.lines:
-                words = list(ln.words)
-                if not words:
-                    continue
-                x0 = min(w_.bounding_rect.x for w_ in words)
-                y0 = min(w_.bounding_rect.y for w_ in words)
-                x1 = max(w_.bounding_rect.x + w_.bounding_rect.width for w_ in words)
-                y1 = max(w_.bounding_rect.y + w_.bounding_rect.height for w_ in words)
-                out.append(([int(x0), int(y0), int(x1 - x0), int(y1 - y0)], ln.text, "ocr"))
-            return out
-
-        return asyncio.run(run())
-    except Exception:  # noqa: BLE001
+        png = _png_bytes(image)
+        out = _ocr_bridge().run((recognizer or _winrt_recognize)(png))
+        _OCR_STATS["ok"] += 1
+        _OCR_STATS["lines"] += len(out)
+        _OCR_STATS["backend"] = "injected" if recognizer else "winrt"
+        return list(out)
+    except Exception as e:  # noqa: BLE001  OCR is optional; but the failure is now RECORDED instead of swallowed
+        _OCR_STATS["errors"] += 1
+        _OCR_STATS["last_error"] = f"{type(e).__name__}: {str(e)[:120]}"
         return []
+    finally:
+        _OCR_STATS["ms_total"] += (time.perf_counter() - t0) * 1000
+
+
+def ocr_stats() -> dict[str, Any]:
+    return dict(_OCR_STATS)
 
 
 # ===================================================================================== detector
@@ -7296,8 +7796,9 @@ class DmlDetector:
                 texts.append(([int(ox + r[0] * k), int(oy + r[1] * k), int(r[2] * k), int(r[3] * k)], t, src))
         items = label_boxes(screen, texts)
         amb, why = ambiguity(items)
+        _ocr_n = sum(1 for it in items if it.get("text_src") == "ocr")
         out = {"items": items, "text": format_structured(items), "ambiguous": amb, "why": why, "ms": round((time.perf_counter() - t0) * 1000, 1),
-               "dml_ms": round(self.infer_ms, 2), "ts": time.time()}
+               "dml_ms": round(self.infer_ms, 2), "ts": time.time(), "ocr_labelled": _ocr_n, "ocr": ocr_stats()}
         self.last = out
         return out
 
@@ -13992,7 +14493,7 @@ if __name__ == "__main__":
     main()
 '@
 
-Add-DscuFile 'agent_brain/browser_mcp.py' 'ded9bbc34b87ce76cc7392803a94393066dac05cafd217783c973eb767d924ac' @'
+Add-DscuFile 'agent_brain/browser_mcp.py' '8c6829231234d2451f2309fb4e6ae66d9fb508adb017fd0d60015387ce2bd0e0' @'
 """v16 browser engine: official ChromeDevTools/chrome-devtools-mcp (Puppeteer/CDP) behind the SAME peer contract the brain already speaks.
 
 The brain's DriverHub talks to "the CDP peer" with  hello / status / heal / observe / action / shutdown  messages.  `McpBrowserEngine` implements that
@@ -14452,6 +14953,24 @@ def _ancestors(nodes: list[dict[str, Any]], i: int) -> list[int]:
         out.append(j)
         j = nodes[j]["parent"]
     return out
+
+
+# v17.1 (log task #8): "点击第一个" landed on the agent's OWN terminal tab titled `chrome-devtools-mcp`.  Developer / terminal / debugging tabs are never task targets.
+DEV_TAB_URL_RX = re.compile(r"^(devtools://|chrome-extension://|chrome://(inspect|extensions|net-internals|version|webrtc-internals)|edge://(inspect|extensions)|view-source:|https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?/(json|devtools)|https?://github\.com/ChromeDevTools/chrome-devtools-mcp)", re.I)
+DEV_TAB_TITLE_RX = re.compile(r"^(chrome-devtools-mcp|DevTools\b|Developer Tools|开发者工具|MCP Inspector)|(Windows Terminal|PowerShell|命令提示符|Administrator:)\s*$|^pwsh", re.I)
+
+
+def is_dev_tab(page: dict[str, Any]) -> bool:
+    """True for developer / terminal / debugging tabs (never a user-task target).  DSCU_ALLOW_DEV_TABS=1 disables the filter."""
+    if os.environ.get("DSCU_ALLOW_DEV_TABS") == "1":
+        return False
+    return bool(DEV_TAB_URL_RX.search(str(page.get("url") or ""))) or bool(DEV_TAB_TITLE_RX.search(str(page.get("title") or "")))
+
+
+def target_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Pages a task may act on; falls back to ALL pages when everything looks like a dev tab (never leaves the engine without a page)."""
+    keep = [p for p in pages if not is_dev_tab(p)]
+    return keep or list(pages)
 
 
 def parse_pages(text: str) -> list[dict[str, Any]]:
@@ -14997,6 +15516,9 @@ class McpBrowserEngine:
             raise McpToolError(f"{tool}: {r.text[:300]}")
         return r
 
+    def _target_pages(self) -> list[dict[str, Any]]:
+        return target_pages(self.pages)
+
     def _pick_page(self, pages: list[dict[str, Any]]) -> dict[str, Any]:
         """Choose the page to (re)select: exact last_url > brand-new non-blank tab (target=_blank / popup / new-tab shortcut) > same origin > server-selected > non-blank > newest."""
         from urllib.parse import urlparse
@@ -15026,7 +15548,8 @@ class McpBrowserEngine:
                 s = max(s, 20)
             return s, int(p["page_id"])
 
-        return max(pages, key=score)
+        pool = [p for p in pages if not is_dev_tab(p)] or pages  # v17.1: never re-select a dev / terminal tab
+        return max(pool, key=score)
 
     async def reselect_page(self, reason: str) -> bool:
         """Transparent Page-Reselect: list_pages -> select_page(best) (or new_page('about:blank') when the browser has none) -> epoch++ -> caller retries the original call."""
@@ -15398,7 +15921,9 @@ class McpBrowserEngine:
             return await done(f"opened new tab {url} (page {self.page_id})")
         if a == "tabs":
             await self.refresh_pages()
-            eff["tabs"] = [{"index": i + 1, "target_id": str(p["page_id"]), "url": p["url"], "selected": p["selected"]} for i, p in enumerate(self.pages)]
+            _tp = self._target_pages()
+            eff["tabs"] = [{"index": i + 1, "target_id": str(p["page_id"]), "url": p["url"], "selected": p["selected"]} for i, p in enumerate(_tp)]
+            eff["hidden_dev_tabs"] = len(self.pages) - len(_tp)
             eff["active_target"] = str(self.page_id)
             return self._res(req, True, "OK", f"{len(self.pages)} tab(s)", eff, t0)
         if a == "switch_tab":
@@ -15410,7 +15935,8 @@ class McpBrowserEngine:
                 pick = next((p for p in self.pages if str(req["url_contains"]) in p["url"]), None)
             elif req.get("index"):
                 i = int(req["index"]) - 1
-                pick = self.pages[i] if 0 <= i < len(self.pages) else None
+                _tp = self._target_pages()  # v17.1: `第 N 个标签页` counts USER tabs only
+                pick = _tp[i] if 0 <= i < len(_tp) else None
             if not pick:
                 return self._res(req, False, "NOT_FOUND", f"no such tab (have {len(self.pages)}): " + " | ".join(f"{i + 1}:{p['url'][:40]}" for i, p in enumerate(self.pages)), eff, t0)
             await self._safe("select_page", pageId=pick["page_id"], bringToFront=True)
@@ -15421,11 +15947,16 @@ class McpBrowserEngine:
             return await done(f"switched to tab {pick['page_id']} {pick['url'][:60]}")
         if a == "probe":
             needles = [str(x) for x in (req.get("needles") or [])]
-            js = ("() => { const nd = %s; const body = ((document.body && document.body.innerText) || '').slice(0, 300000);"
+            js = ("() => { const nd = __ND__; const body = ((document.body && document.body.innerText) || '').slice(0, 300000);"
                   " const needles = {}; for (const n of nd) needles[n] = body.includes(n);"
+                  " const h32 = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h; };"
+                  " const lines = body.split(/\\n+/).map(s => s.trim()).filter(s => s.length > 1).slice(0, 700);"
+                  " const line_hashes = [...new Set(lines.map(h32))];"
+                  " const expanded = [...document.querySelectorAll('[aria-expanded=\"true\"]')].map(e => ((e.innerText || e.getAttribute('aria-label') || e.id || e.tagName) + '').trim().replace(/\\s+/g, ' ').slice(0, 40)).slice(0, 30);"
                   " return {url: location.href, title: document.title, readyState: document.readyState, body_len: body.length,"
                   " inputs: [...document.querySelectorAll('input,textarea')].map(e => e.value).filter(Boolean).slice(0, 12), needles,"
-                  " has_video_player: !!document.querySelector('video')}; }") % json.dumps(needles, ensure_ascii=False)
+                  " has_video_player: !!document.querySelector('video'), expanded, line_hashes, text_digest: h32(lines.join('\\n')).toString(16),"
+                  " n_nodes: document.getElementsByTagName('*').length}; }").replace("__ND__", json.dumps(needles, ensure_ascii=False))
             info = await self.eval_js(js, None, 30)
             if isinstance(info, dict):
                 eff.update(info)
@@ -18414,7 +18945,7 @@ if __name__ == "__main__":
     sys.exit(main(sys.argv))
 '@
 
-Add-DscuFile 'agent_brain/stable_object.py' 'a1470a81138c913e817d8aea4e50272490aadd47766495bdbe4f339d88fba492' @'
+Add-DscuFile 'agent_brain/stable_object.py' 'cccf25ad832a7350eef29da3b5cbeb3b21b61c7a74180bbab075b88e9b95cc11' @'
 """v16.2 StableObject identity layer: authorised target sets + physical-point -> business-object reverse lookup.
 
 Bug fixed (task #2 of the v16.1 run log): StableObject refused a non-target row, then the model re-issued the same click as a *bare coordinate*
@@ -18428,7 +18959,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
 from .protocol import Element
-from .state_machine import StableObject, StableObjectRegistry  # noqa: F401  (re-exported)
+from .state_machine import StableObject, StableObjectRegistry, norm_row_text  # noqa: F401  (re-exported)
 
 
 @dataclass
@@ -18606,6 +19137,59 @@ def lock_selection(reg: StableObjectRegistry, elements: Iterable[Element], segme
         o.expected_state = expected
     reg.targets_locked = bool(pick)
     return pick
+
+
+@dataclass
+class FreezeResult:
+    ok: bool
+    reason: str = ""
+    targets: list = field(default_factory=list)
+    epoch: int = 0
+    rows_seen: int = 0
+    truncated: bool = False
+    stale: bool = False
+
+
+def freeze_same_epoch(reg: StableObjectRegistry, elements: Iterable[Element], segments: list[dict[str, Any]], expected: str = "gone", step: int = 0, *, epoch: int = 0,
+                      channel: str = "cdp", url: str = "", url_must_contain: str = "", cap: int = 250) -> FreezeResult:
+    """v17.1: list extraction + target freeze happen on ONE snapshot (`epoch`).  Refuses (never freezes an empty / stale / truncated set):
+       - empty element list or no rows rendered yet               -> not ok (retry on the next observation)
+       - URL does not belong to the expected site (page not yet refreshed to the real DOM) -> stale
+       - a `tail` segment on a snapshot that hit the element cap   -> truncated (the real last rows are NOT in this snapshot): caller must take an extended snapshot
+       - head+tail would overlap (fewer rows than head+tail)       -> ambiguous
+    Row identity is state-stripped (norm_row_text) so ticking the checkbox afterwards cannot change the stable_id."""
+    els = list(elements)
+    if reg.targets_locked:
+        t = [o for o in reg.objects.values() if o.is_target]
+        return FreezeResult(True, "already frozen", t, getattr(reg, "freeze_epoch", epoch), len(reg.last_rows))
+    if url_must_contain and url_must_contain not in (url or ""):
+        return FreezeResult(False, f"页面 URL 尚未到达 {url_must_contain}（当前 {url[:50] or '空'}），DOM 还没有刷新 → 不冻结旧集", stale=True)
+    if not els:
+        return FreezeResult(False, "快照没有任何控件（页面仍在加载）→ 不冻结空集", epoch=epoch)
+    rows = reg.observe_rows(els, step)
+    if not rows:
+        return FreezeResult(False, "快照里还没有列表行（DOM 未渲染完）→ 不冻结空集", epoch=epoch)
+    truncated = len(els) >= int(cap * 0.96)
+    segs = [(str(s.get("from")), int(s.get("n", 0) or 0)) for s in segments]
+    need_tail = any(f == "tail" and n > 0 for f, n in segs)
+    total = sum(n for _, n in segs)
+    if need_tail and truncated:
+        return FreezeResult(False, f"快照触达 {cap} 控件上限，只含前 {len(rows)} 行，真正的最后几行不在本快照内 → 需要扩展快照后在同一 epoch 内冻结", epoch=epoch, rows_seen=len(rows), truncated=True)
+    if need_tail and len(rows) < total:
+        return FreezeResult(False, f"列表只有 {len(rows)} 行，少于 前+后 共 {total} 行，头尾会重叠，含义不明确 → 请用户澄清", epoch=epoch, rows_seen=len(rows))
+    pick: list[StableObject] = []
+    for f, n in segs:
+        chunk = rows[:n] if f == "head" else (rows[-n:] if n > 0 else [])
+        for o in chunk:
+            if o not in pick:
+                pick.append(o)
+    for o in pick:
+        o.is_target = True
+        o.expected_state = expected
+    reg.targets_locked = bool(pick)
+    reg.freeze_epoch = epoch  # type: ignore[attr-defined]
+    return FreezeResult(bool(pick), "ok" if pick else "没有可冻结的目标", pick, epoch, len(rows), truncated)
+
 '@
 
 Add-DscuFile 'agent_brain/transaction.py' '8019b907ad4bc6f2987c3cb822b5c543cc0d97010e53e953a37aa35ddbcbf05f' @'
@@ -21397,7 +21981,7 @@ class TaskBudget:
                 f" · 诊断命令 {self.diag_total}/{c.max_diagnostic_calls}（拒绝 {self.diag_denied}）{t}")
 '@
 
-Add-DscuFile 'agent_brain/goal_checks.py' '2f60187fe9441c40c8014586668305ee4b5d9bccf525f21f1380eb42ed9b14b2' @'
+Add-DscuFile 'agent_brain/goal_checks.py' 'ef139b28e7077c4abe62a76e665d8464cdb63974f8b35eb817a8a50757ba25a2' @'
 """
 v16.4 independent oracles for the three new strongly-typed goals (AppWindowGoal / FormFieldGoal / MessageSendGoal).
 
@@ -21622,7 +22206,7 @@ async def check_message_send(ver: Any, recipient: str, body: str, st: Any = None
         for n in MSG_POST[1:]:
             out.append(row(n, False, "没有发送会话证据（未经过 MessageSend 门控，不可能发生合规发送）", "message", source="message_gate"))
         return out
-    out.append(row("msg_recipient_frozen", sess.contact_frozen, sess.contact_evidence or "联系人未冻结", "message", source="uia/window_title"))
+    out.append(row("msg_recipient_frozen", sess.contact_frozen, sess.contact_evidence or "联系人未冻结", "message", source="dml+ocr/uia" if "OCR" in (sess.contact_evidence or "") else "uia/window_title"))
     out.append(row("msg_single_chat_window", sess.single_chat, sess.single_chat_evidence or "未确认单聊窗口", "message", source="uia/window_title"))
     out.append(row("msg_draft_readback", sess.draft_ok, f"读回={sess.draft_readback[:30]!r} 来源={sess.draft_source or '无'}", "message", source=sess.draft_source or "none"))
     out.append(row("msg_hitl_confirmed", sess.hitl_confirmed, "发送前人工确认" + ("已通过" if sess.hitl_confirmed else "未通过"), "message", source="hitl"))
@@ -21632,7 +22216,9 @@ async def check_message_send(ver: Any, recipient: str, body: str, st: Any = None
         els = await _uia_elements(ver, sess.chat_hwnd, 200)
     if els is None and obs is not None:
         els = list(getattr(obs, "elements", []) or [])
-    if not sess.send_issued:
+    if getattr(sess, "bubble_verified", False):  # v17.1: WeChatSkill proof (DirectML boxes + OCR, right half of the chat, before/after count)
+        out.append(row("msg_bubble_verified", True, sess.bubble_evidence[:200], "message", source=sess.bubble_source or "dml+ocr"))
+    elif not sess.send_issued:
         out.append(row("msg_bubble_verified", False, "发送动作从未执行", "message", source="message_gate"))
     elif not els:
         out.append(row("msg_bubble_verified", True, "聊天窗口 UIA 不可读（微信 Qt 窗口可能未暴露消息列表）→ 无法独立核验气泡", "message", evaluated=False, source="uia"))
@@ -21643,7 +22229,7 @@ async def check_message_send(ver: Any, recipient: str, body: str, st: Any = None
     return out
 '@
 
-Add-DscuFile 'agent_brain/guards.py' '44a052dcf9fb801a70e311d9039ba5cd19368f3c4aecc941b4296a091d168d59' @'
+Add-DscuFile 'agent_brain/guards.py' 'bbb632d71b0e193a97b14e3c15a1cf5818ab75c114858f94e5c9e7f710ee994a' @'
 """
 v16.4 guard layer: the glue between the Orchestrator and WindowManager / MessageSend / TaskBudget.  Everything here is deterministic (no LLM).
 
@@ -21738,9 +22324,23 @@ class V164:
                 return Code.SECURITY_DENIED, (f"[TEXT_PROVENANCE] 拒绝输入「{str(a.get('text', ''))[:30]}」：消息任务只允许输入联系人「{sess.request.recipient}」（搜索）或用户给定的正文"
                                               f"「{sess.request.body}」。不得自行补全内容。")
             # (c) send gate
-            if ms.is_send_action(a, b.els):
+            if ms.is_send_action(a, b.els) or await self._is_wechat_send_click(a, b):
                 return await self._send_gate(a, b, st, sess)
         return None
+
+    async def _is_wechat_send_click(self, a: dict[str, Any], b: Any) -> bool:
+        """v17.0 log task #13: `click x=1491 y=1347` (the green send button) bypassed is_send_action() -> no send gate, no proofs.  Pixel clicks in the
+        bottom-right corner of the WeChat window are send clicks."""
+        if str(a.get("action", "")) not in ("click", "double_click") or a.get("id") is not None or "x" not in a or "y" not in a:
+            return False
+        wm = self.wm
+        hwnd = self._target(self.b._target_hwnd(b))
+        w = wm.get(hwnd) if (wm and hwnd) else None
+        if not w or str(getattr(w, "process", "")).lower() not in ms.WECHAT_PROCS or not w.rect or len(w.rect) != 4:
+            return False
+        x, y = int(a["x"]), int(a["y"])
+        rx, ry, rw, rh = w.rect
+        return x >= rx + rw * 0.72 and y >= ry + rh * 0.84 and x <= rx + rw and y <= ry + rh
 
     async def _send_gate(self, a: dict[str, Any], b: Any, st: Any, sess: ms.MessageSession) -> Optional[tuple]:
         self.counters["send_gate_checks"] += 1
@@ -21919,7 +22519,7 @@ class V164:
         return out
 '@
 
-Add-DscuFile 'agent_brain/runtime_status.py' 'd7909b9eb9dac04bca332e4630c43901e979f0229ba706448b39c8ac88e9d5e4' @'
+Add-DscuFile 'agent_brain/runtime_status.py' '7a74170d0930d377d824aed329419ac9278f11cafead2b119c5eed71b652899a' @'
 """
 v16.4 Runtime truth table: which driver is REALLY serving this session, and is DirectML REALLY doing detection?
 
@@ -22009,15 +22609,32 @@ def banner_lines(hub: Any, cfg: Any) -> list[str]:
     return lines
 
 
-def settlement_line(hub: Any, cfg: Any) -> str:
+def _settlement_line_v17(hub: Any, cfg: Any) -> str:
     d, m = driver_report(hub, cfg), dml_report()
     h = d.get("hello", {})
     drv = f"驱动={d['tier']}" + (f"（v{h.get('version', '?')} · {h.get('toolchain', '?')} · DXGI={'on' if h.get('dxgi_active') else 'off'}）" if d["rust_active"] else f"（Rust 未启用: {(d['reasons'] or ['未知'])[0][:60]}）")
     return (f"  v17.0：{drv} · DirectML={m['state']} EP={m.get('provider') or '-'} model_sha256={(m.get('sha256') or '-')[:16]}… inferences={m['inferences']} "
             f"dml_p50_ms={m.get('p50_ms')} dml_p95_ms={m.get('p95_ms')}" + (f"（{m['model_kind']}）" if m.get('model_kind') else ""))
+
+
+def v171_line() -> str:
+    """v17.1 evidence: the async-OCR fix is PROVEN by counters (calls / ok / errors / lines), not claimed."""
+    try:
+        from sidecar import dml_detector as dml
+
+        s = dml.ocr_stats()
+        ocr = f"OCR await 已修复 · 调用 {s['calls']} 成功 {s['ok']} 错误 {s['errors']} 识别行 {s['lines']}" + (f" · 最近错误={s['last_error']}" if s.get("last_error") else "")
+    except Exception as e:  # noqa: BLE001
+        ocr = f"OCR 状态不可用 {type(e).__name__}"
+    return f"  v17.1：{ocr} · WebActionGoal(url_changed/dom_mutated/aria_expanded_true) · WeChatSkill 5/5 闭环 · Gmail 同 Epoch 冻结(去状态词身份) · 开发/终端标签页过滤"
+
+
+def settlement_line(hub: Any, cfg: Any) -> str:
+    return _settlement_line_v17(hub, cfg) + "\n" + v171_line()
+
 '@
 
-Add-DscuFile 'agent_brain/skills/message_send.py' 'e5d163741288f6a348b8b775fc686291da275b2655c1528c822a95bf4d655009' @'
+Add-DscuFile 'agent_brain/skills/message_send.py' '97376ac477b7133880768d5b261053d606a97c31e6f5883a0a8a9e0ce7963f61' @'
 """
 v16.4 MessageSend skill: HARD intent-completeness gate + send-time evidence collection (no LLM involved).
 
@@ -22181,6 +22798,9 @@ class MessageSession:
     hitl_confirmed: bool = False
     send_issued: bool = False
     send_step: int = -1
+    bubble_verified: bool = False  # v17.1: set by WeChatSkill after the DML+OCR bubble proof
+    bubble_evidence: str = ""
+    bubble_source: str = ""
     notes: list = field(default_factory=list)
 
     # -- 1) freeze the contact: chat header (window title / header element) must name the recipient
@@ -22268,6 +22888,416 @@ def provenance_ok(text: str, req: MessageRequest) -> bool:
         if s and (t == s or t in s or (s in t and len(t) <= len(s) + 2)):
             return True
     return False
+# ======================================================================================================================
+# v17.1 deterministic WeChatSkill  (Weixin.exe / WeChat.exe)  — UIA + DirectML boxes + local OCR, ZERO LLM calls
+# v17.0 log task #13: the model free-styled the GUI (clicked the send button by raw pixel) so none of the 5 send-time proofs were ever produced although the
+# message really was sent.  The skill below owns the whole closed loop and writes the proofs into MessageSession:
+#   msg_recipient_frozen  <- Ctrl+F search, OCR/UIA exact match of the contact row (section-aware: 联系人 beats 群聊/聊天记录)
+#   msg_single_chat_window<- after the click: chat HEADER (top band of the chat pane) must equal the recipient exactly; "(N)" / 群聊 marker => group => abort
+#   msg_draft_readback    <- clear box, paste body, then select-all+copy through a clipboard SENTINEL (copy proven to have happened) == body
+#   msg_hitl_confirmed    <- HITL (or the explicit auto policy DSCU_AUTO_CONFIRM=1 / DSCU_MSG_HITL=auto) BEFORE the keystroke that sends
+#   msg_bubble_verified   <- after Enter: a NEW bubble containing the body appears in the right half (x > 50 %) of the message area (before/after count)
+# ======================================================================================================================
+import asyncio  # noqa: E402
+import time  # noqa: E402
+
+WECHAT_PROCS = ("weixin.exe", "wechat.exe")
+OTHER_IM_RX = re.compile(r"qq|钉钉|dingtalk|飞书|lark|telegram|whatsapp|slack|discord|teams|短信|sms", re.I)
+SECTION_OK = ("联系人", "contacts", "contact", "好友", "friends")
+SECTION_BAD = ("群聊", "聊天记录", "公众号", "小程序", "搜索网络结果", "功能", "服务号", "文件", "朋友圈", "group chats", "chat history", "chat records", "official accounts",
+               "mini programs", "search the web", "moments", "files")
+SECTION_NEUTRAL = ("最常使用", "frequently used", "最近聊天", "recent chats", "常用")
+CHAT_GROUP_MARK = re.compile(r"[（(]\s*\d{1,4}\s*[)）]\s*$|群聊|群成员|群公告")
+
+
+def cj(s: str) -> str:
+    """CJK-safe comparison key: NFKC + casefold + remove ALL whitespace / zero-width chars (Windows OCR inserts spaces between Chinese glyphs)."""
+    s = unicodedata.normalize("NFKC", s or "")
+    s = re.sub(r"[\u200b\u200c\u200d\ufeff\s]+", "", s)
+    return s.casefold()
+
+
+def is_wechat_request(task: str) -> bool:
+    t = task or ""
+    if re.search(r"微信|wechat|weixin", t, re.I):
+        return True
+    return OTHER_IM_RX.search(t) is None  # no app named -> the default messenger of this skill is WeChat
+
+
+@dataclass
+class TextLine:
+    rect: list  # [x, y, w, h] SCREEN physical pixels
+    text: str
+    src: str = "ocr"
+
+    @property
+    def cx(self) -> float:
+        return self.rect[0] + self.rect[2] / 2.0
+
+    @property
+    def cy(self) -> float:
+        return self.rect[1] + self.rect[3] / 2.0
+
+
+def to_lines(items: Iterable[Any]) -> list:
+    out = []
+    for it in items or []:
+        if isinstance(it, TextLine):
+            out.append(it)
+        elif isinstance(it, dict):
+            r, t = it.get("box") or it.get("rect"), it.get("text")
+            if r and t and len(r) == 4:
+                out.append(TextLine([int(v) for v in r], str(t), str(it.get("text_src") or "ocr")))
+        elif isinstance(it, (tuple, list)) and len(it) >= 2 and it[1]:
+            out.append(TextLine([int(v) for v in it[0]], str(it[1]), str(it[2]) if len(it) > 2 else "ocr"))
+    return out
+
+
+@dataclass
+class WeChatGeometry:
+    """Layout of the Weixin 4.x / WeChat 3.9 main window in PHYSICAL pixels (dpi = GetDpiForWindow/96).  Pure arithmetic => unit-testable."""
+    x: int
+    y: int
+    w: int
+    h: int
+    dpi: float = 1.0
+
+    def d(self, v: float) -> int:
+        return int(round(v * self.dpi))
+
+    @property
+    def search_rect(self) -> list:
+        return [self.x + self.d(54), self.y, self.d(260), self.d(70)]
+
+    @property
+    def list_rect(self) -> list:  # left column: search results / conversation list (below the search box)
+        return [self.x + self.d(54), self.y + self.d(70), self.d(262), self.h - self.d(70)]
+
+    @property
+    def chat_x0(self) -> int:
+        return self.x + self.d(300)
+
+    @property
+    def header_rect(self) -> list:  # top band of the chat pane: conversation title
+        return [self.chat_x0, self.y, self.x + self.w - self.chat_x0, self.d(100)]
+
+    @property
+    def input_rect(self) -> list:  # bottom panel: editor
+        top = self.y + self.h - self.d(170)
+        return [self.chat_x0, top, self.x + self.w - self.chat_x0, self.y + self.h - top]
+
+    @property
+    def msg_right_rect(self) -> list:  # right half of the window, between header and editor: where OUR sent bubbles live (x > 50 %)
+        x0 = self.x + self.w // 2
+        y0 = self.y + self.d(100)
+        y1 = self.y + self.h - self.d(170)
+        return [x0, y0, self.x + self.w - x0, max(40, y1 - y0)]
+
+    @property
+    def input_click(self) -> tuple:
+        r = self.input_rect
+        return (r[0] + int(r[2] * 0.40), self.y + self.h - self.d(75))
+
+    @staticmethod
+    def inside(rect: list, cx: float, cy: float) -> bool:
+        return rect[0] <= cx <= rect[0] + rect[2] and rect[1] <= cy <= rect[1] + rect[3]
+
+    def in_list(self, ln: TextLine) -> bool:
+        return self.inside(self.list_rect, ln.cx, ln.cy)
+
+    def in_header(self, ln: TextLine) -> bool:
+        return self.inside(self.header_rect, ln.cx, ln.cy) and ln.rect[0] >= self.chat_x0 - self.d(8)
+
+    def in_input(self, ln: TextLine) -> bool:
+        return self.inside(self.input_rect, ln.cx, ln.cy)
+
+    def in_msg_right(self, ln: TextLine) -> bool:
+        return self.inside(self.msg_right_rect, ln.cx, ln.cy) and ln.cx > self.x + self.w * 0.5
+
+
+def pick_contact(lines: Iterable[TextLine], recipient: str, geo: WeChatGeometry) -> tuple:
+    """-> (TextLine|None, section, reason).  EXACT name match only; 联系人 section first, never 群聊/聊天记录/公众号; ambiguity => None."""
+    r = cj(recipient)
+    left = sorted((l for l in lines if geo.in_list(l)), key=lambda l: (l.rect[1], l.rect[0]))
+    section = ""
+    exact = []
+    near = []
+    for l in left:
+        t = cj(l.text)
+        sec = next((s for s in SECTION_OK + SECTION_BAD + SECTION_NEUTRAL if t == cj(s)), "")
+        if sec:
+            section = sec
+            continue
+        if t == r:
+            exact.append((section, l))
+        elif r and r in t and len(t) <= len(r) + 14:
+            near.append((section, l))
+    good = [(s, l) for s, l in exact if cj(s) not in {cj(x) for x in SECTION_BAD}]
+    if len(good) == 1:
+        return good[0][1], good[0][0] or "(无分区标题)", "exact"
+    if len(good) > 1:
+        pref = [(s, l) for s, l in good if cj(s) in {cj(x) for x in SECTION_OK}]
+        if len(pref) == 1:
+            return pref[0][1], pref[0][0], "exact(联系人分区优先)"
+        return None, "", f"AMBIGUOUS：{len(good)} 个与「{recipient}」完全同名的候选，拒绝猜测"
+    if exact:
+        return None, "", f"「{recipient}」只出现在 {exact[0][0]} 分区（群聊/聊天记录/公众号），不是联系人"
+    if near:
+        return None, "", f"没有与「{recipient}」完全同名的联系人（近似项: {near[0][1].text[:20]!r}）；不做模糊点击"
+    return None, "", f"搜索结果中没有「{recipient}」（OCR 读到 {len(left)} 行）"
+
+
+def verify_chat_header(lines: Iterable[TextLine], recipient: str, geo: WeChatGeometry) -> tuple:
+    """-> (is_exact_single_chat, group_marker_found, evidence).  Header title must EQUAL the recipient; '(N)' / 群聊 anywhere in the header band => group."""
+    r = cj(recipient)
+    band = [l for l in lines if geo.in_header(l)]
+    texts = [l.text.strip() for l in band]
+    if any(CHAT_GROUP_MARK.search(t) and r in cj(t) for t in texts) or any(re.search(r"群聊|群成员", t) for t in texts):
+        return False, True, "头部检测到群聊标记：" + " | ".join(t[:20] for t in texts[:4])
+    ex = [l for l in band if cj(l.text) == r]
+    if ex:
+        return True, False, f"头部 {ex[0].src.upper()} 精确读到「{ex[0].text.strip()[:24]}」== 联系人，且无群成员数后缀 → 单聊"
+    return False, False, "头部未读到与联系人完全相同的标题（读到: " + (" | ".join(t[:16] for t in texts[:4]) or "空") + "）"
+
+
+def count_bubbles(lines: Iterable[TextLine], body: str, geo: WeChatGeometry) -> tuple:
+    """-> (count of bubbles containing `body` in the right half of the message area, lowest y)."""
+    b = cj(body)
+    right = sorted((l for l in lines if geo.in_msg_right(l)), key=lambda l: (l.rect[1], l.rect[0]))
+    if not b:
+        return 0, -1
+    n, last_y = 0, -1
+    for l in right:
+        c = cj(l.text).count(b)
+        if c:
+            n += c
+            last_y = max(last_y, l.rect[1])
+    if n == 0 and len(b) > 8:  # long body wrapped over several lines: join up to 5 consecutive right-side lines
+        for i in range(len(right)):
+            joined = ""
+            for l in right[i:i + 5]:
+                joined += cj(l.text)
+                if b in joined:
+                    n += 1
+                    last_y = max(last_y, l.rect[1])
+                    break
+    return n, last_y
+
+
+def input_text_from_ocr(lines: Iterable[TextLine], geo: WeChatGeometry) -> str:
+    rows = sorted((l for l in lines if geo.in_input(l)), key=lambda l: (l.rect[1] // 10, l.rect[0]))
+    return "".join(l.text for l in rows)
+
+
+@dataclass
+class WeChatResult:
+    status: str  # sent_verified | fallback | aborted | failed
+    summary: str = ""
+    reason: str = ""
+    trace: list = field(default_factory=list)
+
+
+class WeChatSkill:
+    """Deterministic closed loop.  `io` is an adapter (see skills/wechat_io.py::WeChatWinIO; tests use a scripted fake) providing:
+       find_window() focus(hwnd) launch() key(keys) click(x,y) type_text(t) clipboard_get() clipboard_set(t) perceive(rect) confirm(lines,q) sleep(s)"""
+
+    def __init__(self, io: Any, session: "MessageSession", say: Any = None, poll: float = 0.55) -> None:
+        self.io, self.s, self.say = io, session, say or (lambda m: None)
+        self.poll = poll
+        self.trace: list = []
+        self.geo: Optional[WeChatGeometry] = None
+        self.hwnd = 0
+
+    def _log(self, msg: str) -> None:
+        self.trace.append(msg)
+        self.say("  " + msg)
+
+    async def _lines(self, rect: list) -> tuple:
+        p = await self.io.perceive(rect)
+        return to_lines(p.get("lines") or []), p
+
+    async def _full_lines(self) -> tuple:
+        assert self.geo is not None
+        g = self.geo
+        return await self._lines([g.x, g.y, g.w, g.h])
+
+    async def _refresh_geo(self) -> bool:
+        w = await self.io.find_window()
+        if not w:
+            return False
+        self.hwnd = int(w["hwnd"])
+        x, y, ww, hh = [int(v) for v in w["rect"]]
+        self.geo = WeChatGeometry(x, y, ww, hh, float(w.get("dpi") or 1.0))
+        return True
+
+    async def _ensure_window(self) -> bool:
+        ok = await self._refresh_geo()
+        if not ok and hasattr(self.io, "launch"):
+            self._log("🪟 未找到微信主窗口 → 尝试启动 Weixin.exe/WeChat.exe")
+            await self.io.launch()
+            for _ in range(12):
+                await self.io.sleep(0.8)
+                if await self._refresh_geo():
+                    ok = True
+                    break
+        if not ok:
+            return False
+        for attempt in range(3):
+            if await self.io.focus(self.hwnd):
+                await self.io.sleep(0.25)
+                await self._refresh_geo()
+                return True
+            await self.io.sleep(0.4)
+        return False
+
+    async def _clear_editor(self) -> None:
+        assert self.geo is not None
+        x, y = self.geo.input_click
+        await self.io.click(x, y)
+        await self.io.sleep(0.15)
+        await self.io.key("ctrl+a")
+        await self.io.key("delete")
+        await self.io.sleep(0.12)
+
+    # ------------------------------------------------------------------------------------------------------------------ main
+    async def run(self) -> WeChatResult:
+        s, req = self.s, self.s.request
+        recipient, body = req.recipient.strip(), req.body
+        saved_clip: Optional[str] = None
+        try:
+            saved_clip = await self.io.clipboard_get()
+        except Exception:  # noqa: BLE001
+            saved_clip = None
+        try:
+            return await self._run(recipient, body)
+        finally:
+            if saved_clip is not None:
+                try:
+                    await self.io.clipboard_set(saved_clip)
+                except Exception:  # noqa: BLE001
+                    pass
+
+    async def _run(self, recipient: str, body: str) -> WeChatResult:
+        s = self.s
+        if not await self._ensure_window():
+            return WeChatResult("fallback", reason="找不到/无法前置微信主窗口", trace=self.trace)
+        g = self.geo
+        assert g is not None
+        self._log(f"🪟 微信窗口 hwnd={self.hwnd} rect=({g.x},{g.y},{g.w},{g.h}) dpi={g.dpi:.2f}")
+        # ---- 1) freeze the recipient via Ctrl+F search -------------------------------------------------------------------
+        await self.io.key("ctrl+f")
+        await self.io.sleep(0.35)
+        await self.io.key("ctrl+a")
+        await self.io.clipboard_set(recipient)
+        await self.io.key("ctrl+v")
+        cand: Optional[TextLine] = None
+        sec, why = "", ""
+        for _ in range(6):
+            await self.io.sleep(self.poll + 0.2)
+            lines, p = await self._lines(g.list_rect)
+            cand, sec, why = pick_contact(lines, recipient, g)
+            if cand is not None or why.startswith(("AMBIGUOUS", "「")):
+                break
+        if cand is None:
+            await self.io.key("escape")
+            return WeChatResult("fallback", reason=f"联系人冻结失败：{why}" + (f"（输入层: {self.io.last_error}）" if getattr(self.io, "last_error", "") else ""), trace=self.trace)
+        s.contact_frozen = True
+        s.contact_evidence = f"搜索结果{'(DML+OCR)' if p.get('dml') else '(OCR)'}分区「{sec}」精确匹配「{cand.text.strip()[:24]}」@({int(cand.cx)},{int(cand.cy)})（{why}）"
+        self._log(f"🔒 msg_recipient_frozen ✓ {s.contact_evidence}")
+        # ---- 2) enter the conversation + single-chat proof ---------------------------------------------------------------
+        await self.io.click(int(cand.cx), int(cand.cy))
+        single, grp, ev = False, False, ""
+        for _ in range(6):
+            await self.io.sleep(self.poll)
+            lines, p = await self._lines(g.header_rect)
+            single, grp, ev = verify_chat_header(lines, recipient, g)
+            if single or grp:
+                break
+        s.single_chat, s.single_chat_evidence = single, ev
+        s.chat_hwnd = self.hwnd
+        if not single:
+            self._log(f"🛑 msg_single_chat_window ✗ {ev}")
+            return WeChatResult("failed" if grp else "fallback", reason=f"未能确认单聊窗口：{ev}", trace=self.trace)
+        self._log(f"💬 msg_single_chat_window ✓ {ev}")
+        # ---- 3) draft + read-back ----------------------------------------------------------------------------------------
+        await self._clear_editor()
+        await self.io.clipboard_set(body)
+        await self.io.key("ctrl+v")
+        await self.io.sleep(0.35)
+        readback, source = await self._readback(body)
+        s.draft_readback, s.draft_source = readback, source
+        s.draft_ok = bool(readback) and cj(readback) == cj(body)
+        if not s.draft_ok:  # one repair attempt through SendInput typing
+            self._log(f"⚠ 草稿读回「{readback[:30]}」≠ 正文，改用逐字输入重试")
+            await self._clear_editor()
+            await self.io.type_text(body)
+            await self.io.sleep(0.35)
+            readback, source = await self._readback(body)
+            s.draft_readback, s.draft_source = readback, source
+            s.draft_ok = bool(readback) and cj(readback) == cj(body)
+        if not s.draft_ok:
+            await self._clear_editor()
+            return WeChatResult("failed", reason=f"msg_draft_readback ✗ 读回=「{readback[:40]}」来源={source}", trace=self.trace)
+        self._log(f"📝 msg_draft_readback ✓ 读回={readback[:30]!r} 来源={source}")
+        # ---- 4) HITL before the sending keystroke -------------------------------------------------------------------------
+        lines_ui = [f"  📨 发送前核验 · 联系人冻结=✓ {s.contact_evidence[:80]} · 单聊=✓ {s.single_chat_evidence[:60]} · 草稿读回=✓ {readback[:30]!r}（{source}）"]
+        ok = await self.io.confirm(lines_ui, f"确认把「{body}」发送给「{recipient}」？[y/N]")
+        if not ok:
+            await self._clear_editor()
+            return WeChatResult("aborted", reason="用户未确认发送，已清空草稿（未发送）", trace=self.trace)
+        s.hitl_confirmed = True
+        self._log("🧑‍⚖️ msg_hitl_confirmed ✓")
+        # ---- 5) send + bubble proof ---------------------------------------------------------------------------------------
+        lines0, _ = await self._lines(g.msg_right_rect)
+        n0, y0 = count_bubbles(lines0, body, g)
+        await self.io.key("end")  # collapse the select-all highlight, caret to the end
+        s.send_issued, s.send_step = True, 0
+        await self.io.key("enter")
+        verified, evidence, source_b = False, "", "dml+ocr"
+        pressed_alt = False
+        for i in range(8):
+            await self.io.sleep(self.poll + 0.15)
+            lines1, p1 = await self._lines(g.msg_right_rect)
+            n1, y1 = count_bubbles(lines1, body, g)
+            src_b = "dml+ocr" if p1.get("dml") else "ocr"
+            inp, _p = await self._lines(g.input_rect)
+            still_in_box = cj(body) in cj(input_text_from_ocr(inp, g))
+            if n1 > n0 or (n0 == 0 and n1 >= 1):
+                verified, source_b = True, src_b
+                evidence = f"右半区(x>50%)新增发送气泡：包含「{body[:20]}」的气泡 {n0}→{n1} 个（{src_b}，DML 框 {p1.get('dml_n', 0)} 个）· 输入框已{'未' if still_in_box else ''}清空"
+                break
+            if n1 == n0 >= 1 and not still_in_box and y1 >= y0 and i >= 2:  # identical earlier bubble scrolled; editor emptied and the lowest bubble moved down/stayed
+                verified, source_b = True, src_b
+                evidence = f"输入框已清空且最低气泡 y={y1}≥发送前 y={y0}（气泡数 {n1} 不变：同文历史气泡已滚出可视区）（{src_b}）"
+                break
+            if i == 3 and still_in_box and not pressed_alt:  # Enter produced no send (Ctrl+Enter mode)
+                pressed_alt = True
+                self._log("↪ Enter 未发送（输入框仍有正文）→ 改用 Ctrl+Enter 一次")
+                await self.io.key("ctrl+enter")
+        if verified:
+            s.bubble_verified, s.bubble_evidence, s.bubble_source = True, evidence, source_b
+            self._log(f"✅ msg_bubble_verified ✓ {evidence}")
+            return WeChatResult("sent_verified", summary=f"已通过 WeChatSkill 向微信联系人「{recipient}」发送「{body}」：联系人冻结✓ 单聊✓ 草稿读回✓ 人工确认✓ 气泡核验✓（{evidence}）", trace=self.trace)
+        return WeChatResult("failed", reason="已执行发送，但未在聊天窗口右半区观察到新增的正文气泡（不计入完成）", trace=self.trace)
+
+    async def _readback(self, body: str) -> tuple:
+        """Select-all + copy through a clipboard SENTINEL (proves the copy really happened), else local OCR of the editor band."""
+        assert self.geo is not None
+        sentinel = f"__dscu_sentinel_{int(time.time() * 1000)}__"
+        try:
+            await self.io.clipboard_set(sentinel)
+            await self.io.key("ctrl+a")
+            await self.io.key("ctrl+c")
+            await self.io.sleep(0.2)
+            got = await self.io.clipboard_get()
+            if got and got != sentinel:
+                return got.replace("\r\n", "\n").strip("\n"), "clipboard_select_all_copy"
+        except Exception:  # noqa: BLE001
+            pass
+        lines, _ = await self._lines(self.geo.input_rect)
+        txt = input_text_from_ocr(lines, self.geo)
+        return txt, "ocr_editor_band"
+
 '@
 
 Add-DscuFile 'agent_brain/typed_selector.py' '1c427552d18f01b6bf3abe73b15d3405a492a3e58757d3569cd32e7eb8f0e36c' @'
@@ -25031,7 +26061,7 @@ $global:LASTEXITCODE = 0
 if ($UiAccess -and $result.driver) { & (Join-Path $Root 'scripts\setup-uiaccess.ps1') -Root $Root }
 '@
 
-Add-DscuFile 'tests/unit/test_v17.py' '2c2a5a0312073b6680f396e36cbc53f61594210b00224b1077057c705250eec8' @'
+Add-DscuFile 'tests/unit/test_v17.py' '179ed1ccd5d68fe23b31122dab31b3a6dad8cca33080393773d5b391df90d436' @'
 """v17.0 regression tests: Target/Trigger gate, UIA selection state, Recycle-Bin single-item skill, fuzzy resolver, Shell-window oracle, messaging parser, DML pipeline."""
 from __future__ import annotations
 
@@ -25342,7 +26372,7 @@ class TestDmlPipeline(unittest.TestCase):
         cands = [{"box": [100, 100, 80, 30], "score": 0.9, "cls": 0}, {"box": [300, 100, 30, 30], "score": 0.5, "cls": 0}]
         items = D.label_boxes(cands, [([102, 104, 70, 20], "设置", "uia"), ([500, 500, 60, 20], "孤立文字", "ocr")])
         txt = D.format_structured(items)
-        self.assertIn("[1] Box(100,100,80,30) 设置", txt)
+        self.assertIn('[1] Box(100,100,80,30) "设置"', txt)
         self.assertIn("(icon)", txt)
         self.assertIn("孤立文字", txt)
 
@@ -25414,6 +26444,754 @@ if __name__ == "__main__":
     unittest.main()
 '@
 
+
+Add-DscuFile 'tests/test_v17_1_fixes.py' '85b447022976381e0ae37b31736a08b874e4f942f361426ccc4256a21c5f09e4' @'
+"""v17.1 regression gate.  Run:  PYTHONWARNINGS=error::RuntimeWarning python tests/test_v17_1_fixes.py     (DSCU_MODE=regress171 does exactly that)
+
+Covers the 5 blockers of the v17.0 14-task log:
+  1. dml_detector `coroutine 'ocr_words.<locals>.run' was never awaited`  (RuntimeWarning is a HARD failure here)  + IoU fusion
+  2. WebActionGoal (tasks #9/#10/#11 were `unverified`) + dev/terminal tab filter (task #8)
+  3. WeChatSkill 5/5 (task #13: msg_recipient_frozen / msg_single_chat_window / msg_draft_readback / msg_hitl_confirmed / msg_bubble_verified)
+  4. Gmail same-epoch freeze + state-stripped identity (task #14: `已勾选行中有 5 个不在授权目标集`)
+  5. Rust driver activation assets (bootstrap-rust / verify164 --real)
+"""
+from __future__ import annotations
+
+import asyncio
+import gc
+import re
+import sys
+import threading
+import types
+import unittest
+import warnings
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+warnings.simplefilter("error", RuntimeWarning)  # HARD GATE (same as PYTHONWARNINGS=error::RuntimeWarning)
+
+from agent_brain import goal_checks as gc_  # noqa: E402
+from agent_brain.protocol import Element  # noqa: E402
+from agent_brain.skills import message_send as ms  # noqa: E402
+from agent_brain.stable_object import checked_row_ids, freeze_same_epoch  # noqa: E402
+from agent_brain.state_machine import StableObjectRegistry, norm_row_text  # noqa: E402
+from agent_brain.verifier import IndependentVerifier, WebActionGoal, derive_web_action, web_transitions, WebState  # noqa: E402
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+# ======================================================================================================= 1) OCR await + fusion
+class TestOcrAwait(unittest.TestCase):
+    def setUp(self) -> None:
+        from PIL import Image
+
+        self.img = Image.new("RGB", (64, 64), "white")
+
+    def _no_runtime_warning(self, fn):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            out = fn()
+            gc.collect()
+        bad = [x for x in w if issubclass(x.category, RuntimeWarning)]
+        self.assertEqual(bad, [], f"RuntimeWarning leaked: {[str(x.message) for x in bad]}")
+        return out
+
+    def test_hard_gate_is_on(self) -> None:
+        with self.assertRaises(RuntimeWarning):
+            warnings.warn("probe", RuntimeWarning)
+
+    def test_sync_call_inside_running_loop(self) -> None:
+        """v17.0 bug: ocr_words() called from inside the orchestrator's loop -> asyncio.run() raised -> coroutine never awaited -> [] forever."""
+        from sidecar import dml_detector as D
+
+        async def fake(png: bytes):
+            await asyncio.sleep(0)
+            return [([1, 2, 30, 10], "老虎不抓鼠", "ocr")]
+
+        async def main():
+            return D.ocr_words(self.img, recognizer=fake)  # sync call, running loop
+
+        out = self._no_runtime_warning(lambda: run(main()))
+        self.assertEqual(out, [([1, 2, 30, 10], "老虎不抓鼠", "ocr")])
+
+    def test_async_and_thread_callers(self) -> None:
+        from sidecar import dml_detector as D
+
+        async def fake(png: bytes):
+            return [([0, 0, 5, 5], "x", "ocr")]
+
+        self.assertEqual(self._no_runtime_warning(lambda: run(D.ocr_words_async(self.img, recognizer=fake))), [([0, 0, 5, 5], "x", "ocr")])
+        res: list = []
+        t = threading.Thread(target=lambda: res.append(D.ocr_words(self.img, recognizer=fake)))
+        t.start()
+        t.join(10)
+        self.assertEqual(res, [[([0, 0, 5, 5], "x", "ocr")]])
+
+    def test_recognizer_failure_is_counted_not_swallowed(self) -> None:
+        from sidecar import dml_detector as D
+
+        async def boom(png: bytes):
+            raise RuntimeError("winrt exploded")
+
+        before = D.ocr_stats()["errors"]
+        out = self._no_runtime_warning(lambda: D.ocr_words(self.img, recognizer=boom))
+        self.assertEqual(out, [])
+        self.assertEqual(D.ocr_stats()["errors"], before + 1)
+        self.assertIn("winrt exploded", D.ocr_stats()["last_error"])
+
+    def test_no_asyncio_run_antipattern_left(self) -> None:
+        src = (ROOT / "sidecar" / "dml_detector.py").read_text(encoding="utf-8")
+        self.assertNotIn("asyncio.run(run())", src)
+        self.assertIn("run_coroutine_threadsafe", src)
+
+    def test_fusion_iou_and_format(self) -> None:
+        from sidecar import dml_detector as D
+
+        cands = [{"box": [100, 100, 200, 40], "score": 0.9, "cls": 0}, {"box": [110, 105, 30, 30], "score": 0.8, "cls": 0}, {"box": [400, 100, 40, 40], "score": 0.7, "cls": 0}]
+        texts = [([150, 108, 60, 20], "设 置", "ocr"), ([215, 108, 50, 20], "中心", "ocr"), ([112, 108, 26, 20], "图", "uia"), ([700, 500, 80, 20], "孤立文字", "ocr")]
+        items = D.label_boxes(cands, texts)
+        by = {tuple(i["box"]): i for i in items}
+        self.assertEqual(by[(110, 105, 30, 30)]["text"], "图")  # tightest box wins the text, UIA beats OCR
+        self.assertEqual(by[(110, 105, 30, 30)]["text_src"], "uia")
+        self.assertEqual(by[(100, 100, 200, 40)]["text"], "设 置 中心")  # 2 OCR fragments, reading order
+        self.assertEqual(by[(400, 100, 40, 40)]["text"], "")
+        self.assertIn("孤立文字", [i["text"] for i in items])  # nothing readable is lost
+        txt = D.format_structured(items)
+        self.assertRegex(txt, r'\[\d+\] Box\(100,100,200,40\) "设 置 中心"')
+        self.assertIn("(icon)", txt)
+
+
+# ======================================================================================================= 2) WebActionGoal + dev tabs
+class StubHub:
+    def __init__(self, probes):
+        self.cdp_up = True
+        self.probes = list(probes)
+        self.calls = 0
+
+    async def cdp_action(self, req):
+        pr = self.probes[min(self.calls, len(self.probes) - 1)]
+        self.calls += 1
+        return types.SimpleNamespace(ok=True, effect=pr, message="")
+
+    async def drv_observe(self, **kw):
+        raise RuntimeError("no driver in unit test")
+
+
+def probe(url, title="t", expanded=(), lines=range(40), tabs=1, active="7"):
+    return {"url": url, "title": title, "expanded": list(expanded), "line_hashes": list(lines), "text_digest": "d", "tabs": tabs, "active_target": active}
+
+
+class TestWebActionGoal(unittest.TestCase):
+    def _verify(self, task, base, after, clicks=()):
+        v = IndependentVerifier(StubHub([base, after]), StableObjectRegistry())
+        st = types.SimpleNamespace(step=3, ledger=[])
+
+        async def go():
+            await v.capture_web_baseline(task)
+            for c in clicks:
+                v.web.note_click(c)
+            return await v.verify_done(task, "已完成", st, None, None)
+
+        return run(go())
+
+    def test_derive(self) -> None:
+        self.assertEqual(derive_web_action("点击招生就业")["target"], "招生就业")
+        self.assertEqual(derive_web_action("点击新生入学")["target"], "新生入学")
+        self.assertEqual(derive_web_action("点击第一个网站")["target"], "")
+        self.assertEqual(derive_web_action("展开更多菜单")["intent"], "expand")
+        for owned in ("搜索claude，点击第三个视频", "输入我的电话号码，13226113973，并点击获取验证码", "打开微信，给张三发消息：你好", "打开记事本", "删除前面5条邮件"):
+            self.assertIsNone(derive_web_action(owned), owned)
+
+    def test_task9_url_changed_full(self) -> None:
+        v = self._verify("点击第一个网站", probe("https://cn.bing.com/search?q=x", "bing"), probe("https://www.jmpt.edu.cn/", "江门职业技术学院", lines=range(30, 90)))
+        self.assertEqual((v.ok, v.coverage, v.status), (True, "full", "completed_verified"), v.render())
+        self.assertIn("✓url_changed", v.render())
+
+    def test_task10_dropdown_aria_expanded(self) -> None:
+        v = self._verify("点击招生就业", probe("https://www.jmpt.edu.cn/"), probe("https://www.jmpt.edu.cn/", expanded=["招生就业"], lines=list(range(40)) + [900, 901]), clicks=["招生就业"])
+        self.assertEqual((v.ok, v.coverage), (True, "full"), v.render())
+        self.assertIn("✓aria_expanded_true", v.render())
+
+    def test_task10_dropdown_dom_mutated_only_needs_target(self) -> None:
+        v = self._verify("点击招生就业", probe("https://www.jmpt.edu.cn/"), probe("https://www.jmpt.edu.cn/", lines=list(range(2, 40)) + [900, 901, 902], title="t"), clicks=["招生就业"])
+        self.assertEqual(v.coverage, "full", v.render())
+        self.assertIn("✓dom_mutated", v.render())
+
+    def test_task11_subpage_url(self) -> None:
+        v = self._verify("点击新生入学", probe("https://www.jmpt.edu.cn/zsxx/"), probe("https://www.jmpt.edu.cn/zsxx/xsrx.htm", "新生入学-招生信息网", lines=range(50, 100)), clicks=["新生入学"])
+        self.assertEqual((v.ok, v.coverage), (True, "full"), v.render())
+        self.assertIn("✓dom_mutated", v.render())
+        self.assertIn("✓url_changed", v.render())
+
+    def test_nothing_happened_is_not_full(self) -> None:
+        v = self._verify("点击招生就业", probe("https://www.jmpt.edu.cn/"), probe("https://www.jmpt.edu.cn/"))
+        self.assertNotEqual(v.coverage, "full")
+        self.assertNotEqual(v.status, "completed_verified")
+
+    def test_error_page_never_full(self) -> None:
+        v = self._verify("点击新生入学", probe("https://www.jmpt.edu.cn/"), probe("chrome-error://chromewebdata/", "ERR_CONNECTION_RESET"))
+        self.assertNotEqual(v.coverage, "full")
+        self.assertFalse(v.ok)
+
+    def test_terminal_tab_page_is_not_a_valid_result(self) -> None:
+        v = self._verify("点击第一个", probe("https://www.jmpt.edu.cn/"), probe("https://www.jmpt.edu.cn/x", "chrome-devtools-mcp"))
+        self.assertFalse(v.ok)
+
+    def test_transitions_pure(self) -> None:
+        a, b = WebState(url="https://a/x#1", lines=frozenset(range(10))), WebState(url="https://a/x#2", lines=frozenset(range(10)))
+        tr = web_transitions(a, b)
+        self.assertFalse(tr["url_changed"])  # fragment-only change is not a navigation
+        self.assertFalse(tr["dom_mutated"])
+
+
+class TestDevTabFilter(unittest.TestCase):
+    def test_filter_and_pick(self) -> None:
+        from agent_brain import browser_mcp as B
+
+        pages = [{"page_id": 1, "url": "https://github.com/ChromeDevTools/chrome-devtools-mcp", "title": "chrome-devtools-mcp", "selected": True},
+                 {"page_id": 2, "url": "devtools://devtools/bundled/x.html", "title": "DevTools", "selected": False},
+                 {"page_id": 3, "url": "https://www.bing.com/search?q=a", "title": "a - Bing", "selected": False},
+                 {"page_id": 4, "url": "https://www.jmpt.edu.cn/", "title": "江门职业技术学院", "selected": False}]
+        self.assertEqual([p["page_id"] for p in B.target_pages(pages)], [3, 4])
+        eng = object.__new__(B.McpBrowserEngine)
+        eng.last_url, eng._known_page_ids = "", {1, 2, 3, 4}
+        self.assertIn(eng._pick_page(pages)["page_id"], (3, 4))
+        self.assertEqual(B.target_pages(pages[:2]), pages[:2])  # never leaves the engine without a page
+
+    def test_terminal_host_is_own_console(self) -> None:
+        src = (ROOT / "agent_brain" / "py_native_driver.py").read_text(encoding="utf-8")
+        self.assertIn("CASCADIA_HOSTING_WINDOW_CLASS", src)
+        self.assertGreaterEqual(src.count("self._is_own(pid.value, c.value)"), 2)
+
+
+# ======================================================================================================= 3) WeChatSkill 5/5
+class FakeWeChat:
+    """Scripted WeChat window (Weixin 4.x layout) implementing the WeChatSkill IO protocol."""
+
+    def __init__(self, group_only=False, header_suffix="", prefill="", bubbles=None, confirm=True, enter_sends=True, copy_works=True, name="老虎不抓鼠"):
+        self.name = name
+        self.win = [100, 50, 1500, 1000]
+        self.geo = ms.WeChatGeometry(100, 50, 1500, 1000, 1.0)
+        self.group_only, self.header_suffix, self.confirm_answer, self.enter_sends, self.copy_works = group_only, header_suffix, confirm, enter_sends, copy_works
+        self.search_active, self.search_text, self.chat_title, self.editor, self.bubbles = False, "", "", prefill, list(bubbles or [])
+        self.clip, self.keys, self.sent, self.sel, self.hitl_asked = "orig-clipboard", [], 0, False, False
+
+    async def find_window(self):
+        return {"hwnd": 4242, "title": "微信", "rect": list(self.win), "dpi": 1.0}
+
+    async def focus(self, h):
+        return True
+
+    async def launch(self):
+        return False
+
+    async def sleep(self, s):
+        return None
+
+    async def clipboard_get(self):
+        return self.clip
+
+    async def clipboard_set(self, t):
+        self.clip = t
+
+    async def type_text(self, t):
+        self.editor += t
+
+    async def confirm(self, lines, q):
+        self.hitl_asked = True
+        return self.confirm_answer
+
+    async def key(self, k):
+        self.keys.append(k)
+        if k == "ctrl+f":
+            self.search_active, self.search_text = True, ""
+        elif k == "ctrl+a":
+            self.sel = True
+        elif k == "delete":
+            if self.sel and not self.search_active:
+                self.editor = ""
+            self.sel = False
+        elif k == "ctrl+v":
+            if self.search_active:
+                self.search_text = self.clip
+            else:
+                self.editor = self.clip if self.sel else self.editor + self.clip
+            self.sel = False
+        elif k == "ctrl+c":
+            if self.sel and not self.search_active and self.copy_works:
+                self.clip = self.editor
+        elif k == "end":
+            self.sel = False
+        elif k in ("enter", "ctrl+enter"):
+            if not self.search_active and self.editor and (self.enter_sends or k == "ctrl+enter"):
+                self.bubbles.append(self.editor)
+                self.editor = ""
+                self.sent += 1
+        elif k == "escape":
+            self.search_active = False
+
+    async def click(self, x, y):
+        g = self.geo
+        if self.search_active and g.inside(g.list_rect, x, y):
+            for r, t, _ in self._results():
+                if r[1] <= y <= r[1] + r[3]:
+                    self.chat_title, self.search_active = t + self.header_suffix, False
+
+    def _results(self):
+        g = self.geo
+        if not (self.search_active and self.search_text):
+            return []
+        x, y = g.list_rect[0] + 20, g.list_rect[1] + 10
+        out = []
+        sec = "群聊" if self.group_only else "联系人"
+        out.append(([x, y, 60, 24], sec, "ocr"))
+        out.append(([x, y + 40, 140, 24], self.name if not self.group_only else self.name + "交流群", "ocr"))
+        if self.group_only:
+            out.append(([x, y + 80, 140, 24], self.name, "ocr"))
+        return out
+
+    def _screen(self):
+        g = self.geo
+        ls = list(self._results())
+        if self.search_active:
+            ls.append(([g.x + 70, g.y + 20, 120, 24], self.search_text, "ocr"))
+        if self.chat_title:
+            ls.append(([g.chat_x0 + 24, g.y + 30, 140, 28], " ".join(self.chat_title), "ocr"))  # Windows OCR spaces CJK glyphs
+        if self.editor:
+            ls.append(([g.chat_x0 + 20, g.input_rect[1] + 50, 300, 24], " ".join(self.editor), "ocr"))
+        for i, b in enumerate(self.bubbles):
+            ls.append(([g.x + g.w - 260, g.msg_right_rect[1] + 40 + 50 * i, 120, 26], " ".join(b), "ocr"))
+        return ls
+
+    async def perceive(self, rect):
+        out = [(r, t, s) for r, t, s in self._screen() if rect[0] <= r[0] + r[2] / 2 <= rect[0] + rect[2] and rect[1] <= r[1] + r[3] / 2 <= rect[1] + rect[3]]
+        return {"lines": out, "dml": True, "dml_n": 5}
+
+
+def session(task="打开微信，找到联系人老虎不抓鼠，给他发一条你好"):
+    return ms.MessageSession(ms.parse_message_request(task))
+
+
+class TestWeChatSkill(unittest.TestCase):
+    def _go(self, **kw):
+        fk = FakeWeChat(**kw)
+        sess = session()
+        res = run(ms.WeChatSkill(fk, sess, poll=0).run())
+        return fk, sess, res
+
+    def test_5_of_5_and_completed_verified(self) -> None:
+        fk, s, res = self._go(prefill="https://github.com/ChromeDevTools/chrome-devtools-mcp")  # the junk that polluted the draft in log task #13
+        self.assertEqual(res.status, "sent_verified", res.reason)
+        self.assertTrue(all((s.contact_frozen, s.single_chat, s.draft_ok, s.hitl_confirmed, s.bubble_verified)), s.as_dict())
+        self.assertEqual((s.draft_readback, s.draft_source), ("你好", "clipboard_select_all_copy"))
+        self.assertEqual(fk.bubbles, ["你好"])  # exactly ONE message, no junk, no double send
+        self.assertEqual(fk.sent, 1)
+        self.assertEqual(fk.clip, "orig-clipboard")  # user's clipboard restored
+        self.assertTrue(fk.hitl_asked)
+        # the independent oracle (MessageSendGoal) must now say coverage=full
+        v = IndependentVerifier(StubHub([{}]), StableObjectRegistry())
+        st = types.SimpleNamespace(step=1, ledger=[], msg_session=s)
+        verdict = run(v.verify_done("打开微信，找到联系人老虎不抓鼠，给他发一条你好", res.summary, st, None, None))
+        names = {c.name: c.ok for c in verdict.checks}
+        for n in ("msg_recipient_frozen", "msg_single_chat_window", "msg_draft_readback", "msg_hitl_confirmed", "msg_bubble_verified"):
+            self.assertTrue(names.get(n), f"{n} -> {verdict.render()}")
+        self.assertEqual((verdict.ok, verdict.coverage, verdict.status), (True, "full", "completed_verified"), verdict.render())
+
+    def test_identical_older_bubble_needs_count_increase(self) -> None:
+        fk, s, res = self._go(bubbles=["你好"])
+        self.assertEqual(res.status, "sent_verified")
+        self.assertEqual(fk.bubbles, ["你好", "你好"])
+
+    def test_group_chat_is_never_used(self) -> None:
+        fk, s, res = self._go(group_only=True)
+        self.assertEqual(res.status, "fallback")
+        self.assertFalse(s.contact_frozen)
+        self.assertEqual(fk.sent, 0)
+
+    def test_group_header_suffix_aborts_before_typing(self) -> None:
+        fk, s, res = self._go(header_suffix="(5)")
+        self.assertEqual(res.status, "failed")
+        self.assertFalse(s.single_chat)
+        self.assertEqual((fk.sent, fk.editor), (0, ""))
+
+    def test_hitl_denied_sends_nothing_and_clears_draft(self) -> None:
+        fk, s, res = self._go(confirm=False)
+        self.assertEqual(res.status, "aborted")
+        self.assertEqual((fk.sent, fk.editor, fk.bubbles), (0, "", []))
+        self.assertFalse(s.hitl_confirmed or s.bubble_verified)
+
+    def test_enter_does_not_send_falls_back_to_ctrl_enter_once(self) -> None:
+        fk, s, res = self._go(enter_sends=False)
+        self.assertEqual(res.status, "sent_verified", res.reason)
+        self.assertEqual(fk.sent, 1)
+        self.assertEqual(fk.keys.count("ctrl+enter"), 1)
+
+    def test_clipboard_copy_failure_falls_back_to_ocr_readback(self) -> None:
+        fk, s, res = self._go(copy_works=False)
+        self.assertEqual(res.status, "sent_verified", res.reason)
+        self.assertEqual(s.draft_source, "ocr_editor_band")
+
+    def test_geometry_and_helpers(self) -> None:
+        g = ms.WeChatGeometry(0, 0, 1600, 1000, 1.5)
+        self.assertGreater(g.msg_right_rect[0], 799)  # right half only (x > 50 %)
+        self.assertEqual(ms.cj(" 老 虎 不 抓 鼠 "), "老虎不抓鼠")
+        self.assertTrue(ms.is_wechat_request("给老虎不抓鼠发一条你好"))
+        self.assertFalse(ms.is_wechat_request("用QQ给老虎不抓鼠发一条你好"))
+
+    def test_pixel_click_on_send_button_is_a_send_action(self) -> None:
+        src = (ROOT / "agent_brain" / "guards.py").read_text(encoding="utf-8")
+        self.assertIn("_is_wechat_send_click", src)
+
+
+# ======================================================================================================= 4) Gmail same-epoch freeze
+def mails(n, checked=(), unread=(0, 1, 2), start=0):
+    out = []
+    for r in range(1, n + 1):
+        i = r + start
+        sel = r in checked
+        prefix = ("已經揀選， " if sel else "") + ("未讀， " if (r - 1) in unread else "")
+        out.append(Element(ref_id=f"@3:c{i * 10}", role="row", name=f"{prefix}sender{r} , subject-{r} , 10月{r}日", rect=[10, 100 + r * 30, 900, 28], zone="Row", stable_key=f"r{r}", states=[], row=r))
+        out.append(Element(ref_id=f"@3:c{i * 10 + 1}", role="checkbox", name="選取", rect=[12, 100 + r * 30, 20, 20], zone="Row", stable_key=f"cb{r}", states=["checked"] if sel else [], row=r))
+    return out
+
+
+def filler(k):
+    return [Element(ref_id=f"@3:c{9000 + j}", role="button", name=f"tool{j}", rect=[0, 0, 5, 5], zone="Toolbar", stable_key=f"f{j}") for j in range(k)]
+
+
+SEGS = [{"from": "head", "n": 5}, {"from": "tail", "n": 3}]
+
+
+class TestGmailEpoch(unittest.TestCase):
+    def test_state_words_are_not_identity(self) -> None:
+        self.assertEqual(norm_row_text("已經揀選， 未讀， bizuming1-ui , [x] Run failed"), "bizuming1-ui , [x] Run failed")
+        self.assertEqual(norm_row_text("未讀， Medium Daily Digest"), "Medium Daily Digest")
+        self.assertEqual(norm_row_text("Selected, Unread, GitHub , hi"), "GitHub , hi")
+        self.assertEqual(norm_row_text("已經揀選"), "")
+
+    def test_checked_rows_stay_inside_frozen_set(self) -> None:
+        reg = StableObjectRegistry()
+        res = freeze_same_epoch(reg, mails(50) + filler(20), SEGS, epoch=3, url="https://mail.google.com/mail/u/0/#inbox", url_must_contain="mail.google.com", cap=900)
+        self.assertTrue(res.ok, res.reason)
+        self.assertEqual(len(res.targets), 8)
+        self.assertEqual([o.locator["row"] for o in res.targets], [1, 2, 3, 4, 5, 48, 49, 50])
+        ids = {o.stable_id for o in res.targets}
+        after = mails(50, checked={1, 2, 3, 4, 5}) + filler(20)  # the row accessible name now starts with "已經揀選， "
+        chk = checked_row_ids(reg, after)
+        self.assertEqual(len(chk), 5)
+        self.assertEqual(chk - ids, set(), "checked rows must be a SUBSET of the frozen targets (v17.0: 5 rows not in the authorised set)")
+
+    def test_truncated_snapshot_refuses_tail(self) -> None:
+        reg = StableObjectRegistry()
+        res = freeze_same_epoch(reg, mails(25) + filler(200), SEGS, epoch=3, cap=250)
+        self.assertFalse(res.ok)
+        self.assertTrue(res.truncated)
+        self.assertFalse(reg.targets_locked)
+
+    def test_never_freezes_empty_or_stale(self) -> None:
+        reg = StableObjectRegistry()
+        self.assertFalse(freeze_same_epoch(reg, [], SEGS, epoch=1).ok)
+        self.assertFalse(freeze_same_epoch(reg, filler(10), SEGS, epoch=1).ok)
+        r = freeze_same_epoch(reg, mails(50), SEGS, epoch=1, url="about:blank", url_must_contain="mail.google.com")
+        self.assertTrue(r.stale and not r.ok)
+        self.assertFalse(reg.targets_locked)
+
+    def test_overlap_is_ambiguous(self) -> None:
+        self.assertFalse(freeze_same_epoch(StableObjectRegistry(), mails(6), SEGS, epoch=1).ok)
+
+    def test_capped_snapshot_does_not_fake_deletion(self) -> None:
+        reg = StableObjectRegistry()
+        reg.observe_rows(mails(50) + filler(20), 1)
+        reg.observe_rows(mails(25) + filler(200), 2)  # capped: rows 26..50 are merely not visible
+        self.assertEqual([o.label for o in reg.objects.values() if o.current_state == "gone"], [])
+
+
+# ======================================================================================================= 5) Rust activation assets
+class TestRustAssets(unittest.TestCase):
+    def test_assets(self) -> None:
+        self.assertTrue((ROOT / "crates" / "dscu-driver" / "src" / "main.rs").exists())
+        b = (ROOT / "scripts" / "bootstrap_rust.ps1").read_text(encoding="utf-8")
+        self.assertIn("DSCU_GH_PROXY", b)
+        a = (ROOT / "scripts" / "accept_v171.ps1").read_text(encoding="utf-8")
+        for needle in ("bootstrap_rust.ps1", "verify_phase2.py", "--real", "--rounds", "regress171", "audit_report.json"):
+            self.assertIn(needle, a)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
+
+'@
+
+Add-DscuFile 'scripts/accept_v171.ps1' '2d284f87097e5baf4af2a9d027d0a2ad4fcb49b5c1849773d4ef0afdcf5847d3' @'
+#Requires -Version 7.0
+<#
+.SYNOPSIS
+  v17.1 one-shot acceptance:  regression gate (RuntimeWarning = error)  ->  Rust driver activation (bootstrap-rust)  ->  verify164 --real --rounds N  ->  audit_report.json summary.
+  Usage (inside the installed tree):  DSCU_MODE=accept171 DSCU_GH_PROXY=https://ghfast.top/ pwsh -File <this installer>
+#>
+param(
+    [string]$Root = $(if ($env:DSCU_ROOT) { $env:DSCU_ROOT } else { Join-Path $HOME 'DeepSeekComputerUse/v16' }),
+    [int]$Rounds = 10,
+    [switch]$SkipRust,
+    [switch]$SkipReal
+)
+$ErrorActionPreference = 'Continue'
+$py = Join-Path $Root '.venv/Scripts/python.exe'
+$exe = Join-Path $Root 'bin/dscu-driver.exe'
+$res = [ordered]@{}
+function Step([string]$t) { Write-Host ''; Write-Host "▶ $t" -ForegroundColor Cyan }
+if (-not (Test-Path $py)) { Write-Host "✖ 未找到 venv：$py（先运行一次主程序完成首次构建）" -ForegroundColor Red; return }
+$env:PYTHONUTF8 = '1'; $env:PYTHONIOENCODING = 'utf-8'; $env:DSCU_ROOT = $Root
+Push-Location $Root
+try {
+    Step '1/4 v17.1 回归门禁：PYTHONWARNINGS=error::RuntimeWarning（OCR await · WebActionGoal · WeChat 5 项 · Gmail 同 Epoch · Rust 资产）'
+    $env:PYTHONWARNINGS = 'error::RuntimeWarning'
+    & $py -W error::RuntimeWarning tests/test_v17_1_fixes.py 2>&1 | Out-Host
+    $res['regress171'] = ($LASTEXITCODE -eq 0)
+    Remove-Item Env:PYTHONWARNINGS -ErrorAction SilentlyContinue
+
+    Step '2/4 激活 Rust 原生驱动 dscu-driver.exe（零 MSVC：便携 llvm-mingw + gnullvm；国内网络请先设 $env:DSCU_GH_PROXY）'
+    if ($SkipRust) { Write-Host '  （已跳过 -SkipRust）' -ForegroundColor DarkGray }
+    elseif ((Test-Path $exe) -and ($env:DSCU_REBUILD -ne '1')) { Write-Host "  ✓ 已存在 $exe（$([math]::Round((Get-Item $exe).Length/1KB)) KB）→ 跳过编译（DSCU_REBUILD=1 强制重编）" -ForegroundColor Green }
+    else { try { & (Join-Path $Root 'scripts/bootstrap_rust.ps1') -Root $Root -Target auto -Force } catch { Write-Host "  ⚠ Rust 引导异常：$($_.Exception.Message)" -ForegroundColor Yellow } }
+    $res['rust_native'] = (Test-Path $exe)
+    if ($res['rust_native']) { Write-Host '  ✓ 驱动=rust-native 就绪（重新进入默认模式，横幅将显示 驱动=rust-native）' -ForegroundColor Green }
+    else { Write-Host '  ⚠ 仍为 py-native：查看 bin/driver-build.json 与上方输出；重试 DSCU_DRIVER_RETRY=1 / 设置 DSCU_GH_PROXY' -ForegroundColor Yellow }
+
+    Step "3/4 verify164 --real --rounds $Rounds（真机窗口审计 max_error_px≤3.0 · 真实故障注入）"
+    if ($SkipReal) { Write-Host '  （已跳过 -SkipReal）' -ForegroundColor DarkGray; $res['verify164_real'] = $null }
+    else { & $py tests/verify_phase2.py --real --rounds $Rounds 2>&1 | Out-Host; $res['verify164_real'] = ($LASTEXITCODE -eq 0) }
+
+    Step '4/4 audit_report.json'
+    $rep = Get-ChildItem (Join-Path $Root 'eval_runs') -Directory -Filter 'phase2_*' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($rep) {
+        $f = Join-Path $rep.FullName 'audit_report.json'
+        if (Test-Path $f) {
+            Write-Host "  📄 $f" -ForegroundColor Green
+            try { $j = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json; $j.PSObject.Properties | Where-Object { $_.Value -is [string] -or $_.Value -is [bool] -or $_.Value -is [int] -or $_.Value -is [double] } | ForEach-Object { Write-Host ("     {0} = {1}" -f $_.Name, $_.Value) } } catch { Write-Host '     （JSON 解析失败，请直接打开文件）' -ForegroundColor Yellow }
+            $res['audit_report'] = $f
+        }
+    }
+    else { Write-Host '  （尚无 phase2_* 审计目录：verify164 未成功运行）' -ForegroundColor Yellow }
+}
+finally { Pop-Location }
+Write-Host ''
+Write-Host '════════ v17.1 验收汇总 ════════' -ForegroundColor Cyan
+foreach ($k in $res.Keys) {
+    $v = $res[$k]
+    $mark = if ($v -is [bool]) { if ($v) { '✓ PASS' } else { '✗ FAIL' } } elseif ($null -eq $v) { '— 跳过' } else { "$v" }
+    Write-Host ("  {0,-16} {1}" -f $k, $mark) -ForegroundColor $(if ($v -is [bool] -and -not $v) { 'Red' } else { 'Green' })
+}
+Write-Host '  下一步（复测三类真实任务，需要 DeepSeek API Key）：' -ForegroundColor Cyan
+Write-Host '    微信：打开微信，找到联系人老虎不抓鼠，给他发一条你好        → 期望 completed_verified · 5/5'
+Write-Host '    网页：点击第一个网站 / 点击招生就业 / 点击新生入学            → 期望 completed_verified · ✓dom_mutated · ✓url_changed'
+Write-Host '    Gmail：在浏览器里面打开gmail，删除前面5条和后面3条邮件       → 期望 同一快照 epoch 冻结+勾选，无 OBJECT_IDENTITY_MISMATCH'
+
+'@
+
+Add-DscuFile 'agent_brain/skills/wechat_io.py' '022dc5a96520f015b1f284b4111d070d91c81d2d4c4b0b41e70511e189983247' @'
+"""v17.1 Windows adapter for WeChatSkill: driver input (focus/click/key/type) + ctypes clipboard + PIL grab + DirectML boxes + local OCR."""
+from __future__ import annotations
+
+import asyncio
+import os
+import subprocess
+import sys
+from typing import Any, Optional
+
+from . import message_send as ms
+
+
+def _dpi_of(hwnd: int) -> float:
+    try:
+        import ctypes
+
+        return max(1.0, ctypes.windll.user32.GetDpiForWindow(int(hwnd)) / 96.0)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        return 1.0
+
+
+class _Clip:
+    """Unicode text clipboard through user32 (retries: the clipboard is a global lock another process may hold for a few ms)."""
+
+    @staticmethod
+    def _api() -> Any:
+        import ctypes
+        from ctypes import wintypes
+
+        u, k = ctypes.windll.user32, ctypes.windll.kernel32  # type: ignore[attr-defined]
+        u.OpenClipboard.argtypes = [wintypes.HWND]
+        u.OpenClipboard.restype = wintypes.BOOL
+        u.GetClipboardData.argtypes = [wintypes.UINT]
+        u.GetClipboardData.restype = wintypes.HANDLE
+        u.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+        u.SetClipboardData.restype = wintypes.HANDLE
+        k.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        k.GlobalAlloc.restype = wintypes.HGLOBAL
+        k.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        k.GlobalLock.restype = wintypes.LPVOID
+        k.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        return ctypes, u, k
+
+    @classmethod
+    def get(cls) -> Optional[str]:
+        ctypes, u, k = cls._api()
+        for _ in range(20):
+            if u.OpenClipboard(None):
+                try:
+                    h = u.GetClipboardData(13)  # CF_UNICODETEXT
+                    if not h:
+                        return None
+                    p = k.GlobalLock(h)
+                    try:
+                        return ctypes.wstring_at(p)
+                    finally:
+                        k.GlobalUnlock(h)
+                finally:
+                    u.CloseClipboard()
+            import time
+
+            time.sleep(0.02)
+        return None
+
+    @classmethod
+    def set(cls, text: str) -> bool:
+        ctypes, u, k = cls._api()
+        data = (text + "\0").encode("utf-16-le")
+        for _ in range(20):
+            if u.OpenClipboard(None):
+                try:
+                    u.EmptyClipboard()
+                    h = k.GlobalAlloc(0x0042, len(data))  # GMEM_MOVEABLE | GMEM_ZEROINIT
+                    p = k.GlobalLock(h)
+                    ctypes.memmove(p, data, len(data))
+                    k.GlobalUnlock(h)
+                    u.SetClipboardData(13, h)
+                    return True
+                finally:
+                    u.CloseClipboard()
+            import time
+
+            time.sleep(0.02)
+        return False
+
+
+class WeChatWinIO:
+    def __init__(self, brain: Any) -> None:
+        self.b = brain
+        self.hwnd = 0
+        self.last_error = ""
+
+    def _chk(self, r: Any, what: str) -> Any:
+        if not getattr(r, "ok", True):
+            self.last_error = f"{what} -> {getattr(r, 'code', '?')}: {str(getattr(r, 'message', ''))[:90]}"
+        return r
+
+    # -- window --------------------------------------------------------------------------------------------------------------
+    async def find_window(self) -> Optional[dict[str, Any]]:
+        o = await self.b.hub.drv_observe(channel="dxgi_vision", max_elements=1)
+        best = None
+        for w in o.windows or []:
+            if (w.process or "").lower() not in ms.WECHAT_PROCS or w.cloaked or not w.rect or len(w.rect) != 4:
+                continue
+            if w.rect[2] < 500 or w.rect[3] < 400:
+                continue  # tray / login / pop-up windows
+            area = w.rect[2] * w.rect[3]
+            if best is None or area > best[0]:
+                best = (area, w)
+        if best is None:
+            return None
+        w = best[1]
+        return {"hwnd": int(w.hwnd), "title": w.title, "rect": [int(v) for v in w.rect], "minimized": bool(w.minimized), "dpi": _dpi_of(int(w.hwnd))}
+
+    async def focus(self, hwnd: int) -> bool:
+        self.hwnd = int(hwnd)
+        r = await self.b._drv("restore_window", None, hwnd=int(hwnd))
+        if not r.ok:
+            r = await self.b._drv("focus_window", None, hwnd=int(hwnd))
+        return bool(r.ok)
+
+    async def launch(self) -> bool:
+        cands = [os.path.expandvars(p) for p in (r"%ProgramFiles%\Tencent\Weixin\Weixin.exe", r"%ProgramFiles(x86)%\Tencent\WeChat\WeChat.exe", r"%ProgramFiles%\Tencent\WeChat\WeChat.exe",
+                                                   r"%LOCALAPPDATA%\Tencent\Weixin\Weixin.exe")]
+        for p in cands:
+            if os.path.exists(p):
+                try:
+                    subprocess.Popen([p], close_fds=True)  # noqa: S603
+                    return True
+                except Exception:  # noqa: BLE001
+                    continue
+        try:
+            subprocess.Popen(["cmd", "/c", "start", "", "weixin://"], close_fds=True)  # noqa: S603,S607
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    # -- input ---------------------------------------------------------------------------------------------------------------
+    async def key(self, keys: str) -> None:
+        self._chk(await self.b._drv("key", None, keys=keys, expect_hwnd=self.hwnd), f"key {keys}")
+
+    async def click(self, x: int, y: int) -> None:
+        self._chk(await self.b._drv("click", None, x=int(x), y=int(y), expect_hwnd=self.hwnd), f"click({int(x)},{int(y)})")
+
+    async def type_text(self, text: str) -> None:
+        self._chk(await self.b._drv("type", None, text=text, expect_hwnd=self.hwnd), "type")
+
+    async def clipboard_get(self) -> Optional[str]:
+        return await asyncio.to_thread(_Clip.get) if sys.platform == "win32" else None
+
+    async def clipboard_set(self, text: str) -> None:
+        if sys.platform == "win32":
+            await asyncio.to_thread(_Clip.set, text)
+
+    async def sleep(self, s: float) -> None:
+        await asyncio.sleep(s)
+
+    async def confirm(self, lines: list, question: str) -> bool:
+        policy = os.environ.get("DSCU_MSG_HITL", "always").lower()
+        if policy == "auto":
+            for ln in lines:
+                self.b.say(ln)
+            self.b.say(f"  ✓ HITL 自动策略（DSCU_MSG_HITL=auto）：{question}")
+            return True
+        return await self.b._hitl(lines, question)
+
+    # -- perception: DirectML boxes + local OCR (v17.1 fixed: OCR runs on its own loop thread) ---------------------------------
+    async def perceive(self, rect: list) -> dict[str, Any]:
+        return await asyncio.to_thread(self._perceive_sync, [int(v) for v in rect])
+
+    @staticmethod
+    def _perceive_sync(rect: list) -> dict[str, Any]:
+        from PIL import ImageGrab
+
+        try:  # physical pixels: the Rust-driver tier leaves this Python process DPI-unaware otherwise
+            import ctypes
+
+            ctypes.windll.user32.SetProcessDPIAware()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            pass
+        x, y, w, h = rect
+        img = ImageGrab.grab(bbox=(x, y, x + max(1, w), y + max(1, h)), all_screens=True).convert("RGB")
+        from sidecar import dml_detector as dml
+
+        raw = dml.ocr_words(img)
+        lines = [([x + r[0], y + r[1], r[2], r[3]], t, src) for r, t, src in raw]
+        det = None
+        cands: list = []
+        try:
+            det = dml.get()
+            if det.enabled():
+                cands = [{**c, "box": [x + c["box"][0], y + c["box"][1], c["box"][2], c["box"][3]]} for c in det.detect(img)]
+        except Exception:  # noqa: BLE001
+            cands = []
+        items = dml.label_boxes(cands, lines) if cands else [{"box": r, "text": t, "text_src": s, "cls": -1} for r, t, s in lines]
+        return {"lines": lines, "items": items, "dml": bool(cands), "dml_n": len(cands), "ocr": dml.ocr_stats()}
+
+'@
+
 #endregion
 
 #region ===================== 引导器：校验 → 释放 → 构建 → 启动 =====================
@@ -25433,7 +27211,7 @@ function Expand-Dscu {
     if ($bad.Count -gt 0) {
         Write-Host "✖ 以下 $($bad.Count) 个文件 SHA-256 校验失败（粘贴被终端截断/改写）：" -ForegroundColor Red
         $bad | ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
-        Write-Host '  建议：用 Windows Terminal 粘贴；或在网页上点「下载 .ps1」后执行  pwsh -File .\computer-use-v17.0.ps1' -ForegroundColor Yellow
+        Write-Host '  建议：用 Windows Terminal 粘贴；或在网页上点「下载 .ps1」后执行  pwsh -File .\computer-use-v17.1.ps1' -ForegroundColor Yellow
         throw 'integrity check failed'
     }
     Write-Host ("  ✓ Monorepo 已就绪：{0} 个文件校验通过（本次写入 {1} 个）→ {2}" -f $script:Manifest.Count, $written, $script:Root) -ForegroundColor Green
@@ -25537,7 +27315,7 @@ function Invoke-DscuBuild([int]$Changed) {
     if ($LASTEXITCODE -ne 0 -and -not (Test-DscuBuilt)) { throw '构建失败，请查看上方输出。' }
 }
 
-Write-Host "DeepSeek Computer Use v$script:DscuVersion · Qualitative Leap（真 Rust 驱动零 MSVC · 真训练 OmniParser DirectML@Radeon 780M · Target/Trigger 解耦门控 · 回收站 Shell COM 单文件技能 · Shell 窗口 Oracle） · v16.4 Critical Stabilization（WindowManager 点击/截图归属 · 意图完整性 · 强类型目标/选择器 · 预算熔断 · 驱动/DirectML 实证） · Step 3+ · v16.3 Phase2（No page found 透明自愈 · 统一坐标系 · 可验证滚动 · 故障注入验收 · Rust/DirectML 实证） · v16.2 Phase0/1（coverage=full 硬门槛 · 坐标身份反查 · WAL 崩溃恢复 · GmailSkill + DPAPI · MCP 锁版本） · v16.1 · Clean-Chrome 免风控 + PID 级 FG-Gate + AUTH_WALL 交接 + 官方 chrome-devtools-mcp + 极性验证器 + 强力破遮挡 + v16 三层评测" -ForegroundColor Cyan
+Write-Host "DeepSeek Computer Use v$script:DscuVersion · Phase 12 治本收口（异步 OCR 修通 · WebActionGoal · WeChatSkill 5/5 · Gmail 同 Epoch 冻结 · Rust 激活） · v17.0 Qualitative Leap（真 Rust 驱动零 MSVC · 真训练 OmniParser DirectML@Radeon 780M · Target/Trigger 解耦门控 · 回收站 Shell COM 单文件技能 · Shell 窗口 Oracle） · v16.4 Critical Stabilization（WindowManager 点击/截图归属 · 意图完整性 · 强类型目标/选择器 · 预算熔断 · 驱动/DirectML 实证） · Step 3+ · v16.3 Phase2（No page found 透明自愈 · 统一坐标系 · 可验证滚动 · 故障注入验收 · Rust/DirectML 实证） · v16.2 Phase0/1（coverage=full 硬门槛 · 坐标身份反查 · WAL 崩溃恢复 · GmailSkill + DPAPI · MCP 锁版本） · v16.1 · Clean-Chrome 免风控 + PID 级 FG-Gate + AUTH_WALL 交接 + 官方 chrome-devtools-mcp + 极性验证器 + 强力破遮挡 + v16 三层评测" -ForegroundColor Cyan
 $changed = Expand-Dscu
 if ($script:DscuMode -eq 'extract') { Write-Host "仅释放模式完成：$script:Root"; return }
 
@@ -25545,14 +27323,14 @@ if (($env:DSCU_REBUILD -eq '1') -or (-not (Test-DscuBuilt)) -or ($changed -gt 0 
 
 Ensure-DscuMcp
 Ensure-DscuPptx
-if ($script:DscuMode -in @('run', 'verify163', 'verify164', 'dml', 'dml-init')) { Ensure-DscuDml }
+if ($script:DscuMode -in @('run', 'verify163', 'verify164', 'dml', 'dml-init', 'accept171')) { Ensure-DscuDml }
 if ($script:DscuMode -in @('build-driver', 'bootstrap-rust')) { Ensure-DscuRust $true }
 elseif ($script:DscuMode -in @('run', 'verify163', 'verify164')) { Ensure-DscuRust $false }
 $vpy = Join-Path $script:Root '.venv/Scripts/python.exe'
 $env:DSCU_ROOT = $script:Root
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
-if ([string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY) -and ($script:DscuMode -notin @('verify162', 'verify163', 'verify164', 'regress8', 'gmail-auth', 'gmail-status', 'build-driver', 'bootstrap-rust', 'dml', 'dml-init'))) {
+if ([string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY) -and ($script:DscuMode -notin @('verify162', 'verify163', 'verify164', 'regress8', 'gmail-auth', 'gmail-status', 'build-driver', 'bootstrap-rust', 'dml', 'dml-init', 'regress171', 'accept171'))) {
     while ($true) {
         $k = Read-Host '请输入 DeepSeek API Key（输入时不显示，直接粘贴后按回车）' -MaskInput
         if (-not [string]::IsNullOrWhiteSpace($k)) { $env:DEEPSEEK_API_KEY = $k.Trim(); break }
@@ -25569,6 +27347,8 @@ try {
         'selfcheck' { & $vpy evals/runner.py selfcheck }
         'verify162' { $va = @(); if ($env:DSCU_VERIFY_ARGS) { $va = @($env:DSCU_VERIFY_ARGS -split '\s+' | Where-Object { $_ }) }; & $vpy tests/verify_phase0_1.py @va }
         'verify164' { $va = @(); if ($env:DSCU_VERIFY_ARGS) { $va = @($env:DSCU_VERIFY_ARGS -split '\s+' | Where-Object { $_ }) }; & $vpy tests/verify_phase2.py @va }
+        'regress171' { $env:PYTHONWARNINGS = 'error::RuntimeWarning'; & $vpy -W error::RuntimeWarning tests/test_v17_1_fixes.py; Remove-Item Env:PYTHONWARNINGS -ErrorAction SilentlyContinue }
+        'accept171' { & (Join-Path $script:Root 'scripts/accept_v171.ps1') -Root $script:Root -Rounds $(if ($env:DSCU_ROUNDS) { [int]$env:DSCU_ROUNDS } else { 10 }) }
         'regress8' { & $vpy tests/regress_log8.py }
         'verify163' { $va = @(); if ($env:DSCU_VERIFY_ARGS) { $va = @($env:DSCU_VERIFY_ARGS -split '\s+' | Where-Object { $_ }) }; & $vpy tests/verify_phase2.py @va }
         'bootstrap-rust' { Write-Host '  Rust 驱动激活流程已结束（见上方输出）；重新进入默认模式即可看到 驱动=rust-native' -ForegroundColor Green }
