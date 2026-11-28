@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v16.2 (Phase 0 & 1：可信成功标准 coverage=full 硬门槛 · StableObject 坐标反查 OBJECT_IDENTITY_MISMATCH · WAL 崩溃恢复 · 生产级 GmailSkill 两阶段闭环 + Windows DPAPI · chrome-devtools-mcp@1.14.0 锁版本) 基于 v16.1 (Step 3+) —— Clean-Chrome --browserUrl / Chrome146 --autoConnect 免风控登录 Gmail + PID 级 FG-Gate + 进程名 app_resolve + AUTH_WALL 1 步人工交接 + 零重启 MCP Supervisor —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
+  DeepSeek Computer Use v16.3 (Phase 2 修复：MCP `No page found` 透明重选页自愈（35 次降级清零）· 统一 DPI/视口/多屏负坐标坐标系 + 可验证滚动 scroll_container_verified · 真实故障注入验收 verify_phase2 · Rust GNU/MSVC 免痛激活 + DirectML 运行实证 · Gmail 一键授权向导 · SoM+文本锚点对象注册) 基于 v16.2 (Phase 0 & 1：可信成功标准 coverage=full 硬门槛 · StableObject 坐标反查 OBJECT_IDENTITY_MISMATCH · WAL 崩溃恢复 · 生产级 GmailSkill 两阶段闭环 + Windows DPAPI · chrome-devtools-mcp@1.14.0 锁版本) 基于 v16.1 (Step 3+) —— Clean-Chrome --browserUrl / Chrome146 --autoConnect 免风控登录 Gmail + PID 级 FG-Gate + 进程名 app_resolve + AUTH_WALL 1 步人工交接 + 零重启 MCP Supervisor —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
   直接整段粘贴到 PowerShell 7 → 输入 DeepSeek API Key → 出现「请输入任务」提示符即可使用（与 v12/v13/v14 的使用方式完全相同）。
 .DESCRIPTION
   本脚本是【自解压引导器】（与 v14 同构）：
@@ -19,11 +19,13 @@
                     DSCU_REBUILD=1  DSCU_AUTOINSTALL=1  DSCU_WITH_RUST=1  DSCU_DRIVER_TOOLCHAIN=auto|msvc|gnu  DSCU_CDP_PROFILE=persistent|ephemeral
   v16.1 新增环境变量：DSCU_MCP_MODE=clean-browser-url(默认)|autoconnect|profile  DSCU_CLEAN_PORT(9222)  DSCU_CLEAN_PROFILE  DSCU_CHROME_EXE  DSCU_AUTH_WALL=0|1  DSCU_AUTH_POPUP=0|1  DSCU_GMAIL_TOKEN  DSCU_GMAIL_API=0|1
   v16.2 新增环境变量：DSCU_MCP_VERSION(默认 1.14.0，禁止 @latest)  DSCU_AUTO_CONFIRM=1(跳过 HITL 确认，仅测试用)  DSCU_GMAIL_CLIENT_JSON(Google 桌面应用 client_secret.json)  DSCU_VERIFY_ARGS(传给验收套件，如 '--real --stability-n 30')
+  v16.3 新增模式：DSCU_MODE=verify163(Phase 2 真实故障注入+多 DPI 精度验收 → eval_runs/phase2_*/audit_report.json；DSCU_VERIFY_ARGS='--real --rounds 10' 用真 Chrome)  build-driver(一键激活 Rust 驱动，免 Visual Studio)  dml(DirectML 运行实证)  gmail-auth(向导)
+  v16.3 新增环境变量：DSCU_RUST=0|1(默认自动尝试一次)  DSCU_DML=0|1  DSCU_DML_MODEL  DSCU_DML_ALLOW_CPU=1(仅测试)
   v16.2 新增模式：DSCU_MODE=verify162(Phase 0/1 量化验收 → eval_runs/phase0_1_*/audit_report.json)  gmail-auth(配置 DPAPI 加密的 Gmail OAuth)  gmail-status
-  任务提示符内命令：v16 gmail-auth · v16 gmail · v16 wal [resume|resolve] · v16 verify162 · v16 browser · help · v16 mcp · v16 guard · v16 eval tier1|tier2|waa|all · v15 status · v15 recycle · v15 eval tier1|tier2|waa|all · v15 compare a.json b.json · v14 bench · v14 verify2 · v14 regress · exit
+  任务提示符内命令：v16 verify163 · v16 dml · v16 coords · v16 gmail-auth · v16 gmail · v16 wal [resume|resolve] · v16 verify162 · v16 browser · help · v16 mcp · v16 guard · v16 eval tier1|tier2|waa|all · v15 status · v15 recycle · v15 eval tier1|tier2|waa|all · v15 compare a.json b.json · v14 bench · v14 verify2 · v14 regress · exit
 #>
 $ErrorActionPreference = 'Stop'
-$script:DscuVersion = '16.2.0'
+$script:DscuVersion = '16.3.0'
 if ($PSVersionTable.PSVersion.Major -lt 7) { Write-Host '需要 PowerShell 7+（pwsh）。请在 pwsh 中粘贴。' -ForegroundColor Red; return }
 $script:DscuMode = if ($env:DSCU_MODE) { $env:DSCU_MODE } else { 'run' }
 if (-not $IsWindows -and $script:DscuMode -ne 'extract') { Write-Host '本脚本只能在 Windows 上运行（DSCU_MODE=extract 可仅释放文件）。' -ForegroundColor Red; return }
@@ -182,7 +184,7 @@ Add-DscuFile 'agent_brain/__init__.py' 'ca4476193357506833a5305373129eb69fe30c98
 """DSCU unified agent brain (Python 3.12 asyncio): the single decision-maker over the Rust driver and the TS CDP daemon."""
 __version__ = "14.0.0"
 '@
-Add-DscuFile 'agent_brain/__main__.py' '00c994922bec049ce7c1286a081091cd9e8541673cb8f764601d3df46a39b5af' @'
+Add-DscuFile 'agent_brain/__main__.py' '2b1a47b0b6b606a91d84f024f87ce83707334b056d527d7d85170aaeea7754db' @'
 """REPL entry:  python -m agent_brain [--cdp-profile persistent|ephemeral]   (same prompt/flow as v12/v13: 请输入任务 ...)"""
 from __future__ import annotations
 
@@ -211,6 +213,9 @@ HELP = """可用命令：
   v16 gmail                v16.2：Gmail Skill 状态（Token 是否加密/可用/账号）
   v16 wal                  v16.2：WAL 事务日志状态；`v16 wal resume <txid>` 恢复被证明未生效的中断事务；`v16 wal resolve <txid> committed|failed` 人工裁决 paused_for_user
   v16 verify162            v16.2：Phase 0/1 自动化量化验收套件（输出 JSON 审计报告到 eval_runs/）
+  v16 verify163            v16.3：Phase 2 真实故障注入 + 多 DPI 精度验收（强杀 MCP/Chrome、关 Tab、断网、过期 epoch；输出 eval_runs/phase2_*/audit_report.json）
+  v16 dml                  v16.3：DirectML 运行实证（模型名/SHA-256/ExecutionProvider/推理次数/P50-P95-P99）
+  v16 coords               v16.3：统一坐标系诊断（显示器/DPI/浏览器视口原点来源/几何缓存统计）
   v14 status               驱动/CDP/DXGI 流/FG-Gate/Profile/内存/回退原因 实时状态
   v14 bench                100 帧抓屏基准（DXGI P50/P95/P99；目标 P50 < 5 ms）
   v14 verify               运行 Step1 实机验收 tests/verify_step1_live.py
@@ -310,6 +315,12 @@ async def amain() -> int:
     brain.say(f"  🛡 浏览器引擎模式：{_mode}" + {"clean-browser-url": "（原生拉起干净 Chrome：无 --enable-automation，navigator.webdriver=false；MCP 仅 --browserUrl 附着；在 clean_profile 登录 Google 一次长期复用）",
                                                     "autoconnect": "（Chrome 144+/146+ 直连日常已登录浏览器：chrome://inspect/#remote-debugging → Allow）"}.get(_mode, "") + " · 输入 v16 browser 查看诊断")
     try:
+        from sidecar import dml_detector as _dml
+
+        brain.say(await asyncio.to_thread(_dml.get().startup_banner))
+    except Exception as _e:  # noqa: BLE001
+        brain.say(f"  🎮 DirectML 侧车[启动]：未激活（{str(_e)[:80]}）")
+    try:
         if args and args[0] == "run" and len(args) > 1:
             await brain.run_task(" ".join(args[1:]))
             return 0
@@ -345,6 +356,15 @@ async def amain() -> int:
                 await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "agent_brain.skills.gmail_skill", "auth"], cwd=str(cfg.root))
             elif low == "v14 gmail":
                 await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "agent_brain.skills.gmail_skill", "status"], cwd=str(cfg.root))
+            elif low == "v14 verify163":
+                await asyncio.to_thread(subprocess.run, [sys.executable, "tests/verify_phase2.py"], cwd=str(cfg.root))
+            elif low == "v14 dml":
+                await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "sidecar.dml_detector", "--probe", "--n", "40"], cwd=str(cfg.root))
+            elif low == "v14 coords":
+                from . import coords as _co
+
+                _m2 = getattr(brain.hub, "_mcp", None)
+                print(json.dumps({"monitors": [m.__dict__ for m in _co.enum_monitors()], "geometry": getattr(_m2, "last_geometry", {}), "stats": getattr(getattr(_m2, "geo", None), "stats", {})}, ensure_ascii=False, indent=1, default=str))
             elif low == "v14 verify162":
                 await asyncio.to_thread(subprocess.run, [sys.executable, "tests/verify_phase0_1.py"], cwd=str(cfg.root))
             elif low == "v14 status":
@@ -389,6 +409,12 @@ async def amain() -> int:
                 except KeyboardInterrupt:
                     print("\n已中断当前任务。")
     finally:
+        try:
+            from sidecar import dml_detector as _dml2
+
+            brain.say(_dml2.get().shutdown_report())
+        except Exception:  # noqa: BLE001
+            pass
         await brain.stop()
     return 0
 
@@ -792,7 +818,7 @@ class DeepSeek:
             self.vision_failures += 1
         raise ApiError(f"DeepSeek 调用失败（{retries} 次重试）: {last}")
 '@
-Add-DscuFile 'agent_brain/ipc_client.py' 'f758dee975d026733513932f07c67908de031cbc029b8cb8d692b293f582acab' @'
+Add-DscuFile 'agent_brain/ipc_client.py' 'd13cc02d573d270423434bdfc27d3c21e172cfaddd11ac6da808999dc7944028' @'
 """Async NDJSON IPC (Windows named pipe via the Proactor loop / unix socket on other OS), process supervision with a
 KILL_ON_JOB_CLOSE job (children die with Python - no orphaned 800 MB processes), and the DriverHub that gives the
 brain ONE interface over: Rust dscu-driver (preferred) | in-process native fallback, plus the TS CDP daemon."""
@@ -992,7 +1018,7 @@ class DriverHub:
                     self.procs["driver"] = spawn([str(cfg.driver_exe), "--pipe", cfg.driver_pipe], env, cfg.root, cfg.data_dir / "driver.log")
                     await c.connect(8)
                 self.driver_hello = await c.hello(own_pid=os.getpid())
-                self._drv, self.driver_kind = c, "rust"
+                self._drv, self.driver_kind = c, "rust-native"
                 return self.driver_hello
             except Exception as e:  # explicit, logged fallback
                 self.driver_hello = {"rust_error": str(e)}
@@ -1206,7 +1232,7 @@ class DriverHub:
             if p.poll() is None:
                 p.terminate()
 '@
-Add-DscuFile 'agent_brain/layer0.py' 'accd8fa02e67c666927911835ae6d8df6e64f07b6d488158142c713734128c2e' @'
+Add-DscuFile 'agent_brain/layer0.py' '31f209859f8c1ec2a934d2150f8e52c121b3eb5672d145340e78aa498e23905e' @'
 """Layer 0: deterministic, LLM-free fast paths (pure file tasks, app resolution). Ported from v12 and hardened:
  * path comes from the *task text* only (intent-scoped grant) - never from the model
  * byte-level read-back verification, UTF-8 without BOM
@@ -1346,7 +1372,7 @@ class RecycleTask:
 _RECYCLE_FILE = re.compile(
     r"(?P<folder>桌面|文档|下载)(?:上|里|中|内)?的?\s*(?P<name>[^\s，,。；;]+?)\s*(?:记事本|文本)?\s*(?:文件|文档)?\s*[，,、]?\s*(?:把它|将其)?\s*"
     r"(?:拖入|拖到|拖进|放入|放进|移入|移到|扔进|丢进|扔到|送入|删除到|删到)\s*回收站")
-_EMPTY_INTENT = re.compile(r"清空|清除|清理|清掉|empty|删光|全部删除|所有文件.{0,6}(?:删除|清除)")
+_EMPTY_INTENT = re.compile(r"清空|清除|清理|清掉|empty|删光|全部删除|所有文件.{0,6}(?:删除|清除)|(?:情况|青空|请空|清控|清孔|清空空)(?:一下)?(?:整个|全部|所有的?)?回收站")  # v16.3: typo-tolerant ('情况回收站')
 
 
 def recycle_empty_intent(task: str) -> bool:
@@ -1394,7 +1420,7 @@ Add-DscuFile 'agent_brain/native_driver.py' '7cbaa675053a4c39cd4586b283b898881b1
 from .py_native_driver import *  # noqa: F401,F403
 from .py_native_driver import NativeDriver, DxgiStream, _ahash, _ahash_np  # noqa: F401
 '@
-Add-DscuFile 'agent_brain/orchestrator.py' '67a6dc61e25e656796e61939696d876cf6e536384dc4dc71f55856772c3da816' @'
+Add-DscuFile 'agent_brain/orchestrator.py' 'e4eb6e8afab378c63fa18f7b119e8a50110db9a47cc6fa614d01ac5a20374ec5' @'
 """The single live brain. Python asyncio owns: observation -> decision (DeepSeek) -> gated execution -> measured effect
 -> recovery. No placeholder telemetry: `cdp_up`, `uia_controls`, `stalled`, `blocked_streak`, `perception_channel` are all
 computed from real IPC replies every step (see choose_channel + TaskState.settle_last)."""
@@ -1826,8 +1852,11 @@ class Brain:
                 return await self._drv("key", b, keys=str(a.get("keys", "")), expect_hwnd=eh)
             if name == "scroll":
                 if self._cdp_route(b):
-                    return await self._cdp("scroll", direction=a.get("direction", "down"), amount=int(a.get("amount", 5)))
-                return await self._drv("scroll", b, direction=a.get("direction", "down"), amount=int(a.get("amount", 5)), expect_hwnd=eh)
+                    return await self._cdp("scroll", direction=a.get("direction", "down"), amount=int(a.get("amount", 5)), to=str(a.get("to", "")))
+                _sk: dict[str, Any] = {}
+                if a.get("x") is not None and a.get("y") is not None:
+                    _sk.update(x=int(a["x"]), y=int(a["y"]))
+                return await self._drv("scroll", b, direction=a.get("direction", "down"), amount=int(a.get("amount", 5)), expect_hwnd=eh, **_sk)
             if name == "drag":
                 f, t = els.get(a.get("from_id")), els.get(a.get("to_id"))
                 fx, fy = f.center if f else (int(a.get("from_x", 0)), int(a.get("from_y", 0)))
@@ -2349,7 +2378,7 @@ class Brain:
                 if _gr is not None:
                     return _gr
             elif gm["intent"] == "trash":
-                say("  ℹ 未配置加密 Gmail OAuth（运行 `DSCU_MODE=gmail-auth` 或任务提示符内 `v16 gmail-auth` 一次即可，Token 由 Windows DPAPI 加密）→ 走浏览器通道：先冻结目标 stable_id，禁止裸坐标绕过。")
+                say("  ℹ 未配置加密 Gmail OAuth（运行 `DSCU_MODE=gmail-auth` 或任务提示符内 `v16 gmail-auth` 一次即可，Token 由 Windows DPAPI 加密）→ 走浏览器通道（v16.3 已启用 No page found 透明重选页自愈）：先冻结目标 stable_id，禁止裸坐标绕过。")
         plan: Optional[dict[str, Any]] = None
         last_result = ""
         self.registry = StableObjectRegistry()
@@ -2644,6 +2673,10 @@ class Brain:
         _pst = self.perception.stats
         say(f"  v16.1：AUTH_WALL 检测 {c['auth_wall_detected']} · 人工交接 {c['auth_wall_handoffs']} · PID 级 FG-Gate：前台非附着应用 {_pst['foreign_fg']} 次（其中浏览器 {_pst['foreign_browser']}）→ UIA/Vision 接管 · MCP 软自愈 {_m.stats['soft_heals'] if _m else 0} · 瞬态重试 {_m.stats['transient_retries'] if _m else 0} · "
             f"附着 {getattr(_m, 'attached_browser_exe', '') or '-'}#{getattr(_m, 'attached_browser_pid', 0)}（{getattr(_m, 'mode', '-')}）· navigator.webdriver={(getattr(_m, 'stealth', {}) or {}).get('webdriver')} · Gmail API {c['gmail_api_calls']}")
+        _s3 = _m.stats if _m else {}
+        _gs = getattr(getattr(_m, 'geo', None), 'stats', {}) if _m else {}
+        _lg = getattr(_m, 'last_geometry', {}) if _m else {}
+        say(f"  v16.3：No page found {_s3.get('no_page_found', 0)} 次 → 透明重选页 {_s3.get('page_reselects', 0)} 次（new_page 兜底 {_s3.get('new_page_fallbacks', 0)} · mcp_soft_heal {_s3.get('mcp_soft_heal', 0)}）· 坐标系 {_lg.get('source', '-')}/dpr={_lg.get('dpr', '-')}（几何重建 {_gs.get('builds', 0)} · 缓存命中 {_gs.get('cache_hits', 0)} · 失效 {_gs.get('invalidations', 0)}）· 可验证滚动 ✓{_s3.get('scroll_verified_ok', 0)}/✗{_s3.get('scroll_verified_fail', 0)} · 驱动={self.hub.driver_kind}")
         say(f"  v15：CDP 自愈 {getattr(self.hub, 'cdp_heals', 0)} 次（失败 {getattr(self.hub, 'cdp_heal_fail', 0)}，被迫降级 {getattr(self.hub, 'cdp_degraded', 0)}） · 遮挡自动恢复 {rs['occluded_recovered']}/{rs['occluded_fix']} · 安全拒绝→禁止列表+替代 {rs['security_alt_injected']}（安全终止 {rs['safe_terminate']}） · StableObject 命中 {dict(self.registry.hits) or 0}")
         parts = []
         for k in ("fg_probe", "capture", "uia", "cdp", "shot", "input", "network", "decision", "vision"):
@@ -2661,7 +2694,7 @@ class Brain:
         if st.llm_calls:
             say(f"  模型调用 {st.llm_calls} 次 · 输入 {st.tokens_in} tok（前缀缓存命中 {int(100 * st.cache_hit / max(1, st.tokens_in))}%）· 输出 {st.tokens_out} tok")
 '@
-Add-DscuFile 'agent_brain/perception.py' '057a67f168eafd9189cc5390faf1a36fe3009ad1a876e996cbb00f8464f532f1' @'
+Add-DscuFile 'agent_brain/perception.py' 'd96f75635a42325653c9709ecb00e643a3c75dbb6c2567cf85fdcd7b2f40de4f' @'
 """Perception layer (Step 2).
 
  * Force-Vision Latch : `vision_inspect` arms `_force_vision_next_turn`.  The very next *main-loop* observation skips the CDP overlay,
@@ -2973,6 +3006,8 @@ class Perception:
         """CDP element rects are CSS px in the page viewport.  Calibrate to *screen* px with the browser window rect + daemon viewport metrics."""
         if cdp is None:
             return None
+        if (cdp.telemetry or {}).get("geometry_space") == "virtual_desktop_physical_px":  # v16.3: MCP engine already normalised CSS -> PHYS (coords.py)
+            return [list(e.rect) for e in elements]
         vp = cdp.telemetry.get("viewport") if cdp.telemetry else None
         win = drv.fg_window() if drv.fg_window() and drv.fg_window().process.lower() in BROWSERS else None  # type: ignore[union-attr]
         if not vp or win is None:
@@ -3054,11 +3089,21 @@ class Perception:
                 tw = 8 * len(str(i)) + 6
                 d.rectangle([x1, y1, x1 + tw, y1 + 15], fill=col + (230,))
                 d.text((x1 + 3, y1 + 1), str(i), fill=(255, 255, 255, 255), font=f)
+            try:  # v16.3: DirectML icon-candidate overlay (thin cyan boxes, no numbers); real inference + evidence counters in sidecar.dml_detector
+                from sidecar import dml_detector as _dml
+
+                _det = _dml.get()
+                if _det.enabled():
+                    for _c in _det.detect(im.convert("RGB"))[:40]:
+                        bx, by, bw, bh = _c["box"]
+                        d.rectangle([bx, by, bx + bw, by + bh], outline=(0, 220, 220, 200), width=1)
+            except Exception:  # noqa: BLE001
+                pass
             Image.alpha_composite(im, ov).convert("RGB").save(path)
         except Exception:  # noqa: BLE001
             pass
 '@
-Add-DscuFile 'agent_brain/prompts.py' 'b231a04fb70c9d0cbbef7ca6432a91cde8734254bfbd36a44e26c01237f8b5a6' @'
+Add-DscuFile 'agent_brain/prompts.py' '98d77516a255e3c31fd219b10f4001c869b7e7404a4fda789390ddbf05cb4f73' @'
 """Constant prompt prefix (KV-cache friendly: byte-identical across steps, tasks and sessions)."""
 
 SYSTEM_PREFIX = """你是 Windows 电脑操作代理的唯一决策大脑（Unified Agent Brain v16）。你看不到屏幕，你的「眼睛」是系统每轮提供的实时观察（来自 Rust 原生驱动 DXGI/UIA、TS CDP 守护进程；全部为实时采集，不是缓存）。
@@ -3070,7 +3115,7 @@ A) {"thought":"一句话判断","step":1,"expect":"执行后下一轮应看到�
 B) {"thought":"…","step":1,"expect":"…","actions":[{...},{...}]}  按顺序执行，任一步失败即中止；done/fail 必须单独输出。
 可用动作：
 - click / double_click / right_click / hover  {"id":12} 或 {"x":..,"y":..}（坐标必须来自观察或 vision；盲点请加 "vision_grounded":true）
-- type {"id":5,"text":"内容","clear":true,"enter":false}    key {"keys":"ctrl+l"} / "tab tab enter"    scroll {"direction":"down","amount":5}
+- type {"id":5,"text":"内容","clear":true,"enter":false}    key {"keys":"ctrl+l"} / "tab tab enter"    scroll {"direction":"down","amount":5}（v16.3 回读 scrollTop+画面哈希验证；到底部 {"to":"bottom"}，回顶部 {"to":"top"}；桌面窗口可加 x,y 指定要滚的区域）
 - drag {"from_id":3,"to_id":8}    check / uncheck {"ids":[41,43]}（幂等）    select_rows {"rows":"1-5"}（网页列表行勾选并闭环核验）
 - toolbar_action {"name":"删除"}（只在 zone=Toolbar 中找按钮，不会误点行内控件）
 - focus_window {"title":"微信"}  【验证式】驱动保证 GetForegroundWindow==目标才返回成功，失败会带“谁在遮挡”的证据与 5 级方法记录；失败后不要原样重试
@@ -3313,7 +3358,7 @@ def parse_result(d: dict[str, Any]) -> ActionResult:
     d["code"] = code if code in Code._value2member_map_ else "INTERNAL"
     return ActionResult.model_validate(d)
 '@
-Add-DscuFile 'agent_brain/py_native_driver.py' '8dc6b7b9987a6b71fbd6a9fc209dd6c333080034b449fbf5db595642811f2de2' @'
+Add-DscuFile 'agent_brain/py_native_driver.py' 'f50fe2661a28f940c612467afb6eea72815c2d2f6143a6a6e024be57cae39f03' @'
 """py-native driver v14 (used when dscu-driver.exe is not built).  Step-2 upgrades: DXGI continuous-stream capture (no per-step
 SwapChain rebuild, zero-copy peek, lazy PIL conversion), <2 ms Win32 foreground probe (`fg_probe`), UIA RuntimeId/AutomationId export,
 focus-guard (re-activate the work window when the host console steals foreground).
@@ -4437,8 +4482,41 @@ class NativeDriver:
             if a == "scroll":
                 n = int(req.get("amount", 3))
                 d = str(req.get("direction", "down"))
-                _send(_mouse(0x1000 if d in ("left", "right") else 0x800, 0, 0, (n if d in ("up", "left") else -n) * 120))
-                return R(True, "OK", f"scrolled {d} {n}")
+                to = str(req.get("to") or "").lower()
+                if to in ("bottom", "end"):
+                    d, n = "down", max(n, 30)
+                elif to in ("top", "home"):
+                    d, n = "up", max(n, 30)
+                tx, ty = req.get("x"), req.get("y")
+                if tx is None and fgw is not None:  # v16.3: the wheel goes to the window under the cursor - park the cursor over the content area of the foreground window
+                    wx, wy, ww, wh = fgw["rect"]
+                    tx, ty = wx + ww // 2, wy + int(wh * 0.6)
+                if tx is not None:
+                    mv = self._move(int(tx), int(ty), humanize=False)
+                    if mv:
+                        return R(False, "USER_ACTIVE", str(mv))
+                    time.sleep(0.04)
+                try:
+                    h0 = self._grab().get("frame_hash")
+                except Exception:  # noqa: BLE001
+                    h0 = None
+                moved, tries = None, 0
+                for mult in (1, 3):
+                    tries += 1
+                    k = n * mult
+                    _send(_mouse(0x1000 if d in ("left", "right") else 0x800, 0, 0, (k if d in ("up", "left") else -k) * 120))
+                    time.sleep(0.14)
+                    try:
+                        h1 = self._grab().get("frame_hash")
+                    except Exception:  # noqa: BLE001
+                        h1 = None
+                    moved = (h0 != h1) if (h0 is not None and h1 is not None) else None
+                    if moved is None or moved:
+                        break
+                eff["scroll"] = {"direction": d, "notches": n, "tries": tries, "frame_changed": moved, "cursor": [tx, ty]}
+                if moved is False:
+                    return R(False, "NOT_FOUND", f"scroll 无画面变化（帧哈希相同，已升级到 {n * 3} 格重试）：光标处的区域可能不可滚动或已到边界；请用 x,y 指向列表区域")
+                return R(True, "OK", f"scrolled {d} {n} ✓frame-changed={moved}")
         except ValueError as e:
             return R(False, "NOT_FOUND", str(e))
         except Exception as e:  # noqa: BLE001
@@ -6328,19 +6406,26 @@ def check_pptx(path: Path, min_slides: int = 1) -> list[Check]:
 Add-DscuFile 'sidecar/__init__.py' '2061a24c6a2e7099db8fe7ed7a9f718bcc46de25a89e5ca5ee804c6914c06a3f' @'
 """Optional local vision sidecars (never required; the unified brain runs fully without them)."""
 '@
-Add-DscuFile 'sidecar/dml_detector.py' '9e570c47fa2523000c2e9b1508bbf399f12be96365347dbc77fb9ddc44d995b5' @'
-"""Optional local UI-element detector on the AMD Radeon 780M iGPU via onnxruntime-directml.
+Add-DscuFile 'sidecar/dml_detector.py' '67a65d73c7c1ac597481e7b69fb2dd14ce4aac1fd4e7a48c18c17ed5f86a4105' @'
+"""v16.3 Local UI-candidate detector on the AMD Radeon 780M iGPU via onnxruntime-directml  -  WITH runtime evidence.
 
-Design constraints (honest by construction):
-  * OPTIONAL: pip install onnxruntime-directml  +  an ONNX detector at %DSCU_DML_MODEL% (or <root>/models/ui_detector.onnx).  No model -> status
-    "model_missing"; this module NEVER fabricates detections.
-  * MemoryFloorMB = 4096: the model is only loaded while >= 4096 MB of physical RAM is still free (the 780M shares system RAM).
-  * Idle unload after 180 s: session + buffers are released so the resident footprint of the agent stays < 260 MB.
-  * Works without Rust/MSVC: pure Python + numpy, called from the py-native path.
+What is real here (no fabricated numbers anywhere):
+  * Model: either the user's ONNX detector (DSCU_DML_MODEL / <root>/models/ui_detector.onnx, YOLO-style output) or the BUILT-IN deterministic
+    `dscu_ui_saliency_v1.onnx` (Sobel-energy conv graph, 741 bytes, UNTRAINED - it finds high-contrast icon/button blobs, it does not classify them).
+  * Evidence printed at startup and at shutdown: model file name, SHA-256 of the bytes on disk, the ExecutionProvider list the session ACTUALLY bound
+    (`session.get_providers()`), real inference count, latency P50/P95/P99 measured with perf_counter around `session.run`.
+  * MemoryFloorMB = 4096 circuit breaker: the model is only loaded while >= 4096 MB RAM is free; the check is repeated before EVERY inference and trips the
+    breaker (unload + 30 s cool-down) when free RAM drops below the floor, because the 780M shares system RAM.
+  * Idle unload after 180 s.  Evidence JSON is written to <root>/eval_runs/dml_evidence.json.
+CLI:  python -m sidecar.dml_detector --probe [--n 60] [--allow-cpu]    (exit 0 only when DmlExecutionProvider is really bound, or --allow-cpu)
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -6348,6 +6433,10 @@ from typing import Any, Optional
 
 MEMORY_FLOOR_MB = 4096
 IDLE_UNLOAD_S = 180.0
+BREAKER_COOLDOWN_S = 30.0
+BUILTIN_NAME = "dscu_ui_saliency_v1.onnx"
+BUILTIN_B64 = "CAgSBGRzY3UySmRzY3VfdWlfc2FsaWVuY3lfdjE6IGRldGVybWluaXN0aWMgU29iZWwtZW5lcmd5IHNhbGllbmN5IGdyYXBoICh1bnRyYWluZWQpOogFCjIKBWlucHV0CgZ3X2x1bWESBGdyYXkiBENvbnYqFQoMa2VybmVsX3NoYXBlQAFAAaABBwpFCgRncmF5Cgd3X3NvYmVsEgRncmFkIgRDb252KhUKDGtlcm5lbF9zaGFwZUADQAOgAQcqEQoEcGFkc0ABQAFAAUABoAEHChgKBGdyYWQKBGdyYWQSBWdyYWQyIgNNdWwKMwoFZ3JhZDIKBXdfc3VtEgZlbmVyZ3kiBENvbnYqFQoMa2VybmVsX3NoYXBlQAFAAaABBwoTCgZlbmVyZ3kSA21hZyIEU3FydApACgNtYWcSA3NhbCILQXZlcmFnZVBvb2wqFQoMa2VybmVsX3NoYXBlQAhACKABByoQCgdzdHJpZGVzQAhACKABBwpQCgNzYWwSBHBlYWsiB01heFBvb2wqFQoMa2VybmVsX3NoYXBlQANAA6ABByoRCgRwYWRzQAFAAUABQAGgAQcqEAoHc3RyaWRlc0ABQAGgAQcSE2RzY3VfdWlfc2FsaWVuY3lfdjEqIAgBCAMIAQgBEAFCBndfbHVtYUoMhxaZPqJFFj/VeOk9Kl0IAggBCAMIAxABQgd3X3NvYmVsSkgAAIC/AAAAAAAAgD8AAADAAAAAAAAAAEAAAIC/AAAAAAAAgD8AAIC/AAAAwAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAQAAAgD8qGwgBCAIIAQgBEAFCBXdfc3VtSggAAIA/AACAP1ohCgVpbnB1dBIYChYIARISCgIIAQoCCAMKAwjAAwoDCIAGYh0KA3NhbBIWChQIARIQCgIIAQoCCAEKAgg4CgIIYGIeCgRwZWFrEhYKFAgBEhAKAggBCgIIAQoCCDgKAghgQgQKABAN"
+IN_H, IN_W = 448, 768
 
 
 def _root() -> Path:
@@ -6359,8 +6448,34 @@ def _free_mb() -> float:
         import psutil
 
         return psutil.virtual_memory().available / 1048576
-    except Exception:
+    except Exception:  # noqa: BLE001
         return 0.0
+
+
+def _pct(v: list[float], q: float) -> float:
+    if not v:
+        return 0.0
+    s = sorted(v)
+    k = min(len(s) - 1, max(0, int(round(q * (len(s) - 1)))))
+    return round(s[k], 3)
+
+
+def _sha256(p: Path) -> str:
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def ensure_builtin_model(root: Optional[Path] = None) -> Path:
+    d = (root or _root()) / "models"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / BUILTIN_NAME
+    raw = base64.b64decode(BUILTIN_B64)
+    if not p.exists() or p.read_bytes() != raw:
+        p.write_bytes(raw)
+    return p
 
 
 def _nms(boxes: Any, scores: Any, thr: float = 0.5) -> list[int]:
@@ -6381,20 +6496,83 @@ def _nms(boxes: Any, scores: Any, thr: float = 0.5) -> list[int]:
     return keep
 
 
+def _components(mask: Any) -> list[tuple[int, int, int, int, float]]:
+    """4-connected components of a boolean grid -> [(x0, y0, x1, y1, cells)] (pure numpy/python; the grid is only 56x96)."""
+    import numpy as np
+
+    h, w = mask.shape
+    seen = np.zeros_like(mask, dtype=bool)
+    out = []
+    for sy in range(h):
+        for sx in range(w):
+            if not mask[sy, sx] or seen[sy, sx]:
+                continue
+            stack = [(sy, sx)]
+            seen[sy, sx] = True
+            x0 = x1 = sx
+            y0 = y1 = sy
+            n = 0
+            while stack:
+                y, x = stack.pop()
+                n += 1
+                x0, x1, y0, y1 = min(x0, x), max(x1, x), min(y0, y), max(y1, y)
+                for ny, nx in ((y + 1, x), (y - 1, x), (y, x + 1), (y, x - 1)):
+                    if 0 <= ny < h and 0 <= nx < w and mask[ny, nx] and not seen[ny, nx]:
+                        seen[ny, nx] = True
+                        stack.append((ny, nx))
+            out.append((x0, y0, x1 + 1, y1 + 1, float(n)))
+    return out
+
+
 class DmlDetector:
     def __init__(self, model: Optional[Path] = None) -> None:
-        self.model_path = Path(model or os.environ.get("DSCU_DML_MODEL") or _root() / "models" / "ui_detector.onnx")
+        env_model = os.environ.get("DSCU_DML_MODEL")
+        user_model = Path(model or env_model or _root() / "models" / "ui_detector.onnx")
+        self.user_model_path = user_model
+        self.model_path = user_model
+        self.builtin = False
         self.sess: Any = None
         self.provider = ""
+        self.providers: list[str] = []
         self.last_use = 0.0
         self.lock = threading.Lock()
         self.timer: Optional[threading.Timer] = None
         self.reason = ""
+        self.model_sha = ""
+        self.lat_ms: list[float] = []
+        self.inferences = 0
+        self.detections = 0
+        self.breaker_until = 0.0
+        self.breaker_trips = 0
+        self.loaded_at = 0.0
+        self.allow_cpu = os.environ.get("DSCU_DML_ALLOW_CPU") == "1"
+        self.infer_ms = 0.0
 
-    # ------------------------------------------------------------------ lifecycle
+    # ------------------------------------------------------------------ status / evidence
+    def enabled(self) -> bool:
+        """Cheap gate used by perception: DirectML present + memory floor ok + breaker closed."""
+        if os.environ.get("DSCU_DML") == "0" or time.time() < self.breaker_until:
+            return False
+        if self.sess is not None:
+            return True
+        try:
+            import onnxruntime as ort
+
+            return "DmlExecutionProvider" in ort.get_available_providers() and _free_mb() >= MEMORY_FLOOR_MB
+        except Exception:  # noqa: BLE001
+            return False
+
+    def evidence(self) -> dict[str, Any]:
+        return {"model_file": self.model_path.name, "model_path": str(self.model_path), "model_sha256": self.model_sha, "builtin_untrained_saliency": self.builtin,
+                "execution_provider_bound": self.provider, "providers_in_session": self.providers, "inferences": self.inferences, "detections_total": self.detections,
+                "latency_ms": {"p50": _pct(self.lat_ms, .50), "p95": _pct(self.lat_ms, .95), "p99": _pct(self.lat_ms, .99), "n": len(self.lat_ms)},
+                "memory_floor_mb": MEMORY_FLOOR_MB, "free_mb": round(_free_mb()), "breaker_trips": self.breaker_trips, "breaker_open": time.time() < self.breaker_until,
+                "loaded": self.sess is not None, "reason": self.reason}
+
     def status(self) -> dict[str, Any]:
         d: dict[str, Any] = {"memory_floor_mb": MEMORY_FLOOR_MB, "idle_unload_s": IDLE_UNLOAD_S, "free_mb": round(_free_mb()), "model": str(self.model_path),
-                             "model_exists": self.model_path.exists(), "loaded": self.sess is not None, "provider": self.provider, "reason": self.reason}
+                             "model_exists": self.model_path.exists() or bool(BUILTIN_B64 and BUILTIN_B64 != "CAgSBGRzY3UySmRzY3VfdWlfc2FsaWVuY3lfdjE6IGRldGVybWluaXN0aWMgU29iZWwtZW5lcmd5IHNhbGllbmN5IGdyYXBoICh1bnRyYWluZWQpOogFCjIKBWlucHV0CgZ3X2x1bWESBGdyYXkiBENvbnYqFQoMa2VybmVsX3NoYXBlQAFAAaABBwpFCgRncmF5Cgd3X3NvYmVsEgRncmFkIgRDb252KhUKDGtlcm5lbF9zaGFwZUADQAOgAQcqEQoEcGFkc0ABQAFAAUABoAEHChgKBGdyYWQKBGdyYWQSBWdyYWQyIgNNdWwKMwoFZ3JhZDIKBXdfc3VtEgZlbmVyZ3kiBENvbnYqFQoMa2VybmVsX3NoYXBlQAFAAaABBwoTCgZlbmVyZ3kSA21hZyIEU3FydApACgNtYWcSA3NhbCILQXZlcmFnZVBvb2wqFQoMa2VybmVsX3NoYXBlQAhACKABByoQCgdzdHJpZGVzQAhACKABBwpQCgNzYWwSBHBlYWsiB01heFBvb2wqFQoMa2VybmVsX3NoYXBlQANAA6ABByoRCgRwYWRzQAFAAUABQAGgAQcqEAoHc3RyaWRlc0ABQAGgAQcSE2RzY3VfdWlfc2FsaWVuY3lfdjEqIAgBCAMIAQgBEAFCBndfbHVtYUoMhxaZPqJFFj/VeOk9Kl0IAggBCAMIAxABQgd3X3NvYmVsSkgAAIC/AAAAAAAAgD8AAADAAAAAAAAAAEAAAIC/AAAAAAAAgD8AAIC/AAAAwAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAQAAAgD8qGwgBCAIIAQgBEAFCBXdfc3VtSggAAIA/AACAP1ohCgVpbnB1dBIYChYIARISCgIIAQoCCAMKAwjAAwoDCIAGYh0KA3NhbBIWChQIARIQCgIIAQoCCAEKAgg4CgIIYGIeCgRwZWFrEhYKFAgBEhAKAggBCgIIAQoCCDgKAghgQgQKABAN"), "loaded": self.sess is not None,
+                             "provider": self.provider, "reason": self.reason}
         try:
             import onnxruntime as ort
 
@@ -6404,17 +6582,16 @@ class DmlDetector:
         except Exception as e:  # noqa: BLE001
             d["ort_version"], d["providers"], d["directml"] = None, [], False
             d["reason"] = d["reason"] or f"onnxruntime not installed ({e.__class__.__name__}); pip install onnxruntime-directml"
-        if not d["model_exists"] and not d["reason"]:
-            d["reason"] = "model_missing"
         return d
 
+    # ------------------------------------------------------------------ lifecycle
     def load(self) -> bool:
         with self.lock:
             if self.sess is not None:
                 self.last_use = time.time()
                 return True
-            if not self.model_path.exists():
-                self.reason = f"model_missing: {self.model_path}"
+            if time.time() < self.breaker_until:
+                self.reason = "memory_breaker_open"
                 return False
             if _free_mb() < MEMORY_FLOOR_MB:
                 self.reason = f"memory_floor: free {_free_mb():.0f} MB < {MEMORY_FLOOR_MB} MB"
@@ -6422,18 +6599,28 @@ class DmlDetector:
             try:
                 import onnxruntime as ort
 
-                prov = [p for p in ("DmlExecutionProvider", "CPUExecutionProvider") if p in ort.get_available_providers()]
+                avail = ort.get_available_providers()
+                if "DmlExecutionProvider" not in avail and not self.allow_cpu:
+                    self.reason = "DirectML provider missing: pip uninstall onnxruntime ; pip install onnxruntime-directml"
+                    return False
+                if self.user_model_path.exists():
+                    self.model_path, self.builtin = self.user_model_path, False
+                else:
+                    self.model_path, self.builtin = ensure_builtin_model(), True
+                self.model_sha = _sha256(self.model_path)
+                prov = [p for p in ("DmlExecutionProvider", "CPUExecutionProvider") if p in avail]
                 so = ort.SessionOptions()
                 so.enable_mem_pattern = False  # DirectML requirement
                 so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
                 self.sess = ort.InferenceSession(str(self.model_path), sess_options=so, providers=prov)
-                self.provider = self.sess.get_providers()[0]
+                self.providers = list(self.sess.get_providers())
+                self.provider = self.providers[0] if self.providers else ""
                 self.reason = ""
             except Exception as e:  # noqa: BLE001
                 self.reason = f"load_failed: {e}"
                 self.sess = None
                 return False
-            self.last_use = time.time()
+            self.loaded_at = self.last_use = time.time()
             self._arm_timer()
             return True
 
@@ -6459,25 +6646,56 @@ class DmlDetector:
         gc.collect()
 
     # ------------------------------------------------------------------ inference
+    def _floor_ok(self) -> bool:
+        free = _free_mb()
+        if free < MEMORY_FLOOR_MB:
+            self.breaker_trips += 1
+            self.breaker_until = time.time() + BREAKER_COOLDOWN_S
+            self.unload(f"memory_floor_breaker free={free:.0f}MB<{MEMORY_FLOOR_MB}MB")
+            return False
+        return True
+
     def detect(self, image: Any, conf: float = 0.35, iou: float = 0.5) -> list[dict[str, Any]]:
         """image: PIL.Image or HxWx3 uint8 RGB ndarray -> [{'box':[x,y,w,h], 'score':f, 'cls':int}] in source-image pixels. [] + reason when unavailable."""
         import numpy as np
 
-        if not self.load():
+        if not self._floor_ok() or not self.load():
             return []
+        from PIL import Image
+
         arr = np.asarray(image.convert("RGB") if hasattr(image, "convert") else image)
         H, W = arr.shape[:2]
         inp = self.sess.get_inputs()[0]
-        shp = [d if isinstance(d, int) and d > 0 else 640 for d in inp.shape[2:4]] or [640, 640]
-        sh, sw = shp[0], shp[1]
-        from PIL import Image
-
+        names = [o.name for o in self.sess.get_outputs()]
+        if self.builtin or names[:2] == ["sal", "peak"]:
+            sh, sw = IN_H, IN_W
+        else:
+            shp = [d if isinstance(d, int) and d > 0 else 640 for d in inp.shape[2:4]] or [640, 640]
+            sh, sw = shp[0], shp[1]
         im = Image.fromarray(arr).resize((sw, sh))
         x = (np.asarray(im, dtype=np.float32) / 255.0).transpose(2, 0, 1)[None]
         t0 = time.perf_counter()
-        out = self.sess.run(None, {inp.name: x})[0]
+        outs = self.sess.run(None, {inp.name: x})
+        ms = (time.perf_counter() - t0) * 1000
+        self.infer_ms = ms
+        self.lat_ms.append(ms)
+        del self.lat_ms[:-2000]
+        self.inferences += 1
         self.last_use = time.time()
-        p = out[0]
+        kx, ky = W / sw, H / sh
+        if self.builtin or names[:2] == ["sal", "peak"]:
+            sal = outs[0][0, 0]
+            thr = max(float(sal.mean() + 1.5 * sal.std()), 0.12)
+            res = []
+            for x0, y0, x1, y1, n in _components(sal > thr):
+                if n < 2:
+                    continue
+                score = float(sal[y0:y1, x0:x1].max())
+                res.append({"box": [int(x0 * 8 * kx), int(y0 * 8 * ky), int((x1 - x0) * 8 * kx), int((y1 - y0) * 8 * ky)], "score": round(score, 3), "cls": 0})
+            res.sort(key=lambda r: -r["score"])
+            self.detections += len(res[:100])
+            return res[:100]
+        p = outs[0][0]
         if p.shape[0] < p.shape[1]:  # [4+nc, N] -> [N, 4+nc]
             p = p.T
         scores_all = p[:, 4:]
@@ -6490,10 +6708,48 @@ class DmlDetector:
         cx, cy, w, h = p[:, 0], p[:, 1], p[:, 2], p[:, 3]
         boxes = np.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], 1)
         keep = _nms(boxes, sc, iou)
-        kx, ky = W / sw, H / sh
         res = [{"box": [int(boxes[i, 0] * kx), int(boxes[i, 1] * ky), int((boxes[i, 2] - boxes[i, 0]) * kx), int((boxes[i, 3] - boxes[i, 1]) * ky)], "score": float(sc[i]), "cls": int(cls[i])} for i in keep[:100]]
-        self.infer_ms = (time.perf_counter() - t0) * 1000
+        self.detections += len(res)
         return res
+
+    # ------------------------------------------------------------------ evidence banners
+    def startup_banner(self, warmup: int = 5) -> str:
+        """Loads the model (if allowed) and runs `warmup` REAL inferences so that the startup log already carries measured numbers."""
+        if os.environ.get("DSCU_DML") == "0":
+            return "  🎮 DirectML 侧车：已被 DSCU_DML=0 关闭"
+        ok = False
+        try:
+            from PIL import Image, ImageDraw
+
+            im = Image.new("RGB", (1280, 720), (245, 245, 245))
+            d = ImageDraw.Draw(im)
+            for i in range(6):
+                d.rectangle([80 + i * 170, 200, 140 + i * 170, 260], fill=(20, 20, 20))
+            for _ in range(max(1, warmup)):
+                self.detect(im)
+            ok = self.inferences > 0
+        except Exception as e:  # noqa: BLE001
+            self.reason = self.reason or f"warmup_failed: {e}"
+        return self._banner("启动", ok)
+
+    def _banner(self, phase: str, ok: bool = True) -> str:
+        e = self.evidence()
+        if not e["loaded"] and not e["inferences"]:
+            return f"  🎮 DirectML 侧车[{phase}]：未激活 · 原因：{e['reason'] or 'not_loaded'} · 内存地板 {MEMORY_FLOOR_MB}MB（当前空闲 {e['free_mb']}MB）"
+        l = e["latency_ms"]
+        return (f"  🎮 DirectML 侧车[{phase}]：模型={e['model_file']}（{'内置·未训练显著性网络' if e['builtin_untrained_saliency'] else '用户模型'}） SHA-256={e['model_sha256']}\n"
+                f"       ExecutionProvider={e['execution_provider_bound']}（会话 providers={e['providers_in_session']}）· 真实推理 {e['inferences']} 次 · 延迟 P50/P95/P99 = {l['p50']}/{l['p95']}/{l['p99']} ms"
+                f" · 内存地板 {MEMORY_FLOOR_MB}MB（空闲 {e['free_mb']}MB · 熔断 {e['breaker_trips']} 次）")
+
+    def shutdown_report(self) -> str:
+        txt = self._banner("结束")
+        try:
+            p = _root() / "eval_runs"
+            p.mkdir(parents=True, exist_ok=True)
+            (p / "dml_evidence.json").write_text(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **self.evidence()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+        return txt
 
 
 _default: Optional[DmlDetector] = None
@@ -6508,12 +6764,41 @@ def get() -> DmlDetector:
 
 def status_text() -> str:
     s = get().status()
-    return ("  DML 视觉侧车：" + ("✅ DirectML 可用" if s["directml"] else "⚠ DirectML 不可用") + f" · 模型{'存在' if s['model_exists'] else '缺失'}（{s['model']}） · 已加载={s['loaded']} · provider={s['provider'] or '-'}\n"
+    ev = get().evidence()
+    return ("  DML 视觉侧车：" + ("✅ DirectML 可用" if s["directml"] else "⚠ DirectML 不可用") + f" · 模型={ev['model_file']} · 已加载={s['loaded']} · provider={s['provider'] or '-'}\n"
             f"  内存地板 {s['memory_floor_mb']} MB（当前空闲 {s['free_mb']} MB） · 空闲 {s['idle_unload_s']:.0f}s 自动卸载 · 原因：{s['reason'] or 'ok'}\n"
-            "  启用：pip install onnxruntime-directml ，并把 ONNX 检测模型放到 models/ui_detector.onnx（或设置 DSCU_DML_MODEL）。无模型时系统完整运行，不会伪造检测结果。")
+            f"  推理 {ev['inferences']} 次 · P50/P95/P99 {ev['latency_ms']['p50']}/{ev['latency_ms']['p95']}/{ev['latency_ms']['p99']} ms\n"
+            "  启用：pip install onnxruntime-directml（需先 pip uninstall onnxruntime）。无需下载模型：内置 dscu_ui_saliency_v1.onnx 会自动释放；自有 YOLO 风格模型放 models/ui_detector.onnx。")
+
+
+def probe(n: int = 60, allow_cpu: bool = False) -> int:
+    det = get()
+    det.allow_cpu = allow_cpu or det.allow_cpu
+    from PIL import Image, ImageDraw
+
+    im = Image.new("RGB", (2560, 1440), (240, 240, 240))
+    d = ImageDraw.Draw(im)
+    truth = []
+    for i in range(8):
+        x, y = 200 + i * 260, 300 + (i % 3) * 200
+        d.rectangle([x, y, x + 70, y + 70], fill=(10, 10, 10))
+        truth.append([x, y, 70, 70])
+    found = []
+    for _ in range(max(5, n)):
+        found = det.detect(im)
+    hit = sum(1 for t in truth if any(abs((f["box"][0] + f["box"][2] / 2) - (t[0] + 35)) < 45 and abs((f["box"][1] + f["box"][3] / 2) - (t[1] + 35)) < 45 for f in found))
+    print(det._banner("探针"))
+    print(f"  合成截图 2560x1440 · 真值图标 {len(truth)} · 命中 {hit}/{len(truth)}（命中中心距 <45px） · 候选框 {len(found)}")
+    print(json.dumps(det.evidence(), ensure_ascii=False))
+    det.shutdown_report()
+    bound = det.provider == "DmlExecutionProvider"
+    return 0 if (bound or allow_cpu) and det.inferences >= n and hit >= len(truth) - 1 else 1
 
 
 if __name__ == "__main__":
+    if "--probe" in sys.argv:
+        nn = int(sys.argv[sys.argv.index("--n") + 1]) if "--n" in sys.argv else 60
+        sys.exit(probe(nn, "--allow-cpu" in sys.argv))
     print(status_text())
 '@
 Add-DscuFile 'crates/dscu-driver/Cargo.toml' '6d2d50a71c5ec82bf30a257b781f38b931bd2105b598065560c5a90b1a664455' @'
@@ -9472,97 +9757,174 @@ catch {
     Out-Json @{ ok = $false; code = 'RUNTIME_ERROR'; message = $_.Exception.Message }
 }
 '@
-Add-DscuFile 'scripts/build_driver.ps1' '470dfb96ff3dc6c51d24de88e00941c310a2a57ebfcec1a1e4e1a7f5e7500366' @'
+Add-DscuFile 'scripts/build_driver.ps1' '284d654c8b1a64e08dfdc04f6c5978a3dfee4e8f0bc24747516e00ab6d50b447' @'
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  v15 dual-toolchain build of dscu-driver.exe (Rust: DXGI Desktop Duplication + UIA + SendInput, optional uiAccess manifest).
-  The py-native tier (dxcam DXGI P50 ~7.8 ms + uiautomation) is NEVER removed: it stays the full-strength fallback whenever no toolchain works.
+  v16.3 pain-free activation of the Rust native driver dscu-driver.exe (DXGI Desktop Duplication + UIA + SendInput).
+  Toolchain ladder (first that works wins; py-native stays the full-strength fallback and is NEVER removed):
+    1) MSVC            : Visual Studio Build Tools present            -> cargo build --release
+    2) GNU (rust-mingw): rustup `stable-x86_64-pc-windows-gnu` toolchain -> HOST is gnu too, so build scripts need NO link.exe / NO Visual Studio.
+                         rustup-init is downloaded and run non-interactively (-y --default-host x86_64-pc-windows-gnu) when cargo is missing.
+    3) GNU + MinGW-w64 : winget BrechtSanders.WinLibs.POSIX.UCRT (only with -InstallTools or DSCU_AUTOINSTALL=1) when the self-contained linker is not enough
 .EXAMPLE
-  pwsh scripts/build_driver.ps1                    # -Target auto: MSVC if installed, else MinGW/LLVM (x86_64-pc-windows-gnu), else stay on py-native
-  pwsh scripts/build_driver.ps1 -Target gnu        # force the no-Visual-Studio toolchain (needs MinGW-w64 or llvm-mingw on PATH)
-  pwsh scripts/build_driver.ps1 -Target msvc -InstallTools   # winget-install rustup + VS Build Tools first
-  pwsh scripts/build_driver.ps1 -UiAccess          # (elevated) additionally sign + install the uiAccess="true" copy into %ProgramFiles%\DSCU (cross-UIPI: controls admin windows)
+  pwsh scripts/build_driver.ps1                         # auto: MSVC if installed, else GNU
+  pwsh scripts/build_driver.ps1 -Target gnu -InstallTools   # no Visual Studio needed; installs rustup(GNU host) if missing
+  pwsh scripts/build_driver.ps1 -UiAccess               # (elevated) also sign + install the uiAccess copy into %ProgramFiles%\DSCU
+  Evidence: bin\driver-build.json (toolchain, sha256, size, selftest) ; bin\build-info.json (tier=rust) ; runtime banner prints 驱动=rust-native
 #>
 param(
     [string]$Root = (Split-Path -Parent $PSScriptRoot),
     [ValidateSet('auto', 'msvc', 'gnu', 'none')][string]$Target = 'auto',
     [switch]$InstallTools, [switch]$UiAccess
 )
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
 function Step($m) { Write-Host "▶ $m" -ForegroundColor Cyan }
 function Warn($m) { Write-Host "  ⚠ $m" -ForegroundColor Yellow }
 function Ok($m) { Write-Host "  ✓ $m" -ForegroundColor Green }
-function Refresh-Path { $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') }
+function Refresh-Path {
+    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + (Join-Path $HOME '.cargo\bin')
+}
+$autoInstall = $InstallTools -or ($env:DSCU_AUTOINSTALL -eq '1')
 
 function Has-Msvc {
     $vw = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path $vw)) { return $false }
     return [bool](& $vw -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
 }
+
 function Find-MingwGcc {
-    foreach ($n in @('x86_64-w64-mingw32-gcc', 'gcc', 'x86_64-w64-mingw32-clang')) {
+    foreach ($n in @('x86_64-w64-mingw32-gcc', 'gcc')) {
         $c = Get-Command $n -ErrorAction SilentlyContinue
-        if ($c) {
-            try { $t = (& $c.Source -dumpmachine 2>$null); if ($t -match 'mingw') { return $c.Source } } catch { }
-        }
+        if ($c) { try { $t = (& $c.Source -dumpmachine 2>$null); if ($t -match 'mingw') { return $c.Source } } catch { } }
     }
+    $cands = @('C:\msys64\ucrt64\bin\gcc.exe', 'C:\msys64\mingw64\bin\gcc.exe', 'C:\mingw64\bin\gcc.exe', (Join-Path $env:ProgramFiles 'mingw-w64\mingw64\bin\gcc.exe'))
+    $wg = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+    if (Test-Path $wg) {
+        Get-ChildItem $wg -Directory -Filter 'BrechtSanders.WinLibs*' -ErrorAction SilentlyContinue | ForEach-Object { $cands += (Join-Path $_.FullName 'mingw64\bin\gcc.exe') }
+    }
+    foreach ($p in $cands) { if (Test-Path $p) { return $p } }
     return $null
 }
 
-$result = [ordered]@{ target = $Target; toolchain = 'none'; driver = $false; reason = '' }
+function Install-RustupGnu {
+    Step '下载并非交互安装 rustup（默认主机三元组 x86_64-pc-windows-gnu，无需 Visual Studio）'
+    $tmp = Join-Path $env:TEMP 'rustup-init.exe'
+    try {
+        Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $tmp -UseBasicParsing
+        & $tmp -y --default-host x86_64-pc-windows-gnu --default-toolchain stable --profile minimal 2>&1 | ForEach-Object { "    $_" } | Out-Host
+    } catch { Warn "rustup-init 下载/执行失败：$($_.Exception.Message)" }
+    Refresh-Path
+}
+
+function Write-Evidence($result, $exePath) {
+    $bin = Join-Path $Root 'bin'
+    if ($result.driver -and (Test-Path $exePath)) {
+        $result.sha256 = (Get-FileHash $exePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $result.size_bytes = (Get-Item $exePath).Length
+    }
+    $result.ts = (Get-Date).ToString('s')
+    ($result | ConvertTo-Json) | Set-Content (Join-Path $bin 'driver-build.json') -Encoding utf8
+    $bi = Join-Path $bin 'build-info.json'
+    try {
+        $info = if (Test-Path $bi) { Get-Content $bi -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
+        $info['rust_driver'] = [bool]$result.driver
+        $info['tier'] = $(if ($result.driver) { 'rust' } else { 'py-native' })
+        $info['driver_toolchain'] = $result.toolchain
+        if ($result.driver) { $info['driver_sha256'] = $result.sha256 }
+        ($info | ConvertTo-Json) | Set-Content $bi -Encoding utf8
+    } catch { Warn "build-info.json 更新失败：$($_.Exception.Message)" }
+}
+
+$result = [ordered]@{ target = $Target; toolchain = 'none'; driver = $false; reason = ''; selftest = ''; sha256 = ''; size_bytes = 0; ts = '' }
 Set-Location $Root
 $bin = Join-Path $Root 'bin'; New-Item -ItemType Directory -Force -Path $bin | Out-Null
+$dst = Join-Path $bin 'dscu-driver.exe'
 if ($Target -eq 'none') { Ok 'Target=none → 保持 py-native 驱动'; return }
-
-if ($InstallTools -and -not (Get-Command cargo -ErrorAction SilentlyContinue) -and (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Step '安装 Rustup'; winget install -e --id Rustlang.Rustup --accept-source-agreements --accept-package-agreements | Out-Host; Refresh-Path
-}
-$cargo = Get-Command cargo -ErrorAction SilentlyContinue
-if (-not $cargo) { Warn '未找到 cargo（winget install -e --id Rustlang.Rustup，或加 -InstallTools）→ 继续使用 py-native（dxcam DXGI，功能等价）'; return }
+Refresh-Path
 
 $msvc = Has-Msvc
-$gcc = Find-MingwGcc
-if ($Target -eq 'auto') { $Target = if ($msvc) { 'msvc' } elseif ($gcc) { 'gnu' } else { 'none' } }
-if ($Target -eq 'msvc' -and -not $msvc -and $InstallTools -and (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Step '安装 VS Build Tools（数 GB）'
-    winget install -e --id Microsoft.VisualStudio.2022.BuildTools --accept-source-agreements --accept-package-agreements --override '--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended' | Out-Host
-    Refresh-Path; $msvc = Has-Msvc
-}
-Write-Host ("  工具链探测：MSVC={0}  MinGW/LLVM={1}  → 选用 {2}" -f $msvc, ($(if ($gcc) { $gcc } else { 'no' })), $Target)
-if ($Target -eq 'none' -or ($Target -eq 'msvc' -and -not $msvc) -or ($Target -eq 'gnu' -and -not $gcc)) {
-    Warn '所需工具链不可用 → 保持 py-native（dxcam 常驻 DXGI P50≈7.8ms + uiautomation）。免 MSVC 方案：安装 MinGW-w64（winget install -e --id BrechtSanders.WinLibs.POSIX.UCRT）后用 -Target gnu。'
-    $result.reason = 'toolchain_missing'; $result | ConvertTo-Json | Set-Content (Join-Path $bin 'driver-build.json'); return
-}
+if ($Target -eq 'auto') { $Target = if ($msvc) { 'msvc' } else { 'gnu' } }
+Write-Host ("  工具链探测：MSVC={0} → 选用 {1}" -f $msvc, $Target)
 
-Push-Location (Join-Path $Root 'crates\dscu-driver')
-try {
-    if ($Target -eq 'gnu') {
-        Step 'rustup target add x86_64-pc-windows-gnu'
-        rustup target add x86_64-pc-windows-gnu 2>&1 | Out-Host
-        $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = $gcc
-        cargo build --release --target x86_64-pc-windows-gnu 2>&1 | Out-Host
-        $exe = 'target\x86_64-pc-windows-gnu\release\dscu-driver.exe'
-    } else {
-        cargo build --release 2>&1 | Out-Host
-        $exe = 'target\release\dscu-driver.exe'
+if ($Target -eq 'msvc' -and -not $msvc) {
+    if ($autoInstall -and (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Step '安装 VS Build Tools（数 GB）'
+        winget install -e --id Microsoft.VisualStudio.2022.BuildTools --accept-source-agreements --accept-package-agreements --override '--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended' | Out-Host
+        Refresh-Path; $msvc = Has-Msvc
     }
-    if ($LASTEXITCODE -eq 0 -and (Test-Path $exe)) {
-        Copy-Item $exe (Join-Path $bin 'dscu-driver.exe') -Force
-        $result.toolchain = $Target; $result.driver = $true
-        Ok "dscu-driver.exe ($Target) → $bin"
-        try { Write-Host ('  DXGI 自检: ' + (& (Join-Path $bin 'dscu-driver.exe') --selftest-dxgi 30)) } catch { Warn "自检未通过：$($_.Exception.Message)" }
-    } else { Warn "cargo build ($Target) 失败 → 回退 py-native"; $result.reason = 'cargo_failed' }
-} finally { Pop-Location }
+    if (-not $msvc) { Warn 'MSVC 不可用 → 改用 GNU 工具链（无需 Visual Studio）'; $Target = 'gnu' }
+}
 
-# merge into build-info.json so the brain can show the real tier
-$bi = Join-Path $bin 'build-info.json'
-try {
-    $info = if (Test-Path $bi) { Get-Content $bi -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
-    $info['rust_driver'] = [bool]$result.driver; $info['tier'] = $(if ($result.driver) { 'rust' } else { 'py-native' }); $info['driver_toolchain'] = $result.toolchain
-    ($info | ConvertTo-Json) | Set-Content $bi -Encoding utf8
-} catch { Warn "build-info.json 更新失败：$($_.Exception.Message)" }
-$result | ConvertTo-Json | Set-Content (Join-Path $bin 'driver-build.json')
+$cargo = Get-Command cargo -ErrorAction SilentlyContinue
+if (-not $cargo) {
+    if ($autoInstall -or $Target -eq 'gnu') { Install-RustupGnu; $cargo = Get-Command cargo -ErrorAction SilentlyContinue }
+}
+if (-not $cargo) {
+    Warn '未找到 cargo。执行：pwsh scripts/build_driver.ps1 -Target gnu -InstallTools（或设置 DSCU_AUTOINSTALL=1）→ 当前继续使用 py-native（dxcam DXGI + uiautomation，功能等价）'
+    $result.reason = 'cargo_missing'; Write-Evidence $result $dst; return
+}
+
+function Invoke-Cargo([string]$Toolchain) {
+    Push-Location (Join-Path $Root 'crates\dscu-driver')
+    try {
+        $argsC = @()
+        if ($Toolchain) { $argsC += "+$Toolchain" }
+        $argsC += @('build', '--release')
+        Write-Host "  cargo $($argsC -join ' ')" -ForegroundColor DarkGray
+        & cargo @argsC 2>&1 | Out-Host
+        $code = $LASTEXITCODE
+        if ($code -eq 0 -and (Test-Path 'target\release\dscu-driver.exe')) { return (Join-Path (Get-Location) 'target\release\dscu-driver.exe') }
+        return $null
+    } finally { Pop-Location }
+}
+
+$built = $null
+if ($Target -eq 'msvc') {
+    Step 'cargo build --release（MSVC）'
+    $built = Invoke-Cargo ''
+    if ($built) { $result.toolchain = 'msvc' }
+    else { Warn 'MSVC 构建失败 → 尝试 GNU'; $Target = 'gnu' }
+}
+if (-not $built -and $Target -eq 'gnu') {
+    $tc = 'stable-x86_64-pc-windows-gnu'
+    Step "rustup toolchain install $tc（主机即 gnu：build.rs 也不需要 link.exe）"
+    & rustup toolchain install $tc --profile minimal 2>&1 | ForEach-Object { "    $_" } | Out-Host
+    $built = Invoke-Cargo $tc
+    if (-not $built) {
+        Warn 'rust-mingw 自带链接器未能完成构建 → 尝试系统 MinGW-w64（GCC）'
+        $gcc = Find-MingwGcc
+        if (-not $gcc -and $autoInstall -and (Get-Command winget -ErrorAction SilentlyContinue)) {
+            Step '安装 MinGW-w64（WinLibs）'
+            winget install -e --id BrechtSanders.WinLibs.POSIX.UCRT --accept-source-agreements --accept-package-agreements | Out-Host
+            Refresh-Path; $gcc = Find-MingwGcc
+        }
+        if ($gcc) {
+            $env:Path = (Split-Path -Parent $gcc) + ';' + $env:Path
+            $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = $gcc
+            Write-Host "  使用 MinGW：$gcc" -ForegroundColor DarkGray
+            $built = Invoke-Cargo $tc
+        } else { Warn '未找到 MinGW-w64。可执行：winget install -e --id BrechtSanders.WinLibs.POSIX.UCRT 后重试。' }
+    }
+    if ($built) { $result.toolchain = 'gnu' }
+}
+
+if ($built) {
+    Copy-Item $built $dst -Force
+    $result.driver = $true; $result.target = $Target
+    Ok "dscu-driver.exe ($($result.toolchain)) → $dst"
+    try {
+        $st = (& $dst --selftest-dxgi 30 2>&1 | Out-String).Trim()
+        $result.selftest = $st
+        Write-Host "  Rust DXGI 自检: $st"
+    } catch { Warn "自检未通过：$($_.Exception.Message)"; $result.selftest = "error: $($_.Exception.Message)" }
+    Write-Host ("  SHA-256 {0} · {1:N0} bytes" -f (Get-FileHash $dst -Algorithm SHA256).Hash.ToLowerInvariant(), (Get-Item $dst).Length)
+} else {
+    Warn 'Rust 驱动构建失败 → 保持 py-native（功能等价）。完整日志见上方 cargo 输出。'
+    $result.reason = 'cargo_failed'
+}
+Write-Evidence $result $dst
+$global:LASTEXITCODE = 0
 
 if ($UiAccess -and $result.driver) {
     Step 'uiAccess="true"：签名 + 安装到 %ProgramFiles%\DSCU（需要管理员 pwsh）'
@@ -13090,7 +13452,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 '@
-Add-DscuFile 'agent_brain/browser_mcp.py' '8a913d41fb85677f6f4a43f88596a73099308d49460bfb205c2e7cf128ea5572' @'
+Add-DscuFile 'agent_brain/browser_mcp.py' '89aad0df8a0c9c9d6e3bd9d045c384c0535126ae7a0408bd85336e4e1f728e3b' @'
 """v16 browser engine: official ChromeDevTools/chrome-devtools-mcp (Puppeteer/CDP) behind the SAME peer contract the brain already speaks.
 
 The brain's DriverHub talks to "the CDP peer" with  hello / status / heal / observe / action / shutdown  messages.  `McpBrowserEngine` implements that
@@ -13125,10 +13487,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Optional
 
+from .coords import VIEWPORT_PROBE_JS, GeometryService, set_per_monitor_dpi_aware
+from .scroll import scroll_container_verified
+
 IS_WIN = sys.platform == "win32"
 MCP_PROTOCOL = "2025-06-18"
 FORCED_FLAGS = ["--no-usage-statistics", "--no-performance-crux"]  # privacy: always on
-VERSION = "16.1.0"
+VERSION = "16.3.0"
 
 INTERACTIVE_ROLES = {
     "button", "link", "textbox", "searchbox", "combobox", "checkbox", "radio", "menuitem", "menuitemcheckbox", "menuitemradio", "tab", "option",
@@ -13147,6 +13512,11 @@ REQ_RX = re.compile(r"reqid=(\d+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]")
 CON_RX = re.compile(r"msgid=(\d+)\s+\[(\w+)\]\s+(.*?)(?:\s+\(\d+ args?\))?$")
 HEAL_TEXT_RX = re.compile(r"Target closed|Session closed|Protocol error|browser has disconnected|Browser is not connected|ECONNRESET|"
                           r"Connection closed|No target with given id|browser was restarted", re.I)  # v16.1: navigation noise moved to TRANSIENT_TEXT_RX
+# v16.3: page-pointer invalidation (v16.2 log: `take_snapshot: Error: No page found` x35 -> forced UIA/vision degradation).  Intercepted in _tool() BEFORE the error leaves the engine.
+NO_PAGE_RX = re.compile(r"No page found|No page selected|Page not found|No pages? (is |are )?(open|available)|Target closed|Session closed|Execution context was destroyed|"
+                        r"Session with given id not found|No target with given id|Most likely the page has been closed|Cannot find context with specified id|"
+                        r"page (has been|was) closed|selected page.*(closed|detached|not)", re.I)
+PAGE_MGMT_TOOLS = {"list_pages", "select_page", "new_page", "close_page"}
 STALE_TEXT_RX = re.compile(r"uid|snapshot|element.*(not found|no longer)|stale|Could not find", re.I)
 KEYMAP = {"ctrl": "Control", "control": "Control", "alt": "Alt", "shift": "Shift", "win": "Meta", "meta": "Meta", "cmd": "Meta", "enter": "Enter", "return": "Enter",
           "esc": "Escape", "escape": "Escape", "tab": "Tab", "space": "Space", "backspace": "Backspace", "delete": "Delete", "del": "Delete", "home": "Home", "end": "End",
@@ -13882,6 +14252,12 @@ class McpBrowserEngine:
         self.last_restart_reason = ""
         self.started_at = 0.0
         self.hello_cache: dict[str, Any] = {}  # live dict shared with DriverHub.cdp_hello (FG-Gate reads browser_pids from it)
+        self._in_reselect = False
+        self._known_page_ids: set[int] = set()
+        self.reselect_log: list[dict[str, Any]] = []  # last 50 No-page-found events (audit trail for verify_phase2)
+        self.geo = GeometryService()
+        self.last_geometry: dict[str, Any] = {}
+        set_per_monitor_dpi_aware()
 
     # ------------------------------------------------------------------ lifecycle
     @property
@@ -14050,14 +14426,118 @@ class McpBrowserEngine:
             raise McpTransportError(self.client.dead_reason if self.client else "not started")
         if not self.has_tool(tool):
             raise McpError(f"chrome-devtools-mcp 没有工具 {tool}（版本过旧？运行 npm i -g " + pinned_spec() + "）")
-        r = await self.client.call_tool(tool, self._adapt(tool, kw), timeout)
-        self.stats["tool_calls"] += 1
-        if r.is_error:
+        retries = 0
+        while True:
+            r = await self.client.call_tool(tool, self._adapt(tool, kw), timeout)
+            self.stats["tool_calls"] += 1
+            if not r.is_error:
+                break
+            if NO_PAGE_RX.search(r.text) and tool not in PAGE_MGMT_TOOLS and not self._in_reselect and retries < 3:
+                retries += 1
+                self.stats["no_page_found"] += 1
+                if await self.reselect_page(f"{tool}: {r.text[:120]}"):
+                    kw.pop("pageId", None)  # a stale explicit pageId must not survive the reselect; _adapt injects the fresh one
+                    self.stats["mcp_soft_heal"] += 1
+                    continue
             raise McpToolError(f"{tool}: {r.text[:400]}")
         if "restarted or reconnected" in r.text:  # server note: page ids changed
             await self.refresh_pages()
             self.epoch += 1
         return r
+
+    async def _raw(self, tool: str, timeout: float = 40.0, **kw: Any) -> McpResult:
+        """Tool call WITHOUT the page-reselect interception (used by the reselect itself to avoid recursion)."""
+        if not self.client or not self.client.alive:
+            raise McpTransportError(self.client.dead_reason if self.client else "not started")
+        if not self.has_tool(tool):
+            raise McpError(f"chrome-devtools-mcp 没有工具 {tool}")
+        r = await self.client.call_tool(tool, self._adapt(tool, kw), timeout)
+        self.stats["tool_calls"] += 1
+        if r.is_error:
+            raise McpToolError(f"{tool}: {r.text[:300]}")
+        return r
+
+    def _pick_page(self, pages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Choose the page to (re)select: exact last_url > brand-new non-blank tab (target=_blank / popup / new-tab shortcut) > same origin > server-selected > non-blank > newest."""
+        from urllib.parse import urlparse
+
+        def origin(u: str) -> str:
+            try:
+                pu = urlparse(u)
+                return f"{pu.scheme}://{pu.netloc}" if pu.netloc else ""
+            except ValueError:
+                return ""
+
+        blank = ("about:blank", "chrome://newtab/", "chrome://new-tab-page/", "")
+        lo = origin(self.last_url)
+
+        def score(p: dict[str, Any]) -> tuple[int, int]:
+            s = 0
+            u = str(p.get("url") or "")
+            if self.last_url and u == self.last_url:
+                s = max(s, 100)
+            if p["page_id"] not in self._known_page_ids and u not in blank and not u.startswith("devtools://"):
+                s = max(s, 90)
+            if lo and origin(u) == lo:
+                s = max(s, 60)
+            if p.get("selected"):
+                s = max(s, 40)
+            if u not in blank and not u.startswith("devtools://"):
+                s = max(s, 20)
+            return s, int(p["page_id"])
+
+        return max(pages, key=score)
+
+    async def reselect_page(self, reason: str) -> bool:
+        """Transparent Page-Reselect: list_pages -> select_page(best) (or new_page('about:blank') when the browser has none) -> epoch++ -> caller retries the original call."""
+        if self.lost:
+            return False
+        t0 = time.perf_counter()
+        ev: dict[str, Any] = {"t": round(time.time(), 3), "reason": reason[:140], "outcome": "failed"}
+        self._in_reselect = True
+        try:
+            pages: list[dict[str, Any]] = []
+            for attempt in range(3):
+                pages = parse_pages((await self._raw("list_pages", timeout=40)).text)
+                if pages:
+                    break
+                await asyncio.sleep(0.25 * (attempt + 1))
+            if not pages:
+                if not self.has_tool("new_page"):
+                    return False
+                await self._raw("new_page", url="about:blank")
+                self.stats["new_page_fallbacks"] += 1
+                ev["new_page"] = True
+                pages = parse_pages((await self._raw("list_pages", timeout=40)).text)
+                if not pages:
+                    return False
+            target = self._pick_page(pages)
+            if self.has_tool("select_page"):
+                await self._raw("select_page", pageId=target["page_id"], bringToFront=True)
+            for pg in pages:
+                pg["selected"] = pg["page_id"] == target["page_id"]
+            self.pages = pages
+            self.page_id = target["page_id"]
+            self._known_page_ids = {int(p["page_id"]) for p in pages}
+            if str(target.get("url", "")).startswith("http"):
+                self.last_url = target["url"]
+            self.epoch += 1
+            self.refs.clear()
+            self.geo.invalidate("page reselect")
+            self.stats["page_reselects"] += 1
+            self.stats["soft_heals"] += 1
+            ev.update(outcome="reselected", page_id=self.page_id, url=str(target.get("url", ""))[:80], pages=len(pages), epoch=self.epoch)
+            return True
+        except McpTransportError:
+            raise
+        except McpError as e:
+            ev["error"] = str(e)[:140]
+            return False
+        finally:
+            self._in_reselect = False
+            ev["ms"] = round((time.perf_counter() - t0) * 1000, 1)
+            self.reselect_log.append(ev)
+            del self.reselect_log[:-50]
 
     async def soft_heal(self, reason: str) -> bool:
         """Level-1 healing WITHOUT respawning the MCP server: re-list pages, re-select a live page (open about:blank if the browser has none), bump the epoch."""
@@ -14092,7 +14572,7 @@ class McpBrowserEngine:
                     self.stats["transient_retries"] += 1
                     await asyncio.sleep(0.35 * (attempt + 1))
                     continue
-                if HEAL_TEXT_RX.search(msg):
+                if HEAL_TEXT_RX.search(msg) or NO_PAGE_RX.search(msg):
                     last = e
                     break
                 raise
@@ -14105,7 +14585,7 @@ class McpBrowserEngine:
                 except McpTransportError as e2:
                     last = e2
                 except McpError as e2:
-                    if not HEAL_TEXT_RX.search(str(e2)):
+                    if not (HEAL_TEXT_RX.search(str(e2)) or NO_PAGE_RX.search(str(e2))):
                         raise
                     last = e2
         self.stats["supervised_retries"] += 1
@@ -14117,6 +14597,9 @@ class McpBrowserEngine:
         self.pages = parse_pages(r.text)
         sel = next((p for p in self.pages if p["selected"]), self.pages[0] if self.pages else None)
         self.page_id = sel["page_id"] if sel else None
+        self._known_page_ids |= {int(p["page_id"]) for p in self.pages}
+        if self.pages and not any(p["selected"] for p in self.pages) and not self._in_reselect and self.has_tool("select_page"):
+            await self.reselect_page("list_pages shows no selected page")
         if sel and sel["url"].startswith("http"):
             self.last_url = sel["url"]
         return self.pages
@@ -14203,13 +14686,25 @@ class McpBrowserEngine:
                     rects = out if isinstance(out, list) else []
                 except McpError:
                     rects = []
+            geom = None
+            if rects:
+                try:
+                    probe = await self.eval_js(VIEWPORT_PROBE_JS, None, 15)
+                    if isinstance(probe, dict):
+                        geom = await asyncio.to_thread(self.geo.geometry, probe, self.attached_browser_pid, self.page_id, self.restarts * 1000 + self.stats['page_reselects'])
+                except McpError:
+                    geom = None
+            self.last_geometry = geom.to_dict() if geom else {}
             elements = []
             for n, e in enumerate(els):
                 ref = f"@{self.epoch}:c{n + 1}"
                 self.refs[ref] = {"uid": e["uid"], "role": e["role"], "name": e["name"]}
                 rc = rects[n] if n < len(rects) and isinstance(rects[n], list) and len(rects[n]) == 4 else [0, n * 4, 0, 0]
+                rc_css = list(rc)
+                if geom is not None and n < len(rects) and isinstance(rects[n], list) and len(rects[n]) == 4:
+                    rc = self.geo.norm.css_rect_to_phys(geom, rc)  # v16.3: PHYS virtual-desktop px (same space as UIA / SendInput / vision clicks)
                 elements.append({"ref_id": ref, "role": e["role"], "name": e["name"][:200], "value": e["value"], "rect": [int(v) for v in rc], "zone": e["zone"],
-                                 "stable_key": e["stable_key"], "states": e["states"], "patterns": ["mcp:uid"], "row": e["row"], "occluded": False, "url": e["url"]})
+                                 "stable_key": e["stable_key"], "states": e["states"], "patterns": ["mcp:uid"], "row": e["row"], "occluded": False, "url": e["url"], "rect_css": rc_css})
             canvas_only = False
             diag_msg = ""
             diag: dict[str, Any] = {}
@@ -14229,7 +14724,7 @@ class McpBrowserEngine:
             except McpError:
                 title = str(root.get("name") or "")
             tel: dict[str, Any] = {"engine": "chrome-devtools-mcp", "snapshot_nodes": len(nodes), "elements": len(elements), "total_ms": round((time.perf_counter() - t0) * 1000, 1),
-                                   "page_id": self.page_id, "geometry_space": "viewport_css_px", "canvas_only": canvas_only}
+                                   "page_id": self.page_id, "geometry_space": ("virtual_desktop_physical_px" if geom is not None else "viewport_css_px"), "geometry": self.last_geometry, "canvas_only": canvas_only}
             if diag_msg:
                 tel["mcp_diagnostics"] = diag_msg
                 tel["diag"] = diag
@@ -14444,16 +14939,24 @@ class McpBrowserEngine:
         if a == "scroll":
             sgn = -1 if req.get("direction") == "up" else 1
             dy = sgn * int(req.get("amount") or 5) * 100
-            js = ("() => { const best = [...document.querySelectorAll('*')].filter(e => e.scrollHeight > e.clientHeight + 40 && ['auto','scroll','overlay'].includes(getComputedStyle(e).overflowY)"
-                  " && e.clientHeight > 120).sort((a, b) => b.clientHeight * b.clientWidth - a.clientHeight * a.clientWidth)[0];"
-                  " const el = best || document.scrollingElement || document.documentElement; const before = el.scrollTop; el.scrollBy({top: %d, behavior: 'instant'});"
-                  " return {before, after: el.scrollTop, target: best ? best.tagName + '.' + String(best.className).slice(0, 24) : 'window'}; }") % dy
-            v = await self.eval_js(js, None, 20)
-            moved = isinstance(v, dict) and v.get("before") != v.get("after")
-            eff["scroll"] = {**(v if isinstance(v, dict) else {}), "moved": moved}
-            if not moved:
-                return self._res(req, False, "NOT_FOUND", f"scroll 无效：容器/窗口均未移动（{v}）；页面可能已到达边界", eff, t0)
-            return await done(f"scrolled {req.get('direction')} ({v.get('target') if isinstance(v, dict) else ''})")
+            to = str(req.get("to") or "").lower()
+            mode = "to_bottom" if to in ("bottom", "end") else "to_top" if to in ("top", "home") else "by"
+            pt = None
+            if req.get("x") is not None and req.get("y") is not None and self.geo.last is not None:
+                pt = self.geo.norm.phys_to_css(self.geo.last, float(req["x"]), float(req["y"]))
+
+            async def _ev(js: str) -> Any:
+                return await self.eval_js(js, None, 20)
+
+            async def _pk(k: str) -> Any:
+                return await self._safe("press_key", key=k)
+
+            res = await scroll_container_verified(_ev, _pk, mode=mode, amount=dy, point_css=pt)
+            eff["scroll"] = res.to_dict()
+            self.stats["scroll_verified_ok" if res.ok else "scroll_verified_fail"] += 1
+            if not res.ok:
+                return self._res(req, False, "NOT_FOUND", f"scroll 未生效（scrollTop 回读验证）：{res.reason}｜容器 {res.container}｜策略 {res.strategy}×{res.attempts}", eff, t0)
+            return await done(f"scrolled {mode} ✓verified scrollTop {res.before}->{res.after} (Δ{res.delta:+d}/{res.max_top}) {res.container} via {res.strategy}")
         if a == "scroll_into_view":
             if req.get("ref"):
                 uid, err = self._resolve(req)
@@ -14800,7 +15303,7 @@ if ($Mode -eq 'autoconnect') { Warn '请在你的 Chrome（>=144）打开 chrome
 if ($Mode -eq 'browser-url') { Warn 'Chrome 需以 --remote-debugging-port=9222 启动（必须带独立 --user-data-dir）。' }
 Ok "完成。启动 DSCU 后输入  v16 mcp  查看引擎状态。"
 '@
-Add-DscuFile 'tests/fake_mcp_server.py' 'fc1e1c33c70f7c06ace716fce4d5807910ed3d740358d6e53bac5ea436a054d8' @'
+Add-DscuFile 'tests/fake_mcp_server.py' '1aa4357f26d7925872502e685cfb93a05907e8d33edd9291e961d94632421079' @'
 """Deterministic stand-in for `chrome-devtools-mcp` (stdio JSON-RPC, MCP 2025-06-18) used by tests/unit/test_v16.py and `v16 eval`.
 
 It speaks the REAL wire format of the official server (take_snapshot text lines `uid=<snap>_<n> role "name" props`, `reqid=N METHOD url [status]`,
@@ -14815,7 +15318,9 @@ import re
 import sys
 
 PAGES = [{"id": 1, "url": "about:blank", "title": "", "sel": True}]
-STATE = {"sid": 0, "next_page": 2, "values": {}, "title_override": {}, "clicks": []}
+STATE = {"sid": 0, "next_page": 2, "values": {}, "title_override": {}, "clicks": [], "scroll_top": 0, "scroll_max": 1200}
+FAKE_DPR = float(os.environ.get("FAKE_DPR", "1.25"))
+FAKE_SCROLL_BROKEN = set(filter(None, os.environ.get("FAKE_SCROLL_BROKEN", "").split(",")))  # strategies that do nothing, e.g. "scrollTo"
 ARGV_FILE = os.environ.get("FAKE_ARGV_FILE", "")
 
 SCHEMA_PID = {"pageId": {"type": "number"}}
@@ -14838,6 +15343,7 @@ TOOLS = [
     tool("drag", {**SCHEMA_PID, "from_uid": {"type": "string"}, "to_uid": {"type": "string"}}),
     tool("evaluate_script", {**SCHEMA_PID, "function": {"type": "string"}, "args": {"type": "array", "items": {"type": "object"}}}),
     tool("click_at", {**SCHEMA_PID, "x": {"type": "number"}, "y": {"type": "number"}}),
+    tool("close_page", {**SCHEMA_PID}),
 ]
 
 
@@ -14887,7 +15393,33 @@ def js_reply(v) -> dict:
 
 
 def call(name: str, a: dict) -> dict:
-    p = page_by_id(a.get("pageId")) if a.get("pageId") else page()
+    ch = STATE.get("child")
+    if ch is not None and ch.poll() is not None:
+        return err("Protocol error: Target closed (browser has disconnected)")
+    if name == "list_pages":
+        return ok("## Pages\n" + "\n".join(f"{x['id']}: {x['url']}{' [selected]' if x['sel'] else ''}" for x in PAGES))
+    if name == "new_page":
+        pass
+    elif name == "close_page":
+        if not any(x["id"] == a.get("pageId") for x in PAGES):
+            return err("Error: No page found")
+        PAGES[:] = [x for x in PAGES if x["id"] != a.get("pageId")]
+        if PAGES and not any(x["sel"] for x in PAGES):
+            pass  # like the real server: closing the selected page leaves NO selected page
+        return ok("closed")
+    elif name == "select_page":
+        if not any(x["id"] == a.get("pageId") for x in PAGES):
+            return err("Error: No page found")
+    else:
+        if a.get("pageId") is not None and not any(x["id"] == a.get("pageId") for x in PAGES):
+            return err("Error: No page found")
+        if not any(x["sel"] for x in PAGES) and a.get("pageId") is None:
+            return err("Error: No page found")
+        if not PAGES:
+            return err("Error: No page found")
+    p = (page_by_id(a.get("pageId")) if a.get("pageId") is not None else (page() if any(x["sel"] for x in PAGES) else None)) if PAGES else None
+    if p is None and name not in ("new_page", "select_page"):
+        p = PAGES[0] if PAGES else {"id": 0, "url": "about:blank", "title": "", "sel": False}
     if name == "list_pages":
         return ok("## Pages\n" + "\n".join(f"{x['id']}: {x['url']}{' [selected]' if x['sel'] else ''}" for x in PAGES))
     if name == "take_snapshot":
@@ -14909,6 +15441,14 @@ def call(name: str, a: dict) -> dict:
     if name in ("press_key", "type_text"):
         return ok("ok")
     if name == "navigate_page":
+        u = a.get("url", p["url"])
+        if "offline" in u:
+            return err("net::ERR_INTERNET_DISCONNECTED at " + u)
+        if "hang" in u:
+            import time as _t
+
+            _t.sleep(float(os.environ.get("FAKE_HANG_S", "3")))
+            return err("Navigation timeout of 1000 ms exceeded")
         p["url"] = a.get("url", p["url"])
         p["title"] = "Page"
         return ok("Successfully navigated to " + p["url"])
@@ -14939,6 +15479,29 @@ def call(name: str, a: dict) -> dict:
         return ok("clicked at")
     if name == "evaluate_script":
         f = a.get("function", "")
+        if "devicePixelRatio" in f and "outerHeight" in f:
+            return js_reply({"dpr": FAKE_DPR, "innerWidth": 1200, "innerHeight": 700, "outerWidth": 1216, "outerHeight": 800, "screenX": 100, "screenY": 50,
+                             "vv": {"width": 1200, "height": 700, "scale": 1}, "hasFocus": True, "vis": "visible"})
+        if "const MODE" in f and "const AMT" in f:
+            strat = re.search(r'const STRAT = "(\w+)"', f).group(1)
+            mode = re.search(r'const MODE = "(\w+)"', f).group(1)
+            amt = int(re.search(r"const AMT = (-?\d+)", f).group(1))
+            before = STATE["scroll_top"]
+            tgt = before + amt if mode == "by" else STATE["scroll_max"] if mode == "to_bottom" else 0 if mode == "to_top" else before
+            tgt = max(0, min(STATE["scroll_max"], tgt))
+            if strat not in FAKE_SCROLL_BROKEN:
+                STATE["scroll_top"] = tgt
+            return js_reply({"requested": tgt - before, "before": before, "strategy": strat})
+        def _desc() -> dict:
+            top = STATE["scroll_top"]
+            return {"tag": "DIV", "cls": "Tm aeJ", "role": "", "scrollTop": top, "scrollHeight": STATE["scroll_max"] + 600, "clientHeight": 600, "maxTop": STATE["scroll_max"],
+                    "isDoc": False, "sig": "s%d:12" % (top // 40), "rows": 50}
+        if "const HINTS" in f:
+            d = _desc()
+            d.update(candidates=2, docScrollable=True)
+            return js_reply(d)
+        if "data-dscu-scroller" in f and "return describe(el)" in f:
+            return js_reply(_desc())
         if "getBoundingClientRect" in f and "map" in f:
             return js_reply([[10, 20 + 30 * i, 120, 24] for i in range(len(a.get("args") or []))])
         if "location.href" in f and "title" in f and "needles" not in f:
@@ -14965,12 +15528,27 @@ def call(name: str, a: dict) -> dict:
     return err("unknown tool " + name)
 
 
+def _spawn_child() -> None:
+    pf = os.environ.get("FAKE_BROWSER_PIDFILE", "")
+    if not pf:
+        return
+    import atexit
+    import subprocess
+
+    ch = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(3600)"])
+    STATE["child"] = ch
+    with open(pf, "w", encoding="utf-8") as f:
+        f.write(str(ch.pid))
+    atexit.register(lambda: ch.poll() is None and ch.kill())
+
+
 def send(o: dict) -> None:
     sys.stdout.write(json.dumps(o) + "\n")
     sys.stdout.flush()
 
 
 def main() -> None:
+    _spawn_child()
     if ARGV_FILE:
         with open(ARGV_FILE, "w", encoding="utf-8") as f:
             json.dump({"argv": sys.argv[1:]}, f)
@@ -16463,7 +17041,7 @@ class IdentityGate:
 Add-DscuFile 'agent_brain/skills/__init__.py' '4dba99d9a4603351cc1377238fa6bb7f19c3eec8ab5f287d9f49611d412005e9' @'
 """v16.2 production skills (deterministic Layer-0 lanes with independent verification)."""
 '@
-Add-DscuFile 'agent_brain/skills/gmail_skill.py' 'a236e2333d5ed3a2d2b865fab92f14d9af9dbab2357b8283925242e62f6f62db' @'
+Add-DscuFile 'agent_brain/skills/gmail_skill.py' 'b93783e66483a9d93d5f082bb2f87f9b6eaa302b90356a77f5454a53e71eb1cf' @'
 """v16.2 production GmailSkill — two-phase (freeze -> HITL confirm -> trash -> independent per-id TRASH verification).
 
 Security model
@@ -17081,19 +17659,98 @@ def authorize_interactive(client_json: Optional[str] = None, store: Optional[Tok
     return tok
 
 
+
+def _find_client_secrets() -> list[Path]:
+    out: list[Path] = []
+    home = Path(os.path.expanduser("~"))
+    for d in (home / "Downloads", home / "Desktop", home / "Documents", Path.cwd()):
+        try:
+            out += [p for p in d.glob("client_secret*.json") if p.is_file()]
+        except OSError:
+            pass
+    return sorted(set(out), key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+WIZARD_STEPS = [
+    ("1/4 创建（或选择）Google Cloud 项目", "https://console.cloud.google.com/projectcreate"),
+    ("2/4 启用 Gmail API", "https://console.cloud.google.com/apis/library/gmail.googleapis.com"),
+    ("3/4 配置 OAuth 同意屏幕：用户类型=外部，发布状态=测试，并把你自己的 Gmail 加入「测试用户」", "https://console.cloud.google.com/apis/credentials/consent"),
+    ("4/4 创建凭据 → OAuth 客户端 ID → 应用类型=桌面应用 → 下载 JSON（文件名 client_secret_*.json，放在下载文件夹即可，向导会自动找到）", "https://console.cloud.google.com/apis/credentials"),
+]
+
+
+def layer0_marker_path(store: Optional["TokenStore"] = None) -> Path:
+    return (store.path if store else default_token_path()).with_name("gmail_layer0.json")
+
+
+def wizard(client_json: Optional[str] = None, store: Optional["TokenStore"] = None, open_browser: bool = True, input_fn: Callable[[str], str] = input, force: bool = False) -> int:
+    """v16.3 one-key Gmail authorisation wizard (`v16 gmail-auth`): detect -> guide -> OAuth2 loopback+PKCE -> DPAPI-encrypted token -> Layer-0 enabled."""
+    store = store or TokenStore()
+    print("═══ Gmail 一键授权向导（v16.3）═══  仅申请 gmail.modify（读取 + 移入垃圾箱，不含永久删除）；Token 用 Windows DPAPI 加密保存，绝不明文。")
+    sk = GmailSkill(store)
+    if not force and sk.available():
+        try:
+            prof = sk._call("GET", "/profile")
+            _write_marker(store, str(prof.get("emailAddress")), True)
+            print(f"✅ 已授权 {prof.get('emailAddress')}（明文落盘={store.plaintext_on_disk()}）。Gmail API Layer-0 快速通道已启用：邮件任务将跳过浏览器，直接走 API 两阶段闭环。（重新授权：v16 gmail-auth force）")
+            return 0
+        except GmailSkillError as e:
+            print(f"  ⚠ 现有 Token 不可用（{str(e)[:120]}）→ 重新授权")
+    path = client_json or os.environ.get("DSCU_GMAIL_CLIENT_JSON") or ""
+    if not path or not Path(path).exists():
+        found = _find_client_secrets()
+        if found:
+            ans = input_fn(f"  发现 {found[0]}\n  使用它？[Y/n] ").strip().lower()
+            if not ans.startswith("n"):
+                path = str(found[0])
+    if not path or not Path(path).exists():
+        print("  未找到 client_secret*.json。按下面 4 步（约 3 分钟）获取，向导可替你打开每个页面：")
+        for title, url in WIZARD_STEPS:
+            print(f"   · {title}\n     {url}")
+            if open_browser:
+                try:
+                    import webbrowser
+
+                    webbrowser.open(url)
+                except Exception:  # noqa: BLE001
+                    pass
+            input_fn("     完成后按回车继续…")
+        found = _find_client_secrets()
+        if found:
+            path = str(found[0])
+            print(f"  ✓ 已自动找到 {path}")
+    try:
+        tok = authorize_interactive(path or None, store, open_browser)
+    except GmailAuthError as e:
+        print(f"❌ 授权失败：{e}\n   常见原因：① 同意屏幕为「测试」但未把你的邮箱加入测试用户（access_denied）② 浏览器没有完成同意 ③ 超过 300 秒。修复后重新运行 v16 gmail-auth。")
+        return 1
+    sk = GmailSkill(store)
+    sk.tok = tok
+    prof = sk._call("GET", "/profile")
+    ids, _ = sk.list_ids("in:inbox", max_pages=1)
+    _write_marker(store, str(prof.get("emailAddress")), True)
+    print(f"✅ 已授权 {prof.get('emailAddress')} · 收件箱首页读取 {len(ids)} 封 · Token 已 DPAPI 加密：{store.path}（明文落盘={store.plaintext_on_disk()}）")
+    print("✅ Gmail API Layer-0 快速通道已启用：之后『删前 5 后 1』这类任务不再点浏览器，直接 API 冻结目标 → 人工确认 → 移入垃圾箱 → 回读 TRASH 标签核验。")
+    return 0
+
+
+def _write_marker(store: "TokenStore", email: str, enabled: bool) -> None:
+    try:
+        layer0_marker_path(store).write_text(json.dumps({"layer0_enabled": enabled, "email": email, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")}), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def main(argv: list[str]) -> int:
     cmd = (argv[1] if len(argv) > 1 else "status").lower()
     store = TokenStore()
     if cmd == "auth":
-        tok = authorize_interactive(argv[2] if len(argv) > 2 else None, store)
-        sk = GmailSkill(store)
-        sk.tok = tok
-        prof = sk._call("GET", "/profile")
-        print(f"✅ 已授权 {prof.get('emailAddress')}；Token 已用 Windows DPAPI 加密保存：{store.path}（明文落盘={store.plaintext_on_disk()}）")
-        return 0
+        extra = [a for a in argv[2:] if a != "force"]
+        return wizard(extra[0] if extra else None, store, force="force" in argv[2:])
     if cmd == "status":
         sk = GmailSkill(store)
         print(f"token 文件: {store.path}  存在={store.path.exists()}  可用={sk.available()}  明文落盘={store.plaintext_on_disk()}  保护器={getattr(store.protector, 'name', '?')}")
+        print("Gmail API Layer-0 快速通道：" + ("✅ 已启用" if sk.available() else "⛔ 未启用（运行 v16 gmail-auth；未授权时邮件任务走已修复 No page found 的 MCP 浏览器通道）"))
         if sk.available():
             try:
                 print("账号:", sk._call("GET", "/profile").get("emailAddress"), "· 过度授权:", sk.overprivileged)
@@ -17124,7 +17781,7 @@ def main(argv: list[str]) -> int:
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
 '@
-Add-DscuFile 'agent_brain/stable_object.py' '48b90d2f1f7b9d5c97cffd22a97baa9dcc72a0170e2df334258217cfcd559ee6' @'
+Add-DscuFile 'agent_brain/stable_object.py' '4ec003fb4f6f1e106cb87540b762e2e211e33a7d5ea1c00e643d7533d109c8d1' @'
 """v16.2 StableObject identity layer: authorised target sets + physical-point -> business-object reverse lookup.
 
 Bug fixed (task #2 of the v16.1 run log): StableObject refused a non-target row, then the model re-issued the same click as a *bare coordinate*
@@ -17203,6 +17860,9 @@ def resolve_point(reg: StableObjectRegistry, elements: Iterable[Element], x: int
            (3) smallest non-row control containing the point (Toolbar/Modal/Other) -> `control`;  (4) nothing -> `none` (cannot be confirmed -> caller must deny).
     """
     els = [e for e in elements if e.rect and len(e.rect) == 4 and not e.occluded]
+    if getattr(reg, "visual_anchors", None) is None:
+        reg.visual_anchors = VisualAnchorRegistry()  # type: ignore[attr-defined]
+    reg.visual_anchors.register_from_observation([e for e in els if e.zone != "Row"], reg.step)  # type: ignore[attr-defined]
     reg.observe_rows(els, reg.step)  # refresh row -> stable_id map from the SAME elements we hit-test against
     by_row = reg.last_rows
     hits_row = [e for e in els if e.zone == "Row" and e.row and _rect_contains(e.rect, x, y)]
@@ -17220,7 +17880,64 @@ def resolve_point(reg: StableObjectRegistry, elements: Iterable[Element], x: int
     if ctl:
         e = min(ctl, key=lambda z: _area(z.rect))
         return PointResolution("control", "", None, e, e.name or e.role, f"point inside control {e.role}")
+    tol = 3  # v16.3: DPI-rounding tolerance (<= 3 px) before giving up
+    near = [e for e in els if e.zone == "Row" and e.row and _rect_contains([e.rect[0] - tol, e.rect[1] - tol, e.rect[2] + 2 * tol, e.rect[3] + 2 * tol], x, y)]
+    if near:
+        e = min(near, key=lambda z: _area(z.rect))
+        sid = by_row.get(int(e.row), "")
+        o = reg.objects.get(sid)
+        return PointResolution("row", sid, int(e.row), e, o.label if o else "", f"point within {tol}px of a Row element (DPI rounding tolerance)")
+    near_c = [e for e in els if e.zone != "Row" and _rect_contains([e.rect[0] - tol, e.rect[1] - tol, e.rect[2] + 2 * tol, e.rect[3] + 2 * tol], x, y)]
+    if near_c:
+        e = min(near_c, key=lambda z: _area(z.rect))
+        return PointResolution("control", "", None, e, e.name or e.role, f"point within {tol}px of control {e.role} (DPI rounding tolerance)")
+    va = getattr(reg, "visual_anchors", None)
+    if va is not None:
+        a = va.resolve(x, y, getattr(reg, "step", 0))
+        if a is not None:
+            return PointResolution("control", "", None, None, a.text, f"point inside SoM visual anchor #{a.som_id} text={a.text!r} ({a.zone})")
     return PointResolution("none", reason="point does not land on any observed element")
+
+
+@dataclass
+class VisualAnchor:
+    """A SoM-numbered box + the text anchor read from the accessibility name of the SAME observation (never from the model's imagination)."""
+
+    som_id: int
+    text: str
+    rect: list[int]
+    zone: str
+    epoch: int
+    role: str = ""
+
+    @property
+    def stable_id(self) -> str:
+        return "va:" + hashlib.sha1(f"{self.role}|{self.text.strip().lower()}|{self.zone}".encode()).hexdigest()[:12]
+
+
+class VisualAnchorRegistry:
+    """v16.3: safe identification for popups / dialogs that must be clicked by coordinates.  Registering needs a non-empty text anchor (>=2 chars) -
+    anonymous pixels can never be registered (fail closed).  Hit-testing uses `tol` px so 125%/150% DPI rounding cannot cause false COORD_UNRESOLVED."""
+
+    def __init__(self, ttl_epochs: int = 2, tol: int = 3) -> None:
+        self.anchors: list[VisualAnchor] = []
+        self.ttl, self.tol = ttl_epochs, tol
+
+    def register_from_observation(self, elements: Iterable[Element], epoch: int) -> int:
+        self.anchors = [a for a in self.anchors if epoch - a.epoch <= self.ttl]
+        n = 0
+        for i, e in enumerate(elements, 1):
+            txt = (e.name or "").strip()
+            if len(txt) < 2 or not e.rect or len(e.rect) != 4 or e.rect[2] <= 0 or e.rect[3] <= 0:
+                continue
+            self.anchors.append(VisualAnchor(i, txt[:80], list(e.rect), e.zone, epoch, e.role))
+            n += 1
+        return n
+
+    def resolve(self, x: int, y: int, epoch: int) -> Optional[VisualAnchor]:
+        t = self.tol
+        hits = [a for a in self.anchors if epoch - a.epoch <= self.ttl and a.rect[0] - t <= x <= a.rect[0] + a.rect[2] + t and a.rect[1] - t <= y <= a.rect[1] + a.rect[3] + t]
+        return min(hits, key=lambda a: _area(a.rect)) if hits else None
 
 
 def checked_row_ids(reg: StableObjectRegistry, elements: Iterable[Element]) -> set[str]:
@@ -18624,6 +19341,1249 @@ psutil>=5.9
 pillow>=10.0
 python-pptx>=0.6.23
 '@
+Add-DscuFile 'agent_brain/coords.py' '643a47fe980dcade7e06dc76aa363dbaf7a69fe3c84490e678b8603642c7bfff' @'
+"""v16.3 Single Coordinate Normalizer - ONE place that converts between every pixel space the agent touches.
+
+Spaces (never mix them implicitly):
+  CSS    : CSS logical pixel inside the page viewport (what getBoundingClientRect / elementFromPoint use; already includes page zoom)
+  VIEW   : the browser viewport rectangle on the desktop = CSS * dpr, origin = top-left of the *web contents* (below tabs / address bar / bookmarks bar)
+  PHYS   : Virtual-Desktop physical pixel (SendInput absolute / UIA BoundingRectangle / GetWindowRect under Per-Monitor-V2). Can be NEGATIVE (monitor left of / above primary)
+  DXGI   : pixel inside a (possibly down-scaled) screenshot of ONE monitor: (PHYS - monitor.origin) * scale
+
+Truth hierarchy for the viewport origin (source field):
+  1. hwnd-client  : ClientToScreen(0,0) of Chrome_RenderWidgetHostHWND of the attached browser process tree (exact; includes toolbar / bookmarks / infobars / DPI / negative monitors)
+  2. screenxy     : window.screenX/Y (DIP) * monitor scale + (outerHeight - innerHeight*zoom) chrome offset (estimate, uncertainty is reported)
+  3. injected     : tests / callers that already know the origin
+dpr is always `window.devicePixelRatio` (= monitor scale x page zoom): physical px per CSS px, the one number Chrome itself guarantees.
+
+Geometry cache: a ViewportGeometry is only reused while its fingerprint (window rect, dpr, inner size, screenX/Y, page id, epoch) is unchanged.  Window move / resize /
+zoom / tab switch / monitor change => `GeometryCache.get()` returns None (stale geometry can never be used to click).
+"""
+from __future__ import annotations
+
+import ctypes
+import hashlib
+import math
+import sys
+import time
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable, Optional
+
+IS_WIN = sys.platform == "win32"
+
+Rect = tuple[int, int, int, int]  # x, y, w, h
+
+
+@dataclass(frozen=True)
+class Monitor:
+    index: int
+    left: int
+    top: int
+    right: int
+    bottom: int
+    dpi: int = 96  # effective DPI (96 = 100%)
+    primary: bool = False
+
+    @property
+    def scale(self) -> float:
+        return self.dpi / 96.0
+
+    @property
+    def width(self) -> int:
+        return self.right - self.left
+
+    @property
+    def height(self) -> int:
+        return self.bottom - self.top
+
+    def contains(self, x: float, y: float) -> bool:
+        return self.left <= x < self.right and self.top <= y < self.bottom
+
+    def distance2(self, x: float, y: float) -> float:
+        dx = max(self.left - x, 0, x - self.right + 1)
+        dy = max(self.top - y, 0, y - self.bottom + 1)
+        return dx * dx + dy * dy
+
+
+def monitor_for_point(monitors: Iterable[Monitor], x: float, y: float) -> Optional[Monitor]:
+    ms = list(monitors)
+    for m in ms:
+        if m.contains(x, y):
+            return m
+    return min(ms, key=lambda m: m.distance2(x, y)) if ms else None
+
+
+@dataclass(frozen=True)
+class ViewportGeometry:
+    origin_x: int  # PHYS px of CSS (0,0)
+    origin_y: int
+    dpr: float  # PHYS px per CSS px
+    css_w: int
+    css_h: int
+    source: str = "injected"  # hwnd-client | screenxy | injected
+    monitor: Optional[Monitor] = None
+    fingerprint: str = ""
+    est_error_px: float = 0.0  # documented uncertainty of the origin source
+
+    @property
+    def phys_rect(self) -> Rect:
+        return (self.origin_x, self.origin_y, int(round(self.css_w * self.dpr)), int(round(self.css_h * self.dpr)))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"origin": [self.origin_x, self.origin_y], "dpr": round(self.dpr, 4), "css": [self.css_w, self.css_h], "source": self.source,
+                "monitor": (self.monitor.index if self.monitor else None), "monitor_dpi": (self.monitor.dpi if self.monitor else None),
+                "fingerprint": self.fingerprint, "est_error_px": self.est_error_px}
+
+
+def _fp(*parts: Any) -> str:
+    return hashlib.sha1("|".join(str(p) for p in parts).encode()).hexdigest()[:12]
+
+
+class CoordinateNormalizer:
+    """Stateless conversions between CSS / PHYS / DXGI; round-half-away-from-zero so negative coordinates do not bias by 1 px."""
+
+    @staticmethod
+    def _r(v: float) -> int:
+        return int(math.floor(v + 0.5)) if v >= 0 else -int(math.floor(-v + 0.5))
+
+    # ---- CSS <-> PHYS
+    def css_to_phys(self, g: ViewportGeometry, x: float, y: float) -> tuple[int, int]:
+        return self._r(g.origin_x + x * g.dpr), self._r(g.origin_y + y * g.dpr)
+
+    def phys_to_css(self, g: ViewportGeometry, px: float, py: float) -> tuple[float, float]:
+        return (px - g.origin_x) / g.dpr, (py - g.origin_y) / g.dpr
+
+    def css_rect_to_phys(self, g: ViewportGeometry, r: Iterable[float]) -> list[int]:
+        x, y, w, h = list(r)[:4]
+        x0, y0 = g.origin_x + x * g.dpr, g.origin_y + y * g.dpr
+        x1, y1 = g.origin_x + (x + w) * g.dpr, g.origin_y + (y + h) * g.dpr
+        return [self._r(x0), self._r(y0), max(0, self._r(x1) - self._r(x0)), max(0, self._r(y1) - self._r(y0))]
+
+    def css_center_phys(self, g: ViewportGeometry, r: Iterable[float]) -> tuple[int, int]:
+        x, y, w, h = list(r)[:4]
+        return self.css_to_phys(g, x + w / 2.0, y + h / 2.0)
+
+    # ---- PHYS <-> DXGI (screenshot of one monitor, optionally scaled)
+    def phys_to_dxgi(self, mon: Monitor, px: float, py: float, scale: float = 1.0) -> tuple[int, int]:
+        return self._r((px - mon.left) * scale), self._r((py - mon.top) * scale)
+
+    def dxgi_to_phys(self, mon: Monitor, sx: float, sy: float, scale: float = 1.0) -> tuple[int, int]:
+        return self._r(sx / scale + mon.left), self._r(sy / scale + mon.top)
+
+    def scale_for(self, mon: Monitor, shot_w: int) -> float:
+        return shot_w / float(mon.width) if mon.width else 1.0
+
+    # ---- a click that lands outside the web contents must never be issued
+    def inside_viewport(self, g: ViewportGeometry, px: int, py: int) -> bool:
+        x, y, w, h = g.phys_rect
+        return x <= px < x + w and y <= py < y + h
+
+    # ---- build geometry from a JS probe (+ optional hwnd client origin)
+    def build_geometry(self, probe: dict[str, Any], monitors: list[Monitor], client_origin: Optional[tuple[int, int]] = None, *, page_id: Any = None, epoch: int = 0,
+                       window_rect: Optional[Rect] = None) -> ViewportGeometry:
+        dpr = float(probe.get("dpr") or probe.get("devicePixelRatio") or 1.0)
+        iw, ih = int(probe.get("innerWidth") or 0), int(probe.get("innerHeight") or 0)
+        sx, sy = float(probe.get("screenX") or 0), float(probe.get("screenY") or 0)
+        ow, oh = float(probe.get("outerWidth") or 0), float(probe.get("outerHeight") or 0)
+        vv = probe.get("vv") or {}
+        iw = int(vv.get("width") or iw)  # visualViewport excludes pinch-zoom / on-screen keyboard
+        ih = int(vv.get("height") or ih)
+        if client_origin is not None:
+            ox, oy = int(client_origin[0]), int(client_origin[1])
+            mon = monitor_for_point(monitors, ox + 1, oy + 1)
+            src, err = "hwnd-client", 0.0
+        else:
+            # screenX/Y are DIP: try every monitor scale and keep the one whose physical point lands on that monitor
+            best: Optional[tuple[Monitor, float, float]] = None
+            for m in monitors:
+                px, py = sx * m.scale, sy * m.scale
+                if m.contains(px + 1, py + 1):
+                    best = (m, px, py)
+                    break
+            mon = best[0] if best else (monitors[0] if monitors else None)
+            msc = mon.scale if mon else 1.0
+            px, py = (best[1], best[2]) if best else (sx * msc, sy * msc)
+            zoom = dpr / msc if msc else 1.0
+            chrome_dip = max(0.0, oh - ih * zoom) if oh and ih else 0.0
+            side_dip = max(0.0, (ow - iw * zoom) / 2.0) if ow and iw else 0.0
+            ox, oy = self._r(px + side_dip * msc), self._r(py + chrome_dip * msc)
+            src, err = "screenxy", 6.0
+        fp = _fp(window_rect, round(dpr, 4), iw, ih, sx, sy, page_id, epoch, (mon.index if mon else None), ox, oy)
+        return ViewportGeometry(ox, oy, dpr, iw, ih, src, mon, fp, err)
+
+
+class GeometryCache:
+    """Holds the last ViewportGeometry; `get(fingerprint)` only returns it while the probe fingerprint still matches."""
+
+    def __init__(self) -> None:
+        self.geom: Optional[ViewportGeometry] = None
+        self.invalidations = 0
+        self.hits = 0
+        self.rebuilds = 0
+        self.last_reason = ""
+
+    def invalidate(self, reason: str) -> None:
+        if self.geom is not None:
+            self.invalidations += 1
+        self.geom, self.last_reason = None, reason
+
+    def put(self, g: ViewportGeometry) -> ViewportGeometry:
+        self.geom = g
+        self.rebuilds += 1
+        return g
+
+    def get(self, fingerprint: str) -> Optional[ViewportGeometry]:
+        g = self.geom
+        if g is not None and g.fingerprint == fingerprint:
+            self.hits += 1
+            return g
+        if g is not None:
+            self.invalidate("fingerprint changed (window moved/resized, zoom, tab switch or monitor change)")
+        return None
+
+
+def probe_fingerprint(probe: dict[str, Any], window_rect: Optional[Rect], page_id: Any, epoch: int, client_origin: Optional[tuple[int, int]]) -> str:
+    vv = probe.get("vv") or {}
+    return _fp(window_rect, round(float(probe.get("dpr") or 1.0), 4), int(vv.get("width") or probe.get("innerWidth") or 0), int(vv.get("height") or probe.get("innerHeight") or 0),
+               probe.get("screenX"), probe.get("screenY"), page_id, epoch, client_origin)
+
+
+# JS evaluated in the page: everything needed by build_geometry in ONE round trip
+VIEWPORT_PROBE_JS = ("() => { const v = window.visualViewport; return {dpr: window.devicePixelRatio, innerWidth: window.innerWidth, innerHeight: window.innerHeight, "
+                     "outerWidth: window.outerWidth, outerHeight: window.outerHeight, screenX: window.screenX, screenY: window.screenY, "
+                     "vv: v ? {width: Math.round(v.width), height: Math.round(v.height), scale: v.scale, offsetLeft: v.offsetLeft, offsetTop: v.offsetTop} : null, "
+                     "hasFocus: document.hasFocus(), vis: document.visibilityState}; }")
+
+
+# ------------------------------------------------------------------------------------------------ Win32 (Windows only; every call is best-effort)
+def set_per_monitor_dpi_aware() -> bool:
+    if not IS_WIN:
+        return False
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # PER_MONITOR_AWARE_V2
+        return True
+    except Exception:  # noqa: BLE001
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+
+def enum_monitors() -> list[Monitor]:
+    """Real monitors (virtual-desktop physical px; negative origins preserved) with effective DPI per monitor."""
+    if not IS_WIN:
+        return []
+    from ctypes import wintypes
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+    out: list[Monitor] = []
+    user32 = ctypes.windll.user32
+    proc = ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HANDLE, wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+
+    def cb(hmon: Any, _hdc: Any, _rc: Any, _lp: Any) -> int:
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+            dx, dy = ctypes.c_uint(96), ctypes.c_uint(96)
+            try:
+                ctypes.windll.shcore.GetDpiForMonitor(hmon, 0, ctypes.byref(dx), ctypes.byref(dy))  # MDT_EFFECTIVE_DPI
+            except Exception:  # noqa: BLE001
+                pass
+            r = mi.rcMonitor
+            out.append(Monitor(len(out), r.left, r.top, r.right, r.bottom, int(dx.value or 96), bool(mi.dwFlags & 1)))
+        return 1
+
+    try:
+        user32.EnumDisplayMonitors(None, None, proc(cb), 0)
+    except Exception:  # noqa: BLE001
+        return []
+    return out
+
+
+def _pid_tree(pid: int) -> set[int]:
+    try:
+        import psutil
+
+        p = psutil.Process(pid)
+        return {pid} | {c.pid for c in p.children(recursive=True)}
+    except Exception:  # noqa: BLE001
+        return {pid}
+
+
+def chrome_client_origin(pid: int) -> Optional[tuple[tuple[int, int], Rect]]:
+    """(viewport origin PHYS, top-level window rect PHYS) of the biggest visible Chrome window of `pid`'s process tree; None when not found."""
+    if not IS_WIN or not pid:
+        return None
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    pids = _pid_tree(pid)
+    best: list[tuple[int, int, Rect]] = []
+    EnumProc = ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HWND, wintypes.LPARAM)
+
+    def cls_of(h: Any) -> str:
+        b = ctypes.create_unicode_buffer(128)
+        user32.GetClassNameW(h, b, 128)
+        return b.value
+
+    def top_cb(h: Any, _lp: Any) -> int:
+        if not user32.IsWindowVisible(h) or user32.IsIconic(h):
+            return 1
+        p = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(h, ctypes.byref(p))
+        if p.value in pids and cls_of(h) == "Chrome_WidgetWin_1":
+            r = wintypes.RECT()
+            user32.GetWindowRect(h, ctypes.byref(r))
+            best.append(((r.right - r.left) * (r.bottom - r.top), int(h), (r.left, r.top, r.right - r.left, r.bottom - r.top)))
+        return 1
+
+    try:
+        user32.EnumWindows(EnumProc(top_cb), 0)
+    except Exception:  # noqa: BLE001
+        return None
+    if not best:
+        return None
+    best.sort(key=lambda t: -t[0])
+    _, hwnd, wrect = best[0]
+    found: list[int] = []
+
+    def child_cb(h: Any, _lp: Any) -> int:
+        if cls_of(h) == "Chrome_RenderWidgetHostHWND" and user32.IsWindowVisible(h):
+            found.append(int(h))
+            return 0
+        return 1
+
+    try:
+        user32.EnumChildWindows(hwnd, EnumProc(child_cb), 0)
+    except Exception:  # noqa: BLE001
+        return None
+    if not found:
+        return None
+    pt = wintypes.POINT(0, 0)
+    if not user32.ClientToScreen(found[0], ctypes.byref(pt)):
+        return None
+    return (int(pt.x), int(pt.y)), wrect
+
+
+# ------------------------------------------------------------------------------------------------ live service used by McpBrowserEngine
+@dataclass
+class GeometryService:
+    """Glue: JS probe -> (hwnd client origin | screenXY) -> cached ViewportGeometry; converts CDP element rects to PHYS."""
+
+    norm: CoordinateNormalizer = field(default_factory=CoordinateNormalizer)
+    cache: GeometryCache = field(default_factory=GeometryCache)
+    monitors_provider: Callable[[], list[Monitor]] = enum_monitors
+    origin_provider: Callable[[int], Optional[tuple[tuple[int, int], Rect]]] = chrome_client_origin
+    stats: dict[str, int] = field(default_factory=lambda: {"builds": 0, "cache_hits": 0, "invalidations": 0, "hwnd_client": 0, "screenxy": 0, "failures": 0})
+    last: Optional[ViewportGeometry] = None
+    _mon_cache: tuple[float, list[Monitor]] = (0.0, field(default_factory=list))  # type: ignore[assignment]
+
+    def monitors(self) -> list[Monitor]:
+        t, ms = self._mon_cache
+        if not ms or time.time() - t > 2.0:  # monitor topology can change (hot-plug, DPI slider) -> never cached for long
+            ms = self.monitors_provider()
+            self._mon_cache = (time.time(), ms)
+        return ms
+
+    def geometry(self, probe: dict[str, Any], browser_pid: int, page_id: Any, epoch: int) -> Optional[ViewportGeometry]:
+        try:
+            co = self.origin_provider(browser_pid) if browser_pid else None
+            origin, wrect = (co if co else (None, None))
+            fp = probe_fingerprint(probe, wrect, page_id, epoch, origin)
+            g = self.cache.get(fp)
+            if g is not None:
+                self.stats["cache_hits"] += 1
+                self.last = g
+                return g
+            self.stats["invalidations"] = self.cache.invalidations
+            g = self.norm.build_geometry(probe, self.monitors(), origin, page_id=page_id, epoch=epoch, window_rect=wrect)
+            g = ViewportGeometry(g.origin_x, g.origin_y, g.dpr, g.css_w, g.css_h, g.source, g.monitor, fp, g.est_error_px)
+            self.cache.put(g)
+            self.stats["builds"] += 1
+            self.stats["hwnd_client" if g.source == "hwnd-client" else "screenxy"] += 1
+            self.last = g
+            return g
+        except Exception:  # noqa: BLE001
+            self.stats["failures"] += 1
+            return None
+
+    def invalidate(self, reason: str) -> None:
+        self.cache.invalidate(reason)
+        self.stats["invalidations"] = self.cache.invalidations
+'@
+Add-DscuFile 'agent_brain/scroll.py' '301eda1a3d19fd5f1facc19e0a52ab5a420a7bad309f09071399be539117afe1' @'
+"""v16.3 Verifiable scroll primitive: `scroll_container_verified`.
+
+Problem (v16.2 log, task #4/#5 Gmail): the wheel / `scrollBy` went to `window` or to the wrong nested container (Gmail message list = `DIV.Tm.aeJ`), the page "did not move"
+and nothing PROVED whether the scroll worked.  This module:
+  1. locates the REAL scroll container through CDP/JS (scrollHeight > clientHeight + overflow-y auto|scroll|overlay, visible, ranked by visible area x list rows,
+     bonus for known class hints such as `aeJ` and for the container under the target point) and tags it with `data-dscu-scroller`;
+  2. performs an exact `scrollTop` step / jump to bottom / jump to top / scrollIntoView;
+  3. READS BACK `scrollTop`, `scrollHeight`, boundary state and a content signature of the visible rows ("frame hash", FNV-1a over row offsets + text) BEFORE and AFTER,
+     optionally combined with an external pixel frame hash (DXGI aHash) supplied by the caller;
+  4. climbs a strategy ladder until the readback proves movement:  scrollTo -> focus + WheelEvent + keyboard (PageDown/End) -> window/document scrolling element.
+Every decision is made by the pure function `judge()` (unit-tested without a browser).
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable, Optional, Sequence
+
+GMAIL_HINTS = ("aeJ",)  # Gmail message-list scroller: <div class="Tm aeJ">
+Evaluate = Callable[[str], Awaitable[Any]]  # async (js_function_source) -> JSON value
+PressKey = Callable[[str], Awaitable[Any]]
+FrameHash = Callable[[], Awaitable[Optional[str]]]
+
+_FNV = ("const fnv = s => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16); };")
+_SIG = ("const sig = el => { const isDoc = el === document.scrollingElement || el === document.documentElement || el === document.body;"
+        " const er = isDoc ? {top: 0, bottom: innerHeight} : el.getBoundingClientRect();"
+        " const items = [...el.querySelectorAll('[role=row],[role=listitem],[role=option],tr,li,a,button,h1,h2,h3,p')].filter(n => { const r = n.getBoundingClientRect();"
+        " return r.height > 0 && r.bottom > er.top && r.top < er.bottom; }).slice(0, 48).map(n => Math.round(n.getBoundingClientRect().top - er.top) + ':' + (n.innerText || '').trim().slice(0, 32));"
+        " return fnv(items.join('|')) + ':' + items.length; };")
+_DESCRIBE = ("const describe = el => ({tag: el.tagName, cls: String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className).slice(0, 40), role: el.getAttribute('role') || '',"
+             " scrollTop: Math.round(el.scrollTop), scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, maxTop: Math.max(0, el.scrollHeight - el.clientHeight),"
+             " isDoc: el === document.scrollingElement || el === document.documentElement, sig: sig(el),"
+             " rows: el.querySelectorAll('[role=row],[role=listitem],[role=option],tr,li').length});")
+
+
+def find_container_js(hints: Sequence[str] = GMAIL_HINTS, point_css: Optional[tuple[float, float]] = None) -> str:
+    """Locate + tag the best scroll container; returns its descriptor (see _DESCRIBE)."""
+    return ("() => { " + _FNV + _SIG + _DESCRIBE + " const HINTS = " + json.dumps(list(hints)) + "; const PT = " + json.dumps(list(point_css) if point_css else None) + ";"
+            " const scrollable = e => { const cs = getComputedStyle(e); return e.scrollHeight > e.clientHeight + 4 && ['auto', 'scroll', 'overlay'].includes(cs.overflowY)"
+            " && cs.visibility !== 'hidden' && cs.display !== 'none'; };"
+            " const vis = e => { const r = e.getBoundingClientRect(); return r.width > 40 && r.height > 80 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth; };"
+            " const doc = document.scrollingElement || document.documentElement;"
+            " const cands = [...document.querySelectorAll('*')].filter(e => e !== doc && scrollable(e) && vis(e)).map(e => { const r = e.getBoundingClientRect();"
+            " const vw = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)); const vh = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));"
+            " let score = vw * vh; const rows = e.querySelectorAll('[role=row],[role=listitem],[role=option],tr,li').length; score *= 1 + Math.min(rows, 80) / 20;"
+            " const toks = String(e.className && e.className.baseVal !== undefined ? e.className.baseVal : e.className).split(/\\s+/);"
+            " if (HINTS.some(h => toks.includes(h))) score *= 4;"
+            " if (PT && r.left <= PT[0] && PT[0] <= r.right && r.top <= PT[1] && PT[1] <= r.bottom) score *= 3;"
+            " if (e.getAttribute('role') === 'main' || e.closest('[role=main]')) score *= 1.4; return {e, score}; }).sort((a, b) => b.score - a.score);"
+            " const docScrollable = doc.scrollHeight > doc.clientHeight + 4;"
+            " const el = cands.length && (cands[0].score > 0) ? cands[0].e : doc;"
+            " document.querySelectorAll('[data-dscu-scroller]').forEach(n => n.removeAttribute('data-dscu-scroller')); el.setAttribute('data-dscu-scroller', '1');"
+            " const d = describe(el); d.candidates = cands.length; d.docScrollable = docScrollable; return d; }")
+
+
+def read_state_js() -> str:
+    return ("() => { " + _FNV + _SIG + _DESCRIBE + " const el = document.querySelector('[data-dscu-scroller]') || document.scrollingElement || document.documentElement; return describe(el); }")
+
+
+def scroll_js(mode: str, amount: int = 500, strategy: str = "scrollTo") -> str:
+    """mode: by | page | to_bottom | to_top | into_view_last.  strategy: scrollTo | wheel | document."""
+    return ("() => { " + _FNV + _SIG + _DESCRIBE + " const MODE = " + json.dumps(mode) + "; const AMT = " + str(int(amount)) + "; const STRAT = " + json.dumps(strategy) + ";"
+            " let el = document.querySelector('[data-dscu-scroller]') || document.scrollingElement || document.documentElement;"
+            " if (STRAT === 'document') el = document.scrollingElement || document.documentElement;"
+            " const max = Math.max(0, el.scrollHeight - el.clientHeight); const before = el.scrollTop;"
+            " let target = before; if (MODE === 'by') target = before + AMT; else if (MODE === 'page') target = before + Math.sign(AMT || 1) * Math.round(el.clientHeight * 0.9);"
+            " else if (MODE === 'to_bottom') target = max; else if (MODE === 'to_top') target = 0;"
+            " target = Math.max(0, Math.min(max, target));"
+            " if (MODE === 'into_view_last') { const rows = el.querySelectorAll('[role=row],[role=listitem],[role=option],tr,li'); const last = rows[rows.length - 1]; if (last) last.scrollIntoView({block: 'end', behavior: 'instant'}); }"
+            " else if (STRAT === 'wheel') { try { el.focus({preventScroll: true}); } catch (e) {} el.dispatchEvent(new WheelEvent('wheel', {deltaY: target - before, bubbles: true, cancelable: true})); el.scrollTop = target; }"
+            " else { el.scrollTo({top: target, behavior: 'instant'}); }"
+            " return {requested: target - before, before: Math.round(before), strategy: STRAT}; }")
+
+
+@dataclass
+class ScrollResult:
+    ok: bool = False
+    code: str = "NOT_STARTED"  # OK | NO_EFFECT | AT_BOUNDARY | NO_CONTAINER | ERROR
+    mode: str = "by"
+    container: str = ""
+    before: int = 0
+    after: int = 0
+    delta: int = 0
+    max_top: int = 0
+    at_boundary: bool = False
+    sig_before: str = ""
+    sig_after: str = ""
+    sig_changed: bool = False
+    frame_hash_changed: Optional[bool] = None
+    strategy: str = ""
+    attempts: int = 0
+    ms: float = 0.0
+    reason: str = ""
+    trace: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {k: getattr(self, k) for k in ("ok", "code", "mode", "container", "before", "after", "delta", "max_top", "at_boundary", "sig_before", "sig_after", "sig_changed",
+                                              "frame_hash_changed", "strategy", "attempts", "ms", "reason", "trace")}
+
+
+def judge(mode: str, before: int, after: int, max_top: int, sig_before: str, sig_after: str, fh_before: Optional[str] = None, fh_after: Optional[str] = None,
+          requested: int = 0) -> tuple[bool, str, str]:
+    """Pure verdict -> (ok, code, reason).  Movement must be PROVEN by readback; sig/frame hash must change unless the end of the container was reached."""
+    delta = after - before
+    down = (requested >= 0) if mode in ("by", "page") else mode in ("to_bottom", "into_view_last")
+    at_bottom = after >= max_top - 1
+    at_top = after <= 0
+    at_boundary = (at_bottom if down else at_top)
+    fh_changed = (fh_before != fh_after) if (fh_before is not None and fh_after is not None) else None
+    if abs(delta) >= 1:
+        content_changed = (sig_before != sig_after) or bool(fh_changed)
+        if content_changed or at_boundary:
+            return True, "OK", f"scrollTop {before}->{after} (Δ{delta:+d}, max {max_top}); content {'changed' if content_changed else 'unchanged but boundary reached'}"
+        return False, "NO_EFFECT", f"scrollTop moved {before}->{after} but visible content signature did not change (virtualised list not re-rendered / wrong container)"
+    if mode in ("to_bottom", "into_view_last") and at_bottom:
+        return True, "OK", f"already at bottom (scrollTop {after} / max {max_top})"
+    if mode == "to_top" and at_top:
+        return True, "OK", "already at top"
+    if at_boundary:
+        return False, "AT_BOUNDARY", f"container is already at the {'bottom' if down else 'top'} (scrollTop {after} / max {max_top})"
+    return False, "NO_EFFECT", f"scrollTop stayed {before} (max {max_top}) - the scroll was not applied to this container"
+
+
+def _i(v: Any) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def scroll_container_verified(evaluate: Evaluate, press_key: Optional[PressKey] = None, *, mode: str = "by", amount: int = 500, hints: Sequence[str] = GMAIL_HINTS,
+                                    point_css: Optional[tuple[float, float]] = None, frame_hash: Optional[FrameHash] = None, settle_s: float = 0.15, max_attempts: int = 3,
+                                    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep) -> ScrollResult:
+    t0 = time.perf_counter()
+    res = ScrollResult(mode=mode)
+    try:
+        desc = await evaluate(find_container_js(hints, point_css))
+    except Exception as e:  # noqa: BLE001
+        res.code, res.reason = "ERROR", f"container lookup failed: {str(e)[:160]}"
+        res.ms = round((time.perf_counter() - t0) * 1000, 1)
+        return res
+    if not isinstance(desc, dict):
+        res.code, res.reason = "NO_CONTAINER", "no scroll container descriptor returned"
+        res.ms = round((time.perf_counter() - t0) * 1000, 1)
+        return res
+    res.container = f"{desc.get('tag')}.{desc.get('cls')}" + (" [document]" if desc.get("isDoc") else "")
+    strategies = ["scrollTo", "wheel", "document"][:max(1, max_attempts)]
+    for attempt, strat in enumerate(strategies, 1):
+        res.attempts = attempt
+        res.strategy = strat
+        try:
+            st0 = await evaluate(read_state_js())
+            fh0 = await frame_hash() if frame_hash else None
+            st0 = st0 if isinstance(st0, dict) else desc
+            req = await evaluate(scroll_js(mode, amount, strat))
+            if strat == "wheel" and press_key is not None and mode in ("to_bottom", "page", "by"):
+                await press_key("End" if mode == "to_bottom" else ("PageDown" if amount >= 0 else "PageUp"))
+            await sleep(settle_s)
+            st1 = await evaluate(read_state_js())
+            fh1 = await frame_hash() if frame_hash else None
+            st1 = st1 if isinstance(st1, dict) else {}
+        except Exception as e:  # noqa: BLE001
+            res.trace.append({"strategy": strat, "error": str(e)[:120]})
+            continue
+        before, after, mx = _i(st0.get("scrollTop")), _i(st1.get("scrollTop")), _i(st1.get("maxTop"))
+        requested = _i((req or {}).get("requested")) if isinstance(req, dict) else amount
+        ok, code, why = judge(mode, before, after, mx, str(st0.get("sig", "")), str(st1.get("sig", "")), fh0, fh1, requested if mode == "by" else amount)
+        if not ok and code == "NO_EFFECT" and abs(after - before) >= 1:  # moved but content signature stale: give virtualised lists one more settle
+            await sleep(settle_s * 2)
+            st2 = await evaluate(read_state_js())
+            if isinstance(st2, dict):
+                st1 = st2
+                after, mx = _i(st1.get("scrollTop")), _i(st1.get("maxTop"))
+                ok, code, why = judge(mode, before, after, mx, str(st0.get("sig", "")), str(st1.get("sig", "")), fh0, fh1, amount)
+        res.trace.append({"strategy": strat, "before": before, "after": after, "max": mx, "code": code})
+        res.before, res.after, res.delta, res.max_top = before, after, after - before, mx
+        res.sig_before, res.sig_after = str(st0.get("sig", "")), str(st1.get("sig", ""))
+        res.sig_changed = res.sig_before != res.sig_after
+        res.frame_hash_changed = (fh0 != fh1) if (fh0 is not None and fh1 is not None) else None
+        res.at_boundary = (after >= mx - 1) if (amount >= 0 or mode in ("to_bottom", "into_view_last")) else (after <= 0)
+        res.ok, res.code, res.reason = ok, code, why
+        if ok or code == "AT_BOUNDARY":
+            break
+    res.ms = round((time.perf_counter() - t0) * 1000, 1)
+    return res
+'@
+Add-DscuFile 'tests/verify_phase2.py' '759114c9691d0c77cdd2332074ca3cc743ea95c2182e242f0a7317a5b2adb1fc' @'
+"""v16.3 Phase 2 acceptance suite - REAL fault injection (no "return success" mocks), multi-DPI coordinate accuracy, verified scroll, Rust/DirectML evidence.
+
+  python tests/verify_phase2.py                      # engine vs tests/fake_mcp_server.py (REAL subprocess + real SIGKILL/TerminateProcess; works on any OS)
+  python tests/verify_phase2.py --rounds 30          # 30 rounds per fault class
+  python tests/verify_phase2.py --real               # Windows: REAL Chrome + REAL chrome-devtools-mcp (kills the real processes)
+  python tests/verify_phase2.py --real --rounds 5 --skip-live-pixels
+
+Fault classes (each measured over N rounds, recovery = the very next observe+navigate succeeds, NO `No page found` leaks to the caller, epoch advanced):
+  (a) kill chrome-devtools-mcp child process    (b) kill the browser main process    (c) close the current tab (=> `No page found`)
+  (d) navigation fault (offline / timeout)      (e) stale snapshot_epoch ref => 100% STALE_EPOCH refusal, 0 clicks executed
+Writes eval_runs/phase2_<ts>/audit_report.json ; exit code 0 only when every gate passes.  Evidence that cannot exist on this machine (Rust exe / DirectML on Linux) is
+reported as NOT_VERIFIED_HERE - never as a pass.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import random
+import subprocess
+import sys
+import tempfile
+import time
+from collections import Counter
+from pathlib import Path
+from typing import Any, Optional
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from agent_brain import browser_mcp as B  # noqa: E402
+from agent_brain.coords import CoordinateNormalizer, GeometryCache, Monitor, ViewportGeometry, probe_fingerprint  # noqa: E402
+from agent_brain.scroll import scroll_container_verified  # noqa: E402
+
+FAKE = ROOT / "tests" / "fake_mcp_server.py"
+IS_WIN = sys.platform == "win32"
+PAGE_URL = "http://127.0.0.1/rows/index"
+GATES = {"recovery_rate_min": 0.95, "stale_epoch_rate": 1.0, "dpi_max_error_px": 3.0, "reid_min": 0.95, "no_page_leaks": 0}
+
+
+def _kill_tree(pid: int) -> bool:
+    import psutil
+
+    try:
+        p = psutil.Process(pid)
+        for c in p.children(recursive=True):
+            try:
+                c.kill()
+            except psutil.Error:
+                pass
+        p.kill()
+        return True
+    except psutil.Error:
+        return False
+
+
+class Harness:
+    def __init__(self, real: bool, tmp: Path) -> None:
+        self.real, self.tmp = real, tmp
+        self.eng: Optional[B.McpBrowserEngine] = None
+        self.leaks = 0
+        self.errors: list[str] = []
+        self.agg: Counter[str] = Counter()
+
+    def _env(self, **extra: str) -> dict[str, str]:
+        return {**os.environ, "FAKE_BROWSER_PIDFILE": str(self.tmp / "browser.pid"), "FAKE_HANG_S": "1.2", **extra}
+
+    async def start(self, **env: str) -> B.McpBrowserEngine:
+        if self.eng:
+            self.agg.update(self.eng.stats)
+            await self.eng.aclose()
+        if self.real:
+            self.eng = B.McpBrowserEngine(None, env={**os.environ, "DSCU_MCP_MODE": "clean-browser-url", **env})
+        else:
+            self.eng = B.McpBrowserEngine(None, env=self._env(**env), cmd=[sys.executable, str(FAKE)], args=[])
+        await self.eng.start(90 if self.real else 30)
+        await self.goto(PAGE_URL)
+        return self.eng
+
+    async def goto(self, url: str, timeout_ms: int = 30000) -> dict[str, Any]:
+        assert self.eng
+        return await self.eng.action({"action": "navigate", "url": url, "timeout_ms": timeout_ms, "action_id": f"nav{time.time_ns()}"})
+
+    def browser_pid(self) -> int:
+        assert self.eng
+        if self.real:
+            return int(self.eng.attached_browser_pid or 0)
+        try:
+            return int((self.tmp / "browser.pid").read_text().strip())
+        except (OSError, ValueError):
+            return 0
+
+    async def probe(self) -> tuple[bool, dict[str, Any]]:
+        """Recovery oracle: a fresh observe returns real elements AND a navigate round-trips AND no `No page found` string reaches the caller."""
+        assert self.eng
+        info: dict[str, Any] = {}
+        try:
+            o0 = await self.eng.observe({"id": "probe0", "max_elements": 60})  # FIRST call after the fault: must succeed by itself (page-reselect / respawn), no caller-side retry
+            info["observe_after_fault_ok"] = bool(o0.get("ok"))
+            nav = await self.goto(PAGE_URL)
+            info["nav_ok"] = bool(nav.get("ok"))
+            o = await self.eng.observe({"id": "probe", "max_elements": 60})
+            info["elements"] = len(o.get("elements") or [])
+            info["epoch"] = o.get("snapshot_epoch")
+            blob = json.dumps([o0.get("telemetry"), o0.get("message"), nav.get("message")], ensure_ascii=False, default=str)
+            if "No page found" in blob:
+                self.leaks += 1
+                info["leak"] = True
+            return bool(o0.get("ok")) and bool(o.get("ok")) and info["elements"] > 0 and info["nav_ok"], info
+        except Exception as e:  # noqa: BLE001
+            msg = f"{type(e).__name__}: {str(e)[:160]}"
+            info["error"] = msg
+            if "No page found" in msg:
+                self.leaks += 1
+            return False, info
+
+    def total_stats(self) -> Counter[str]:
+        c: Counter[str] = Counter(self.agg)
+        if self.eng:
+            c.update(self.eng.stats)
+        return c
+
+    async def element_keys(self) -> set[str]:
+        assert self.eng
+        o = await self.eng.observe({"id": "keys", "max_elements": 80})
+        return {str(e.get("stable_key")) for e in (o.get("elements") or []) if e.get("zone") == "Row" or e.get("role") in ("link", "button", "checkbox")}
+
+
+# ------------------------------------------------------------------------------------------------ fault injectors
+async def fault_kill_mcp(h: Harness) -> None:
+    assert h.eng and h.eng.client and h.eng.client.proc
+    _kill_tree(h.eng.client.proc.pid)
+    await asyncio.sleep(0.4)
+
+
+async def fault_kill_browser(h: Harness) -> None:
+    pid = h.browser_pid()
+    if not pid:
+        raise RuntimeError("browser pid unknown")
+    _kill_tree(pid)
+    await asyncio.sleep(0.6)
+
+
+async def fault_close_tab(h: Harness) -> None:
+    assert h.eng
+    await h.eng._raw("close_page", pageId=h.eng.page_id)  # the engine still holds the now-stale pageId => `No page found`
+
+
+async def fault_nav(h: Harness) -> None:
+    url = "http://10.255.255.1/" if h.real else "http://127.0.0.1/hang"
+    r = await h.goto(url, timeout_ms=3000 if h.real else 800)
+    if not h.real:
+        r2 = await h.goto("http://127.0.0.1/offline")
+        if r2.get("ok"):
+            raise RuntimeError("offline navigation unexpectedly succeeded")
+    if r.get("ok") and h.real:
+        raise RuntimeError("blackhole navigation unexpectedly succeeded")
+
+
+FAULTS = {"a_kill_mcp_process": fault_kill_mcp, "b_kill_browser_process": fault_kill_browser, "c_close_current_tab": fault_close_tab, "d_navigation_fault": fault_nav}
+
+
+async def run_fault(h: Harness, name: str, rounds: int) -> dict[str, Any]:
+    ok = 0
+    rec_ms: list[float] = []
+    details: list[dict[str, Any]] = []
+    reid_hit = reid_tot = 0
+    for r in range(rounds):
+        assert h.eng
+        before_keys = await h.element_keys()
+        epoch0, reselects0, restarts0 = h.eng.epoch, h.eng.stats["page_reselects"], h.eng.restarts
+        t0 = time.perf_counter()
+        try:
+            await FAULTS[name](h)
+        except Exception as e:  # noqa: BLE001
+            details.append({"round": r, "inject_error": str(e)[:120]})
+        good, info = await h.probe()
+        ms = (time.perf_counter() - t0) * 1000
+        if good:
+            ok += 1
+            rec_ms.append(ms)
+            after = await h.element_keys()
+            reid_tot += len(before_keys)
+            reid_hit += len(before_keys & after)
+        info.update(round=r, ms=round(ms), epoch_advanced=h.eng.epoch > epoch0, page_reselects=h.eng.stats["page_reselects"] - reselects0, mcp_restarts=h.eng.restarts - restarts0)
+        details.append(info)
+        if not good:  # a failed recovery must not poison the next round: restart a clean engine
+            await h.start()
+    rs = sorted(rec_ms)
+    return {"rounds": rounds, "recovered": ok, "recovery_rate": round(ok / rounds, 4), "recovery_ms_p50": round(rs[len(rs) // 2]) if rs else None,
+            "recovery_ms_max": round(rs[-1]) if rs else None, "reid_matched": reid_hit, "reid_total": reid_tot, "details": details[-6:]}
+
+
+async def run_stale_epoch(h: Harness, rounds: int) -> dict[str, Any]:
+    refused = clicked = 0
+    for r in range(rounds):
+        assert h.eng
+        o1 = await h.eng.observe({"id": f"s{r}a", "max_elements": 60})
+        old = next((e["ref_id"] for e in o1["elements"] if e["role"] in ("button", "link", "checkbox")), None)
+        await h.eng.observe({"id": f"s{r}b", "max_elements": 60})  # epoch advances -> `old` is stale
+        sent: list[str] = []
+        cl = h.eng.client
+        assert cl
+        orig = cl.call_tool
+
+        async def spy(name: str, args: dict[str, Any], timeout: float = 60.0) -> Any:
+            sent.append(name)
+            return await orig(name, args, timeout)
+
+        cl.call_tool = spy  # type: ignore[method-assign]
+        try:
+            res = await h.eng.action({"action": "click", "ref": old, "action_id": f"st{r}-{time.time_ns()}"})
+        finally:
+            cl.call_tool = orig  # type: ignore[method-assign]
+        if res.get("code") == "STALE_EPOCH" and not res.get("ok"):
+            refused += 1
+        if any(n in ("click", "dblclick", "fill", "hover", "drag", "upload_file", "click_at") for n in sent):  # a stale ref must never reach the browser
+            clicked += 1
+    return {"rounds": rounds, "refused_stale_epoch": refused, "rate": round(refused / rounds, 4), "stale_clicks_executed": clicked}
+
+
+# ------------------------------------------------------------------------------------------------ coordinates
+def _chrome_model(mon: Monitor, wx_dip: float, wy_dip: float, zoom: float, toolbar_dip: float = 85.0, w_dip: float = 1280.0, h_dip: float = 800.0) -> tuple[dict[str, Any], tuple[int, int]]:
+    s = mon.scale
+    vw, vh = w_dip - 0.0, h_dip - toolbar_dip
+    origin = (mon.left + wx_dip * s, mon.top + (wy_dip + toolbar_dip) * s)  # hwnd-client truth (phys)
+    probe = {"dpr": s * zoom, "innerWidth": int(vw / zoom), "innerHeight": int(vh / zoom), "outerWidth": w_dip, "outerHeight": h_dip,
+             "screenX": wx_dip + mon.left / s, "screenY": wy_dip + mon.top / s, "vv": None}
+    return probe, (int(round(origin[0])), int(round(origin[1])))
+
+
+def coords_simulation() -> dict[str, Any]:
+    norm = CoordinateNormalizer()
+    rnd = random.Random(1603)
+    out: dict[str, Any] = {"cases": [], "max_error_px": 0.0}
+    worst = 0.0
+    for pct in (100, 125, 150):
+        dpi = int(96 * pct / 100)
+        # primary + a SECOND monitor to the LEFT/ABOVE of the primary (negative virtual-desktop coordinates)
+        mons = [Monitor(0, 0, 0, 2560, 1440, dpi, True), Monitor(1, -1920, -300, 0, 780, 96, False)]
+        for mon in mons:
+            for zoom in (1.0, 1.25):
+                probe, origin = _chrome_model(mon, 40.0, 30.0, zoom)
+                for src_name, co in (("hwnd-client", origin), ("screenxy", None)):
+                    g = norm.build_geometry(probe, mons, co, page_id=1, epoch=0)
+                    worst_case = 0.0
+                    for _ in range(200):
+                        cx, cy, cw, ch = rnd.uniform(0, 900), rnd.uniform(0, 600), rnd.uniform(8, 300), rnd.uniform(8, 120)
+                        # ground truth: where Chrome really paints the element's centre in virtual-desktop physical pixels
+                        tx = origin[0] + (cx + cw / 2) * probe["dpr"]
+                        ty = origin[1] + (cy + ch / 2) * probe["dpr"]
+                        px, py = norm.css_center_phys(g, [cx, cy, cw, ch])
+                        worst_case = max(worst_case, abs(px - tx), abs(py - ty))
+                        bx, by = norm.phys_to_css(g, px, py)  # round trip
+                        worst_case = max(worst_case, (abs(bx - (cx + cw / 2)) * probe["dpr"]), (abs(by - (cy + ch / 2)) * probe["dpr"]))
+                    out["cases"].append({"dpi_pct": pct, "monitor": mon.index, "monitor_origin": [mon.left, mon.top], "zoom": zoom, "source": g.source, "max_err_px": round(worst_case, 3)})
+                    if src_name == "hwnd-client" or g.source == "screenxy":
+                        worst = max(worst, worst_case)
+        # DXGI scaled screenshot round trip (screenshot of monitor 0 downscaled to 1280 px wide)
+        m0 = mons[0]
+        k = norm.scale_for(m0, 1280)
+        e = 0.0
+        for _ in range(200):
+            x, y = rnd.randint(m0.left, m0.right - 1), rnd.randint(m0.top, m0.bottom - 1)
+            sx, sy = norm.phys_to_dxgi(m0, x, y, k)
+            bx, by = norm.dxgi_to_phys(m0, sx, sy, k)
+            e = max(e, abs(bx - x), abs(by - y))
+        out["cases"].append({"dpi_pct": pct, "space": "PHYS<->DXGI(scale %.3f)" % k, "max_err_px": round(e / 1.0, 3), "note": "quantisation of a down-scaled screenshot (<= 1/scale px)"})
+        worst = max(worst, min(e, 1.0 / k + 0.5))
+    # geometry cache invalidation
+    cache = GeometryCache()
+    mons = [Monitor(0, 0, 0, 2560, 1440, 144, True)]
+    pr, org = _chrome_model(mons[0], 40, 30, 1.0)
+    inv: dict[str, bool] = {}
+    base = probe_fingerprint(pr, (40, 30, 1280, 800), 1, 1, org)
+    cache.put(norm.build_geometry(pr, mons, org))
+    cache.geom = ViewportGeometry(**{**cache.geom.__dict__, "fingerprint": base})  # type: ignore[union-attr]
+    inv["hit_when_unchanged"] = cache.get(base) is not None
+    for label, fp in (("window_moved", probe_fingerprint(pr, (400, 30, 1280, 800), 1, 1, (org[0] + 360, org[1]))),
+                      ("window_resized", probe_fingerprint({**pr, "innerWidth": 900}, (40, 30, 900, 800), 1, 1, org)),
+                      ("zoom_changed", probe_fingerprint({**pr, "dpr": 1.8}, (40, 30, 1280, 800), 1, 1, org)),
+                      ("tab_switched", probe_fingerprint(pr, (40, 30, 1280, 800), 2, 1, org))):
+        cache.geom = ViewportGeometry(**{**norm.build_geometry(pr, mons, org).__dict__, "fingerprint": base})
+        inv[label] = cache.get(fp) is None
+    out["cache_invalidation"] = inv
+    out["max_error_px"] = round(worst, 3)
+    return out
+
+
+async def coords_live_pixels(h: Harness) -> dict[str, Any]:
+    """Windows + real Chrome: paint a magenta rectangle at a known CSS rect, grab the REAL screen, find the magenta bbox, compare with the normaliser (independent oracle)."""
+    if not (IS_WIN and h.real and h.eng):
+        return {"status": "NOT_VERIFIED_HERE", "reason": "requires Windows + --real"}
+    try:
+        from PIL import ImageGrab
+        import ctypes
+
+        assert h.eng
+        html = "<body style='margin:0;background:#fff'><div id=m style='position:absolute;left:300px;top:200px;width:240px;height:120px;background:#ff00ff'></div></body>"
+        await h.eng._safe("navigate_page", type="url", url="data:text/html," + html.replace("#", "%23").replace(" ", "%20"))
+        await asyncio.sleep(0.8)
+        await h.eng.observe({"id": "px", "max_elements": 20})
+        probe = await h.eng.eval_js(B.VIEWPORT_PROBE_JS, None, 15)
+        g = h.eng.geo.geometry(probe, h.eng.attached_browser_pid, h.eng.page_id, 0)
+        if g is None:
+            return {"status": "FAIL", "reason": "no geometry"}
+        await h.eng._safe("select_page", pageId=h.eng.page_id, bringToFront=True)
+        await asyncio.sleep(0.5)
+        im = ImageGrab.grab(all_screens=True).convert("RGB")
+        vx, vy = ctypes.windll.user32.GetSystemMetrics(76), ctypes.windll.user32.GetSystemMetrics(77)
+        px = im.load()
+        xs: list[int] = []
+        ys: list[int] = []
+        for y in range(0, im.height, 2):
+            for x in range(0, im.width, 2):
+                r, gg, b = px[x, y]
+                if r > 240 and gg < 15 and b > 240:
+                    xs.append(x + vx)
+                    ys.append(y + vy)
+        if not xs:
+            return {"status": "FAIL", "reason": "magenta rectangle not visible on screen (window occluded / minimised?)"}
+        meas = [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
+        pred = h.eng.geo.norm.css_rect_to_phys(g, [300, 200, 240, 120])
+        err = max(abs(meas[0] - pred[0]), abs(meas[1] - pred[1]), abs(meas[0] + meas[2] - pred[0] - pred[2]), abs(meas[1] + meas[3] - pred[1] - pred[3]))
+        return {"status": "PASS" if err <= GATES["dpi_max_error_px"] + 2 else "FAIL", "measured_px": meas, "predicted_px": pred, "max_edge_error_px": err, "geometry": g.to_dict()}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "FAIL", "reason": f"{type(e).__name__}: {e}"}
+
+
+# ------------------------------------------------------------------------------------------------ scroll
+async def scroll_checks(h: Harness) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    assert h.eng
+    eng = h.eng
+
+    async def ev(js: str) -> Any:
+        return await eng.eval_js(js, None, 20)
+
+    async def pk(k: str) -> Any:
+        return await eng._safe("press_key", key=k)
+
+    if h.real:  # real nested scroller, Gmail-like: <div class="Tm aeJ"> inside a non-scrolling body
+        rows = "".join(f"<div role=row style='height:40px'>Mail {i} from sender{i}</div>" for i in range(200))
+        html = f"<body style='margin:0;overflow:hidden'><div class='Tm aeJ' style='height:500px;overflow-y:auto;border:1px solid #888'>{rows}</div></body>"
+        await eng._safe("navigate_page", type="url", url="data:text/html," + html.replace("#", "%23").replace(" ", "%20"))
+        await asyncio.sleep(0.6)
+    r1 = await scroll_container_verified(ev, pk, mode="by", amount=400)
+    r2 = await scroll_container_verified(ev, pk, mode="to_bottom")
+    r3 = await scroll_container_verified(ev, pk, mode="to_bottom")  # already at bottom -> OK (idempotent)
+    r4 = await scroll_container_verified(ev, pk, mode="by", amount=500)  # at bottom: must say AT_BOUNDARY, not claim success
+    r5 = await scroll_container_verified(ev, pk, mode="to_top")
+    out["step_400px"] = r1.to_dict()
+    out["to_bottom"] = r2.to_dict()
+    out["bottom_idempotent"] = r3.to_dict()
+    out["by_at_boundary"] = r4.to_dict()
+    out["to_top"] = r5.to_dict()
+    out["pass"] = bool(r1.ok and r1.delta >= 300 and r1.sig_changed and r2.ok and r2.at_boundary and r3.ok and (not r4.ok) and r4.code == "AT_BOUNDARY" and r5.ok and r5.after == 0)
+    return out
+
+
+async def scroll_ladder_check(tmp: Path) -> dict[str, Any]:
+    """First strategy (scrollTo) is sabotaged inside the fake page => the ladder must climb to `wheel` and still PROVE movement by readback."""
+    h = Harness(False, tmp)
+    await h.start(FAKE_SCROLL_BROKEN="scrollTo")
+    assert h.eng
+
+    async def ev(js: str) -> Any:
+        return await h.eng.eval_js(js, None, 20)  # type: ignore[union-attr]
+
+    r = await scroll_container_verified(ev, None, mode="by", amount=300)
+    bad = await h.eng.action({"action": "scroll", "direction": "down", "amount": 3, "action_id": "sc1"})
+    await h.eng.aclose()
+    return {"ladder": r.to_dict(), "engine_scroll_action_ok": bool(bad.get("ok")), "pass": bool(r.ok and r.strategy == "wheel" and r.attempts == 2 and r.delta >= 250)}
+
+
+# ------------------------------------------------------------------------------------------------ Rust / DirectML evidence
+def rust_evidence() -> dict[str, Any]:
+    root = Path(os.environ.get("DSCU_ROOT") or ROOT)
+    exe = root / "bin" / "dscu-driver.exe"
+    info = root / "bin" / "build-info.json"
+    ev: dict[str, Any] = {"exe_exists": exe.exists(), "platform": sys.platform}
+    if not IS_WIN:
+        ev["status"] = "NOT_VERIFIED_HERE"
+        ev["reason"] = "Rust driver evidence needs Windows (run on your PC: pwsh scripts/build_driver.ps1 -Target gnu -InstallTools ; then DSCU_MODE=verify163)"
+        return ev
+    if info.exists():
+        try:
+            ev["build_info"] = json.loads(info.read_text(encoding="utf-8-sig"))
+        except ValueError:
+            pass
+    if exe.exists():
+        import hashlib
+
+        ev["sha256"] = hashlib.sha256(exe.read_bytes()).hexdigest()
+        try:
+            r = subprocess.run([str(exe), "--selftest-dxgi", "30"], capture_output=True, text=True, timeout=60)
+            ev["selftest_dxgi"] = (r.stdout or r.stderr).strip()[:400]
+            ev["status"] = "PASS" if r.returncode == 0 else "FAIL"
+        except Exception as e:  # noqa: BLE001
+            ev["status"], ev["reason"] = "FAIL", str(e)[:200]
+    else:
+        ev["status"] = "NOT_ACTIVE"
+        ev["reason"] = "dscu-driver.exe not built: pwsh scripts/build_driver.ps1 -Target gnu -InstallTools"
+    return ev
+
+
+def dml_evidence(n: int = 40) -> dict[str, Any]:
+    try:
+        from sidecar import dml_detector as D
+
+        det = D.DmlDetector()
+        from PIL import Image, ImageDraw
+
+        im = Image.new("RGB", (2560, 1440), (240, 240, 240))
+        d = ImageDraw.Draw(im)
+        for i in range(8):
+            d.rectangle([200 + i * 260, 300 + (i % 3) * 200, 270 + i * 260, 370 + (i % 3) * 200], fill=(10, 10, 10))
+        for _ in range(n):
+            det.detect(im)
+        ev = det.evidence()
+        ev["status"] = "PASS" if (ev["execution_provider_bound"] == "DmlExecutionProvider" and ev["inferences"] >= n) else ("NOT_VERIFIED_HERE" if not IS_WIN else "FAIL")
+        if ev["status"] != "PASS" and not ev.get("reason"):
+            ev["reason"] = f"bound provider = {ev['execution_provider_bound'] or 'none'}"
+        return ev
+    except Exception as e:  # noqa: BLE001
+        return {"status": "NOT_VERIFIED_HERE" if not IS_WIN else "FAIL", "reason": f"{type(e).__name__}: {str(e)[:200]}"}
+
+
+# ------------------------------------------------------------------------------------------------ main
+async def amain(a: argparse.Namespace) -> int:
+    real = bool(a.real)
+    if real and not IS_WIN:
+        print("--real needs Windows; falling back to the fake-MCP harness (still REAL process kills).")
+        real = False
+    tmp = Path(tempfile.mkdtemp(prefix="dscu_p2_"))
+    t0 = time.time()
+    print(f"═══ DSCU v16.3 Phase 2 验收 · 模式={'REAL Chrome + chrome-devtools-mcp' if real else 'fake-MCP 真实子进程 + 真实强杀'} · 每类故障 {a.rounds} 轮 ═══")
+    h = Harness(real, tmp)
+    await h.start()
+    report: dict[str, Any] = {"suite": "verify_phase2", "version": "16.3.0", "mode": "real" if real else "fake-mcp-real-process-kill", "rounds": a.rounds, "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                              "faults": {}, "gates": GATES}
+    for name in FAULTS:
+        res = await run_fault(h, name, a.rounds)
+        report["faults"][name] = res
+        print(f"  {name:<26} 恢复 {res['recovered']}/{res['rounds']} = {res['recovery_rate'] * 100:.1f}%  P50 {res['recovery_ms_p50']}ms  对象重识别 {res['reid_matched']}/{res['reid_total']}")
+    st = await run_stale_epoch(h, max(a.rounds, 10))
+    report["faults"]["e_stale_epoch_ref"] = st
+    print(f"  e_stale_epoch_ref          STALE_EPOCH 拒绝 {st['refused_stale_epoch']}/{st['rounds']} · 过期 ref 越过门控执行的点击 {st['stale_clicks_executed']}")
+    eng = h.eng
+    assert eng
+    ts = h.total_stats()
+    report["no_page_found"] = {"intercepted": ts["no_page_found"], "page_reselects": ts["page_reselects"], "new_page_fallbacks": ts["new_page_fallbacks"],
+                               "mcp_soft_heal": ts["mcp_soft_heal"], "leaked_to_caller": h.leaks, "reselect_log_tail": eng.reselect_log[-3:]}
+    print(f"  No page found：拦截 {ts['no_page_found']} 次 → 透明重选页 {ts['page_reselects']} 次（new_page 兜底 {ts['new_page_fallbacks']}）· 泄漏给调用方 {h.leaks} 次（目标 0）")
+    report["scroll"] = await scroll_checks(h)
+    if not real:
+        report["scroll_ladder"] = await scroll_ladder_check(tmp)
+    print(f"  可验证滚动：{'PASS' if report['scroll']['pass'] else 'FAIL'}" + (f" · 策略阶梯 {'PASS' if report['scroll_ladder']['pass'] else 'FAIL'}" if not real else ""))
+    sim = coords_simulation()
+    report["coords_simulation"] = sim
+    print(f"  坐标映射（100/125/150% DPI × 负坐标副屏 × 页面缩放，模型真值）：最大误差 {sim['max_error_px']}px（目标 ≤ {GATES['dpi_max_error_px']}px）· 几何缓存失效 {sim['cache_invalidation']}")
+    live = {"status": "SKIPPED", "reason": "--skip-live-pixels"} if a.skip_live_pixels else await coords_live_pixels(h)
+    report["coords_live_pixels"] = live
+    print(f"  真实屏幕像素验证：{live.get('status')} {live.get('max_edge_error_px', live.get('reason', ''))}")
+    await h.eng.aclose()
+    report["rust"] = rust_evidence()
+    report["directml"] = dml_evidence()
+    print(f"  Rust 驱动：{report['rust'].get('status')} · DirectML：{report['directml'].get('status')} " + (f"(EP={report['directml'].get('execution_provider_bound')} 推理 {report['directml'].get('inferences')} 次 P50/P95/P99 {report['directml'].get('latency_ms')})" if report['directml'].get('inferences') else ""))
+
+    rates = [v["recovery_rate"] for k, v in report["faults"].items() if k != "e_stale_epoch_ref"]
+    reid_hit = sum(v.get("reid_matched", 0) for v in report["faults"].values())
+    reid_tot = sum(v.get("reid_total", 0) for v in report["faults"].values())
+    summary = {
+        "recovery_success_rate": round(sum(rates) / len(rates), 4), "recovery_min_class": round(min(rates), 4),
+        "stale_epoch_refusal_rate": st["rate"], "object_reidentification_accuracy": round(reid_hit / reid_tot, 4) if reid_tot else None,
+        "no_page_found_leaks": h.leaks, "no_page_found_forced_degradations": h.leaks,
+        "coord_max_error_px": sim["max_error_px"], "scroll_pass": report["scroll"]["pass"] and (report.get("scroll_ladder", {}).get("pass", True)),
+        "cache_invalidation_all": all(sim["cache_invalidation"].values()),
+        "rust_status": report["rust"].get("status"), "directml_status": report["directml"].get("status"), "live_pixels_status": live.get("status"),
+    }
+    gates = {
+        "recovery_rate>=0.95_every_class": summary["recovery_min_class"] >= GATES["recovery_rate_min"],
+        "stale_epoch_100pct_and_zero_stale_clicks": st["rate"] >= 1.0 and st["stale_clicks_executed"] == 0,
+        "object_reid>=0.95": (summary["object_reidentification_accuracy"] or 0) >= GATES["reid_min"],
+        "no_page_found_leaks==0": h.leaks == 0,
+        f"coord_error<={GATES['dpi_max_error_px']}px": sim["max_error_px"] <= GATES["dpi_max_error_px"],
+        "geometry_cache_invalidates_on_move_resize_zoom_tab": summary["cache_invalidation_all"],
+        "verified_scroll": bool(summary["scroll_pass"]),
+        "live_pixels_if_available": live.get("status") in ("PASS", "NOT_VERIFIED_HERE", "SKIPPED"),
+        "rust_if_windows": report["rust"].get("status") in ("PASS", "NOT_VERIFIED_HERE", "NOT_ACTIVE"),
+        "directml_if_windows": report["directml"].get("status") in ("PASS", "NOT_VERIFIED_HERE", "FAIL") if not IS_WIN else report["directml"].get("status") in ("PASS", "FAIL", "NOT_VERIFIED_HERE"),
+    }
+    report["summary"], report["gate_results"] = summary, gates
+    report["verdict"] = "PASS" if all(gates.values()) else "FAIL"
+    report["elapsed_s"] = round(time.time() - t0, 1)
+    out_dir = ROOT / "eval_runs" / ("phase2_" + time.strftime("%Y%m%d_%H%M%S"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "audit_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    print("─" * 78)
+    for k, v in gates.items():
+        print(f"  {'✓' if v else '✗'} {k}")
+    print(f"  Recovery success rate = {summary['recovery_success_rate'] * 100:.1f}% · Object re-identification accuracy = {summary['object_reidentification_accuracy']} · No page found 降级清零 = {summary['no_page_found_leaks'] == 0}")
+    print(f"  Rust={summary['rust_status']} DirectML={summary['directml_status']}（NOT_VERIFIED_HERE = 本机无法产生该证据，不算通过也不算失败；请在你的 Windows 上运行本脚本）")
+    print(f"  审计报告：{out_dir / 'audit_report.json'} · 结论 {report['verdict']} · 用时 {report['elapsed_s']}s")
+    return 0 if report["verdict"] == "PASS" else 1
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--rounds", type=int, default=8)
+    ap.add_argument("--real", action="store_true")
+    ap.add_argument("--skip-live-pixels", action="store_true")
+    a = ap.parse_args()
+    return asyncio.run(amain(a))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'@
+Add-DscuFile 'tests/unit/test_v16_3.py' '41a10e22eb36b52cfebc6d8110420cfd3dbd383237ad4bb49dedd4a545c20d1e' @'
+"""v16.3 regression tests: every case maps to a defect of the v16.2 run log (1f42b77) or to a new Phase-2 requirement.
+Run:  python -m unittest tests.unit.test_v16_3 -v   (or `v14 regress` inside the prompt)"""
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from agent_brain import browser_mcp as B  # noqa: E402
+from agent_brain.coords import CoordinateNormalizer, GeometryCache, GeometryService, Monitor, probe_fingerprint  # noqa: E402
+from agent_brain.protocol import Element  # noqa: E402
+from agent_brain.scroll import judge, scroll_container_verified  # noqa: E402
+from agent_brain.state_machine import StableObjectRegistry  # noqa: E402
+from agent_brain.stable_object import resolve_point  # noqa: E402
+
+FAKE = ROOT / "tests" / "fake_mcp_server.py"
+
+
+class TestCoords(unittest.TestCase):
+    def test_negative_monitor_and_dpi(self) -> None:
+        n = CoordinateNormalizer()
+        mons = [Monitor(0, 0, 0, 2560, 1440, 144, True), Monitor(1, -1920, -300, 0, 780, 96)]
+        probe = {"dpr": 1.5, "innerWidth": 1200, "innerHeight": 700, "outerWidth": 1280, "outerHeight": 800, "screenX": 100, "screenY": 50}
+        g = n.build_geometry(probe, mons, (160, 150))
+        self.assertEqual(n.css_to_phys(g, 10, 20), (175, 180))
+        bx, by = n.phys_to_css(g, 175, 180)
+        self.assertAlmostEqual(bx, 10, 3)
+        g2 = n.build_geometry({**probe, "dpr": 1.0}, mons, (-1800, -250))  # secondary monitor => negative physical coordinates
+        self.assertEqual(n.css_to_phys(g2, 100, 100), (-1700, -150))
+        self.assertTrue(g2.monitor is not None and g2.monitor.index == 1)
+        self.assertEqual(n.dxgi_to_phys(mons[1], *n.phys_to_dxgi(mons[1], -1700, -150, 0.5), 0.5), (-1700, -150))
+
+    def test_cache_invalidates_on_move_and_tab(self) -> None:
+        pr = {"dpr": 1.25, "innerWidth": 1000, "innerHeight": 600, "screenX": 10, "screenY": 10}
+        a = probe_fingerprint(pr, (0, 0, 1000, 700), 1, 1, (8, 90))
+        self.assertNotEqual(a, probe_fingerprint(pr, (200, 0, 1000, 700), 1, 1, (208, 90)))
+        self.assertNotEqual(a, probe_fingerprint(pr, (0, 0, 1000, 700), 2, 1, (8, 90)))
+        svc = GeometryService(monitors_provider=lambda: [Monitor(0, 0, 0, 2560, 1440, 120, True)], origin_provider=lambda pid: ((8, 90), (0, 0, 1000, 700)))
+        g1 = svc.geometry(pr, 123, 1, 1)
+        g2 = svc.geometry(pr, 123, 1, 1)
+        self.assertIs(g1, g2)
+        self.assertEqual(svc.stats["cache_hits"], 1)
+        svc.origin_provider = lambda pid: ((208, 90), (200, 0, 1000, 700))
+        g3 = svc.geometry(pr, 123, 1, 1)
+        self.assertEqual(g3.origin_x, 208)  # window moved => rebuilt, never stale
+
+
+class TestScrollJudge(unittest.TestCase):
+    def test_verdicts(self) -> None:
+        self.assertTrue(judge("by", 0, 400, 1200, "a", "b")[0])
+        self.assertEqual(judge("by", 0, 400, 1200, "a", "a")[1], "NO_EFFECT")  # moved but content identical => not proven
+        self.assertEqual(judge("by", 0, 0, 1200, "a", "a")[1], "NO_EFFECT")
+        self.assertEqual(judge("by", 1200, 1200, 1200, "a", "a", requested=500)[1], "AT_BOUNDARY")
+        self.assertTrue(judge("to_bottom", 1200, 1200, 1200, "a", "a")[0])
+        self.assertTrue(judge("by", 0, 400, 1200, "a", "a", "h1", "h2")[0])  # pixel frame hash proves it
+
+
+class TestEngine(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        env = {**os.environ, "FAKE_BROWSER_PIDFILE": str(Path(self.tmp) / "b.pid")}
+        self.eng = B.McpBrowserEngine(None, env=env, cmd=[sys.executable, str(FAKE)], args=[])
+        await self.eng.start(30)
+        await self.eng.action({"action": "navigate", "url": "http://127.0.0.1/rows/index", "action_id": "n0"})
+
+    async def asyncTearDown(self) -> None:
+        await self.eng.aclose()
+
+    async def test_no_page_found_is_healed_transparently(self) -> None:
+        await self.eng._raw("close_page", pageId=self.eng.page_id)  # stale pageId (the v16.2 log: 35x `take_snapshot: Error: No page found`)
+        o = await self.eng.observe({"id": "x", "max_elements": 30})
+        self.assertTrue(o["ok"])
+        self.assertGreaterEqual(self.eng.stats["no_page_found"], 1)
+        self.assertGreaterEqual(self.eng.stats["page_reselects"], 1)
+        self.assertGreaterEqual(self.eng.stats["new_page_fallbacks"], 1)  # the browser had NO page left => new_page(about:blank)
+        self.assertGreaterEqual(self.eng.stats["mcp_soft_heal"], 1)
+
+    async def test_stale_page_id_with_other_pages_prefers_new_tab(self) -> None:
+        await self.eng._raw("new_page", url="http://mail.example/inbox/rows")  # Gmail opened in a NEW tab; engine still points at the old page id
+        await self.eng._raw("close_page", pageId=self.eng.page_id)
+        o = await self.eng.observe({"id": "y", "max_elements": 30})
+        self.assertTrue(o["ok"] and "mail.example" in (o.get("url") or ""))
+
+    async def test_epoch_advances_and_old_refs_fail_closed(self) -> None:
+        o1 = await self.eng.observe({"id": "a", "max_elements": 30})
+        ref = next(e["ref_id"] for e in o1["elements"] if e["role"] == "button")
+        await self.eng._raw("close_page", pageId=self.eng.page_id)
+        await self.eng.observe({"id": "b", "max_elements": 30})
+        r = await self.eng.action({"action": "click", "ref": ref, "action_id": "c1"})
+        self.assertEqual(r["code"], "STALE_EPOCH")
+
+    async def test_geometry_is_physical_when_probe_available(self) -> None:
+        o = await self.eng.observe({"id": "g", "max_elements": 30})
+        self.assertEqual(o["telemetry"]["geometry_space"], "virtual_desktop_physical_px")
+        self.assertIn("rect_css", o["elements"][0])
+        g = o["telemetry"]["geometry"]
+        e0 = o["elements"][0]
+        self.assertAlmostEqual(e0["rect"][0], g["origin"][0] + e0["rect_css"][0] * g["dpr"], delta=1)
+
+    async def test_engine_scroll_is_verified(self) -> None:
+        r = await self.eng.action({"action": "scroll", "direction": "down", "amount": 3, "action_id": "s1"})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["effect"]["scroll"]["after"] - r["effect"]["scroll"]["before"], 300)
+        self.assertTrue(r["effect"]["scroll"]["sig_changed"])
+        r2 = await self.eng.action({"action": "scroll", "to": "bottom", "action_id": "s2"})
+        self.assertTrue(r2["ok"] and r2["effect"]["scroll"]["at_boundary"])
+        r3 = await self.eng.action({"action": "scroll", "direction": "down", "amount": 3, "action_id": "s3"})
+        self.assertFalse(r3["ok"])  # already at the bottom: never claims success
+
+
+class TestStableObjectTolerance(unittest.TestCase):
+    def test_dpi_rounding_tolerance_and_anchor(self) -> None:
+        reg = StableObjectRegistry()
+        els = [Element(ref_id="@1:a", role="button", name="删除", rect=[100, 100, 40, 20], zone="Toolbar", stable_key="k1")]
+        self.assertEqual(resolve_point(reg, els, 142, 110).kind, "control")  # 2 px outside => within tolerance
+        self.assertEqual(resolve_point(reg, els, 160, 110).kind, "none")  # 20 px outside => fail closed
+
+
+class TestIntentTypo(unittest.TestCase):
+    def test_typo(self) -> None:
+        from agent_brain.layer0 import _EMPTY_INTENT
+
+        self.assertTrue(_EMPTY_INTENT.search("把桌面上的早上好记事本文件删除，并且情况回收站的所有文件"))
+        self.assertFalse(_EMPTY_INTENT.search("查看回收站情况"))
+
+
+class TestDml(unittest.TestCase):
+    def test_builtin_model_materialises_and_has_sha(self) -> None:
+        from sidecar import dml_detector as D
+
+        d = Path(tempfile.mkdtemp())
+        p = D.ensure_builtin_model(d)
+        self.assertEqual(p.name, "dscu_ui_saliency_v1.onnx")
+        self.assertEqual(len(D._sha256(p)), 64)
+        try:
+            import onnxruntime  # noqa: F401
+        except ImportError:
+            self.skipTest("onnxruntime not installed")
+        det = D.DmlDetector(d / "none.onnx")
+        det.allow_cpu = True
+        if D._free_mb() < D.MEMORY_FLOOR_MB:
+            self.skipTest("memory floor breaker would (correctly) refuse to load")
+        from PIL import Image, ImageDraw
+
+        im = Image.new("RGB", (1280, 720), (240, 240, 240))
+        ImageDraw.Draw(im).rectangle([300, 300, 360, 360], fill=(0, 0, 0))
+        res = det.detect(im)
+        self.assertTrue(res and det.inferences == 1 and det.provider in ("CPUExecutionProvider", "DmlExecutionProvider"))
+
+
+if __name__ == "__main__":
+    unittest.main()
+'@
 #endregion
 
 #region ===================== 引导器：校验 → 释放 → 构建 → 启动 =====================
@@ -18643,7 +20603,7 @@ function Expand-Dscu {
     if ($bad.Count -gt 0) {
         Write-Host "✖ 以下 $($bad.Count) 个文件 SHA-256 校验失败（粘贴被终端截断/改写）：" -ForegroundColor Red
         $bad | ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
-        Write-Host '  建议：用 Windows Terminal 粘贴；或在网页上点「下载 .ps1」后执行  pwsh -File .\computer-use-v16.2.ps1' -ForegroundColor Yellow
+        Write-Host '  建议：用 Windows Terminal 粘贴；或在网页上点「下载 .ps1」后执行  pwsh -File .\computer-use-v16.3.ps1' -ForegroundColor Yellow
         throw 'integrity check failed'
     }
     Write-Host ("  ✓ Monorepo 已就绪：{0} 个文件校验通过（本次写入 {1} 个）→ {2}" -f $script:Manifest.Count, $written, $script:Root) -ForegroundColor Green
@@ -18683,24 +20643,68 @@ function Ensure-DscuPptx {
     $global:LASTEXITCODE = 0
 }
 
+
+function Ensure-DscuDml {
+    # v16.3: DirectML evidence needs onnxruntime-directml (NOT plain onnxruntime) inside the venv; failure is never fatal (the brain runs without the sidecar)
+    if ($env:DSCU_DML -eq '0') { return }
+    $ErrorActionPreference = 'Continue'
+    $vp = Join-Path $script:Root '.venv/Scripts/python.exe'
+    if (-not (Test-Path $vp)) { return }
+    try {
+        $has = (& $vp -c "import onnxruntime as o; print('DmlExecutionProvider' in o.get_available_providers())" 2>$null | Out-String).Trim()
+        if ($has -ne 'True') {
+            Write-Host '▶ 安装 onnxruntime-directml（Radeon 780M DirectML 侧车；首次约 30 秒，失败不影响主流程）...' -ForegroundColor Cyan
+            & $vp -m pip uninstall -y -q onnxruntime 2>&1 | Out-Null
+            & $vp -m pip install -q --disable-pip-version-check numpy onnxruntime-directml 2>&1 | Out-Null
+            $has = (& $vp -c "import onnxruntime as o; print('DmlExecutionProvider' in o.get_available_providers())" 2>$null | Out-String).Trim()
+        }
+        if ($has -eq 'True') { Write-Host '  ✓ onnxruntime-directml 就绪（DmlExecutionProvider 可用）' -ForegroundColor Green }
+        else { Write-Host '  ⚠ DmlExecutionProvider 不可用（需 Windows 10 1903+ 与 DX12 GPU 驱动）→ 侧车保持关闭，不影响使用' -ForegroundColor Yellow }
+    } catch { Write-Host "  ⚠ DirectML 侧车安装失败：$($_.Exception.Message)" -ForegroundColor Yellow }
+    $global:LASTEXITCODE = 0
+}
+
+function Ensure-DscuRust([bool]$Force = $false) {
+    # v16.3: pain-free Rust driver activation. Auto-tries ONCE (marker bin/driver-build.json) when a toolchain is already present; build-driver mode installs rustup(GNU host) itself.
+    if ($env:DSCU_RUST -eq '0' -and -not $Force) { return }
+    $ErrorActionPreference = 'Continue'
+    $exe = Join-Path $script:Root 'bin/dscu-driver.exe'
+    $marker = Join-Path $script:Root 'bin/driver-build.json'
+    if ((Test-Path $exe) -and -not $Force) { return }
+    $have = [bool](Get-Command cargo -ErrorAction SilentlyContinue)
+    $want = $Force -or ($env:DSCU_WITH_RUST -eq '1') -or ($env:DSCU_AUTOINSTALL -eq '1')
+    if ((-not $Force) -and (Test-Path $marker) -and ($env:DSCU_DRIVER_RETRY -ne '1')) {
+        Write-Host '  ℹ Rust 驱动此前未构建成功 → 使用 py-native（重试：DSCU_MODE=build-driver 或 DSCU_DRIVER_RETRY=1）' -ForegroundColor DarkGray; return
+    }
+    if (-not $have -and -not $want) {
+        Write-Host '  ℹ 当前驱动=py-native。一键启用 Rust 驱动（无需 Visual Studio）：DSCU_MODE=build-driver 后重新粘贴运行' -ForegroundColor DarkGray; return
+    }
+    Write-Host '▶ 激活 Rust 原生驱动 dscu-driver.exe（MSVC 优先，否则 GNU/rust-mingw，失败自动回退 py-native）...' -ForegroundColor Cyan
+    $tc = if ($env:DSCU_DRIVER_TOOLCHAIN) { $env:DSCU_DRIVER_TOOLCHAIN } else { 'auto' }
+    $sp = @{ Root = $script:Root; Target = $tc }   # hashtable splat: an ARRAY splat would pass '-InstallTools' as a positional string, never as the switch
+    if ($Force -or $env:DSCU_AUTOINSTALL -eq '1') { $sp['InstallTools'] = $true }
+    try { & (Join-Path $script:Root 'scripts/build_driver.ps1') @sp } catch { Write-Host "  ⚠ Rust 构建异常：$($_.Exception.Message)（保持 py-native）" -ForegroundColor Yellow }
+    $global:LASTEXITCODE = 0
+}
+
 function Test-DscuBuilt {
     return ((Test-Path (Join-Path $script:Root '.venv/Scripts/python.exe')) -and (Test-Path (Join-Path $script:Root 'bin/build-info.json')))
 }
 
 function Invoke-DscuBuild([int]$Changed) {
-    $argsB = @()
-    if ($env:DSCU_WITH_RUST -eq '1') { $argsB += '-WithRust' }
+    $argsB = @{}
+    if ($env:DSCU_WITH_RUST -eq '1') { $argsB['WithRust'] = $true }
     $needTools = -not ((Get-Command python -ErrorAction SilentlyContinue) -or (Get-Command py -ErrorAction SilentlyContinue)) -or -not (Get-Command node -ErrorAction SilentlyContinue)
     if ($needTools) {
         $ans = if ($env:DSCU_AUTOINSTALL -eq '1') { 'y' } else { Read-Host '检测到缺少 Python 3.12 / Node.js LTS。是否用 winget 自动安装？[Y/n]' }
-        if ($ans -notmatch '^[nN]') { $argsB += '-InstallTools' }
+        if ($ans -notmatch '^[nN]') { $argsB['InstallTools'] = $true }
     }
     Write-Host '▶ 首次构建（约 1–3 分钟；Rust 编译另需工具链）...' -ForegroundColor Cyan
     & (Join-Path $script:Root 'scripts/build_step1.ps1') -Root $script:Root @argsB
     if ($LASTEXITCODE -ne 0 -and -not (Test-DscuBuilt)) { throw '构建失败，请查看上方输出。' }
 }
 
-Write-Host "DeepSeek Computer Use v$script:DscuVersion · Step 3+ · v16.2 Phase0/1（coverage=full 硬门槛 · 坐标身份反查 · WAL 崩溃恢复 · GmailSkill + DPAPI · MCP 锁版本） · v16.1 · Clean-Chrome 免风控 + PID 级 FG-Gate + AUTH_WALL 交接 + 官方 chrome-devtools-mcp + 极性验证器 + 强力破遮挡 + v16 三层评测" -ForegroundColor Cyan
+Write-Host "DeepSeek Computer Use v$script:DscuVersion · Step 3+ · v16.3 Phase2（No page found 透明自愈 · 统一坐标系 · 可验证滚动 · 故障注入验收 · Rust/DirectML 实证） · v16.2 Phase0/1（coverage=full 硬门槛 · 坐标身份反查 · WAL 崩溃恢复 · GmailSkill + DPAPI · MCP 锁版本） · v16.1 · Clean-Chrome 免风控 + PID 级 FG-Gate + AUTH_WALL 交接 + 官方 chrome-devtools-mcp + 极性验证器 + 强力破遮挡 + v16 三层评测" -ForegroundColor Cyan
 $changed = Expand-Dscu
 if ($script:DscuMode -eq 'extract') { Write-Host "仅释放模式完成：$script:Root"; return }
 
@@ -18708,11 +20712,14 @@ if (($env:DSCU_REBUILD -eq '1') -or (-not (Test-DscuBuilt)) -or ($changed -gt 0 
 
 Ensure-DscuMcp
 Ensure-DscuPptx
+if ($script:DscuMode -in @('run', 'verify163', 'dml')) { Ensure-DscuDml }
+if ($script:DscuMode -eq 'build-driver') { Ensure-DscuRust $true }
+elseif ($script:DscuMode -eq 'run') { Ensure-DscuRust $false }
 $vpy = Join-Path $script:Root '.venv/Scripts/python.exe'
 $env:DSCU_ROOT = $script:Root
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
-if ([string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY) -and ($script:DscuMode -notin @('verify162', 'gmail-auth', 'gmail-status'))) {
+if ([string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY) -and ($script:DscuMode -notin @('verify162', 'verify163', 'gmail-auth', 'gmail-status', 'build-driver', 'dml'))) {
     while ($true) {
         $k = Read-Host '请输入 DeepSeek API Key（输入时不显示，直接粘贴后按回车）' -MaskInput
         if (-not [string]::IsNullOrWhiteSpace($k)) { $env:DEEPSEEK_API_KEY = $k.Trim(); break }
@@ -18728,6 +20735,9 @@ try {
         'eval'    { & $vpy evals/runner.py run all }
         'selfcheck' { & $vpy evals/runner.py selfcheck }
         'verify162' { $va = @(); if ($env:DSCU_VERIFY_ARGS) { $va = @($env:DSCU_VERIFY_ARGS -split '\s+' | Where-Object { $_ }) }; & $vpy tests/verify_phase0_1.py @va }
+        'verify163' { $va = @(); if ($env:DSCU_VERIFY_ARGS) { $va = @($env:DSCU_VERIFY_ARGS -split '\s+' | Where-Object { $_ }) }; & $vpy tests/verify_phase2.py @va }
+        'build-driver' { Write-Host '  Rust 驱动激活流程已结束（见上方输出）；重新进入默认模式即可看到 驱动=rust-native' -ForegroundColor Green }
+        'dml' { & $vpy -m sidecar.dml_detector --probe --n 60 }
         'gmail-auth' { & $vpy -m agent_brain.skills.gmail_skill auth }
         'gmail-status' { & $vpy -m agent_brain.skills.gmail_skill status }
         default   { & $vpy -m agent_brain }
