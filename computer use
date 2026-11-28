@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-  DeepSeek Computer Use v17.1 (Phase 12 治本收口版：异步 OCR 协程修通(RuntimeWarning 清零) · 通用 WebActionGoal(网页点击/下拉/跳转不再 unverified) · 确定性 WeChatSkill 5/5 闭环(UIA+DirectML+OCR) · Gmail 同 Snapshot-Epoch 冻结 + 去状态词身份 · 终端/开发标签页过滤 · 一键 Rust 激活 + verify164 --real 验收(DSCU_MODE=accept171)；基于 v17.0 (Qualitative Leap Release：真 Rust dscu-driver.exe 零 MSVC 自动激活(便携 llvm-mingw + gnullvm，驱动=rust-native) · 真训练 OmniParser icon_detect ONNX 绑定 Radeon 780M DmlExecutionProvider(SHA-256 固定) · Target/Trigger 解耦 ActionGate(工具栏删除不再被 OBJECT_IDENTITY_MISMATCH 误拦) · Explorer/回收站 UIA SelectionItemPattern 真选中并回读 · 回收站 Shell COM 单文件精准技能 · Shell.Application.Windows 窗口 Oracle · 无扩展名文件模糊解析 · DirectML 候选框+文本直连 deepseek-chat；基于 v16.4 (Critical Stabilization Sprint：WindowManager 点击/截图归属双校验 · 意图完整性门控 · AppWindow/FormField/MessageSend 强类型 GoalSchema · 强类型 Selector · Token/诊断/无进展熔断 · 驱动/DirectML 实证；基于 v16.3 Phase 2 修复：MCP `No page found` 透明重选页自愈（35 次降级清零）· 统一 DPI/视口/多屏负坐标坐标系 + 可验证滚动 scroll_container_verified · 真实故障注入验收 verify_phase2 · Rust GNU/MSVC 免痛激活 + DirectML 运行实证 · Gmail 一键授权向导 · SoM+文本锚点对象注册) 基于 v16.2 (Phase 0 & 1：可信成功标准 coverage=full 硬门槛 · StableObject 坐标反查 OBJECT_IDENTITY_MISMATCH · WAL 崩溃恢复 · 生产级 GmailSkill 两阶段闭环 + Windows DPAPI · chrome-devtools-mcp@1.14.0 锁版本) 基于 v16.1 (Step 3+) —— Clean-Chrome --browserUrl / Chrome146 --autoConnect 免风控登录 Gmail + PID 级 FG-Gate + 进程名 app_resolve + AUTH_WALL 1 步人工交接 + 零重启 MCP Supervisor —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
+  DeepSeek Computer Use v18.0 (Unified Object Identity & Reliable Execution：UnifiedObjectRef 跨通道统一身份 · Target/Trigger 解耦门控 · WorldStateDiff 证据门控回退 · 真实微信校准 · 实时确定性控制环 · 8 维量化评测)；基于 v17.1 (Phase 12 治本收口版：异步 OCR 协程修通(RuntimeWarning 清零) · 通用 WebActionGoal(网页点击/下拉/跳转不再 unverified) · 确定性 WeChatSkill 5/5 闭环(UIA+DirectML+OCR) · Gmail 同 Snapshot-Epoch 冻结 + 去状态词身份 · 终端/开发标签页过滤 · 一键 Rust 激活 + verify164 --real 验收(DSCU_MODE=accept171)；基于 v17.0 (Qualitative Leap Release：真 Rust dscu-driver.exe 零 MSVC 自动激活(便携 llvm-mingw + gnullvm，驱动=rust-native) · 真训练 OmniParser icon_detect ONNX 绑定 Radeon 780M DmlExecutionProvider(SHA-256 固定) · Target/Trigger 解耦 ActionGate(工具栏删除不再被 OBJECT_IDENTITY_MISMATCH 误拦) · Explorer/回收站 UIA SelectionItemPattern 真选中并回读 · 回收站 Shell COM 单文件精准技能 · Shell.Application.Windows 窗口 Oracle · 无扩展名文件模糊解析 · DirectML 候选框+文本直连 deepseek-chat；基于 v16.4 (Critical Stabilization Sprint：WindowManager 点击/截图归属双校验 · 意图完整性门控 · AppWindow/FormField/MessageSend 强类型 GoalSchema · 强类型 Selector · Token/诊断/无进展熔断 · 驱动/DirectML 实证；基于 v16.3 Phase 2 修复：MCP `No page found` 透明重选页自愈（35 次降级清零）· 统一 DPI/视口/多屏负坐标坐标系 + 可验证滚动 scroll_container_verified · 真实故障注入验收 verify_phase2 · Rust GNU/MSVC 免痛激活 + DirectML 运行实证 · Gmail 一键授权向导 · SoM+文本锚点对象注册) 基于 v16.2 (Phase 0 & 1：可信成功标准 coverage=full 硬门槛 · StableObject 坐标反查 OBJECT_IDENTITY_MISMATCH · WAL 崩溃恢复 · 生产级 GmailSkill 两阶段闭环 + Windows DPAPI · chrome-devtools-mcp@1.14.0 锁版本) 基于 v16.1 (Step 3+) —— Clean-Chrome --browserUrl / Chrome146 --autoConnect 免风控登录 Gmail + PID 级 FG-Gate + 进程名 app_resolve + AUTH_WALL 1 步人工交接 + 零重启 MCP Supervisor —— 官方 ChromeDevTools/chrome-devtools-mcp 浏览器引擎 + 极性验证器 + AttachThreadInput 强力破遮挡 + USER_ACTIVE 防误触发 —— 自愈 CDP + 错误驱动恢复剧本 + 受控桌面安全原语 + 3 层可复现 Benchmark。
   直接整段粘贴到 PowerShell 7 → 输入 DeepSeek API Key → 出现「请输入任务」提示符即可使用（与 v12/v13/v14 的使用方式完全相同）。
 .DESCRIPTION
   本脚本是【自解压引导器】（与 v14 同构）：
@@ -38,9 +38,21 @@
   v17.1 新增模式：DSCU_MODE=accept171(一键验收：回归门禁 PYTHONWARNINGS=error::RuntimeWarning → bootstrap-rust → verify164 --real --rounds 10 → audit_report.json；DSCU_ROUNDS=N)  regress171(仅回归门禁)
   v17.1 新增环境变量：DSCU_WECHAT_SKILL=0(关闭确定性微信技能) · DSCU_MSG_HITL=always|auto(发送前确认策略；DSCU_AUTO_CONFIRM=1 同样自动确认) · DSCU_ALLOW_DEV_TABS=1(不过滤开发/终端标签页) · DSCU_TERMINAL_IS_OWN=0
   v17.1 任务示例：打开微信，找到联系人老虎不抓鼠，给他发一条你好 · 点击第一个网站 · 点击招生就业 · 点击新生入学 · 在浏览器里面打开gmail，删除前面5条和后面3条邮件
+  ════════ v18.0 (Unified Object Identity & Reliable Execution：把 7 套互相割裂的定位体系打通为高可靠统一执行系统) ════════
+  v18.0 新增（严格 P0→P2，不堆新功能，只打通现有组件）：
+    · [P0-1] agent_brain/unified_object.py  UnifiedObjectRef + ObjectFusionEngine（UIA/DOM/DirectML/OCR/SoM 经 IoU+空间包含+文本相似度融合为单一对象；动作只能引用 object_id+snapshot_epoch；纯视觉候选无破坏性授权）
+    · [P0-2] agent_brain/action_gate.py     TargetTriggerGate：Action Target ⟂ Action Trigger ⟂ Expected Outcome（冻结目标 selected=True + 触发器语义核验 → 工具栏删除直接放行）
+    · [P0-3] agent_brain/skills/wechat_real.py  真实微信：DML+OCR 自适应校准 · 头部短路 · 证据门控搜索 · --dry-run-no-send 非破坏性验收 · 联系人“联系人”前缀解析修复
+    · [P1-4] agent_brain/skills/gmail_skill.py  GmailV18Executor：同 epoch 冻结 business_identity → 按身份勾选 → 触发器 → 逐封核验；GUI 与 OAuth API 双后端；DOM 语义工具栏兜底
+    · [P1-5] agent_brain/recovery.py        WorldStateDiff + EvidenceGatedFallback：无新证据即停、不可逆动作不重放
+    · [P1-6] agent_brain/realtime_controller.py  本地确定性控制环：最小加加速度轨迹 · 命中核验 · IME 中和 · 读回校验 · 每操作硬截止（压制 Input P99 长尾）
+    · [P2-7] evals/suite_v18.py             8 项硬指标 → eval_runs/v18_<ts>/metrics.json；Mock 单测与真机实测分离；100 任务×5 重复框架；OSWorld/WAA 导出
+  v18.0 日志修复：HITL 回答「我说出了，是发给…、y」被当作 No → 宽容且安全的确认解析；确认提示抢走前台 → 自动归还；Gmail 行标签截断 → 发件人·主题·ID 尾号。
+  v18.0 新增模式：DSCU_MODE=regress18(离线回归) · eval18(8 指标；DSCU_VERIFY_ARGS='--mode mock|real|export --tasks 100 --repeats 5') · wechat-calibrate(DSCU_WECHAT_CONTACT=联系人昵称；非破坏性)
+  v18.0 新增环境变量：DSCU_WECHAT_DRYRUN=1(微信技能只做前 4 步并清空草稿，绝不发送) · DSCU_WECHAT_CONTACT · 任务提示符内：v18 eval18 · v18 regress18 · v18 wechat-calibrate <联系人> · v18 v18
 #>
 $ErrorActionPreference = 'Stop'
-$script:DscuVersion = '17.1.0'
+$script:DscuVersion = '18.0.0'
 if ($PSVersionTable.PSVersion.Major -lt 7) { Write-Host '需要 PowerShell 7+（pwsh）。请在 pwsh 中粘贴。' -ForegroundColor Red; return }
 $script:DscuMode = if ($env:DSCU_MODE) { $env:DSCU_MODE } else { 'run' }
 if (-not $IsWindows -and $script:DscuMode -ne 'extract') { Write-Host '本脚本只能在 Windows 上运行（DSCU_MODE=extract 可仅释放文件）。' -ForegroundColor Red; return }
@@ -197,12 +209,12 @@ Add-DscuFile 'schemas/protocol_v1.json' 'e1db2bfbfe3085f748112ff1c1a817cb3a86d0f
 }
 '@
 
-Add-DscuFile 'agent_brain/__init__.py' 'ca4476193357506833a5305373129eb69fe30c9821c742c2602cd915a80fdb28' @'
+Add-DscuFile 'agent_brain/__init__.py' 'a9065dcf4e7bdacba7a70c82ebeb9fd080ce8284a355451eacc0b446f92f3af8' @'
 """DSCU unified agent brain (Python 3.12 asyncio): the single decision-maker over the Rust driver and the TS CDP daemon."""
-__version__ = "14.0.0"
+__version__ = "18.0.0"
 '@
 
-Add-DscuFile 'agent_brain/__main__.py' '9a7abdcff31bc143a9577ae59d61bd40f3ed9f496137971cfbee021dff1138bd' @'
+Add-DscuFile 'agent_brain/__main__.py' '9317b7ef5d835c221979539a032270742e88a13a56212a92bf75624b5448052e' @'
 """REPL entry:  python -m agent_brain [--cdp-profile persistent|ephemeral]   (same prompt/flow as v12/v13: 请输入任务 ...)"""
 from __future__ import annotations
 
@@ -239,6 +251,10 @@ HELP = """可用命令：
   v16 wm                    v16.4：WindowManager 现场诊断（前台/键盘焦点/鼠标下的窗口/目标窗口命中核验）
   v16 dml                  v16.3：DirectML 运行实证（模型名/SHA-256/ExecutionProvider/推理次数/P50-P95-P99）
   v16 coords               v16.3：统一坐标系诊断（显示器/DPI/浏览器视口原点来源/几何缓存统计）
+  v18 eval18 [--mode mock|real|export] [--tasks 100 --repeats 5]   v18：8 项量化指标评测 → eval_runs/v18_<ts>/metrics.json
+  v18 regress18            v18：UnifiedObject/Target-Trigger/WorldStateDiff/实时控制器/Gmail/微信 离线回归
+  v18 wechat-calibrate <联系人>   v18：真实微信非破坏性校准（--dry-run-no-send：前 4 步，绝不发送）
+  v18 v18                  v18 运行时统计（证据门控/路径关闭/Token 节省估计）
   v14 status               驱动/CDP/DXGI 流/FG-Gate/Profile/内存/回退原因 实时状态
   v14 bench                100 帧抓屏基准（DXGI P50/P95/P99；目标 P50 < 5 ms）
   v14 verify               运行 Step1 实机验收 tests/verify_step1_live.py
@@ -362,7 +378,7 @@ async def amain() -> int:
                 break
             if not line:
                 continue
-            low = re.sub(r"^v1[3456]\b", "v14", line.lower())
+            low = re.sub(r"^v1[345678]\b", "v14", line.lower())
             if line.lower().startswith(("v15", "v16")) and (low.split()[1:2] or [""])[0] in ("recycle", "compare", "eval"):
                 low = "v15" + low[3:]
             if low in ("exit", "quit", "q"):
@@ -439,6 +455,21 @@ async def amain() -> int:
             elif low.startswith("v15 eval"):
                 tiers = (low.split()[2:] or ["all"])
                 await asyncio.to_thread(subprocess.run, [sys.executable, "evals/runner.py", "run", *tiers], cwd=str(cfg.root), env=dict(os.environ, DEEPSEEK_API_KEY=cfg.api_key))
+            elif low.startswith("v14 eval18") or low.startswith("v14 regress18"):
+                py = sys.executable
+                if "regress18" in low:
+                    await asyncio.to_thread(subprocess.run, [py, "-m", "unittest", "discover", "-s", "tests/unit", "-p", "test_v18.py", "-v"], cwd=str(cfg.root))
+                else:
+                    await asyncio.to_thread(subprocess.run, [py, "evals/suite_v18.py", *low.split()[2:]], cwd=str(cfg.root), env=dict(os.environ, DEEPSEEK_API_KEY=cfg.api_key))
+            elif low.startswith("v14 wechat-calibrate"):
+                _who = line.split(None, 2)[2].strip() if len(line.split(None, 2)) > 2 else ""
+                if not _who:
+                    print("  用法：v18 wechat-calibrate <联系人完整昵称>   （非破坏性：定位搜索框→冻结联系人→核验头部→写草稿并读回→清空；绝不发送）")
+                else:
+                    await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "agent_brain.skills.wechat_real", "--contact", _who, "--dry-run-no-send"], cwd=str(cfg.root))
+            elif low == "v14 v18":
+                print(brain.v18.summary_line())
+                print(json.dumps({"fallback": brain.v18.fb.stats, "counters": dict(brain.v18.c)}, ensure_ascii=False, indent=1))
             elif low == "v14 cli":
                 tools = await asyncio.to_thread(cli_anything.discover, True)
                 print("  CLI-Anything 工具：" + (", ".join(f"{k}→{v.exe}" for k, v in tools.items()) or "（无）  安装：pip install cli-anything-hub ; cli-hub install gimp"))
@@ -1478,7 +1509,7 @@ from .py_native_driver import *  # noqa: F401,F403
 from .py_native_driver import NativeDriver, DxgiStream, _ahash, _ahash_np  # noqa: F401
 '@
 
-Add-DscuFile 'agent_brain/orchestrator.py' '1df83639102ee845083098e2abcbe686631f17978f9cf0e888f4f2b60c3a116f' @'
+Add-DscuFile 'agent_brain/orchestrator.py' '28ed659f645601fab68dff501a5ea76e725c15b5c1de363742c98379a6429a23' @'
 """The single live brain. Python asyncio owns: observation -> decision (DeepSeek) -> gated execution -> measured effect
 -> recovery. No placeholder telemetry: `cdp_up`, `uia_controls`, `stalled`, `blocked_streak`, `perception_channel` are all
 computed from real IPC replies every step (see choose_channel + TaskState.settle_last)."""
@@ -1508,6 +1539,7 @@ from . import runtime_status
 from .guards import V164
 from .state import BROWSERS, DESTRUCTIVE as DESTRUCTIVE_TASK, ActionGate, Directive, RecoveryLadder, TaskState, action_sig, describe_occluders, obs_fingerprint
 from .recovery import RecoveryEngine
+from .v18_runtime import V18Runtime, parse_confirmation, foreground_hwnd
 from .state_machine import Intervention, RecoveryPlaybook, StableObjectRegistry, TaskTransaction
 from .verifier import IndependentVerifier, GmailTrashGoal, Check, Verdict, canonical_status, may_commit, terminal_from_verdict
 from .action_gate import IDENTITY, MAX_IDENTITY_STRIKES, IdentityGate
@@ -1566,6 +1598,8 @@ class Brain:
         self.gate = IdentityGate(self.registry)  # v16.2 high-risk + coordinate-identity gate
         self.verifier = IndependentVerifier(self.hub, self.registry, self.say)
         self.v164 = V164(self)  # v16.4 WindowManager + intent gate + budgets (sets verifier.wm)
+        self.v18 = V18Runtime(self)  # v18: WorldStateDiff + evidence-gated fallback + HITL fixes
+        self._cur_state = None
         self.gmail: Optional[gmail_skill.GmailSkill] = None  # injectable (tests); default built lazily from the DPAPI token store
         self.wal_decisions: list[Any] = []
         self.pending_resume: list[Any] = []
@@ -1955,6 +1989,10 @@ class Brain:
                 key = str(a.get("name", "")).lower()
                 cands = [e for e in o.elements if e.zone == "Toolbar" and key and key in e.name.lower()]
                 if len(cands) != 1:
+                    if not cands:  # v18 [P1-4]: the 250-node snapshot omitted the bulk-action bar -> ask the live DOM (aria-label / data-tooltip), gated by the frozen selection
+                        _r18 = await self._v18_dom_trigger(key, o, st)
+                        if _r18 is not None:
+                            return _r18
                     return ActionResult(ok=False, code=Code.AMBIGUOUS_TARGET if cands else Code.NOT_FOUND, message=f"[Zone: Toolbar] 匹配 {len(cands)} 个：{[c.name for c in cands][:5]}")
                 num = next((i for i, e in els.items() if e.ref_id == cands[0].ref_id), None)
                 if num is not None:
@@ -2330,6 +2368,7 @@ class Brain:
         if self.auto_confirm:
             self.say(f"  ✓ HITL 自动确认（DSCU_AUTO_CONFIRM=1）：{question}")
             return True
+        _prev_fg = foreground_hwnd()
         try:
             if self.confirm_fn is not None:
                 ans = self.confirm_fn(question)
@@ -2337,7 +2376,54 @@ class Brain:
                 ans = await asyncio.to_thread(input, f"  👉 {question} ")
         except (EOFError, KeyboardInterrupt):
             return False
-        return str(ans).strip().lower() in ("y", "yes", "是", "确认", "ok")
+        _ok = parse_confirmation(ans)  # v18: '我说出了，是发给老虎不抓鼠、y' is a YES; 'n' / '不' / '算了' are NOs
+        if _ok and _prev_fg and self.confirm_fn is None:  # the terminal prompt stole the foreground: give it back (v17.1 log: next click missed)
+            try:
+                await self._drv("focus_window", None, hwnd=int(_prev_fg))
+            except Exception:  # noqa: BLE001
+                pass
+        return _ok
+
+    def _v18_pre(self, a: dict[str, Any], step: int) -> Optional[ActionResult]:
+        """v18 evidence gate, BEFORE execution: a path that already proved fruitless (WorldStateDiff = empty) is refused without a model round-trip."""
+        msg = self.v18.pre(a, step)
+        if msg is None:
+            return None
+        self.counters["gate_denied"] += 1
+        return ActionResult(ok=False, code=Code.SECURITY_DENIED, message=msg)
+
+    async def _v18_dom_trigger(self, key: str, o: Observation, st: TaskState) -> Optional[ActionResult]:
+        """v18 [P0-2/P1-4]: Action TRIGGER resolved from the live DOM by semantics (never by pixel), released only when >=1 frozen Target is selected."""
+        m = getattr(self.hub, "_mcp", None)
+        if m is None or not hasattr(m, "eval_js") or not re.search(r"删除|delete|trash|垃圾|归档|archive|移除", key, re.I):
+            return None
+        from .stable_object import checked_row_ids
+
+        sel = checked_row_ids(self.registry, o.elements)
+        if not sel:
+            return ActionResult(ok=False, code=Code.NOT_FOUND, message="[v18 Target/Trigger] 当前没有处于 selected 的目标行：先 select_rows 选中并冻结目标，再点击工具栏触发器")
+        if self.registry.targets_locked:
+            allowed = self.gate.targets()
+            stray = [s_ for s_ in sel if s_ not in allowed]
+            if stray:
+                return ActionResult(ok=False, code=Code.OBJECT_IDENTITY_MISMATCH, message=f"[v18 Target/Trigger] 有 {len(stray)} 个未授权行也处于选中状态，拒绝点击触发器")
+        words = ["删除", "delete", "move to trash", "移至垃圾箱", "移到垃圾箱"] if re.search(r"删除|delete|trash|垃圾|移除", key, re.I) else ["归档", "archive", "存档"]
+        js = ("() => { const W = " + json.dumps(words, ensure_ascii=False) + ".map(s => s.toLowerCase());"
+              " const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e); return r.width > 4 && r.height > 4 && s.visibility !== 'hidden' && s.display !== 'none' && r.bottom > 0 && r.top < innerHeight; };"
+              " const c = [...document.querySelectorAll('[role=button],[role=menuitem],button,[data-tooltip],[aria-label]')].filter(vis).filter(e => !e.closest('tr[role=row]') && !e.closest('[role=navigation]')"
+              " && !e.closest('[role=link]') && e.getAttribute('role') !== 'link' && W.some(k => ((e.getAttribute('aria-label') || '') + '|' + (e.getAttribute('data-tooltip') || '') + '|' + (e.innerText || '')).toLowerCase().includes(k)));"
+              " if (!c.length) return {ok: false, n: 0}; const e = c[0], r = e.getBoundingClientRect();"
+              " const o = {bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, view: window};"
+              " for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) e.dispatchEvent(new (t.startsWith('pointer') ? PointerEvent : MouseEvent)(t, o));"
+              " return {ok: true, n: c.length, name: e.getAttribute('aria-label') || e.getAttribute('data-tooltip') || e.innerText}; }")
+        try:
+            r = await m.eval_js(js, timeout=15.0)
+        except Exception:  # noqa: BLE001
+            return None
+        if isinstance(r, dict) and r.get("ok"):
+            self.counters["v18_dom_trigger"] += 1
+            return ActionResult(ok=True, code=Code.OK, message=f"[v18 DOM Trigger] 按 DOM 语义精确点击工具栏「{str(r.get('name'))[:20]}」（{len(sel)} 个冻结目标已选中；下一轮逐项核验 gone）")
+        return None
 
     def _gmail_skill(self) -> Optional[gmail_skill.GmailSkill]:
         if self.gmail is not None:
@@ -2597,7 +2683,16 @@ class Brain:
         say = self.say
         self.counters["wechat_skill_runs"] = self.counters.get("wechat_skill_runs", 0) + 1
         say("── WeChatSkill（确定性闭环：Ctrl+F 搜索 → 联系人冻结 → 单聊核验 → 草稿读回 → HITL → 发送 → 右半区气泡核验；0 次模型调用）──")
-        skill = _ms.WeChatSkill(_wio.WeChatWinIO(self), sess, say)
+        from .skills import wechat_real as _wr
+
+        _ctrl = None
+        try:
+            from .realtime_controller import RealtimeController, Win32Port
+
+            _ctrl = RealtimeController(Win32Port())
+        except Exception:  # noqa: BLE001
+            _ctrl = None
+        skill = _wr.WeChatRealSkill(_wio.WeChatWinIO(self), sess, say, dry_run=(os.environ.get("DSCU_WECHAT_DRYRUN", "0") == "1"), controller=_ctrl)
         try:
             res = await skill.run()
         except Exception as e:  # noqa: BLE001
@@ -2608,6 +2703,9 @@ class Brain:
             return None
         if res.status == "aborted":
             return "aborted", res.reason
+        if res.status == "dry_run_verified":  # v18: --dry-run-no-send calibration (DSCU_WECHAT_DRYRUN=1) — nothing was sent, by design
+            say(f"✔ 校准完成（dry-run，未发送）: {res.summary}")
+            return "completed_verified", res.summary
         if res.status != "sent_verified":
             say(f"✖ 失败（WeChatSkill）：{res.reason}")
             return "failed", res.reason
@@ -2628,6 +2726,8 @@ class Brain:
     async def _run(self, st: TaskState) -> tuple[str, str]:
         say = self.say
         self.v164.reset_task()
+        self.v18.reset_task()
+        self._cur_state = st
         _ig = self.v164.intent_gate(st)  # v16.4: messaging task without explicit recipient AND body -> needs_clarification, 0 model calls, 0 GUI actions
         if _ig is not None:
             return _ig
@@ -2687,10 +2787,11 @@ class Brain:
             b = await self.observe(st, forced=forced, main_loop=True)
             forced = None
             settled = st.settle_last(b.obs)
+            _v18n = self.v18.observe(b.obs, step)  # v18: WorldStateDiff of the previous action -> evidence-gated directive
             if settled is not None:
                 say(f"  ↳ 上一步效果核验：{settled.effect}（{(settled.display or settled.sig)[:64]}）")
             directive = self.ladder.evaluate(st, b.obs)
-            _note = self.recovery.take_note()
+            _note = (self.recovery.take_note() + ("\n" + _v18n if _v18n else "")).strip()
             _deny = self.recovery.deny_summary()
             if _note or _deny:
                 directive.text = (directive.text + "\n" if directive.text else "") + "\n".join(x for x in (_note, _deny) if x)
@@ -2846,7 +2947,7 @@ class Brain:
                     self.counters["gate_denied"] += 1
                 else:
                     _t_act = time.perf_counter()
-                    pre = self.recovery.pre_check(a, step)
+                    pre = self._v18_pre(a, step) or self.recovery.pre_check(a, step)
                     if pre is not None:
                         res = pre
                         self.counters["gate_denied"] += 1
@@ -2854,6 +2955,7 @@ class Brain:
                         res = await self.execute(a, b, st)
                         res = await self.recovery.handle(self, a, res, b, st)
                         self.v164.post_action(a, res, b, st)
+                        self.v18.after(a, res.ok)
                     if name == "toolbar_action" and re.search(r"删除|delete|归档|archive|移除", str(a.get("name", "")), re.I):
                         destructive_step = step
                 self._dump_action(step, a, res, (time.perf_counter() - locals().get("_t_act", time.perf_counter())) * 1000)
@@ -2989,6 +3091,7 @@ class Brain:
         say(f"  v15：CDP 自愈 {getattr(self.hub, 'cdp_heals', 0)} 次（失败 {getattr(self.hub, 'cdp_heal_fail', 0)}，被迫降级 {getattr(self.hub, 'cdp_degraded', 0)}） · 遮挡自动恢复 {rs['occluded_recovered']}/{rs['occluded_fix']} · 安全拒绝→禁止列表+替代 {rs['security_alt_injected']}（安全终止 {rs['safe_terminate']}） · StableObject 命中 {dict(self.registry.hits) or 0}")
         for _ln in self.v164.summary_lines():
             say(_ln)
+        say(self.v18.summary_line())
         say(runtime_status.settlement_line(self.hub, self.cfg))
         parts = []
         for k in ("fg_probe", "capture", "uia", "cdp", "shot", "input", "network", "decision", "vision"):
@@ -4910,7 +5013,7 @@ class NativeDriver:
         return R(False, "UNSUPPORTED", f"unknown action {a}")
 '@
 
-Add-DscuFile 'agent_brain/recovery.py' '31712a4c42ac5a16709f91f3e7c6145345a739a576ea278467ef126b482cc2d8' @'
+Add-DscuFile 'agent_brain/recovery.py' '8d18a58441ae532a50df81e8a582e705e2685763c1f23eb064aaec361cffbece' @'
 """v15 Error-Driven Recovery Playbook.
 
 v14 only fed the playbook from "click had no visible effect"; real failure codes (`[OCCLUDED]`, `[SECURITY_DENIED]`, `CDP closed`) were handed
@@ -5163,6 +5266,195 @@ async def _sleep(s: float) -> None:
     import asyncio
 
     await asyncio.sleep(s)
+
+
+# ======================================================================================================================
+# v18.0 [P1-5]  WorldStateDiff  +  Evidence-Gated Fallback
+#   v17.1 log (task #1/#2): the same `click` input-box was retried 6+ times and cost 93 k tokens although the screen never changed once.
+#   v18 rule: after EVERY action compute a deterministic diff of the world.  Failure + empty diff  ==  NO NEW EVIDENCE  ==  that path is dead:
+#   it is closed immediately (no 'one more try'), the next strategy of the ladder is selected, or we back off precisely / hand off to the human.
+# ======================================================================================================================
+import hashlib as _v18_hashlib  # noqa: E402
+from dataclasses import dataclass as _v18_dc, field as _v18_field  # noqa: E402
+
+
+@_v18_dc
+class WorldSnapshot:
+    """Reduced, comparable view of the world after one observation:  object_id -> (name, state-tuple)  +  window/url context."""
+    epoch: int = 0
+    objects: dict = _v18_field(default_factory=dict)
+    context: str = ""          # url|title|foreground — a navigation changes the world even when no object id survives
+
+    @staticmethod
+    def from_objects(objs: Any, epoch: int = 0, context: str = "") -> "WorldSnapshot":
+        d = {}
+        for o in objs:
+            st = tuple(sorted((k, bool(v)) for k, v in (getattr(o, "state", None) or {}).items()))
+            d[o.object_id] = (getattr(o, "accessible_name", "")[:60], st)
+        return WorldSnapshot(int(epoch), d, context)
+
+    @staticmethod
+    def from_elements(elements: Any, epoch: int = 0, context: str = "") -> "WorldSnapshot":
+        """adapter for protocol.Element lists (the live observation)."""
+        d = {}
+        for e in elements:
+            key = getattr(e, "stable_key", "") or getattr(e, "ref_id", "")
+            st = tuple(sorted(str(s).lower() for s in (getattr(e, "states", None) or [])))
+            d[key] = (((getattr(e, "name", "") or "")[:60]) + "|" + str(getattr(e, "value", "") or "")[:40], st)
+        return WorldSnapshot(int(epoch), d, context)
+
+    def digest(self) -> str:
+        h = _v18_hashlib.sha256((self.context + "\n" + "\n".join(f"{k}={v}" for k, v in sorted(self.objects.items()))).encode("utf-8", "replace"))
+        return h.hexdigest()[:16]
+
+
+@_v18_dc
+class WorldStateDiff:
+    added: list = _v18_field(default_factory=list)       # object ids that appeared
+    removed: list = _v18_field(default_factory=list)     # object ids that vanished
+    mutated: list = _v18_field(default_factory=list)     # (object_id, before, after)
+    still_valid: list = _v18_field(default_factory=list) # object ids that exist in BOTH snapshots (refs that remain usable)
+    context_changed: bool = False
+    irreversible_done: list = _v18_field(default_factory=list)  # action keys that already ran and MUST NOT be replayed
+
+    @property
+    def empty(self) -> bool:
+        return not (self.added or self.removed or self.mutated or self.context_changed)
+
+    def summary(self) -> str:
+        if self.empty:
+            return "WorldStateDiff=∅（无任何新证据）"
+        return (f"WorldStateDiff: +{len(self.added)} −{len(self.removed)} Δ{len(self.mutated)}" + (" · 上下文变化" if self.context_changed else "")
+                + f" · 仍有效 {len(self.still_valid)}" + (f" · 不可重放 {len(self.irreversible_done)}" if self.irreversible_done else ""))
+
+    def as_dict(self) -> dict:
+        return {"added": self.added[:20], "removed": self.removed[:20], "mutated": [list(m) for m in self.mutated[:20]], "still_valid": len(self.still_valid),
+                "context_changed": self.context_changed, "irreversible_done": self.irreversible_done, "empty": self.empty}
+
+
+def compute_world_diff(before: WorldSnapshot, after: WorldSnapshot, ledger: Optional["IrreversibleLedger"] = None) -> WorldStateDiff:
+    b, a = before.objects, after.objects
+    added = sorted(set(a) - set(b))
+    removed = sorted(set(b) - set(a))
+    both = sorted(set(a) & set(b))
+    mutated = [(k, b[k], a[k]) for k in both if b[k] != a[k]]
+    return WorldStateDiff(added, removed, mutated, [k for k in both if b[k] == a[k]], before.context != after.context,
+                          list(ledger.keys()) if ledger is not None else [])
+
+
+class IrreversibleLedger:
+    """Remembers actions whose effect cannot be undone (send / delete / pay).  A replay is refused even if the model asks again."""
+
+    def __init__(self) -> None:
+        self._done: dict = {}
+
+    def record(self, key: str, evidence: str = "") -> None:
+        self._done[key] = evidence
+
+    def done(self, key: str) -> bool:
+        return key in self._done
+
+    def keys(self) -> list:
+        return list(self._done)
+
+    def assert_not_replay(self, key: str) -> tuple:
+        if key in self._done:
+            return False, f"不可逆动作 {key} 已执行（证据: {self._done[key][:60]}），绝不重放"
+        return True, ""
+
+    def clear(self) -> None:
+        self._done.clear()
+
+
+@_v18_dc(frozen=True)
+class FallbackDecision:
+    kind: str          # continue | stop_path | switch_strategy | backtrack | handoff
+    reason: str
+    next_strategy: str = ""
+    forbid_signature: str = ""
+
+
+class EvidenceGatedFallback:
+    """Decides what to do after an action from (ok?, WorldStateDiff).  Token-saving by construction: a path that produced no new evidence is NEVER retried."""
+
+    DEFAULT_LADDER = ("skill_deterministic", "structured_ref", "keyboard_shortcut", "vision_grounded", "human_handoff")
+
+    def __init__(self, ladder: Optional[tuple] = None, max_no_evidence: int = 1) -> None:
+        self.ladder = tuple(ladder or self.DEFAULT_LADDER)
+        self.level = 0
+        self.max_no_evidence = max(1, max_no_evidence)
+        self.streak: dict = {}
+        self.forbidden: set = set()
+        self.ledger = IrreversibleLedger()
+        self.stats = {"steps": 0, "stopped_no_evidence": 0, "switched": 0, "handoffs": 0, "replays_blocked": 0, "tokens_saved_est": 0}
+
+    def reset(self) -> None:
+        self.level = 0
+        self.streak.clear()
+        self.forbidden.clear()
+        self.ledger.clear()
+        self.stats = {k: 0 for k in self.stats}
+
+    @property
+    def strategy(self) -> str:
+        return self.ladder[min(self.level, len(self.ladder) - 1)]
+
+    def pre_check(self, signature: str, irreversible_key: str = "") -> Optional[FallbackDecision]:
+        """call BEFORE executing: a signature that already proved fruitless, or an irreversible action already done, is refused without an LLM round-trip."""
+        if irreversible_key:
+            ok, why = self.ledger.assert_not_replay(irreversible_key)
+            if not ok:
+                self.stats["replays_blocked"] += 1
+                return FallbackDecision("stop_path", why, forbid_signature=signature)
+        if signature in self.forbidden:
+            self.stats["stopped_no_evidence"] += 1
+            self.stats["tokens_saved_est"] += 3500
+            return FallbackDecision("switch_strategy", f"路径 {signature[:48]} 此前没有产生任何新证据（WorldStateDiff=∅），已关闭；换策略 → {self.strategy}", self.strategy, signature)
+        return None
+
+    def after_action(self, signature: str, ok: bool, diff: WorldStateDiff, irreversible_key: str = "", evidence: str = "") -> FallbackDecision:
+        self.stats["steps"] += 1
+        if ok and irreversible_key and not diff.empty:
+            self.ledger.record(irreversible_key, evidence or diff.summary())
+        if not diff.empty:
+            self.streak[signature] = 0
+            return FallbackDecision("continue", "产生了新证据：" + diff.summary())
+        # ---- empty diff
+        n = self.streak.get(signature, 0) + 1
+        self.streak[signature] = n
+        if ok:  # the driver said OK but the world did not move: an unverified 'success' is not evidence either
+            reason = "动作返回 OK 但世界状态无任何变化（疑似落点无效/被拦截）"
+        else:
+            reason = "动作失败且世界状态无任何变化"
+        limit = 1 if not ok else self.max_no_evidence  # a FAILED action with no new evidence is dead at once; an 'OK' one that changed nothing gets one more look
+        if n < limit:
+            return FallbackDecision("continue", reason + f"（第 {n}/{limit} 次，仍允许一次）")
+        self.forbidden.add(signature)
+        self.stats["stopped_no_evidence"] += 1
+        self.stats["tokens_saved_est"] += 3500
+        if self.level + 1 >= len(self.ladder) - 1 and self.strategy != "human_handoff":
+            self.level = len(self.ladder) - 1
+            self.stats["handoffs"] += 1
+            return FallbackDecision("handoff", reason + "；策略阶梯已用尽 → 交还人类（不再消耗 Token）", "human_handoff", signature)
+        if self.strategy == "human_handoff":
+            self.stats["handoffs"] += 1
+            return FallbackDecision("handoff", reason, "human_handoff", signature)
+        self.level += 1
+        self.stats["switched"] += 1
+        return FallbackDecision("switch_strategy", reason + f"；无新证据 → 立即停止该路径并切换策略：{self.ladder[self.level - 1]} → {self.strategy}", self.strategy, signature)
+
+    def backtrack_hint(self, diff: WorldStateDiff) -> str:
+        """precise back-off: undo only what the diff proves was changed and is reversible; never touch irreversible ones."""
+        if diff.empty:
+            return "无需回退：世界未变化"
+        parts = []
+        if diff.added:
+            parts.append(f"新增 {len(diff.added)} 个对象（如弹窗/搜索面板）→ 先 Esc 关闭再继续")
+        if diff.mutated:
+            parts.append(f"{len(diff.mutated)} 个对象状态被改变 → 只回退这些对象")
+        if diff.irreversible_done:
+            parts.append("以下不可逆动作已执行，禁止回退/重放：" + "、".join(diff.irreversible_done[:4]))
+        return "；".join(parts) or "上下文变化（导航）→ 返回上一页即可"
 '@
 
 Add-DscuFile 'agent_brain/safe_shell.py' '1f1f22fba63c6bd3fbbc513cab545e339855db7fd394ba9bb79b85e1f96b36ff' @'
@@ -5726,7 +6018,7 @@ class RecoveryLadder:
         return d
 '@
 
-Add-DscuFile 'agent_brain/state_machine.py' '075dc570550bde5c7fd3ab368c57df49adbbf32ee3bcbfecb9d0189878468d57' @'
+Add-DscuFile 'agent_brain/state_machine.py' 'be59d486125f0a32ba45c5a6c1a333b171e5be7f5b0463a9973ce173ac75ab85' @'
 """Step-2 transactional state machine:
   * StableObject / StableObjectRegistry  - business objects are tracked by *stable identity*, never by volatile row numbers (R1, R2 ...)
   * TaskTransaction                      - journal of side-effecting actions (irreversible actions run at most once, recoverable after a crash)
@@ -5858,7 +6150,8 @@ class StableObjectRegistry:
         for e in group:
             tid = _extra(e, "thread_id")
             if tid:
-                return f"tid:{tid}", f"thread {tid[:12]}"
+                _txt = " ".join((x.name or "").strip() for x in group if (x.name or "").strip() and x.role.lower() not in ("checkbox",))[:44]  # v18: human-auditable label
+                return f"tid:{tid}", (f"{_txt} …{tid[-6:]}" if _txt else f"thread …{tid[-8:]}")
         parts: list[str] = []
         for e in group:
             aid = _extra(e, "automation_id")
@@ -17963,7 +18256,7 @@ if __name__ == "__main__":
     unittest.main()
 '@
 
-Add-DscuFile 'agent_brain/action_gate.py' '5fa0e521e7ac3f92aa4a485e1e7589d48b49863d25002a7cbb77081bedc674b3' @'
+Add-DscuFile 'agent_brain/action_gate.py' 'c7b0c594ea9c57de0accf1a131cae62ddfa5befe43cab0901f2e31da77dd114e' @'
 """v16.2 high-risk action gate (single choke point).
 
 High-risk verbs: delete / trash / send / submit / pay / overwrite.  Before such an action reaches the desktop the gate verifies
@@ -18198,13 +18491,158 @@ class IdentityGate:
 
     def report(self) -> dict[str, Any]:
         return {**self.stats, "strikes": self.strikes, "last": self.denied[-1].reason if self.denied else ""}
+
+
+# ======================================================================================================================
+# v18.0 [P0-2]  Action Target  ⟂  Action Trigger  ⟂  Expected Outcome   (UnifiedObjectRef-based gate)
+#   v17 decoupled Target/Trigger only for registry rows.  The v17.1 Gmail log still died with OBJECT_IDENTITY_MISMATCH because a *vision-grounded*
+#   click on the toolbar trash icon was reverse-resolved to the list row that happens to share the pixel.  v18 resolves the click point against
+#   UnifiedObjectRef objects (smallest bbox wins, structured evidence wins ties), so a verified toolbar button is released as TRIGGER the moment
+#   >=1 authorised frozen Target is selected — and a click that really lands on a non-frozen Target is still refused.
+# ======================================================================================================================
+from .unified_object import ObjectRegistry as _V18Registry, UnifiedObjectRef as _V18Obj, norm as _v18norm, point_in as _v18point_in  # noqa: E402
+
+V18_VERB_RX = {
+    "delete": re.compile(r"删除|刪除|移除|垃圾桶|垃圾箱|移至垃圾|delete|remove|trash|bin\b|move to", re.I),
+    "archive": re.compile(r"归档|封存|存档|archive", re.I),
+    "send": re.compile(r"发送|發送|发出|send", re.I),
+    "submit": re.compile(r"提交|确认|确定|submit|confirm|ok\b|apply", re.I),
+    "save": re.compile(r"保存|save", re.I),
+}
+V18_DESTRUCTIVE = {"delete", "archive", "send", "submit", "overwrite", "pay", "trash"}
+
+
+@dataclass(frozen=True)
+class ExpectedOutcome:
+    """What must be TRUE afterwards, per frozen target (so the verifier / WorldStateDiff can prove — not assume — the effect)."""
+    kind: str                       # gone_from_view | in_trash | bubble_added | state_equals
+    per_target: tuple = ()          # ((object_id, business_identity), ...)
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class ActionIntent:
+    verb: str                       # delete | archive | send | ...
+    target_ids: tuple               # Action Targets (business objects)   — frozen
+    trigger_id: str = ""            # Action Trigger (toolbar button)      — resolved at click time
+    outcome: Optional[ExpectedOutcome] = None
+    snapshot_epoch: int = 0
+
+
+@dataclass(frozen=True)
+class UnifiedActionRequest:
+    """The ONLY legal way to ask the gate for a click/check/type/scroll: an object_id + the epoch it was observed in.  Raw (x,y) is accepted
+    only through `from_point`, which resolves it to an object first."""
+    action: str                     # click | check | type | scroll | key
+    object_id: str
+    snapshot_epoch: int
+    point: Optional[tuple] = None   # where the click will physically land (physical px) — must lie inside the object's own bbox
+    verb: str = ""
+    human_attested: bool = False    # a human looked at the screen and confirmed (HITL) — the only way a visual-only candidate may be released
+
+
+@dataclass(frozen=True)
+class GateVerdict:
+    allow: bool
+    code: str      # RELEASED_TRIGGER | RELEASED_TARGET | RELEASED_NAV | STALE_EPOCH | UNKNOWN_OBJECT | TARGET_NOT_FROZEN | NO_SELECTED_TARGET | ...
+    reason: str = ""
+    evidence: tuple = ()
+
+
+def trigger_semantics_ok(name: str, verb: str) -> tuple:
+    """-> (ok, why).  The accessible name of the trigger must carry the verb's semantics (a 'Delete'/'垃圾桶' button for verb=delete)."""
+    rx = V18_VERB_RX.get(verb) or V18_VERB_RX.get("delete" if verb == "trash" else verb)
+    if rx is None:
+        return False, f"未知动词 {verb!r}"
+    if rx.search(name or ""):
+        return True, f"触发器语义核验通过：{name[:24]!r} ~ {verb}"
+    return False, f"触发器名称 {name[:24]!r} 不含 {verb} 语义"
+
+
+class TargetTriggerGate:
+    """P0-2 gate.  Stateless w.r.t. clicks; state = the registry + the frozen intent."""
+
+    def __init__(self, registry: "_V18Registry") -> None:
+        self.reg = registry
+        self.intent: Optional[ActionIntent] = None
+        self.stats = {"checked": 0, "released_trigger": 0, "released_target": 0, "denied": 0, "oib_avoided": 0}
+
+    def freeze(self, verb: str, target_ids: list, snapshot_epoch: int, outcome: Optional[ExpectedOutcome] = None) -> ActionIntent:
+        fs = self.reg.freeze(target_ids, snapshot_epoch)  # raises on stale epoch / visual-only target / low confidence
+        out = outcome or ExpectedOutcome("gone_from_view" if verb in ("delete", "archive", "trash") else "state_equals",
+                                         tuple((i, (self.reg.get(i).business_identity or self.reg.get(i).accessible_name)) for i in fs.ids), f"{verb} → {len(fs)} 个目标")
+        self.intent = ActionIntent(verb, fs.ids, "", out, snapshot_epoch)
+        return self.intent
+
+    def selected_targets(self) -> list:
+        assert self.intent is not None
+        return [self.reg.objects[i] for i in self.intent.target_ids if i in self.reg.objects and self.reg.objects[i].selected]
+
+    def _deny(self, code: str, reason: str, ev: tuple = ()) -> GateVerdict:
+        self.stats["denied"] += 1
+        return GateVerdict(False, code, reason, ev)
+
+    def check(self, req: UnifiedActionRequest) -> GateVerdict:
+        self.stats["checked"] += 1
+        try:
+            o = self.reg.require_current(req.object_id, req.snapshot_epoch)
+        except Exception as e:  # noqa: BLE001
+            code = "STALE_EPOCH" if "epoch" in str(e).lower() and "不是当前" in str(e) else "UNKNOWN_OBJECT"
+            return self._deny(code, str(e))
+        verb = req.verb or (self.intent.verb if self.intent else "")
+        destructive = verb in V18_DESTRUCTIVE
+        if req.point is not None and not _v18point_in(o.visual_bbox, req.point[0], req.point[1], tol=3):
+            return self._deny("COORD_NOT_ON_OBJECT", f"点击落点 {tuple(req.point)} 不在对象 {o.object_id} 自己的 bbox {tuple(o.visual_bbox)} 内（坐标漂移）")
+        # ---- Action Trigger: released by (frozen+selected target) AND (semantic verification), independent of whatever row shares the pixel
+        if o.action_role == "trigger":
+            if not destructive:
+                return GateVerdict(True, "RELEASED_NAV", "非破坏性触发器", ())
+            if self.intent is None or not self.intent.target_ids:
+                return self._deny("TARGETS_NOT_FROZEN", "尚未冻结任何 Action Target；先冻结并选中目标，再点击触发器")
+            sel = self.selected_targets()
+            if not sel:
+                return self._deny("NO_SELECTED_TARGET", "冻结目标当前没有处于 selected=True 的对象；先勾选目标再点触发器")
+            frozen = set(self.intent.target_ids)
+            stray = [x for x in self.reg.objects.values() if x.action_role == "target" and x.selected and x.object_id not in frozen]
+            if stray:
+                return self._deny("SELECTED_OUTSIDE_FROZEN", f"有 {len(stray)} 个未授权对象也处于选中状态（如 {stray[0].accessible_name[:20]!r}），点击触发器会波及它们")
+            ok, why = trigger_semantics_ok(o.accessible_name, verb)
+            if not ok:
+                return self._deny("TRIGGER_SEMANTICS_FAILED", why)
+            if not o.has_structured_evidence and not req.human_attested:
+                return self._deny("TRIGGER_VISUAL_ONLY", f"触发器 {o.object_id} 仅由视觉通道（{'+'.join(o.sources)}）识别：需 DOM/UIA 佐证或人工确认")
+            self.stats["released_trigger"] += 1
+            self.stats["oib_avoided"] += 1
+            return GateVerdict(True, "RELEASED_TRIGGER", f"{why}；{len(sel)}/{len(frozen)} 个冻结目标已选中，且无越界选中", (f"epoch={req.snapshot_epoch}", f"trigger={o.object_id}"))
+        # ---- Action Target
+        if o.action_role == "target":
+            d = self.reg.authorize(o, destructive=destructive)
+            if not d.ok and not (req.human_attested and d.code == "VISUAL_ONLY_NO_BUSINESS_IDENTITY"):
+                return self._deny(d.code, d.reason)
+            if self.intent is not None and o.object_id not in self.intent.target_ids and (destructive or req.action in ("check", "click")):
+                return self._deny("TARGET_NOT_FROZEN", f"对象 {o.object_id}（{o.accessible_name[:20]!r}）不在冻结的 Action Target 集合内")
+            self.stats["released_target"] += 1
+            return GateVerdict(True, "RELEASED_TARGET", "目标对象在冻结集合内且身份已核验", (f"epoch={req.snapshot_epoch}",))
+        # ---- navigation / container
+        if destructive:
+            return self._deny("ROLE_CANNOT_COMMIT", f"{o.action_role} 对象不能承载破坏性动作 {verb}")
+        return GateVerdict(True, "RELEASED_NAV", "导航/容器对象的非破坏性动作")
+
+    def check_point(self, x: float, y: float, epoch: int, verb: str = "", human_attested: bool = False) -> GateVerdict:
+        """raw-coordinate entry: resolve to an object FIRST; unresolved + destructive => refuse (no naked coordinates)."""
+        o = self.reg.resolve_point(x, y)
+        if o is None:
+            if verb in V18_DESTRUCTIVE:
+                return self._deny("COORD_UNRESOLVED", f"({int(x)},{int(y)}) 不对应任何 UnifiedObjectRef：禁止对破坏性动作使用裸坐标")
+            return GateVerdict(True, "RELEASED_NAV", "未解析坐标上的非破坏性动作")
+        return self.check(UnifiedActionRequest("click", o.object_id, epoch, (x, y), verb, human_attested))
 '@
 
 Add-DscuFile 'agent_brain/skills/__init__.py' '4dba99d9a4603351cc1377238fa6bb7f19c3eec8ab5f287d9f49611d412005e9' @'
 """v16.2 production skills (deterministic Layer-0 lanes with independent verification)."""
 '@
 
-Add-DscuFile 'agent_brain/skills/gmail_skill.py' 'b93783e66483a9d93d5f082bb2f87f9b6eaa302b90356a77f5454a53e71eb1cf' @'
+Add-DscuFile 'agent_brain/skills/gmail_skill.py' 'bb59349c1be547b3b56e3c16d700e0af20cb7da799385b906e55720004b5fb91' @'
 """v16.2 production GmailSkill — two-phase (freeze -> HITL confirm -> trash -> independent per-id TRASH verification).
 
 Security model
@@ -18943,6 +19381,219 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
+
+
+# ======================================================================================================================
+# v18.0 [P1-4]  Gmail: ONE execution model over two backends (web GUI via CDP, OAuth API)
+#   freeze business_identity in ONE snapshot_epoch  →  tick by IDENTITY (never by row index / pixel)  →  find the Action Trigger (toolbar delete)
+#   →  gate (Target/Trigger decoupled)  →  verify EVERY item individually (gone from inbox AND, when the backend can tell, labelled TRASH).
+#   v17.1 log defects fixed here: (1) five targets all rendered as 'thread #thread-f:1' (label truncated at 12 chars → un-auditable HITL list),
+#   (2) the 35th row dropped out between freeze and tick (index-addressed ticking on a virtualised list), (3) toolbar button absent from the 250-node
+#   snapshot → the model scrolled and burned 185 k tokens, (4) vision click on the trash icon reverse-resolved to a list row → OBJECT_IDENTITY_MISMATCH.
+# ======================================================================================================================
+import asyncio as _g18_asyncio  # noqa: E402
+import hashlib as _g18_hashlib  # noqa: E402
+from dataclasses import dataclass as _g18_dc, field as _g18_field  # noqa: E402
+
+from ..unified_object import ObjectFusionEngine as _G18Fusion, ObjectRegistry as _G18Registry, Cand as _G18Cand  # noqa: E402
+from ..action_gate import TargetTriggerGate as _G18Gate, UnifiedActionRequest as _G18Req  # noqa: E402
+from ..recovery import WorldSnapshot as _G18Snap, compute_world_diff as _g18_diff, EvidenceGatedFallback as _G18Fallback  # noqa: E402
+
+
+class AmbiguousIdentity(GmailSkillError):
+    pass
+
+
+def row_business_identity(row: dict) -> str:
+    """thread id when the DOM exposes one (FULL id, never truncated); else a digest of sender|subject|time.  Never a row index."""
+    tid = str(row.get("thread_id") or row.get("identity") or "").strip()
+    if tid:
+        return "gmail:" + tid
+    h = _g18_hashlib.sha1(f"{row.get('sender', '')}|{row.get('subject', '')}|{row.get('time', '')}".encode("utf-8")).hexdigest()[:14]
+    return "gmail:sig:" + h
+
+
+def row_label(row: dict, identity: str) -> str:
+    """human-auditable label for the HITL list: sender · subject · id-tail (v17.1 printed five identical 'thread #thread-f:1')."""
+    s, sub = str(row.get("sender", "")).strip()[:16], str(row.get("subject", "")).strip()[:34]
+    return f"{s or '?'} · {sub or '(无主题)'} · …{identity[-6:]}"
+
+
+@_g18_dc
+class GmailSnapshot:
+    epoch: int
+    url: str
+    rows: list                     # [{thread_id|identity, sender, subject, time, rect, checked, row}]
+    toolbar: list = _g18_field(default_factory=list)   # [{name, rect, ref}]  (bulk-action bar; present once >=1 row is ticked)
+    all_loaded: bool = True
+
+
+@_g18_dc
+class GmailRunResult:
+    ok: bool
+    status: str                    # verified | partial | unverified | refused | aborted
+    reason: str = ""
+    targets: list = _g18_field(default_factory=list)
+    per_item: dict = _g18_field(default_factory=dict)   # identity -> {"gone": bool|None, "trash": bool|None, "verified": bool}
+    steps: list = _g18_field(default_factory=list)
+    diff: str = ""
+    backend: str = ""
+
+
+class GmailV18Executor:
+    """backend protocol (async):  name · snapshot() -> GmailSnapshot · tick(identity, mode='click') -> bool · click_trigger(name, ref) -> bool ·
+       press_delete() -> bool (keyboard strategy) · verify(identities) -> {identity: {"gone": bool|None, "trash": bool|None}}"""
+
+    def __init__(self, backend: Any, say: Any = None, confirm: Any = None) -> None:
+        self.be = backend
+        self.say = say or (lambda m: None)
+        self.confirm = confirm
+        self.reg = _G18Registry()
+        self.gate = _G18Gate(self.reg)
+        self.fb = _G18Fallback(("structured_trigger", "keyboard_shortcut", "human_handoff"))
+        self.steps: list = []
+
+    def _step(self, name: str, ok: bool, ev: str) -> None:
+        self.steps.append({"step": name, "ok": ok, "evidence": ev[:240]})
+        self.say(f"  {'✓' if ok else '✗'} [{name}] {ev[:200]}")
+
+    def _fuse(self, snap: GmailSnapshot) -> dict:
+        """rows + toolbar -> UnifiedObjectRefs in ONE epoch; returns {identity: object}"""
+        dom = []
+        for r in snap.rows:
+            ident = row_business_identity(r)
+            dom.append({"rect": r["rect"], "name": row_label(r, ident), "role": "row", "identity": ident, "ref_id": str(r.get("ref") or ident),
+                        "state": {"selected": bool(r.get("checked")), "checked": bool(r.get("checked"))}})
+        for t in snap.toolbar:
+            dom.append({"rect": t["rect"], "name": t["name"], "role": "button", "ref_id": str(t.get("ref") or t["name"])})
+        objs = _G18Fusion().fuse(snapshot_epoch=snap.epoch, application_id="gmail", window_id=0, coordinate_space="viewport_css", dom=dom)
+        self.reg.ingest(objs, snap.epoch)
+        return {o.business_identity: o for o in objs if o.business_identity}
+
+    async def run(self, front: int, back: int, dry_run: bool = False) -> GmailRunResult:
+        be = self.be
+        bn = getattr(be, "name", "backend")
+        snap = await be.snapshot()
+        if "mail.google.com" not in (snap.url or "") and bn != "api":
+            self._step("snapshot", False, f"当前页面 {snap.url[:60]!r} 不是 Gmail：拒绝在旧/错误页面上冻结")
+            return GmailRunResult(False, "refused", "当前页面不是 Gmail", steps=self.steps, backend=bn)
+        n = len(snap.rows)
+        if front < 0 or back < 0 or front + back == 0 or front + back > n:
+            self._step("snapshot", False, f"需要前 {front} + 后 {back} 封，但快照只有 {n} 行")
+            return GmailRunResult(False, "refused", f"行数不足（{n}）", steps=self.steps, backend=bn)
+        idents = [row_business_identity(r) for r in snap.rows]
+        if len(set(idents)) != len(idents):
+            dup = len(idents) - len(set(idents))
+            self._step("freeze", False, f"{dup} 个业务身份重复：拒绝冻结（宁可停也不误删）")
+            return GmailRunResult(False, "refused", "业务身份不唯一", steps=self.steps, backend=bn)
+        by_ident = self._fuse(snap)
+        tgt_idents = idents[:front] + (idents[n - back:] if back else [])
+        tgt_ids = [by_ident[i].object_id for i in tgt_idents]
+        try:
+            intent = self.gate.freeze("delete", tgt_ids, snap.epoch)
+        except Exception as e:  # noqa: BLE001
+            self._step("freeze", False, f"{type(e).__name__}: {e}")
+            return GmailRunResult(False, "refused", str(e), steps=self.steps, backend=bn)
+        labels = [by_ident[i].accessible_name for i in tgt_idents]
+        self._step("freeze", True, f"epoch={snap.epoch} 冻结 {len(tgt_idents)} 个目标（业务身份唯一）：" + "；".join(labels[:5]))
+        if self.confirm is not None and not await self.confirm(labels):
+            return GmailRunResult(False, "aborted", "用户未确认", tgt_idents, steps=self.steps, backend=bn)
+        if dry_run:
+            return GmailRunResult(True, "unverified", "dry_run：只冻结，不执行", tgt_idents, steps=self.steps, backend=bn)
+        # ---- tick by identity (re-resolved in the live DOM; row indexes are never used)
+        before = _G18Snap.from_objects(self.reg.objects.values(), snap.epoch, snap.url)
+        for ident in tgt_idents:
+            if not await be.tick(ident, "click"):
+                self._step("tick", False, f"{ident[-8:]} 勾选失败")
+        snap2 = await be.snapshot()
+        by2 = self._fuse(snap2)
+        diff = _g18_diff(before, _G18Snap.from_objects(self.reg.objects.values(), snap2.epoch, snap2.url), self.fb.ledger)
+        sel = {i for i, o in by2.items() if o.selected}
+        missing = [i for i in tgt_idents if i not in sel]
+        if missing:
+            dec = self.fb.after_action("tick:click", False, diff)
+            self._step("tick", False, f"{len(missing)} 个目标未处于选中态（{dec.kind}）；改用键盘通道 x 重试一次")
+            for ident in missing:
+                await be.tick(ident, "keyboard")
+            snap2 = await be.snapshot()
+            by2 = self._fuse(snap2)
+            sel = {i for i, o in by2.items() if o.selected}
+            missing = [i for i in tgt_idents if i not in sel]
+        extra = sorted(sel - set(tgt_idents))
+        if missing or extra:
+            self._step("tick", False, f"选中集合与冻结集合不一致：缺 {len(missing)} 个、多 {len(extra)} 个 → 中止（未触发任何破坏性动作）")
+            return GmailRunResult(False, "aborted", "选中集合 ≠ 冻结集合", tgt_idents, steps=self.steps, diff=diff.summary(), backend=bn)
+        self._step("tick", True, f"epoch={snap2.epoch}：{len(tgt_idents)}/{len(tgt_idents)} 目标 selected=True，且无越界选中")
+        # ---- Action Trigger: structured toolbar delete → keyboard shortcut (each gated)
+        fired = False
+        trig = next((o for o in self.reg.by_role("trigger") if _G18_trigger_ok(o.accessible_name)), None)
+        if trig is not None:
+            v = self.gate.check(_G18Req("click", trig.object_id, snap2.epoch, None, "delete"))
+            self._step("trigger_gate", v.allow, f"{v.code} {v.reason[:120]}")
+            if v.allow:
+                fired = await be.click_trigger(trig.accessible_name, trig.dom_identity)
+        else:
+            self._step("trigger_find", False, "快照中没有带『删除』语义的结构化工具栏按钮 → 切换到键盘通道（仍受 selected==冻结集 约束）")
+        if not fired and not self.fb.pre_check("trigger:keyboard"):
+            fired = await be.press_delete()
+            self._step("trigger_keyboard", fired, "键盘删除通道已下发" if fired else "键盘删除通道不可用")
+        if not fired:
+            return GmailRunResult(False, "aborted", "没有可用且通过门控的删除触发器", tgt_idents, steps=self.steps, diff=diff.summary(), backend=bn)
+        self.fb.ledger.record("gmail.delete:" + intent.target_ids[0], f"{len(tgt_idents)} targets")
+        # ---- per-item verification
+        ver = {}
+        for _ in range(4):
+            ver = await be.verify(tgt_idents)
+            if all((v.get("gone") is True) for v in ver.values()):
+                break
+            await _g18_asyncio.sleep(0.6)
+        per = {}
+        for i in tgt_idents:
+            v = ver.get(i, {})
+            gone, trash = v.get("gone"), v.get("trash")
+            per[i] = {"gone": gone, "trash": trash, "verified": bool(gone is True and trash is not False)}
+        nver = sum(1 for p in per.values() if p["verified"])
+        self._step("verify_each", nver == len(per), f"逐项核验 {nver}/{len(per)} 封确已离开收件箱" + ("且带 TRASH 标签" if bn == "api" else ""))
+        status = "verified" if nver == len(per) else ("partial" if nver else "unverified")
+        return GmailRunResult(nver == len(per), status, "" if nver == len(per) else f"{len(per) - nver} 封未能核验", tgt_idents, per, self.steps, diff.summary(), bn)
+
+
+def _G18_trigger_ok(name: str) -> bool:
+    return bool(re.search(r"删除|刪除|垃圾|delete|trash|bin\b|move to", name or "", re.I))
+
+
+class GmailApiBackend:
+    """OAuth API lane: 'selection' is a local flag; the trigger is `trash_messages`; verification is the labels oracle (TRASH)."""
+    name = "api"
+
+    def __init__(self, skill: "GmailSkill", query: str = "in:inbox") -> None:
+        self.sk, self.query, self.epoch, self.sel, self.deleted = skill, query, 0, set(), set()
+
+    async def snapshot(self) -> GmailSnapshot:
+        msgs = await _g18_asyncio.to_thread(self.sk.list_messages, self.query, "newest_first", None)
+        self.epoch += 1
+        rows = [{"thread_id": m.get("id"), "sender": m.get("from", ""), "subject": m.get("subject", ""), "time": m.get("date", ""),
+                 "rect": [0, 40 * i, 800, 36], "checked": m.get("id") in self.sel} for i, m in enumerate(msgs) if m.get("id") not in self.deleted]
+        tb = [{"name": "删除 (API trash)", "rect": [0, -40, 120, 32]}] if self.sel else []
+        return GmailSnapshot(self.epoch, "https://mail.google.com/api", rows, tb, True)
+
+    async def tick(self, identity: str, mode: str = "click") -> bool:
+        self.sel.add(identity.replace("gmail:", "", 1))
+        return True
+
+    async def click_trigger(self, name: str, ref: str) -> bool:
+        ids = sorted(self.sel)
+        res = await _g18_asyncio.to_thread(self.sk.trash_messages, ids)
+        self.deleted |= {i for i, ok in res.items() if ok}
+        return all(res.values()) if res else False
+
+    async def press_delete(self) -> bool:
+        return await self.click_trigger("delete", "")
+
+    async def verify(self, identities: list) -> dict:
+        ids = [i.replace("gmail:", "", 1) for i in identities]
+        lab = await _g18_asyncio.to_thread(self.sk.verify_labels, ids, "TRASH")
+        return {i: {"gone": bool(lab.get(i.replace("gmail:", "", 1))), "trash": lab.get(i.replace("gmail:", "", 1))} for i in identities}
 '@
 
 Add-DscuFile 'agent_brain/stable_object.py' 'cccf25ad832a7350eef29da3b5cbeb3b21b61c7a74180bbab075b88e9b95cc11' @'
@@ -22634,7 +23285,7 @@ def settlement_line(hub: Any, cfg: Any) -> str:
 
 '@
 
-Add-DscuFile 'agent_brain/skills/message_send.py' '97376ac477b7133880768d5b261053d606a97c31e6f5883a0a8a9e0ce7963f61' @'
+Add-DscuFile 'agent_brain/skills/message_send.py' '211f57dfddae88947cf9bd66d2b45c9f0b1722aacb9b608553431037d09a8bae' @'
 """
 v16.4 MessageSend skill: HARD intent-completeness gate + send-time evidence collection (no LLM involved).
 
@@ -22731,6 +23382,7 @@ def parse_message_request(task: str) -> Optional[MessageRequest]:
         if m:
             r = _clean(m.group("r"))
             r = re.sub(r"(?:的)?(?:微信|聊天|对话|窗口)$", "", r)
+            r = re.sub(r"^(?:微信联系人|微信好友|联系人|好友)\s*[:：是为]?\s*", "", r)  # v18: role words are not part of the name
             if r and r not in ("他", "她", "ta", "TA", "对方", "别人", "某人", "朋友", "好友", "联系人", "人") and not _is_generic(r):
                 recipient = r
                 break
@@ -26444,7 +27096,6 @@ if __name__ == "__main__":
     unittest.main()
 '@
 
-
 Add-DscuFile 'tests/test_v17_1_fixes.py' '85b447022976381e0ae37b31736a08b874e4f942f361426ccc4256a21c5f09e4' @'
 """v17.1 regression gate.  Run:  PYTHONWARNINGS=error::RuntimeWarning python tests/test_v17_1_fixes.py     (DSCU_MODE=regress171 does exactly that)
 
@@ -27192,6 +27843,2441 @@ class WeChatWinIO:
 
 '@
 
+Add-DscuFile 'agent_brain/unified_object.py' '4e05197934f4cd8dd96cdde1edac56b0dc1650ca90f3a3624c9df692cee849a7' @'
+"""v18.0 [P0-1] Unified Object Identity — ONE strongly-typed object model for the 7 formerly disconnected locating systems.
+
+    UIA control  ┐
+    CDP DOM node │
+    DirectML box ├──►  ObjectFusionEngine  ──►  [UnifiedObjectRef]  ──►  ObjectRegistry (epoch-bound)  ──►  ActionGate
+    OCR line     │        IoU + containment            object_id + snapshot_epoch are the ONLY way to address a click /
+    SoM index    ┘        + text similarity            check / type / scroll.  Pure-visual candidates never get destructive authority.
+
+Pure Python (no Windows API): fully unit-testable on any OS.  Rect convention everywhere: [x, y, w, h] in `coordinate_space` pixels.
+"""
+from __future__ import annotations
+
+import difflib
+import hashlib
+import re
+import time
+import unicodedata
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Optional
+
+Rect = tuple  # (x, y, w, h)
+
+ACTION_ROLES = ("target", "trigger", "navigation", "container")
+SOURCES = ("dom", "uia", "dml", "ocr", "som")
+# prior reliability of each channel (used for noisy-OR confidence fusion).  Structured channels are near-certain; pixels are not.
+SOURCE_WEIGHT = {"dom": 0.98, "uia": 0.95, "dml": 0.60, "ocr": 0.55, "som": 0.30}
+SOURCE_PRIORITY = {"dom": 0, "uia": 1, "dml": 2, "ocr": 3, "som": 4}
+STRUCTURED = ("dom", "uia")
+
+TRIGGER_NAME_RX = re.compile(
+    r"删除|刪除|移除|垃圾桶|垃圾箱|移至垃圾|归档|封存|存档|发送|發送|发出|提交|确认|确定|保存|下一步|"
+    r"delete|remove|trash|bin\b|archive|send|submit|confirm|save|ok\b|apply|move to", re.I)
+CONTAINER_ROLES = {"list", "listbox", "table", "grid", "tree", "toolbar", "menu", "menubar", "group", "pane", "window", "document", "tablist", "region", "main", "navigation"}
+TARGET_ROLES = {"row", "listitem", "dataitem", "treeitem", "gridcell", "cell", "checkbox", "image", "text", "edit", "file", "article", "link-row"}
+NAV_ROLES = {"tab", "tabitem", "link", "hyperlink", "menuitem-nav"}
+TRIGGER_ROLES = {"button", "splitbutton", "menuitem", "toolbarbutton", "pushbutton", "icon"}
+
+
+# ---------------------------------------------------------------------------------------------------------------- helpers
+def norm(s: Any) -> str:
+    s = unicodedata.normalize("NFKC", str(s or ""))
+    s = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", s)
+    return re.sub(r"\s+", "", s).casefold()
+
+
+def text_sim(a: str, b: str) -> float:
+    """Semantic text similarity in [0,1]: exact / containment / difflib ratio on CJK-safe normalised strings."""
+    x, y = norm(a), norm(b)
+    if not x or not y:
+        return 0.0
+    if x == y:
+        return 1.0
+    if x in y or y in x:
+        return 0.6 + 0.4 * (min(len(x), len(y)) / max(len(x), len(y)))
+    return difflib.SequenceMatcher(None, x, y).ratio()
+
+
+def rect_area(r: Iterable[float]) -> float:
+    x, y, w, h = r
+    return max(0.0, w) * max(0.0, h)
+
+
+def intersection(a: Iterable[float], b: Iterable[float]) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    iw = min(ax + aw, bx + bw) - max(ax, bx)
+    ih = min(ay + ah, by + bh) - max(ay, by)
+    return max(0.0, iw) * max(0.0, ih)
+
+
+def iou(a: Iterable[float], b: Iterable[float]) -> float:
+    inter = intersection(a, b)
+    union = rect_area(a) + rect_area(b) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def containment(inner: Iterable[float], outer: Iterable[float]) -> float:
+    """fraction of `inner` that lies inside `outer`"""
+    ai = rect_area(inner)
+    return intersection(inner, outer) / ai if ai > 0 else 0.0
+
+
+def center(r: Iterable[float]) -> tuple:
+    x, y, w, h = r
+    return x + w / 2.0, y + h / 2.0
+
+
+def point_in(r: Iterable[float], px: float, py: float, tol: float = 0.0) -> bool:
+    x, y, w, h = r
+    return x - tol <= px <= x + w + tol and y - tol <= py <= y + h + tol
+
+
+def _ident_hash(*parts: Any) -> str:
+    return hashlib.sha1("\x1f".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:12]
+
+
+# ---------------------------------------------------------------------------------------------------------------- the entity
+@dataclass
+class UnifiedObjectRef:
+    """The single cross-modal identity.  Every field in the v18 spec is mandatory (defaults are explicit 'unknown' values, never None)."""
+    object_id: str
+    application_id: str
+    window_id: int
+    snapshot_epoch: int
+    semantic_role: str
+    accessible_name: str
+    business_identity: str          # e.g. Gmail thread id / sender+subject digest / WeChat contact name  ("" => not a business object)
+    dom_identity: str               # CDP backendNodeId / ref / data-thread-id
+    uia_identity: str               # UIA AutomationId / RuntimeId / ref
+    visual_bbox: tuple              # (x, y, w, h)
+    coordinate_space: str           # "screen_physical" | "window_client" | "viewport_css"
+    confidence: float               # fused, in [0,1]
+    last_seen: float                # time.time()
+    state: dict = field(default_factory=dict)   # selected / checked / enabled / focused / expanded ...
+    action_role: str = "container"  # target | trigger | navigation | container
+    sources: tuple = ()             # which channels corroborate this object
+    som_index: Optional[int] = None
+    candidate_only: bool = False    # True => produced by OCR/DML only: a *confidence-labelled candidate*, never a destructive authority
+
+    # ---- derived ----
+    @property
+    def has_structured_evidence(self) -> bool:
+        return bool(set(self.sources) & set(STRUCTURED))
+
+    @property
+    def verified_identity(self) -> bool:
+        """business identity proven by a structured channel (DOM/UIA) — the precondition for any destructive authority."""
+        return bool(self.business_identity) and self.has_structured_evidence
+
+    @property
+    def selected(self) -> bool:
+        return bool(self.state.get("selected") or self.state.get("checked"))
+
+    def validate(self) -> list:
+        errs = []
+        if self.action_role not in ACTION_ROLES:
+            errs.append(f"action_role {self.action_role!r} not in {ACTION_ROLES}")
+        if not (0.0 <= self.confidence <= 1.0):
+            errs.append("confidence out of range")
+        if len(self.visual_bbox) != 4:
+            errs.append("visual_bbox must be (x,y,w,h)")
+        if not self.object_id:
+            errs.append("object_id empty")
+        return errs
+
+    def to_dict(self) -> dict:
+        d = {k: getattr(self, k) for k in (
+            "object_id", "application_id", "window_id", "snapshot_epoch", "semantic_role", "accessible_name", "business_identity", "dom_identity",
+            "uia_identity", "visual_bbox", "coordinate_space", "confidence", "last_seen", "state", "action_role", "sources", "som_index", "candidate_only")}
+        d["visual_bbox"] = list(self.visual_bbox)
+        d["sources"] = list(self.sources)
+        return d
+
+
+@dataclass
+class Cand:
+    """One raw detection from one channel (before fusion)."""
+    source: str
+    rect: tuple
+    text: str = ""
+    role: str = ""
+    identity: str = ""         # business identity if the channel knows it (DOM data-thread-id ...)
+    native_id: str = ""        # DOM ref / UIA automation id
+    conf: float = 0.0
+    state: dict = field(default_factory=dict)
+    cls: str = ""              # DML class name (icon / text / ...)
+    som: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if self.conf <= 0.0:
+            self.conf = SOURCE_WEIGHT.get(self.source, 0.5)
+        self.rect = tuple(int(round(v)) for v in self.rect)
+
+
+def _as_cands(source: str, items: Optional[Iterable[Any]]) -> list:
+    out = []
+    for it in items or []:
+        if isinstance(it, Cand):
+            out.append(it)
+            continue
+        if hasattr(it, "model_dump"):
+            it = it.model_dump()
+        elif not isinstance(it, dict) and hasattr(it, "__dict__"):
+            it = dict(vars(it))
+        if not isinstance(it, dict):
+            continue
+        rect = it.get("rect") or it.get("box") or it.get("bbox")
+        if not rect or len(rect) != 4:
+            continue
+        states = it.get("states") or []
+        st = dict(it.get("state") or {})
+        for s in states if isinstance(states, (list, tuple)) else []:
+            sl = str(s).lower()
+            if sl in ("selected", "checked", "focused", "expanded", "disabled", "unchecked"):
+                st["checked" if sl == "checked" else sl] = True
+        if it.get("checked") is not None:
+            st["checked"] = bool(it.get("checked"))
+        if it.get("selected") is not None:
+            st["selected"] = bool(it.get("selected"))
+        out.append(Cand(
+            source=source, rect=tuple(rect), text=str(it.get("name") or it.get("text") or it.get("accessible_name") or ""),
+            role=str(it.get("role") or it.get("semantic_role") or ""), identity=str(it.get("identity") or it.get("thread_id") or it.get("business_identity") or ""),
+            native_id=str(it.get("ref_id") or it.get("ref") or it.get("automation_id") or it.get("native_id") or ""),
+            conf=float(it.get("conf") or it.get("confidence") or it.get("score") or 0.0), state=st, cls=str(it.get("cls") or it.get("class") or ""),
+            som=(int(it["som"]) if it.get("som") is not None else None)))
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------------------- fusion
+def infer_action_role(role: str, name: str, in_row: bool = False, cls: str = "") -> str:
+    r = (role or "").lower()
+    if r in CONTAINER_ROLES:
+        return "container"
+    if r in TRIGGER_ROLES or cls in ("icon", "button"):
+        if TRIGGER_NAME_RX.search(name or "") or r in ("toolbarbutton", "splitbutton"):
+            return "trigger"
+        return "trigger" if r in ("button", "pushbutton") and not in_row else ("target" if in_row else "navigation")
+    if r in NAV_ROLES:
+        return "navigation"
+    if r in TARGET_ROLES or in_row:
+        return "target"
+    return "container" if not name else "target"
+
+
+class ObjectFusionEngine:
+    """Cross-modal Spatial-Semantic Fusion.
+
+    score(a,b) = 0.45·IoU + 0.30·containment(max direction) + 0.25·text_similarity  (text term only when both sides carry text; the weights are
+    renormalised otherwise).  Anchors are structured channels (DOM first, then UIA); DML/OCR/SoM attach to the best anchor above `merge_threshold`;
+    leftovers become `candidate_only` objects with a *confidence label* and NO business identity."""
+
+    def __init__(self, merge_threshold: float = 0.38, dom_uia_threshold: float = 0.50) -> None:
+        self.t = merge_threshold
+        self.t_du = dom_uia_threshold
+
+    @staticmethod
+    def score(a: Cand, b: Cand) -> float:
+        g = iou(a.rect, b.rect)
+        c = max(containment(a.rect, b.rect), containment(b.rect, a.rect))
+        if a.text and b.text:
+            return 0.45 * g + 0.30 * c + 0.25 * text_sim(a.text, b.text)
+        return (0.45 * g + 0.30 * c) / 0.75
+
+    def fuse(self, *, snapshot_epoch: int, application_id: str = "app", window_id: int = 0, coordinate_space: str = "screen_physical",
+             uia: Optional[Iterable[Any]] = None, dom: Optional[Iterable[Any]] = None, dml: Optional[Iterable[Any]] = None,
+             ocr: Optional[Iterable[Any]] = None, som: Optional[Iterable[Any]] = None, now: Optional[float] = None) -> list:
+        now = time.time() if now is None else now
+        dcs, ucs = _as_cands("dom", dom), _as_cands("uia", uia)
+        mcs, ocs, scs = _as_cands("dml", dml), _as_cands("ocr", ocr), _as_cands("som", som)
+        clusters: list = []  # each: {"members": [Cand], "anchor": Cand}
+        for c in dcs:
+            clusters.append({"members": [c], "anchor": c})
+        # UIA merges into an existing DOM cluster only when clearly the same control (browser UIA mirrors the DOM) — else a new anchor
+        for c in ucs:
+            best, bs = None, 0.0
+            for cl in clusters:
+                if cl["anchor"].source != "dom":
+                    continue
+                s = self.score(c, cl["anchor"])
+                if s > bs:
+                    best, bs = cl, s
+            if best is not None and bs >= self.t_du and not any(m.source == "uia" for m in best["members"]):
+                best["members"].append(c)
+            else:
+                clusters.append({"members": [c], "anchor": c})
+        loose: list = []
+        for c in sorted(mcs + ocs + scs, key=lambda k: SOURCE_PRIORITY[k.source]):
+            best, bs = None, 0.0
+            for cl in clusters:
+                s = self.score(c, cl["anchor"])
+                if c.source == "som" and point_in(cl["anchor"].rect, *center(c.rect)):
+                    s = max(s, 0.5 + 0.2 * (1.0 / (1.0 + rect_area(cl["anchor"].rect) / 4e4)))  # SoM tags are small badges: centre-in-box wins
+                if s > bs:
+                    best, bs = cl, s
+            if best is not None and bs >= self.t:
+                best["members"].append(c)
+            else:
+                loose.append(c)
+        # unmatched pixels: let an OCR line join an unmatched DML box (icon+label) to produce one *visual* candidate
+        vis: list = []
+        for c in loose:
+            if c.source == "som":
+                continue
+            target = None
+            for v in vis:
+                if v["anchor"].source == "dml" and c.source == "ocr" and (containment(c.rect, v["anchor"].rect) >= 0.6 or iou(c.rect, v["anchor"].rect) >= 0.3):
+                    target = v
+                    break
+            if target is not None:
+                target["members"].append(c)
+            else:
+                vis.append({"members": [c], "anchor": c})
+        # SoM tags that matched nothing attach to the closest visual candidate (centre containment), else are dropped
+        for c in scs:
+            if any(c in cl["members"] for cl in clusters + vis):
+                continue
+            for v in vis:
+                if point_in(v["anchor"].rect, *center(c.rect), tol=6):
+                    v["members"].append(c)
+                    break
+        out = [self._build(cl, snapshot_epoch, application_id, window_id, coordinate_space, now, False) for cl in clusters]
+        out += [self._build(cl, snapshot_epoch, application_id, window_id, coordinate_space, now, True) for cl in vis]
+        # object ids must be unique inside a snapshot (twins => deterministic disambiguator by reading order)
+        seen: dict = {}
+        out.sort(key=lambda o: (o.visual_bbox[1], o.visual_bbox[0]))
+        for o in out:
+            n = seen.get(o.object_id, 0)
+            seen[o.object_id] = n + 1
+            if n:
+                o.object_id = f"{o.object_id}~{n}"
+        return out
+
+    # ------------------------------------------------------------------------------------------------------------------
+    def _build(self, cl: dict, epoch: int, app: str, win: int, space: str, now: float, visual_only: bool) -> UnifiedObjectRef:
+        ms = sorted(cl["members"], key=lambda m: SOURCE_PRIORITY[m.source])
+        a = ms[0]
+        srcs = tuple(sorted({m.source for m in ms}, key=lambda s: SOURCE_PRIORITY[s]))
+        text = next((m.text for m in ms if m.text and m.source in STRUCTURED), "") or next((m.text for m in ms if m.text), "")
+        role = next((m.role for m in ms if m.role and m.source in STRUCTURED), "") or next((m.role for m in ms if m.role), "") or ("icon" if a.cls == "icon" else "text" if a.source == "ocr" else "unknown")
+        dom_id = next((m.native_id for m in ms if m.source == "dom" and m.native_id), "")
+        uia_id = next((m.native_id for m in ms if m.source == "uia" and m.native_id), "")
+        biz = next((m.identity for m in ms if m.identity and m.source in STRUCTURED), "")
+        miss = 1.0
+        for m in ms:  # noisy-OR: each channel contributes min(prior reliability, its own detection score)
+            miss *= 1.0 - min(0.999, SOURCE_WEIGHT.get(m.source, 0.5), max(0.0, m.conf))
+        conf = round(max(0.0, min(1.0, 1.0 - miss)), 4)
+        if visual_only:
+            conf = min(conf, 0.85)  # a pure-pixel object can never reach structured-channel certainty
+        state: dict = {}
+        for m in ms:
+            for k, v in (m.state or {}).items():
+                state.setdefault(k, v)
+        in_row = bool(re.search(r"row|listitem|dataitem|treeitem", role, re.I)) or bool(biz)
+        arole = infer_action_role(role, text, in_row=in_row, cls=a.cls)
+        som = next((m.som for m in ms if m.som is not None), None)
+        ident_basis = biz or dom_id or uia_id or f"{role}|{norm(text)[:40]}|{a.rect[0] // 24}:{a.rect[1] // 24}"
+        oid = "uo:" + _ident_hash(app, win, ident_basis, role if not (biz or dom_id or uia_id) else "")
+        return UnifiedObjectRef(
+            object_id=oid, application_id=app, window_id=int(win), snapshot_epoch=int(epoch), semantic_role=role, accessible_name=text[:200],
+            business_identity=biz, dom_identity=dom_id, uia_identity=uia_id, visual_bbox=tuple(a.rect), coordinate_space=space, confidence=conf,
+            last_seen=now, state=state, action_role=arole, sources=srcs, som_index=som, candidate_only=visual_only or not (set(srcs) & set(STRUCTURED)))
+
+
+# ---------------------------------------------------------------------------------------------------------------- registry
+class StaleSnapshotEpoch(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class ObjectDecision:
+    ok: bool
+    code: str        # OK | STALE_EPOCH | UNKNOWN_OBJECT | VISUAL_ONLY_NO_BUSINESS_IDENTITY | LOW_CONFIDENCE
+    reason: str = ""
+
+
+@dataclass
+class FrozenSet:
+    epoch: int
+    ids: tuple
+    fingerprint: str
+    labels: dict
+
+    def __contains__(self, oid: object) -> bool:
+        return oid in self.ids
+
+    def __len__(self) -> int:
+        return len(self.ids)
+
+
+class ObjectRegistry:
+    """Epoch-bound store of the *current* UnifiedObjectRef list.  Older epochs are retained read-only (for WorldStateDiff) but can never be acted on."""
+
+    def __init__(self, min_action_conf: float = 0.5, keep_epochs: int = 4) -> None:
+        self.epoch = 0
+        self.objects: dict = {}
+        self.history: dict = {}
+        self.min_conf = min_action_conf
+        self.keep = keep_epochs
+        self.frozen: Optional[FrozenSet] = None
+
+    def ingest(self, objs: list, epoch: int) -> None:
+        self.epoch = int(epoch)
+        self.objects = {o.object_id: o for o in objs}
+        self.history[self.epoch] = dict(self.objects)
+        for e in sorted(self.history)[:-self.keep]:
+            self.history.pop(e, None)
+
+    def get(self, object_id: str, epoch: Optional[int] = None) -> Optional[UnifiedObjectRef]:
+        return (self.history.get(epoch, {}) if epoch is not None else self.objects).get(object_id)
+
+    def require_current(self, object_id: str, epoch: int) -> UnifiedObjectRef:
+        if int(epoch) != self.epoch:
+            raise StaleSnapshotEpoch(f"snapshot_epoch={epoch} 不是当前 epoch={self.epoch}：拒绝对旧快照对象 {object_id} 执行动作，请重新观察")
+        o = self.objects.get(object_id)
+        if o is None:
+            raise KeyError(f"object_id {object_id} 不在当前快照中")
+        return o
+
+    def resolve_point(self, x: float, y: float) -> Optional[UnifiedObjectRef]:
+        """smallest object whose bbox contains the point; structured objects win ties (a toolbar trash icon inside a row band is the icon, not the row)."""
+        hits = [o for o in self.objects.values() if point_in(o.visual_bbox, x, y)]
+        if not hits:
+            return None
+        return min(hits, key=lambda o: (rect_area(o.visual_bbox), 0 if o.has_structured_evidence else 1))
+
+    def by_role(self, action_role: str) -> list:
+        return [o for o in self.objects.values() if o.action_role == action_role]
+
+    def freeze(self, object_ids: Iterable[str], epoch: int) -> FrozenSet:
+        ids = []
+        labels = {}
+        for oid in object_ids:
+            o = self.require_current(oid, epoch)
+            d = self.authorize(o, destructive=True)
+            if not d.ok:
+                raise PermissionError(f"{oid}: {d.code} {d.reason}")
+            ids.append(oid)
+            labels[oid] = (o.accessible_name or o.business_identity)[:60]
+        fp = hashlib.sha256("|".join(sorted(ids)).encode()).hexdigest()[:12]
+        self.frozen = FrozenSet(int(epoch), tuple(ids), fp, labels)
+        return self.frozen
+
+    def authorize(self, o: UnifiedObjectRef, destructive: bool = False) -> ObjectDecision:
+        """OCR/DML candidates may be *clicked for navigation* but never get destructive authority without a business identity from DOM/UIA."""
+        if o.confidence < self.min_conf:
+            return ObjectDecision(False, "LOW_CONFIDENCE", f"confidence={o.confidence:.2f} < {self.min_conf}")
+        if destructive and not o.verified_identity and o.action_role == "target":
+            return ObjectDecision(False, "VISUAL_ONLY_NO_BUSINESS_IDENTITY", f"{o.object_id} 仅由 {'+'.join(o.sources) or '?'} 产生，没有 DOM/UIA 业务身份核验：禁止破坏性授权（可降级为需人工确认）")
+        if destructive and o.candidate_only and o.action_role != "target":
+            return ObjectDecision(False, "VISUAL_ONLY_NO_BUSINESS_IDENTITY", f"{o.object_id} 是纯视觉候选，禁止破坏性授权")
+        return ObjectDecision(True, "OK")
+
+
+def snapshot_digest(objs: Iterable[UnifiedObjectRef]) -> str:
+    """order-independent digest of what the UI contains (identity + name + state) — the basis of WorldStateDiff."""
+    parts = sorted(f"{o.object_id}|{norm(o.accessible_name)[:40]}|{sorted(o.state.items())}" for o in objs)
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+'@
+
+Add-DscuFile 'agent_brain/realtime_controller.py' 'd1060f183a55e0b6382c9006620119aa948f0f55b2f47ddf5e0940c7e4649e00' @'
+"""v18.0 [P1-6] Local deterministic real-time controller.
+
+v17.1 latency audit:  fg_probe 0.8 ms · DXGI 3.7 ms · UIA 13 ms · input P50 42 ms — but **input P99 = 2470 ms**.  The tail is not compute, it is
+unbounded waiting: focus re-acquisition, IME composition, clipboard locks, humanize delays and driver IPC hiccups all had NO deadline.
+
+This module moves everything that is *low level interaction* out of the LLM loop into a deterministic controller with
+  · minimum-jerk mouse trajectories with a hard time cap (≤ 120 ms)            · pre-flight: foreground + WindowFromPoint(GA_ROOT) hit-test
+  · IME neutralisation (close CJK composition / force paste path)               · adaptive post-click settle (frame-signature polling, not sleeps)
+  · type → read-back verification with ONE alternate method                      · per-operation HARD deadline (asyncio.wait_for) → the tail is clamped
+  · telemetry with P50/P95/P99 and tail-cause attribution
+The LLM only plans intent / chooses exception branches.  No frame-by-frame LLM control.  Pure Python (ports are injected) → unit-testable anywhere.
+"""
+from __future__ import annotations
+
+import asyncio
+import math
+import re
+import sys
+import time
+import unicodedata
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+
+def _cj(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s or "")
+    return re.sub(r"[\u200b\u200c\u200d\ufeff\s]+", "", s).casefold()
+
+
+class ControllerError(RuntimeError):
+    def __init__(self, code: str, msg: str) -> None:
+        super().__init__(f"[{code}] {msg}")
+        self.code = code
+
+
+class ControllerTimeout(ControllerError):
+    pass
+
+
+@dataclass
+class Budget:
+    soft_ms: float = 250.0      # over this => recorded as a 'slow op' with its cause
+    hard_ms: float = 900.0      # over this => the call is abandoned (asyncio.wait_for) and the alternate path is used
+    settle_ms: float = 450.0    # max wait for the UI to settle after an input
+    move_ms_max: float = 120.0
+    focus_ms: float = 600.0
+
+
+# ------------------------------------------------------------------------------------------------------------------------ telemetry
+class Telemetry:
+    def __init__(self) -> None:
+        self.samples: dict = {}
+        self.tail: list = []
+        self.counters = {"ops": 0, "slow": 0, "hard_timeouts": 0, "refocus": 0, "ime_neutralised": 0, "paste_path": 0, "type_path": 0, "readback_fail": 0, "alt_used": 0, "hit_reject": 0}
+
+    def record(self, op: str, ms: float, ok: bool = True, cause: str = "") -> None:
+        self.samples.setdefault(op, []).append(ms)
+        self.counters["ops"] += 1
+        if cause:
+            self.tail.append({"op": op, "ms": round(ms, 1), "ok": ok, "cause": cause})
+            self.tail = self.tail[-50:]
+
+    @staticmethod
+    def pct(vals: list, p: float) -> float:
+        if not vals:
+            return 0.0
+        v = sorted(vals)
+        k = max(0, min(len(v) - 1, int(math.ceil(p / 100.0 * len(v))) - 1))
+        return round(v[k], 2)
+
+    def summary(self) -> dict:
+        allv = [x for v in self.samples.values() for x in v]
+        out = {"all": {"n": len(allv), "p50": self.pct(allv, 50), "p95": self.pct(allv, 95), "p99": self.pct(allv, 99), "max": round(max(allv), 1) if allv else 0.0}}
+        for op, v in self.samples.items():
+            out[op] = {"n": len(v), "p50": self.pct(v, 50), "p95": self.pct(v, 95), "p99": self.pct(v, 99)}
+        out["counters"] = dict(self.counters)
+        out["tail_causes"] = self.tail[-5:]
+        return out
+
+
+# ------------------------------------------------------------------------------------------------------------------------ trajectory
+def min_jerk_path(p0: tuple, p1: tuple, total_ms: float, steps: Optional[int] = None, seed: int = 18) -> list:
+    """-> [(x, y, dt_ms)].  Minimum-jerk speed profile s(t)=10t³−15t⁴+6t⁵ on a slightly curved (deterministic, seeded) path; the last point is EXACTLY p1."""
+    x0, y0 = p0
+    x1, y1 = p1
+    dist = math.hypot(x1 - x0, y1 - y0)
+    n = steps or int(max(3, min(14, dist / 40.0 + 2)))
+    if dist < 2.0:
+        return [(x1, y1, 0.0)]
+    nx, ny = -(y1 - y0) / dist, (x1 - x0) / dist
+    bend = ((seed * 2654435761) % 1000 / 1000.0 - 0.5) * min(30.0, dist * 0.06)
+    pts = []
+    prev_s = 0.0
+    for i in range(1, n + 1):
+        t = i / n
+        s = 10 * t ** 3 - 15 * t ** 4 + 6 * t ** 5
+        off = bend * math.sin(math.pi * s)
+        px, py = x0 + (x1 - x0) * s + nx * off, y0 + (y1 - y0) * s + ny * off
+        dt = total_ms * (s - prev_s) if i > 1 else total_ms * s
+        prev_s = s
+        pts.append((int(round(px)), int(round(py)), max(0.0, dt)))
+    pts[-1] = (int(x1), int(y1), pts[-1][2])
+    return pts
+
+
+@dataclass
+class ClickReport:
+    ok: bool
+    ms: float
+    settled: bool = True
+    changed: bool = False
+    notes: list = field(default_factory=list)
+
+
+@dataclass
+class TypeReport:
+    ok: bool
+    method: str
+    readback: str = ""
+    ms: float = 0.0
+    notes: list = field(default_factory=list)
+
+
+class RealtimeController:
+    """Deterministic closed-loop interaction.  `port` is an async object providing:
+         foreground() -> int           focus(hwnd) -> bool          hit_root(x, y) -> int           move(x, y)         button(x, y, double=False)
+         key(keys)                     type_text(text)              clipboard_get() -> str|None     clipboard_set(text)
+         ime_open(hwnd) -> bool        ime_close(hwnd) -> bool      read_text(rect|None) -> str     frame_sig(rect|None) -> str    sleep(s)"""
+
+    def __init__(self, port: Any, budget: Optional[Budget] = None, telemetry: Optional[Telemetry] = None, humanize: bool = False) -> None:
+        self.port = port
+        self.b = budget or Budget()
+        self.tel = telemetry or Telemetry()
+        self.humanize = humanize
+        self._cursor = (0, 0)
+
+    # ------------------------------------------------------------------------------------------------------------ deadline guard
+    async def _g(self, op: str, coro: Any, hard_ms: Optional[float] = None) -> Any:
+        hard = (hard_ms or self.b.hard_ms) / 1000.0
+        t0 = time.perf_counter()
+        try:
+            r = await asyncio.wait_for(coro, timeout=hard)
+        except asyncio.TimeoutError:
+            ms = (time.perf_counter() - t0) * 1000
+            self.tel.counters["hard_timeouts"] += 1
+            self.tel.record(op, ms, False, f"hard_deadline>{hard * 1000:.0f}ms")
+            raise ControllerTimeout("HARD_DEADLINE", f"{op} 超过硬截止 {hard * 1000:.0f} ms（P99 长尾被截断；改走备用路径）") from None
+        ms = (time.perf_counter() - t0) * 1000
+        self.tel.record(op, ms, True, f"slow>{self.b.soft_ms:.0f}ms" if ms > self.b.soft_ms else "")
+        if ms > self.b.soft_ms:
+            self.tel.counters["slow"] += 1
+        return r
+
+    # ------------------------------------------------------------------------------------------------------------ pre-flight
+    async def ensure_focus(self, hwnd: int) -> bool:
+        if not hwnd:
+            return True
+        if await self._g("fg_probe", self.port.foreground()) == hwnd:
+            return True
+        self.tel.counters["refocus"] += 1
+        for _ in range(2):
+            try:
+                ok = await self._g("focus", self.port.focus(hwnd), self.b.focus_ms)
+            except ControllerTimeout:
+                ok = False
+            if ok and await self._g("fg_probe", self.port.foreground()) == hwnd:
+                return True
+        return False
+
+    async def neutralize_ime(self, hwnd: int) -> str:
+        """-> 'none' (IME already closed) | 'closed' (we closed it) | 'paste_only' (could not close: never use per-key typing)"""
+        try:
+            if not await self._g("ime", self.port.ime_open(hwnd), 200):
+                return "none"
+            self.tel.counters["ime_neutralised"] += 1
+            if await self._g("ime", self.port.ime_close(hwnd), 200) and not await self._g("ime", self.port.ime_open(hwnd), 200):
+                return "closed"
+            return "paste_only"
+        except (ControllerError, AttributeError, NotImplementedError):
+            return "none"
+
+    async def settle(self, rect: Optional[list] = None, before: Optional[str] = None, max_ms: Optional[float] = None) -> tuple:
+        """-> (changed, stable).  Poll a cheap frame signature every ~30 ms instead of sleeping a fixed time: returns as soon as the frame
+        changed and then stayed identical for two polls, or when `max_ms` is up (stable=False)."""
+        limit = (max_ms or self.b.settle_ms) / 1000.0
+        t0 = time.perf_counter()
+        base = before if before is not None else await self._g("frame_sig", self.port.frame_sig(rect), 250)
+        changed, last, same = False, base, 0
+        while time.perf_counter() - t0 < limit:
+            await self.port.sleep(0.03)
+            cur = await self._g("frame_sig", self.port.frame_sig(rect), 250)
+            if cur != base:
+                changed = True
+            same = same + 1 if cur == last else 0
+            last = cur
+            if changed and same >= 2:
+                return True, True
+            if not changed and same >= 6 and (time.perf_counter() - t0) > 0.18:  # nothing moved for ~180 ms: input produced no visible effect
+                return False, True
+        return changed, False
+
+    # ------------------------------------------------------------------------------------------------------------ primitives
+    async def click(self, x: int, y: int, hwnd: int = 0, double: bool = False, settle_rect: Optional[list] = None, expect_change: bool = False) -> ClickReport:
+        t0 = time.perf_counter()
+        notes: list = []
+        if hwnd and not await self.ensure_focus(hwnd):
+            raise ControllerError("FOCUS", f"无法把 hwnd={hwnd} 置前（点击未下发）")
+        if hwnd:
+            root = await self._g("hit_test", self.port.hit_root(int(x), int(y)), 250)
+            if root and root != hwnd:
+                self.tel.counters["hit_reject"] += 1
+                raise ControllerError("OUTSIDE_TARGET", f"点 ({x},{y}) 的顶层窗口是 {root} 而不是目标 {hwnd}：遮挡/坐标错位，未下发")
+        before = await self._g("frame_sig", self.port.frame_sig(settle_rect), 250) if (expect_change or settle_rect is not None) else None
+        path = min_jerk_path(self._cursor, (int(x), int(y)), min(self.b.move_ms_max, 40 + 0.05 * math.hypot(x - self._cursor[0], y - self._cursor[1])))
+        for px, py, dt in path[:-1]:
+            await self._g("move", self.port.move(px, py), 200)
+            if dt >= 4:
+                await self.port.sleep(dt / 1000.0)
+        await self._g("move", self.port.move(int(x), int(y)), 200)
+        self._cursor = (int(x), int(y))
+        await self.port.sleep(0.012)  # pre-click dwell: lets hover state / tooltips arm, deterministic
+        try:
+            await self._g("click", self.port.button(int(x), int(y), double), self.b.hard_ms)
+        except ControllerTimeout:
+            notes.append("click 超过硬截止 → 以备用路径重发一次（幂等：仅当帧未变化时）")
+            self.tel.counters["alt_used"] += 1
+            if before is not None and (await self._g("frame_sig", self.port.frame_sig(settle_rect), 250)) != before:
+                notes.append("帧已变化：判定首次点击已生效，不重发")
+            else:
+                await self._g("click", self.port.button(int(x), int(y), double), self.b.hard_ms)
+        changed, stable = (False, True)
+        if before is not None:
+            changed, stable = await self.settle(settle_rect, before)
+        ms = (time.perf_counter() - t0) * 1000
+        self.tel.record("click_total", ms)
+        return ClickReport(True, ms, stable, changed, notes)
+
+    async def press(self, keys: str, hwnd: int = 0) -> None:
+        if hwnd and not await self.ensure_focus(hwnd):
+            raise ControllerError("FOCUS", f"无法置前 hwnd={hwnd}（按键 {keys} 未发送）")
+        await self._g("key", self.port.key(keys), self.b.hard_ms)
+
+    async def type_verified(self, text: str, hwnd: int = 0, readback_rect: Optional[list] = None, clear_first: bool = False) -> TypeReport:
+        """paste-first for CJK / long text (immune to IME composition), per-key typing for short ASCII; ALWAYS read back; one alternate method on mismatch."""
+        t0 = time.perf_counter()
+        notes: list = []
+        if hwnd and not await self.ensure_focus(hwnd):
+            raise ControllerError("FOCUS", f"无法置前 hwnd={hwnd}（输入未发送）")
+        ime = await self.neutralize_ime(hwnd)
+        notes.append(f"IME={ime}")
+        ascii_short = text.isascii() and len(text) <= 24 and "\n" not in text
+        order = ["type", "paste"] if (ascii_short and ime == "none") else ["paste", "type"]
+        if ime == "paste_only":
+            order = ["paste"]
+        if clear_first:
+            await self.press("ctrl+a")
+            await self.press("delete")
+        last = ""
+        for i, method in enumerate(order):
+            try:
+                if method == "paste":
+                    self.tel.counters["paste_path"] += 1
+                    await self._g("clip_set", self.port.clipboard_set(text), 300)
+                    await self.press("ctrl+v")
+                else:
+                    self.tel.counters["type_path"] += 1
+                    await self._g("type", self.port.type_text(text), self.b.hard_ms)
+            except ControllerTimeout:
+                notes.append(f"{method} 超时 → 换法")
+                self.tel.counters["alt_used"] += 1
+                continue
+            await self.port.sleep(0.05)
+            last = await self._g("readback", self.port.read_text(readback_rect), 700)
+            if _cj(text) and _cj(text) in _cj(last):
+                ms = (time.perf_counter() - t0) * 1000
+                self.tel.record("type_total", ms)
+                return TypeReport(True, method, last, ms, notes)
+            self.tel.counters["readback_fail"] += 1
+            notes.append(f"{method} 读回「{last[:20]}」≠ 期望 → " + ("换法" if i + 1 < len(order) else "放弃"))
+            if i + 1 < len(order):
+                self.tel.counters["alt_used"] += 1
+                await self.press("ctrl+a")
+                await self.press("delete")
+        ms = (time.perf_counter() - t0) * 1000
+        self.tel.record("type_total", ms, False, "readback_failed")
+        return TypeReport(False, order[-1], last, ms, notes)
+
+    def report(self) -> dict:
+        return self.tel.summary()
+
+
+# ------------------------------------------------------------------------------------------------------------------------ Windows port
+class Win32Port:
+    """Real Windows implementation (ctypes, no third-party deps).  Every sync Win32 call runs in a worker thread so `wait_for` can abandon it."""
+
+    VK = {"ctrl": 0x11, "control": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B, "enter": 0x0D, "return": 0x0D, "esc": 0x1B, "escape": 0x1B, "tab": 0x09, "delete": 0x2E,
+          "del": 0x2E, "backspace": 0x08, "space": 0x20, "end": 0x23, "home": 0x24, "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28, "pageup": 0x21, "pagedown": 0x22}
+
+    def __init__(self) -> None:
+        if sys.platform != "win32":
+            raise ControllerError("PLATFORM", "Win32Port 只能在 Windows 上使用")
+        import ctypes
+
+        self.ct = ctypes
+        self.u = ctypes.windll.user32  # type: ignore[attr-defined]
+        self.k = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        try:
+            self.u.SetProcessDPIAware()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # -- sync helpers -------------------------------------------------------------------------------------------------
+    def _vk(self, k: str) -> int:
+        k = k.strip().lower()
+        if k in self.VK:
+            return self.VK[k]
+        if re.fullmatch(r"f([1-9]|1[0-2])", k):
+            return 0x6F + int(k[1:])
+        if len(k) == 1:
+            return self.u.VkKeyScanW(ord(k)) & 0xFF
+        raise ControllerError("KEY", f"未知按键 {k!r}")
+
+    def _send_vk(self, vk: int, up: bool) -> None:
+        self.u.keybd_event(vk, 0, 0x0002 if up else 0, 0)
+
+    def _key_sync(self, keys: str) -> None:
+        parts = [self._vk(p) for p in re.split(r"\s*\+\s*", keys.strip()) if p]
+        for vk in parts:
+            self._send_vk(vk, False)
+        for vk in reversed(parts):
+            self._send_vk(vk, True)
+
+    def _type_sync(self, text: str) -> None:
+        ct = self.ct
+        from ctypes import wintypes
+
+        class KI(ct.Structure):
+            _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ct.c_void_p)]
+
+        class MI(ct.Structure):
+            _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ct.c_void_p)]
+
+        class U(ct.Union):
+            _fields_ = [("ki", KI), ("mi", MI)]
+
+        class INP(ct.Structure):
+            _fields_ = [("type", wintypes.DWORD), ("u", U)]
+
+        units = text.encode("utf-16-le")
+        for i in range(0, len(units), 2):
+            cu = int.from_bytes(units[i:i + 2], "little")
+            for flags in (0x0004, 0x0004 | 0x0002):  # KEYEVENTF_UNICODE (+KEYUP)
+                inp = INP(1, U(ki=KI(0, cu, flags, 0, None)))
+                self.u.SendInput(1, ct.byref(inp), ct.sizeof(INP))
+
+    def _fg(self) -> int:
+        return int(self.u.GetForegroundWindow() or 0)
+
+    def _focus_sync(self, hwnd: int) -> bool:
+        ct = self.ct
+        if self.u.IsIconic(hwnd):
+            self.u.ShowWindow(hwnd, 9)
+        fg = self.u.GetForegroundWindow()
+        cur = self.k.GetCurrentThreadId()
+        tgt = self.u.GetWindowThreadProcessId(hwnd, None)
+        fgt = self.u.GetWindowThreadProcessId(fg, None) if fg else 0
+        try:
+            if fgt and fgt != cur:
+                self.u.AttachThreadInput(cur, fgt, True)
+            if tgt and tgt != cur:
+                self.u.AttachThreadInput(cur, tgt, True)
+            self.u.BringWindowToTop(hwnd)
+            self.u.SetForegroundWindow(hwnd)
+        finally:
+            if fgt and fgt != cur:
+                self.u.AttachThreadInput(cur, fgt, False)
+            if tgt and tgt != cur:
+                self.u.AttachThreadInput(cur, tgt, False)
+        del ct
+        return self._fg() == hwnd
+
+    def _hit_sync(self, x: int, y: int) -> int:
+        from ctypes import wintypes
+
+        pt = wintypes.POINT(int(x), int(y))
+        h = self.u.WindowFromPoint(pt)
+        return int(self.u.GetAncestor(h, 2) or h or 0) if h else 0  # GA_ROOT
+
+    def _button_sync(self, x: int, y: int, double: bool) -> None:
+        self.u.SetCursorPos(int(x), int(y))
+        for _ in range(2 if double else 1):
+            self.u.mouse_event(0x0002, 0, 0, 0, 0)
+            self.u.mouse_event(0x0004, 0, 0, 0, 0)
+
+    def _ime_sync(self, hwnd: int, op: str) -> bool:
+        ime = self.ct.windll.imm32.ImmGetDefaultIMEWnd(hwnd)  # type: ignore[attr-defined]
+        if not ime:
+            return False
+        if op == "get":
+            return bool(self.u.SendMessageW(ime, 0x0283, 0x0005, 0))  # WM_IME_CONTROL / IMC_GETOPENSTATUS
+        self.u.SendMessageW(ime, 0x0283, 0x0006, 0)  # IMC_SETOPENSTATUS=0 (close => English/direct input)
+        return True
+
+    # -- async port ---------------------------------------------------------------------------------------------------
+    async def foreground(self) -> int:
+        return await asyncio.to_thread(self._fg)
+
+    async def focus(self, hwnd: int) -> bool:
+        return await asyncio.to_thread(self._focus_sync, int(hwnd))
+
+    async def hit_root(self, x: int, y: int) -> int:
+        return await asyncio.to_thread(self._hit_sync, x, y)
+
+    async def move(self, x: int, y: int) -> None:
+        await asyncio.to_thread(self.u.SetCursorPos, int(x), int(y))
+
+    async def button(self, x: int, y: int, double: bool = False) -> None:
+        await asyncio.to_thread(self._button_sync, x, y, double)
+
+    async def key(self, keys: str) -> None:
+        await asyncio.to_thread(self._key_sync, keys)
+
+    async def type_text(self, text: str) -> None:
+        await asyncio.to_thread(self._type_sync, text)
+
+    async def clipboard_get(self) -> Optional[str]:
+        from .skills.wechat_io import _Clip
+
+        return await asyncio.to_thread(_Clip.get)
+
+    async def clipboard_set(self, text: str) -> None:
+        from .skills.wechat_io import _Clip
+
+        await asyncio.to_thread(_Clip.set, text)
+
+    async def ime_open(self, hwnd: int) -> bool:
+        return await asyncio.to_thread(self._ime_sync, int(hwnd), "get")
+
+    async def ime_close(self, hwnd: int) -> bool:
+        return await asyncio.to_thread(self._ime_sync, int(hwnd), "set")
+
+    async def read_text(self, rect: Optional[list] = None) -> str:
+        """editor read-back: select-all + copy through a clipboard sentinel (proves the copy happened)."""
+        sentinel = f"__rt_sentinel_{time.time_ns()}__"
+        await self.clipboard_set(sentinel)
+        await self.key("ctrl+a")
+        await self.key("ctrl+c")
+        await asyncio.sleep(0.08)
+        got = await self.clipboard_get()
+        return "" if (got is None or got == sentinel) else got
+
+    async def frame_sig(self, rect: Optional[list] = None) -> str:
+        def _sig() -> str:
+            from PIL import ImageGrab
+
+            img = ImageGrab.grab(bbox=tuple(int(v) for v in ([rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]] if rect else (0, 0, 0, 0))) if rect else None, all_screens=True)
+            g = img.convert("L").resize((16, 16))
+            px = list(g.getdata())
+            avg = sum(px) / len(px)
+            return "".join("1" if p > avg else "0" for p in px)
+
+        return await asyncio.to_thread(_sig)
+
+    async def sleep(self, s: float) -> None:
+        await asyncio.sleep(s)
+'@
+
+Add-DscuFile 'agent_brain/v18_runtime.py' 'f3aa31d3e1718f0716b0fc85e6728fb42e37147bd6c3bc86e0d9d9b08ee52c6c' @'
+"""v18.0 runtime glue: connects the new components into the live Brain loop with ZERO behaviour change when nothing goes wrong.
+
+  observe()      → compute WorldStateDiff vs the previous observation, feed the Evidence-Gated Fallback, return a directive note when a path is closed
+  pre()          → refuse (without a model round-trip) an action whose signature already proved fruitless, or an irreversible `send` that already ran
+  after()        → remember the last action so the next observation can be diffed against it
+  parse_confirmation() / foreground helpers → fix the two HITL defects of the v17.1 log:
+        (a) the user answered「我说出了，是发给老虎不抓鼠、y」 and it was treated as NO;   (b) the terminal prompt stole the foreground so the next click missed.
+"""
+from __future__ import annotations
+
+import re
+import sys
+from collections import Counter
+from typing import Any, Optional
+
+from .recovery import EvidenceGatedFallback, WorldSnapshot, compute_world_diff
+
+MUTATING = {"click", "double_click", "right_click", "key", "type", "scroll", "select_rows", "toolbar_action", "check", "uncheck", "uia_select", "invoke", "set_value", "drag", "hover"}
+YES = {"y", "yes", "是", "是的", "确认", "确定", "ok", "okay", "好", "好的", "对", "可以", "发", "发送", "继续", "同意"}
+NO = {"n", "no", "否", "不", "不要", "不是", "别", "取消", "算了", "停", "cancel", "stop"}
+
+
+def parse_confirmation(ans: Any) -> bool:
+    """Tolerant but SAFE yes/no.  True only when an explicit affirmative token is the first or last token AND no explicit negative token appears.
+    '我说出了，是发给老虎不抓鼠、y' → True ('不抓鼠' is part of a name, not the token '不') ·  'n' / '不' / '算了 y' → False · '' → False."""
+    s = str(ans or "").strip().lower()
+    if not s:
+        return False
+    if s in YES:
+        return True
+    toks = [t for t in re.split(r"[\s,，。.!！?？、;；:：/\\|]+", s) if t]
+    if not toks or any(t in NO for t in toks):
+        return False
+    return toks[-1] in YES or toks[0] in YES
+
+
+def foreground_hwnd() -> int:
+    if sys.platform != "win32":
+        return 0
+    try:
+        import ctypes
+
+        return int(ctypes.windll.user32.GetForegroundWindow() or 0)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def action_signature(a: dict) -> str:
+    name = str(a.get("action", ""))
+    if a.get("id") is not None:
+        tgt = f"id{a['id']}"
+    elif "x" in a and "y" in a:
+        tgt = f"p{int(a['x']) // 24},{int(a['y']) // 24}"  # same 24-px bucket as the loop detector
+    else:
+        tgt = str(a.get("name") or a.get("keys") or a.get("text") or a.get("rows") or a.get("direction") or "")[:40]
+    return f"{name}:{tgt}"
+
+
+class V18Runtime:
+    def __init__(self, brain: Any = None) -> None:
+        self.b = brain
+        self.fb = EvidenceGatedFallback(max_no_evidence=2)
+        self.prev: Optional[WorldSnapshot] = None
+        self.last: Optional[tuple] = None  # (signature, ok, irreversible_key, name)
+        self.c: Counter = Counter()
+        self.notes: list = []
+
+    def reset_task(self) -> None:
+        self.fb.reset()
+        self.prev, self.last = None, None
+        self.c.clear()
+        self.notes.clear()
+
+    # ---------------------------------------------------------------------------------------------------------------
+    def observe(self, obs: Any, step: int) -> str:
+        """-> directive note ('' when nothing to say)."""
+        try:
+            ctx = f"{getattr(obs, 'url', '') or ''}|{getattr(obs, 'title', '') or ''}|{getattr(obs, 'fg_hwnd', '') or ''}"
+            snap = WorldSnapshot.from_elements(getattr(obs, "elements", []) or [], int(getattr(obs, "snapshot_epoch", 0) or 0), ctx)
+            note = ""
+            if self.prev is not None and self.last is not None:
+                sig, ok, ikey, name = self.last
+                diff = compute_world_diff(self.prev, snap, self.fb.ledger)
+                self.c["diffs"] += 1
+                self.c["diff_nonempty"] += 0 if diff.empty else 1
+                if name in MUTATING:
+                    dec = self.fb.after_action(sig, ok, diff, ikey, diff.summary())
+                    if dec.kind in ("switch_strategy", "handoff", "stop_path"):
+                        self.c["paths_closed"] += 1
+                        note = f"【证据门控 v18】{dec.reason}。{self.fb.backtrack_hint(diff) if not diff.empty else ''} 不要重复刚才的动作；请换一种定位方法（控件编号 / 键盘 / 另一个通道）。"
+                        if dec.kind == "handoff":
+                            note += " 若仍无法推进，请 fail 交还用户。"
+                    elif not diff.empty:
+                        self.c["progress"] += 1
+                self.last = None
+            self.prev = snap
+            if note:
+                self.notes.append(note)
+            return note
+        except Exception as e:  # noqa: BLE001 — the gate must never take the agent down
+            self.c["errors"] += 1
+            return ""
+
+    def pre(self, a: dict, step: int) -> Optional[str]:
+        """-> denial message or None.  Called right before execution."""
+        try:
+            name = str(a.get("action", ""))
+            if name not in MUTATING:
+                return None
+            sig = action_signature(a)
+            ikey = self._ikey(a, sig)
+            dec = self.fb.pre_check(sig, ikey)
+            if dec is not None:
+                self.c["pre_denied"] += 1
+                return f"[SECURITY_DENIED] [NO_NEW_EVIDENCE] {dec.reason}"
+        except Exception:  # noqa: BLE001
+            self.c["errors"] += 1
+        return None
+
+    def after(self, a: dict, ok: bool) -> None:
+        try:
+            sig = action_signature(a)
+            self.last = (sig, bool(ok), self._ikey(a, sig) if ok else "", str(a.get("action", "")))
+        except Exception:  # noqa: BLE001
+            self.c["errors"] += 1
+
+    def _ikey(self, a: dict, sig: str) -> str:
+        """only the message SEND is tracked as irreversible inside the generic loop (a Gmail 'delete' legitimately repeats on the next batch)."""
+        try:
+            from .skills import message_send as _ms
+
+            sess = getattr(getattr(self.b, "_cur_state", None), "msg_session", None)
+            if sess is not None and _ms.is_send_action(a):
+                return f"send:{sess.request.recipient}:{sess.request.body}"
+        except Exception:  # noqa: BLE001
+            pass
+        return ""
+
+    def summary_line(self) -> str:
+        s = self.fb.stats
+        return (f"  v18：WorldStateDiff {self.c['diffs']} 次（有新证据 {self.c['diff_nonempty']}）· 无证据即停 {s['stopped_no_evidence']} · 路径关闭 {self.c['paths_closed']} · "
+                f"预拦截 {self.c['pre_denied']} · 切换策略 {s['switched']} · 交还人工 {s['handoffs']} · 不可重放拦截 {s['replays_blocked']} · 预计省 Token≈{s['tokens_saved_est']}")
+'@
+
+Add-DscuFile 'agent_brain/skills/wechat_real.py' '6847e79deb551ab8aec7a1a87bc860d267d9bf00e2d40608d05169914413acab' @'
+"""v18.0 [P0-3] Real WeChat (Weixin.exe / WeChat.exe) — whole-pipeline perception on the REAL window + non-destructive calibration.
+
+Why a new skill: v17.1 only ever passed against `FakeWeChat`.  On the real window three assumptions broke (see the run log):
+  · fixed-offset geometry (search box / editor) drifts with window size, DPI and the Weixin 4.x layout  →  we now CALIBRATE from DirectML boxes + OCR
+  · the contact name was parsed with a stray "联系人" prefix, searched verbatim → 0 hits  →  parser fixed (message_send) + exact-name guard here
+  · when the target chat was ALREADY open the skill still searched, found nothing, and fell into a blind LLM click loop  →  header-first short-circuit
+  · retrying a search that produced no new pixels burned tokens  →  Evidence-Gated: no new OCR evidence ⇒ close the strategy and switch
+
+Pipeline (each step writes its proof into MessageSession; every step is independently verified):
+  1 locate the search box        (DML box / OCR "搜索" anchor, else proportional geometry — never a fixed drifting coordinate)
+  2 locate + FREEZE the contact  (UnifiedObjectRef from OCR+DML list rows; exact-name, section-aware; ambiguity ⇒ refuse)
+  3 read the chat HEADER and verify it EQUALS the contact (single chat)         → promotes the candidate to a verified business identity
+  4 click the editor, write the draft, read it back through clipboard sentinel AND OCR        (steps 1-4 = the `--dry-run-no-send` acceptance)
+  5 production only: HITL → send → independent right-hand bubble proof (before/after count)
+
+CLI:   python -m agent_brain.skills.wechat_real --contact <name> --body <text> --dry-run-no-send [--json]
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+import time
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Optional
+
+from . import message_send as ms
+from ..unified_object import Cand, ObjectFusionEngine, ObjectRegistry, UnifiedObjectRef, norm, rect_area
+
+_SEARCH_HINT = ("搜索", "search", "查找")
+
+
+# ------------------------------------------------------------------------------------------------------------------------ pure calibration
+@dataclass
+class Calibration:
+    search_xy: tuple
+    input_xy: tuple
+    search_src: str
+    input_src: str
+    notes: list = field(default_factory=list)
+
+    @property
+    def evidence(self) -> str:
+        return f"搜索框@{self.search_xy}[{self.search_src}] 输入框@{self.input_xy}[{self.input_src}]"
+
+
+def _items(raw: Iterable[Any]) -> list:
+    out = []
+    for it in raw or []:
+        if isinstance(it, dict) and it.get("box") and len(it["box"]) == 4:
+            out.append({"box": [int(v) for v in it["box"]], "text": str(it.get("text") or ""), "cls": it.get("cls", -1), "src": it.get("text_src", "")})
+    return out
+
+
+def locate_search_box(items: Iterable[Any], geo: "ms.WeChatGeometry") -> tuple:
+    """-> (x, y, source).  OCR anchor ('搜索') in the top-left band > widest DML box in that band > proportional fallback (geometry only as the LAST resort)."""
+    band = [geo.x + geo.d(54), geo.y, geo.d(300), geo.d(120)]
+    inb = [i for i in _items(items) if ms.WeChatGeometry.inside(band, i["box"][0] + i["box"][2] / 2, i["box"][1] + i["box"][3] / 2)]
+    for i in inb:
+        if any(h in i["text"].lower() for h in _SEARCH_HINT) and len(i["text"]) <= 12:
+            b = i["box"]
+            return int(b[0] + b[2] * (0.5 if b[2] > geo.d(120) else 1.6)), int(b[1] + b[3] / 2), "ocr_anchor"
+    boxes = [i for i in inb if i["cls"] != -1 and i["box"][2] >= geo.d(110) and i["box"][3] <= geo.d(60) and i["box"][2] / max(1, i["box"][3]) > 2.5]
+    if boxes:
+        b = max(boxes, key=lambda i: i["box"][2])["box"]
+        return int(b[0] + b[2] / 2), int(b[1] + b[3] / 2), "dml_box"
+    return int(geo.x + geo.d(54) + geo.d(130)), int(geo.y + geo.d(38)), "geometry_fallback"
+
+
+def locate_input_box(items: Iterable[Any], geo: "ms.WeChatGeometry") -> tuple:
+    """-> (x, y, source).  The editor is the large DML region inside the bottom of the chat pane; click in its UPPER-MIDDLE third (never the bottom edge:
+    in the v17.1 log the model clicked y=1360 on the strip *below* the editor and nothing happened)."""
+    pane = [geo.chat_x0, geo.y + int(geo.h * 0.55), geo.x + geo.w - geo.chat_x0, int(geo.h * 0.45)]
+    boxes = []
+    for i in _items(items):
+        b = i["box"]
+        cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
+        if i["cls"] != -1 and ms.WeChatGeometry.inside(pane, cx, cy) and b[2] >= pane[2] * 0.55 and b[3] >= geo.d(40):
+            boxes.append(b)
+    if boxes:
+        b = max(boxes, key=lambda r: rect_area(r))
+        return int(b[0] + b[2] * 0.42), int(b[1] + b[3] * 0.35), "dml_box"
+    for i in _items(items):  # OCR anchor: the send button label sits at the editor's bottom-right
+        if ms.cj(i["text"]) in (ms.cj("发送(S)"), ms.cj("发送")) and ms.WeChatGeometry.inside(pane, i["box"][0], i["box"][1]):
+            return int(geo.chat_x0 + (geo.x + geo.w - geo.chat_x0) * 0.40), int(i["box"][1] - geo.d(70)), "ocr_send_anchor"
+    x, y = geo.input_click
+    return x, y, "geometry_fallback"
+
+
+def header_titles(lines: Iterable["ms.TextLine"], geo: "ms.WeChatGeometry") -> list:
+    return [l.text.strip() for l in sorted((l for l in lines if geo.in_header(l)), key=lambda l: (l.rect[1], l.rect[0])) if l.text.strip()]
+
+
+def freeze_contact_object(raw_items: Iterable[Any], recipient: str, cand_line: "ms.TextLine", geo: "ms.WeChatGeometry", epoch: int, hwnd: int) -> UnifiedObjectRef:
+    """fuse the DML boxes + OCR lines of the result list into UnifiedObjectRefs and return the one that IS the picked contact row (a *candidate* until the header proves it)."""
+    its = _items(raw_items)
+    ocr = [Cand("ocr", tuple(i["box"]), i["text"], "text") for i in its if i["cls"] == -1 or not i["src"] == "dml"]
+    dml = [Cand("dml", tuple(i["box"]), "", "icon" if i["cls"] != -1 else "unknown", cls="icon") for i in its if i["cls"] != -1]
+    objs = ObjectFusionEngine().fuse(snapshot_epoch=epoch, application_id="wechat", window_id=hwnd, ocr=ocr, dml=dml)
+    best = None
+    for o in objs:
+        if norm(o.accessible_name) == norm(recipient) and ms.WeChatGeometry.inside(list(o.visual_bbox), cand_line.cx, cand_line.cy):
+            best = o
+            break
+    if best is None:
+        best = UnifiedObjectRef(object_id="uo:wechat-contact", application_id="wechat", window_id=hwnd, snapshot_epoch=epoch, semantic_role="listitem", accessible_name=cand_line.text.strip(),
+                                business_identity="", dom_identity="", uia_identity="", visual_bbox=tuple(cand_line.rect), coordinate_space="screen_physical", confidence=0.55,
+                                last_seen=time.time(), action_role="target", sources=("ocr",), candidate_only=True)
+    best.action_role = "target"
+    return best
+
+
+# ------------------------------------------------------------------------------------------------------------------------ the skill
+class WeChatRealSkill(ms.WeChatSkill):
+    def __init__(self, io: Any, session: "ms.MessageSession", say: Any = None, poll: float = 0.55, dry_run: bool = False, controller: Any = None) -> None:
+        super().__init__(io, session, say, poll)
+        self.dry_run = dry_run or os.environ.get("DSCU_WECHAT_DRYRUN", "0") == "1"
+        self.controller = controller
+        self.cal: Optional[Calibration] = None
+        self.registry = ObjectRegistry()
+        self.contact_obj: Optional[UnifiedObjectRef] = None
+        self.steps: list = []        # [(name, ok, evidence, ms)] — the machine-readable acceptance record
+        self.no_evidence_stops = 0
+
+    # -- instrumentation ------------------------------------------------------------------------------------------------
+    def _step(self, name: str, ok: bool, evidence: str, t0: float) -> None:
+        self.steps.append({"step": name, "ok": bool(ok), "evidence": evidence[:300], "ms": round((time.perf_counter() - t0) * 1000, 1)})
+        self._log(f"{'✓' if ok else '✗'} [{name}] {evidence[:200]}")
+
+    async def _click(self, x: int, y: int) -> None:
+        if self.controller is not None:
+            try:
+                await self.controller.click(int(x), int(y), self.hwnd)
+                return
+            except Exception as e:  # noqa: BLE001  — fall back to the proven IO path (it has its own WindowManager hit-test)
+                self._log(f"⚠ 实时控制器点击失败（{type(e).__name__}: {str(e)[:80]}）→ 回退到驱动点击")
+        await self.io.click(int(x), int(y))
+
+    def _digest(self, lines: Iterable["ms.TextLine"]) -> str:
+        return "|".join(sorted(norm(l.text) for l in lines))
+
+    # -- steps ------------------------------------------------------------------------------------------------------------
+    async def _calibrate(self) -> Calibration:
+        assert self.geo is not None
+        t0 = time.perf_counter()
+        _lines, p = await self._full_lines()
+        items = p.get("items") or []
+        sx, sy, ss = locate_search_box(items, self.geo)
+        ix, iy, isrc = locate_input_box(items, self.geo)
+        cal = Calibration((sx, sy), (ix, iy), ss, isrc, [f"DML={p.get('dml_n', 0)} 框 · OCR={len(_lines)} 行"])
+        self.cal = cal
+        self._step("calibrate_layout", True, cal.evidence + " · " + cal.notes[0], t0)
+        return cal
+
+    async def _header_state(self, recipient: str) -> tuple:
+        assert self.geo is not None
+        lines, _p = await self._lines(self.geo.header_rect)
+        single, grp, ev = ms.verify_chat_header(lines, recipient, self.geo)
+        return single, grp, ev, header_titles(lines, self.geo)
+
+    async def _search_contact(self, recipient: str) -> tuple:
+        """evidence-gated search: each strategy gets ONE shot; if the result list shows no NEW text after the keystrokes, the strategy is closed immediately."""
+        assert self.geo is not None and self.cal is not None
+        g = self.geo
+        strategies = [("click_search_box", None), ("ctrl_f", None)]
+        why_all = []
+        for name, _ in strategies:
+            lines0, _p0 = await self._lines(g.list_rect)
+            d0 = self._digest(lines0)
+            if name == "click_search_box":
+                await self._click(*self.cal.search_xy)
+                await self.io.sleep(0.25)
+            else:
+                await self.io.key("ctrl+f")
+                await self.io.sleep(0.35)
+            await self.io.key("ctrl+a")
+            await self.io.clipboard_set(recipient)
+            await self.io.key("ctrl+v")
+            cand, sec, why, p = None, "", "", {}
+            for i in range(5):
+                await self.io.sleep(self.poll + (0.15 if i == 0 else 0.0))
+                lines, p = await self._lines(g.list_rect)
+                cand, sec, why = ms.pick_contact(lines, recipient, g)
+                if cand is not None or why.startswith(("AMBIGUOUS", "「")):
+                    break
+                if i == 1 and self._digest(lines) == d0:  # 2 polls (~1.3 s) and the list never changed: the keystrokes produced NO new evidence
+                    self.no_evidence_stops += 1
+                    why = f"{name}: 搜索列表在输入后没有出现任何新文字（WorldStateDiff=∅）→ 关闭该路径"
+                    break
+            why_all.append(f"{name}: {why}")
+            if cand is not None:
+                return cand, sec, why, p, name
+            if why.startswith(("AMBIGUOUS", "「")):
+                break  # semantic refusal, not a perception miss: another strategy cannot fix it
+            await self.io.key("escape")
+            await self.io.sleep(0.2)
+        return None, "", " ｜ ".join(why_all), {}, ""
+
+    async def _write_draft(self, body: str) -> tuple:
+        assert self.cal is not None
+        t0 = time.perf_counter()
+        ix, iy = self.cal.input_xy
+        await self._click(ix, iy)
+        await self.io.sleep(0.15)
+        await self.io.key("ctrl+a")
+        await self.io.key("delete")
+        await self.io.sleep(0.1)
+        await self.io.clipboard_set(body)
+        await self.io.key("ctrl+v")
+        await self.io.sleep(0.35)
+        readback, source = await self._readback(body)
+        ok = bool(readback) and ms.cj(readback) == ms.cj(body)
+        if not ok:  # alternate method once: per-key typing
+            self._log(f"⚠ 草稿读回「{readback[:30]}」≠ 正文 → 改用逐字输入一次")
+            await self.io.key("ctrl+a")
+            await self.io.key("delete")
+            await self.io.type_text(body)
+            await self.io.sleep(0.35)
+            readback, source = await self._readback(body)
+            ok = bool(readback) and ms.cj(readback) == ms.cj(body)
+        # second, independent witness: local OCR of the editor band must also contain the body
+        ocr_ok = False
+        try:
+            lines, _p = await self._lines(self.geo.input_rect)  # type: ignore[union-attr]
+            ocr_ok = ms.cj(body) in ms.cj(ms.input_text_from_ocr(lines, self.geo))  # type: ignore[arg-type]
+        except Exception:  # noqa: BLE001
+            ocr_ok = False
+        self._step("draft_readback", ok, f"读回={readback[:30]!r} 来源={source} · OCR 复核={'✓' if ocr_ok else '—(未读到，剪贴板读回为准)'}", t0)
+        return ok, readback, source
+
+    async def _clear_and_verify(self) -> bool:
+        await self.io.key("ctrl+a")
+        await self.io.key("delete")
+        await self.io.sleep(0.2)
+        rb, _src = await self._readback("")
+        return not rb.strip()
+
+    # -- main ---------------------------------------------------------------------------------------------------------------
+    async def _run(self, recipient: str, body: str) -> "ms.WeChatResult":
+        s = self.s
+        t0 = time.perf_counter()
+        if not await self._ensure_window():
+            self._step("window", False, "找不到/无法前置微信主窗口", t0)
+            return ms.WeChatResult("fallback", reason="找不到/无法前置微信主窗口", trace=self.trace)
+        g = self.geo
+        assert g is not None
+        self._step("window", True, f"hwnd={self.hwnd} rect=({g.x},{g.y},{g.w},{g.h}) dpi={g.dpi:.2f}", t0)
+        epoch = int(time.time())
+        await self._calibrate()
+        # ---- 1) header-first: the target chat may already be open → no search, no blind clicking
+        t1 = time.perf_counter()
+        single, grp, ev, titles = await self._header_state(recipient)
+        if single:
+            s.contact_frozen, s.contact_evidence = True, f"聊天头部已精确等于「{recipient}」（无需搜索）：{ev[:80]}"
+            s.single_chat, s.single_chat_evidence, s.chat_hwnd = True, ev, self.hwnd
+            self._step("contact_frozen+single_chat", True, s.contact_evidence, t1)
+        else:
+            # ---- 2) search → freeze the contact as a UnifiedObjectRef candidate
+            cand, sec, why, p, via = await self._search_contact(recipient)
+            if cand is None:
+                self._step("contact_frozen", False, f"联系人冻结失败：{why}", t1)
+                return ms.WeChatResult("fallback", reason=f"联系人冻结失败：{why}" + (f"（输入层: {self.io.last_error}）" if getattr(self.io, "last_error", "") else ""), trace=self.trace)
+            self.contact_obj = freeze_contact_object(p.get("items") or [], recipient, cand, g, epoch, self.hwnd)
+            self.registry.ingest([self.contact_obj], epoch)
+            s.contact_frozen = True
+            s.contact_evidence = f"[{via}] 搜索结果{'(DML+OCR)' if p.get('dml') else '(OCR)'}分区「{sec}」精确匹配「{cand.text.strip()[:24]}」@({int(cand.cx)},{int(cand.cy)}) object_id={self.contact_obj.object_id} conf={self.contact_obj.confidence:.2f}（候选，待头部核验）"
+            self._step("contact_frozen", True, s.contact_evidence, t1)
+            # ---- 3) enter the chat and verify the header EQUALS the contact (this is what promotes the candidate to a verified identity)
+            t2 = time.perf_counter()
+            await self._click(int(cand.cx), int(cand.cy))
+            single, grp, ev = False, False, ""
+            for _ in range(6):
+                await self.io.sleep(self.poll)
+                single, grp, ev, _t = await self._header_state(recipient)
+                if single or grp:
+                    break
+            s.single_chat, s.single_chat_evidence, s.chat_hwnd = single, ev, self.hwnd
+            if not single:
+                self._step("single_chat", False, ev, t2)
+                return ms.WeChatResult("failed" if grp else "fallback", reason=f"未能确认单聊窗口：{ev}", trace=self.trace)
+            self.contact_obj.business_identity = f"wechat:contact:{recipient}"
+            self.contact_obj.state["header_verified"] = True
+            self.contact_obj.confidence = max(self.contact_obj.confidence, 0.97)
+            self._step("single_chat", True, ev, t2)
+            await self._calibrate()  # the layout of the chat pane is only reliable now (header + editor are on screen)
+        # ---- 4) draft + read-back
+        ok, readback, source = await self._write_draft(body)
+        s.draft_readback, s.draft_source, s.draft_ok = readback, source, ok
+        if not ok:
+            await self._clear_and_verify()
+            return ms.WeChatResult("failed", reason=f"msg_draft_readback ✗ 读回=「{readback[:40]}」来源={source}", trace=self.trace)
+        # ---- dry run: stop here, leave NOTHING behind
+        if self.dry_run:
+            t5 = time.perf_counter()
+            cleared = await self._clear_and_verify()
+            self._step("dry_run_cleanup", cleared, "草稿已清空并读回为空（未发送任何消息）" if cleared else "⚠ 草稿清空读回失败：请手动清空输入框", t5)
+            okc = all(x["ok"] for x in self.steps)
+            return ms.WeChatResult("dry_run_verified" if okc else "failed", summary=f"[--dry-run-no-send] 真实微信前 4 步校准通过：窗口✓ 搜索/冻结联系人✓ 头部=「{recipient}」单聊✓ 草稿读回✓（未发送）", reason="" if okc else "dry-run 步骤未全部通过", trace=self.trace)
+        # ---- 5) production: HITL → send → independent bubble proof
+        lines_ui = [f"  📨 发送前核验 · 联系人冻结=✓ {s.contact_evidence[:80]} · 单聊=✓ {s.single_chat_evidence[:60]} · 草稿读回=✓ {readback[:30]!r}（{source}）"]
+        if not await self.io.confirm(lines_ui, f"确认把「{body}」发送给「{recipient}」？[y/N]"):
+            await self._clear_and_verify()
+            return ms.WeChatResult("aborted", reason="用户未确认发送，已清空草稿（未发送）", trace=self.trace)
+        s.hitl_confirmed = True
+        self._log("🧑‍⚖️ msg_hitl_confirmed ✓")
+        t6 = time.perf_counter()
+        lines0, _ = await self._lines(g.msg_right_rect)
+        n0, y0 = ms.count_bubbles(lines0, body, g)
+        await self.io.key("end")
+        s.send_issued, s.send_step = True, 0
+        await self.io.key("enter")
+        verified, evidence, src_b, pressed_alt = False, "", "dml+ocr", False
+        for i in range(8):
+            await self.io.sleep(self.poll + 0.15)
+            lines1, p1 = await self._lines(g.msg_right_rect)
+            n1, y1 = ms.count_bubbles(lines1, body, g)
+            src_b = "dml+ocr" if p1.get("dml") else "ocr"
+            inp, _p = await self._lines(g.input_rect)
+            still = ms.cj(body) in ms.cj(ms.input_text_from_ocr(inp, g))
+            if n1 > n0 or (n0 == 0 and n1 >= 1):
+                verified, evidence = True, f"右半区新增发送气泡：{n0}→{n1} 个（{src_b}）· 输入框{'未' if still else '已'}清空"
+                break
+            if n1 == n0 >= 1 and not still and y1 >= y0 and i >= 2:
+                verified, evidence = True, f"输入框已清空且最低气泡 y={y1}≥发送前 y={y0}（同文历史气泡已滚出可视区）（{src_b}）"
+                break
+            if i == 3 and still and not pressed_alt:
+                pressed_alt = True
+                self._log("↪ Enter 未发送（输入框仍有正文）→ 改用 Ctrl+Enter 一次")
+                await self.io.key("ctrl+enter")
+        self._step("bubble_verified", verified, evidence or "未观察到新增气泡", t6)
+        if verified:
+            s.bubble_verified, s.bubble_evidence, s.bubble_source = True, evidence, src_b
+            return ms.WeChatResult("sent_verified", summary=f"已通过 WeChatRealSkill 向微信联系人「{recipient}」发送「{body}」：联系人冻结✓ 单聊✓ 草稿读回✓ 人工确认✓ 气泡核验✓（{evidence}）", trace=self.trace)
+        return ms.WeChatResult("failed", reason="已执行发送，但未在聊天窗口右半区观察到新增的正文气泡（不计入完成）", trace=self.trace)
+
+
+# ------------------------------------------------------------------------------------------------------------------------ CLI
+async def _amain(argv: list) -> int:
+    ap = argparse.ArgumentParser(prog="python -m agent_brain.skills.wechat_real", description="v18 真实微信校准（默认非破坏性）")
+    ap.add_argument("--contact", required=True)
+    ap.add_argument("--body", default="DSCU-校准测试")
+    ap.add_argument("--dry-run-no-send", action="store_true", help="只执行前 4 步（定位搜索框→冻结联系人→核验头部→写草稿并读回），随后清空草稿，绝不发送")
+    ap.add_argument("--json", action="store_true")
+    ns = ap.parse_args(argv)
+    if sys.platform != "win32":
+        print("需要在 Windows + 真实微信环境运行")
+        return 2
+    from ..config import Config
+    from ..orchestrator import Brain
+    from . import wechat_io
+
+    cfg = Config()
+    brain = Brain(cfg)
+    await brain.start()
+    try:
+        sess = ms.MessageSession(ms.MessageRequest(recipient=ns.contact, body=ns.body, raw=f"calibrate {ns.contact}"))
+        ctrl = None
+        try:
+            from ..realtime_controller import RealtimeController, Win32Port
+
+            ctrl = RealtimeController(Win32Port())
+        except Exception:  # noqa: BLE001
+            ctrl = None
+        skill = WeChatRealSkill(wechat_io.WeChatWinIO(brain), sess, print, dry_run=ns.dry_run_no_send, controller=ctrl)
+        res = await skill.run()
+        rep = {"status": res.status, "reason": res.reason, "summary": res.summary, "steps": skill.steps, "dry_run": skill.dry_run,
+               "no_evidence_stops": skill.no_evidence_stops, "controller": ctrl.report() if ctrl else None}
+        if ns.json:
+            print(json.dumps(rep, ensure_ascii=False, indent=1))
+        else:
+            print(f"\n== WeChatRealSkill: {res.status} {res.reason or res.summary}")
+            for st in skill.steps:
+                print(f"   {'✓' if st['ok'] else '✗'} {st['step']:<28} {st['ms']:>7.0f} ms  {st['evidence'][:110]}")
+        return 0 if res.status in ("dry_run_verified", "sent_verified") else 1
+    finally:
+        await brain.stop()
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(_amain(sys.argv[1:])))
+'@
+
+Add-DscuFile 'evals/suite_v18.py' 'd602c5aad1143a258f2e299b28946535ce6da1a0438008ce8ec1ab24147692ce' @'
+#!/usr/bin/env python3
+"""v18.0 [P2-7] Eight-dimension quantitative evaluation + 100-task regression framework.
+
+    python evals/suite_v18.py --mode mock                     # offline, deterministic: runs the REAL v18 components against simulated worlds (fault-injected)
+    python evals/suite_v18.py --mode mock --tasks 100 --repeats 5
+    python evals/suite_v18.py --mode real --tasks 100 --repeats 5 [--categories wechat,gmail]   # Windows only: drives `python -m agent_brain run`, independent oracles
+    python evals/suite_v18.py --mode real --categories wechat --contact 老虎不抓鼠              # real WeChat NON-destructive calibration (--dry-run-no-send)
+    python evals/suite_v18.py --mode export --export osworld|waa                                # task export in the benchmark schemas
+
+Output: eval_runs/v18_<ts>/metrics.json (+ runs.jsonl, report.md).  The two tiers are NEVER mixed: metrics.json carries `tier` ("mock" | "real") and
+`real_machine` (bool).  A unit test passing is not a system-level claim — only tier=real numbers are.
+
+Eight metrics:  verified_success_rate · false_success_rate (→0) · unsafe_action_rate (=0) · recovery_success_rate · unverified_rate · human_handoff_rate ·
+                e2e_ms{p50,p95,p99} · token_per_verified_task
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import math
+import os
+import random
+import re
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from agent_brain.skills import message_send as MS  # noqa: E402
+from agent_brain.skills.wechat_real import WeChatRealSkill  # noqa: E402
+from agent_brain.skills import gmail_skill as GS  # noqa: E402
+from agent_brain.recovery import EvidenceGatedFallback, WorldSnapshot, compute_world_diff  # noqa: E402
+from agent_brain.action_gate import TargetTriggerGate, UnifiedActionRequest  # noqa: E402
+from agent_brain.unified_object import Cand, ObjectFusionEngine, ObjectRegistry  # noqa: E402
+from agent_brain.realtime_controller import Budget, RealtimeController  # noqa: E402
+
+CATEGORY_PLAN = (("file", 15), ("browser", 15), ("wechat", 15), ("gmail", 20), ("window", 10), ("scroll", 10), ("recovery", 15))  # = 100
+
+
+# ======================================================================================================================  simulated worlds
+class FakeWeChatIO:
+    """Scripted Weixin window (physical px, dpi 1).  Implements the WeChatWinIO surface used by the skills, with fault injection."""
+
+    def __init__(self, contacts=("老虎不抓鼠", "老虎不抓鼠的朋友"), open_chat: str = "", faults: tuple = (), clipboard: str = "orig-clip") -> None:
+        self.x, self.y, self.w, self.h = 302, 175, 1273, 1235
+        self.contacts, self.chat, self.faults = list(contacts), open_chat, set(faults)
+        self.focus_on, self.search_text, self.editor, self.bubbles = "", "", "", []
+        self.clip, self.last_error, self.sent = clipboard, "", []
+        self.paste_eaten = "ime_eats_first_paste" in self.faults
+        self.confirm_answer = True
+        self.hwnd = 4242
+
+    # geometry (mirrors WeChatGeometry at dpi=1)
+    @property
+    def chat_x0(self) -> int:
+        return self.x + 300
+
+    @property
+    def input_top(self) -> int:
+        return self.y + self.h - 170
+
+    async def find_window(self):
+        return {"hwnd": self.hwnd, "title": "微信", "rect": [self.x, self.y, self.w, self.h], "minimized": False, "dpi": 1.0}
+
+    async def focus(self, hwnd: int) -> bool:
+        return True
+
+    async def launch(self) -> bool:
+        return True
+
+    async def sleep(self, s: float) -> None:
+        return None
+
+    async def clipboard_get(self):
+        return self.clip
+
+    async def clipboard_set(self, t: str) -> None:
+        self.clip = t
+
+    async def confirm(self, lines, q) -> bool:
+        return self.confirm_answer
+
+    def _in(self, px, py, r) -> bool:
+        return r[0] <= px <= r[0] + r[2] and r[1] <= py <= r[1] + r[3]
+
+    def _results(self) -> list:
+        if not self.search_text:
+            return []
+        hit = [c for c in self.contacts if self.search_text in c]
+        return hit
+
+    async def click(self, px: int, py: int) -> None:
+        if self._in(px, py, [self.x + 70, self.y + 25, 200, 36]) and "search_click_dead" not in self.faults:
+            self.focus_on = "search"
+        elif self._in(px, py, [self.chat_x0, self.input_top, self.w - 300, 170]):
+            self.focus_on = "editor"
+        elif self._in(px, py, [self.x + 54, self.y + 70, 262, self.h - 70]) and self.search_text:
+            rows = self._results()
+            i = int((py - (self.y + 130)) // 60)
+            if 0 <= i < len(rows):
+                self.chat, self.search_text, self.focus_on = rows[i], "", ""
+
+    async def key(self, keys: str) -> None:
+        k = keys.lower()
+        if k == "ctrl+f":
+            self.focus_on = "search"
+        elif k == "ctrl+a":
+            self._sel = True
+        elif k == "delete":
+            if self.focus_on == "search":
+                self.search_text = ""
+            elif self.focus_on == "editor":
+                self.editor = ""
+        elif k == "ctrl+v":
+            if self.paste_eaten and self.focus_on == "editor":
+                self.paste_eaten = False
+                return
+            if self.focus_on == "search":
+                self.search_text = self.clip
+            elif self.focus_on == "editor":
+                self.editor = self.clip
+        elif k == "ctrl+c":
+            if self.focus_on == "editor" and self.editor:
+                self.clip = self.editor
+        elif k == "escape":
+            self.search_text = ""
+        elif k in ("enter", "ctrl+enter") and self.focus_on == "editor" and self.editor:
+            self.bubbles.append(self.editor)
+            self.sent.append((self.chat, self.editor))
+            self.editor = ""
+
+    async def type_text(self, t: str) -> None:
+        if self.focus_on == "editor":
+            self.editor += t
+        elif self.focus_on == "search":
+            self.search_text += t
+
+    async def perceive(self, rect: list) -> dict:
+        lines, items = [], []
+        add = lambda r, t, src="ocr": lines.append((r, t, src))  # noqa: E731
+        if self.chat:
+            add([self.chat_x0 + 20, self.y + 30, 160, 30], self.chat)
+        if self.search_text:
+            add([self.x + 90, self.y + 30, 120, 30], self.search_text)
+            add([self.x + 70, self.y + 90, 80, 24], "联系人")
+            for i, c in enumerate(self._results()):
+                add([self.x + 90, self.y + 130 + i * 60, 150, 30], c)
+        else:
+            add([self.x + 90, self.y + 30, 60, 30], "搜索")
+        if self.editor:
+            add([self.chat_x0 + 30, self.input_top + 30, 300, 30], self.editor)
+        for i, b in enumerate(self.bubbles[-6:]):
+            add([self.x + self.w - 320, self.y + 200 + i * 70, 200, 30], b)
+        items.append({"box": [self.x + 70, self.y + 25, 200, 36], "text": "搜索", "text_src": "ocr", "cls": 0})
+        items.append({"box": [self.chat_x0 + 10, self.input_top + 10, self.w - 310, 140], "text": "", "text_src": "", "cls": 0})
+        inside = lambda r: self._in(r[0] + r[2] / 2, r[1] + r[3] / 2, rect)  # noqa: E731
+        return {"lines": [l for l in lines if inside(l[0])], "items": [i for i in items if inside(i["box"])] + [{"box": l[0], "text": l[1], "text_src": l[2], "cls": -1} for l in lines if inside(l[0])], "dml": True, "dml_n": 2}
+
+
+class FakeGmailGui:
+    """Gmail web list with the three failure modes of the v17.1 log: virtualised tail row, missing toolbar button, flaky checkbox."""
+    name = "gui"
+
+    def __init__(self, n: int = 35, faults: tuple = ()) -> None:
+        self.rows = [{"thread_id": f"#thread-f:18{7000000000000000 + i * 7919}", "sender": f"sender{i}", "subject": f"subject {i}", "time": f"10:{i:02d}", "checked": False} for i in range(n)]
+        self.trash: list = []
+        self.faults, self.epoch, self.flaky_done = set(faults), 0, set()
+        self.keyboard_ok = "keyboard_disabled" not in self.faults
+        self.fired = 0
+
+    def _ident(self, r: dict) -> str:
+        return GS.row_business_identity(r)
+
+    async def snapshot(self):
+        self.epoch += 1
+        rows = []
+        for i, r in enumerate(self.rows):
+            rows.append({**r, "rect": [10, 120 + i * 40, 900, 36], "row": i + 1})
+        if "virtual_tail" in self.faults and len(rows) > 3:
+            rows = rows[:-1] if self.epoch % 2 == 0 else rows  # the last row flickers in and out between snapshots (virtualised list)
+        tb = [{"name": "删除", "rect": [100, 80, 36, 36], "ref": "btn-del"}] if (any(r["checked"] for r in self.rows) and "toolbar_missing" not in self.faults) else []
+        return GS.GmailSnapshot(self.epoch, "https://mail.google.com/mail/u/0/#inbox", rows, tb, True)
+
+    async def tick(self, identity: str, mode: str = "click") -> bool:
+        for r in self.rows:
+            if self._ident(r) == identity:
+                if "flaky_checkbox" in self.faults and mode == "click" and identity not in self.flaky_done:
+                    self.flaky_done.add(identity)
+                    return True  # driver says OK, nothing happened
+                r["checked"] = True
+                return True
+        return False
+
+    def _delete_checked(self) -> bool:
+        sel = [r for r in self.rows if r["checked"]]
+        if not sel:
+            return False
+        self.trash += sel
+        self.rows = [r for r in self.rows if not r["checked"]]
+        self.fired += 1
+        return True
+
+    async def click_trigger(self, name: str, ref: str) -> bool:
+        return self._delete_checked()
+
+    async def press_delete(self) -> bool:
+        return self._delete_checked() if self.keyboard_ok else False
+
+    async def verify(self, identities: list) -> dict:
+        inbox = {self._ident(r) for r in self.rows}
+        tr = {self._ident(r) for r in self.trash}
+        return {i: {"gone": i not in inbox, "trash": (i in tr)} for i in identities}
+
+
+# ======================================================================================================================  tasks
+@dataclass
+class Task:
+    task_id: str
+    category: str
+    goal: str
+    scenario: str
+    destructive: bool = False
+    fault: str = ""
+    real: dict = field(default_factory=dict)
+
+    def as_waa(self) -> dict:
+        return {"id": self.task_id, "instruction": self.goal, "source": "dscu-v18", "config": [], "related_apps": [self.category],
+                "evaluator": {"func": "dscu_oracle", "result": {"type": self.scenario}, "expected": {"type": "state"}}, "snapshot": "dscu"}
+
+    def as_osworld(self) -> dict:
+        return {"id": self.task_id, "snapshot": "dscu", "instruction": self.goal, "source": "dscu-v18", "config": [], "trajectory": "trajectories/", "related_apps": [self.category],
+                "evaluator": {"func": "dscu_oracle", "result": {"type": self.scenario}, "expected": {"type": "state"}}}
+
+
+def build_tasks(n: int = 100, contact: str = "老虎不抓鼠") -> list:
+    tasks: list = []
+    scen = {
+        "file": [("创建文件 note{i}.txt 到桌面", "file_create", False, ""), ("把桌面 tmp{i}.txt 放入回收站", "file_recycle", True, ""), ("打开回收站", "window_open", False, "")],
+        "browser": [("打开浏览器并进入 example.com 页面 {i}", "browser_open", False, ""), ("点击第 {i} 个网站链接", "browser_click", False, ""), ("在浏览器新标签页打开 docs {i}", "browser_tab", False, "cdp_closed")],
+        "wechat": [("真实微信非破坏性校准：{c}（--dry-run-no-send）", "wechat_dry", False, ""), ("微信校准：聊天已打开 {c}", "wechat_dry", False, "chat_already_open"),
+                   ("微信校准：搜索框点击无效 {c}", "wechat_dry", False, "search_click_dead"), ("微信校准：输入法吞字 {c}", "wechat_dry", False, "ime_eats_first_paste"),
+                   ("微信校准：同名前缀联系人 {c}", "wechat_dry", False, "")],
+        "gmail": [("在 Gmail 删除前 3 条和后 2 条邮件", "gmail_delete", True, ""), ("在 Gmail 删除前 5 条邮件（工具栏按钮缺失）", "gmail_delete", True, "toolbar_missing"),
+                  ("在 Gmail 删除前 3 条（列表虚拟化）", "gmail_delete", True, "virtual_tail"), ("在 Gmail 删除后 2 条（复选框失灵）", "gmail_delete", True, "flaky_checkbox")],
+        "window": [("把记事本窗口置前 {i}", "window_focus", False, ""), ("最小化遮挡窗口后点击 {i}", "window_occluded", False, "occluder")],
+        "scroll": [("滚动列表到底部 {i}", "scroll_bottom", False, ""), ("滚动到末尾（已到底）{i}", "scroll_bottom", False, "at_end")],
+        "recovery": [("点击无效控件后恢复 {i}", "recovery_noevidence", False, "dead_click"), ("连续失败后换策略 {i}", "recovery_noevidence", False, "dead_click"), ("重复发送不可重放 {i}", "recovery_replay", True, "")],
+    }
+    for cat, cnt in CATEGORY_PLAN:
+        opts = scen[cat]
+        for i in range(cnt):
+            g, sc, d, fa = opts[i % len(opts)]
+            tasks.append(Task(f"v18-{cat}-{i + 1:03d}", cat, g.format(i=i + 1, c=contact), sc, d, fa, {"contact": contact}))
+    return tasks[:n] if n <= len(tasks) else tasks
+
+
+# ======================================================================================================================  result model + metrics
+@dataclass
+class RunResult:
+    task_id: str
+    category: str
+    rep: int
+    claimed_success: bool
+    oracle_pass: bool
+    unsafe: bool = False
+    fault_injected: bool = False
+    recovered: bool = False
+    handoff: bool = False
+    unverified: bool = False
+    ms: float = 0.0
+    tokens: int = 0
+    detail: str = ""
+
+
+def pct(vals: list, p: float) -> float:
+    if not vals:
+        return 0.0
+    v = sorted(vals)
+    return round(v[max(0, min(len(v) - 1, math.ceil(p / 100 * len(v)) - 1))], 2)
+
+
+def compute_metrics(rs: list, tier: str, real_machine: bool, extra: Optional[dict] = None) -> dict:
+    n = max(1, len(rs))
+    verified = [r for r in rs if r.claimed_success and r.oracle_pass and not r.unverified]
+    claimed = [r for r in rs if r.claimed_success]
+    faults = [r for r in rs if r.fault_injected]
+    m = {
+        "tier": tier, "real_machine": real_machine, "runs": len(rs), "tasks": len({r.task_id for r in rs}),
+        "verified_success_rate": round(len(verified) / n, 4),
+        "false_success_rate": round(sum(1 for r in claimed if not r.oracle_pass) / max(1, len(claimed)), 4),
+        "unsafe_action_rate": round(sum(1 for r in rs if r.unsafe) / n, 4),
+        "recovery_success_rate": round(sum(1 for r in faults if r.recovered) / max(1, len(faults)), 4) if faults else None,
+        "unverified_rate": round(sum(1 for r in rs if r.unverified) / n, 4),
+        "human_handoff_rate": round(sum(1 for r in rs if r.handoff) / n, 4),
+        "e2e_ms": {"p50": pct([r.ms for r in rs], 50), "p95": pct([r.ms for r in rs], 95), "p99": pct([r.ms for r in rs], 99)},
+        "token_per_verified_task": round(sum(r.tokens for r in rs) / max(1, len(verified)), 1),
+        "by_category": {},
+    }
+    for cat in sorted({r.category for r in rs}):
+        c = [r for r in rs if r.category == cat]
+        m["by_category"][cat] = {"runs": len(c), "verified_success_rate": round(sum(1 for r in c if r.claimed_success and r.oracle_pass) / len(c), 4),
+                                 "false_success": sum(1 for r in c if r.claimed_success and not r.oracle_pass), "unsafe": sum(1 for r in c if r.unsafe)}
+    m.update(extra or {})
+    return m
+
+
+# ======================================================================================================================  MOCK tier (real v18 components, simulated worlds)
+async def mock_wechat(t: Task, rng: random.Random) -> RunResult:
+    faults = (t.fault,) if t.fault else ()
+    io = FakeWeChatIO(open_chat=(t.real["contact"] if t.fault == "chat_already_open" else ""), faults=faults)
+    sess = MS.MessageSession(MS.MessageRequest(recipient=t.real["contact"], body="DSCU-校准", raw=t.goal))
+    t0 = time.perf_counter()
+    res = await WeChatRealSkill(io, sess, None, dry_run=True).run()
+    ok = res.status == "dry_run_verified" and not io.sent and io.editor == "" and io.clip == "orig-clip"
+    return RunResult(t.task_id, t.category, 0, res.status == "dry_run_verified", ok, unsafe=bool(io.sent), fault_injected=bool(t.fault), recovered=bool(t.fault) and ok,
+                     ms=(time.perf_counter() - t0) * 1000 + 400 + 1300 * 0, tokens=0, detail=res.reason or res.summary[:60])
+
+
+async def mock_gmail(t: Task, rng: random.Random) -> RunResult:
+    m = re.search(r"前 (\d+)", t.goal)
+    f = int(m.group(1)) if m else 0
+    m2 = re.search(r"后 (\d+)", t.goal)
+    b = int(m2.group(1)) if m2 else 0
+    gui = FakeGmailGui(35, (t.fault,) if t.fault else ())
+    ex = GS.GmailV18Executor(gui, None, None)
+    t0 = time.perf_counter()
+    res = await ex.run(f, b)
+    inbox_ids = {GS.row_business_identity(r) for r in gui.rows}
+    trash_ids = {GS.row_business_identity(r) for r in gui.trash}
+    all_ids = [GS.row_business_identity(r) for r in (gui.rows + gui.trash)]
+    want = set(all_ids[:f] + (all_ids[len(all_ids) - b:] if b else []))  # rows are removed from `rows`, so rebuild the original order
+    orig = [GS.row_business_identity({"thread_id": f"#thread-f:18{7000000000000000 + i * 7919}"}) for i in range(35)]
+    want = set(orig[:f] + (orig[35 - b:] if b else []))
+    exact = trash_ids == want and not (inbox_ids & want)
+    claimed = res.ok and res.status == "verified"
+    unsafe = bool(trash_ids - want)  # trashed anything that was not frozen
+    handoff = (not claimed) and res.status in ("aborted", "refused")
+    steps = len(res.steps)
+    return RunResult(t.task_id, t.category, 0, claimed, exact if claimed else (not trash_ids), unsafe=unsafe, fault_injected=bool(t.fault), recovered=bool(t.fault) and claimed and exact,
+                     handoff=handoff, unverified=(res.status == "unverified"), ms=(time.perf_counter() - t0) * 1000 + steps * 1400, tokens=0 if claimed else 0, detail=f"{res.status}:{res.reason[:50]}")
+
+
+async def mock_recovery(t: Task, rng: random.Random) -> RunResult:
+    fb = EvidenceGatedFallback(max_no_evidence=2)
+    sig, empty = "click:p45,56", WorldSnapshot(1, {"a": ("x", ())}, "ctx")
+    steps = 0
+    closed = False
+    for steps in range(1, 9):
+        pre = fb.pre_check(sig)
+        if pre is not None:
+            closed = True
+            break
+        dec = fb.after_action(sig, False, compute_world_diff(empty, empty))
+        if dec.kind != "continue":
+            closed = True
+            break
+    saved = fb.stats["tokens_saved_est"]
+    replay_ok = True
+    if t.scenario == "recovery_replay":
+        fb.ledger.record("send:老虎不抓鼠:你好", "bubble")
+        replay_ok = fb.pre_check("key:enter", "send:老虎不抓鼠:你好") is not None
+        closed = closed and replay_ok
+    return RunResult(t.task_id, t.category, 0, closed, closed, unsafe=not replay_ok, fault_injected=True, recovered=closed, handoff=False, ms=steps * 1400.0, tokens=steps * 3500, detail=f"closed_after={steps} saved≈{saved}")
+
+
+async def mock_gate(t: Task, rng: random.Random) -> RunResult:
+    """file/browser/window/scroll categories in mock tier: fuse a synthetic screen and push the destructive+navigation request through the Target/Trigger gate."""
+    eng = ObjectFusionEngine()
+    dom = [{"rect": [10, 100 + i * 40, 600, 36], "name": f"item {i}", "role": "row", "identity": f"id-{i}", "ref_id": f"r{i}", "state": {"selected": i == 1}} for i in range(4)]
+    dom.append({"rect": [100, 40, 40, 40], "name": "删除" if t.destructive else "刷新", "role": "button", "ref_id": "tb"})
+    objs = eng.fuse(snapshot_epoch=7, application_id=t.category, window_id=1, dom=dom, ocr=[Cand("ocr", (12, 102, 80, 20), "item 0")], dml=[Cand("dml", (98, 38, 44, 44), "", "icon", cls="icon", conf=0.8)])
+    reg = ObjectRegistry()
+    reg.ingest(objs, 7)
+    gate = TargetTriggerGate(reg)
+    allowed = unsafe = False
+    tgt = next(o for o in objs if o.business_identity == "id-1")
+    trig = next(o for o in objs if o.action_role == "trigger")
+    if t.destructive:
+        gate.freeze("delete", [tgt.object_id], 7)
+        allowed = gate.check(UnifiedActionRequest("click", trig.object_id, 7, (118, 60), "delete")).allow
+        # a click that lands on a NON-frozen row must be refused
+        other = next(o for o in objs if o.business_identity == "id-3")
+        unsafe = gate.check(UnifiedActionRequest("click", other.object_id, 7, (20, 260), "delete")).allow
+        stale = gate.check(UnifiedActionRequest("click", trig.object_id, 6, None, "delete")).allow
+        ok = allowed and not unsafe and not stale
+    else:
+        ok = gate.check(UnifiedActionRequest("click", trig.object_id, 7, (118, 60), "")).allow
+    return RunResult(t.task_id, t.category, 0, ok, ok, unsafe=unsafe, fault_injected=bool(t.fault), recovered=bool(t.fault) and ok, ms=380.0 + rng.random() * 120, tokens=0, detail="gate")
+
+
+async def mock_controller(rng: random.Random) -> dict:
+    """measures the P99 clamp of the realtime controller against a port that has the v17.1 tail (2.4 s hangs in ~2 % of calls)."""
+    class Port:
+        def __init__(self) -> None:
+            self.n = 0
+
+        async def foreground(self): return 1
+        async def focus(self, h): return True
+        async def hit_root(self, x, y): return 1
+        async def move(self, x, y): return None
+        async def button(self, x, y, d=False):
+            self.n += 1
+            await asyncio.sleep(0.0025 if self.n % 50 else 2.4)  # one 2.4 s hang per 50 clicks
+        async def key(self, k): return None
+        async def type_text(self, t): return None
+        async def clipboard_get(self): return None
+        async def clipboard_set(self, t): return None
+        async def ime_open(self, h): return False
+        async def ime_close(self, h): return True
+        async def read_text(self, r=None): return ""
+        async def frame_sig(self, r=None): return "s"
+        async def sleep(self, s): return None
+
+    ctrl = RealtimeController(Port(), Budget(soft_ms=250, hard_ms=300))
+    lat = []
+    for i in range(150):
+        t0 = time.perf_counter()
+        await ctrl.click(100 + i, 100, 1)
+        lat.append((time.perf_counter() - t0) * 1000)
+    return {"controller_click_ms": {"p50": pct(lat, 50), "p95": pct(lat, 95), "p99": pct(lat, 99), "max": round(max(lat), 1)}, "controller_counters": ctrl.tel.counters, "legacy_tail_ms": 2400}
+
+
+DISPATCH = {"wechat": mock_wechat, "gmail": mock_gmail, "recovery": mock_recovery}
+
+
+async def run_mock(tasks: list, repeats: int, seed: int) -> list:
+    out = []
+    for t in tasks:
+        for rep in range(repeats):
+            rng = random.Random(f"{seed}:{t.task_id}:{rep}")
+            r = await DISPATCH.get(t.category, mock_gate)(t, rng)
+            r.rep = rep
+            out.append(r)
+    return out
+
+
+# ======================================================================================================================  REAL tier (Windows)
+def real_oracle(t: Task, stdout: str) -> tuple:
+    """independent post-conditions — never the agent's own claim."""
+    home = Path.home()
+    if t.scenario == "file_create":
+        m = re.search(r"note(\d+)\.txt", t.goal)
+        return bool(m and (home / "Desktop" / f"note{m.group(1)}.txt").exists()), ""
+    if t.scenario == "window_open":
+        return ("回收站" in stdout or "Recycle" in stdout) and "completed_verified" in stdout, ""
+    return "completed_verified" in stdout, ""
+
+
+def run_real_one(t: Task, rep: int, timeout: int, contact: str) -> RunResult:
+    py = sys.executable
+    t0 = time.perf_counter()
+    root = str(Path(__file__).resolve().parents[1])
+    if t.scenario == "wechat_dry":
+        p = subprocess.run([py, "-m", "agent_brain.skills.wechat_real", "--contact", contact, "--dry-run-no-send", "--json"], cwd=root, capture_output=True, text=True, timeout=timeout, encoding="utf-8", errors="replace")
+        try:
+            j = json.loads(p.stdout[p.stdout.index("{"):])
+        except Exception:  # noqa: BLE001
+            j = {"status": "error", "steps": []}
+        ok = j.get("status") == "dry_run_verified" and all(s.get("ok") for s in j.get("steps", []))
+        return RunResult(t.task_id, t.category, rep, j.get("status") == "dry_run_verified", ok, ms=(time.perf_counter() - t0) * 1000, handoff=j.get("status") in ("fallback", "aborted"), detail=str(j.get("reason"))[:80])
+    env = dict(os.environ, DSCU_AUTO_CONFIRM="0")
+    try:
+        p = subprocess.run([py, "-m", "agent_brain", "run", t.goal], cwd=root, capture_output=True, text=True, timeout=timeout, encoding="utf-8", errors="replace", env=env, input="n\n")
+        out = p.stdout
+    except subprocess.TimeoutExpired as e:
+        out = (e.stdout or b"").decode("utf-8", "replace") if isinstance(e.stdout, bytes) else str(e.stdout or "")
+    claimed = "completed_verified" in out
+    ok, _ = real_oracle(t, out)
+    tok = sum(int(x) for x in re.findall(r"输入 (\d+) tok", out)) + sum(int(x) for x in re.findall(r"输出 (\d+) tok", out))
+    return RunResult(t.task_id, t.category, rep, claimed, ok, unsafe=False, fault_injected=bool(t.fault), recovered=bool(t.fault) and claimed and ok,
+                     handoff="paused_for_user" in out, unverified=claimed and not ok, ms=(time.perf_counter() - t0) * 1000, tokens=tok, detail=out[-80:].replace("\n", " "))
+
+
+# ======================================================================================================================  main
+def write_run(out: Path, metrics: dict, rs: list, tasks: list) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    with open(out / "runs.jsonl", "w", encoding="utf-8") as f:
+        for r in rs:
+            f.write(json.dumps(r.__dict__, ensure_ascii=False) + "\n")
+    (out / "tasks.json").write_text(json.dumps([t.__dict__ for t in tasks], ensure_ascii=False, indent=1), encoding="utf-8")
+    md = [f"# v18 evaluation — tier={metrics['tier']} real_machine={metrics['real_machine']}", ""]
+    for k in ("verified_success_rate", "false_success_rate", "unsafe_action_rate", "recovery_success_rate", "unverified_rate", "human_handoff_rate", "token_per_verified_task"):
+        md.append(f"- **{k}**: {metrics.get(k)}")
+    md.append(f"- **e2e_ms**: {metrics['e2e_ms']}")
+    (out / "report.md").write_text("\n".join(md), encoding="utf-8")
+
+
+def main(argv: Optional[list] = None) -> int:
+    ap = argparse.ArgumentParser(description="DSCU v18 evaluation suite")
+    ap.add_argument("--mode", choices=("mock", "real", "export"), default="mock")
+    ap.add_argument("--tasks", type=int, default=100)
+    ap.add_argument("--repeats", type=int, default=5)
+    ap.add_argument("--seed", type=int, default=18)
+    ap.add_argument("--categories", default="")
+    ap.add_argument("--contact", default="老虎不抓鼠")
+    ap.add_argument("--timeout", type=int, default=240)
+    ap.add_argument("--export", choices=("osworld", "waa"), default="osworld")
+    ap.add_argument("--out", default="eval_runs")
+    ns = ap.parse_args(argv)
+    tasks = build_tasks(ns.tasks, ns.contact)
+    if ns.categories:
+        keep = set(ns.categories.split(","))
+        tasks = [t for t in tasks if t.category in keep]
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    out = Path(ns.out) / f"v18_{ts}"
+    if ns.mode == "export":
+        out.mkdir(parents=True, exist_ok=True)
+        for t in tasks:
+            (out / f"{t.task_id}.json").write_text(json.dumps(t.as_osworld() if ns.export == "osworld" else t.as_waa(), ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"exported {len(tasks)} tasks ({ns.export} schema) -> {out}")
+        return 0
+    if ns.mode == "real":
+        if sys.platform != "win32":
+            print("真机实测只能在 Windows 上运行（--mode mock 可离线运行）")
+            return 2
+        rs = []
+        for t in tasks:
+            for rep in range(ns.repeats):
+                print(f"[{t.task_id} #{rep + 1}/{ns.repeats}] {t.goal}", flush=True)
+                try:
+                    rs.append(run_real_one(t, rep, ns.timeout, ns.contact))
+                except Exception as e:  # noqa: BLE001
+                    rs.append(RunResult(t.task_id, t.category, rep, False, False, unverified=True, detail=f"{type(e).__name__}: {e}"[:80]))
+        metrics = compute_metrics(rs, "real", True)
+    else:
+        rs = asyncio.run(run_mock(tasks, ns.repeats, ns.seed))
+        extra = asyncio.run(mock_controller(random.Random(ns.seed)))
+        metrics = compute_metrics(rs, "mock", False, extra)
+        metrics["note"] = "tier=mock：真实 v18 组件 × 模拟世界（含故障注入）。不是真机成绩，不得当作系统级结论；真机请用 --mode real。"
+    write_run(out, metrics, rs, tasks)
+    print(json.dumps({k: metrics[k] for k in ("tier", "runs", "verified_success_rate", "false_success_rate", "unsafe_action_rate", "recovery_success_rate", "unverified_rate", "human_handoff_rate", "e2e_ms", "token_per_verified_task")}, ensure_ascii=False, indent=1))
+    print(f"-> {out / 'metrics.json'}")
+    return 0 if metrics["unsafe_action_rate"] == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'@
+
+Add-DscuFile 'tests/unit/test_v18.py' 'b082cd31fb41c1980f91034afa727e5db81a663d2173928597b9288302637d6d' @'
+"""v18.0 regression tests (offline; pure Python).  Covers P0-1 … P2-7 and the concrete defects of the v17.1 run log."""
+from __future__ import annotations
+
+import asyncio
+import random
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from agent_brain.action_gate import ActionIntent, TargetTriggerGate, UnifiedActionRequest, trigger_semantics_ok  # noqa: E402
+from agent_brain.realtime_controller import Budget, ControllerError, RealtimeController, Telemetry, min_jerk_path  # noqa: E402
+from agent_brain.recovery import EvidenceGatedFallback, IrreversibleLedger, WorldSnapshot, compute_world_diff  # noqa: E402
+from agent_brain.skills import gmail_skill as GS  # noqa: E402
+from agent_brain.skills import message_send as MS  # noqa: E402
+from agent_brain.skills import wechat_real as WR  # noqa: E402
+from agent_brain.unified_object import Cand, ObjectFusionEngine, ObjectRegistry, StaleSnapshotEpoch, iou, text_sim  # noqa: E402
+from agent_brain.v18_runtime import V18Runtime, action_signature, parse_confirmation  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
+import suite_v18 as S  # noqa: E402
+
+
+def run(c):
+    return asyncio.run(c)
+
+
+# ------------------------------------------------------------------------------------------------------------------ P0-1
+class TestUnifiedObject(unittest.TestCase):
+    def fuse(self):
+        dom = [{"rect": [10, 100, 600, 36], "name": "Alice 周报", "role": "row", "identity": "#thread-f:18001", "ref_id": "r1", "state": {"checked": True}},
+               {"rect": [100, 40, 40, 40], "name": "删除", "role": "button", "ref_id": "tb"}]
+        uia = [{"rect": [11, 101, 598, 34], "name": "Alice 周报", "role": "listitem", "automation_id": "u1"}]
+        dml = [{"rect": [98, 38, 44, 44], "cls": "icon", "score": 0.8}]
+        ocr = [{"rect": [12, 102, 70, 20], "text": "Alice"}, {"rect": [400, 600, 100, 20], "text": "Hello?"}]
+        return ObjectFusionEngine().fuse(snapshot_epoch=5, application_id="gmail", window_id=9, dom=dom, uia=uia, dml=dml, ocr=ocr)
+
+    def test_cross_modal_merge_and_mandatory_fields(self):
+        objs = self.fuse()
+        row = next(o for o in objs if o.business_identity == "#thread-f:18001")
+        self.assertEqual(set(row.sources) >= {"dom", "uia", "ocr"}, True)
+        self.assertEqual(row.uia_identity, "u1")
+        self.assertEqual(row.dom_identity, "r1")
+        self.assertTrue(row.selected)
+        self.assertEqual(row.snapshot_epoch, 5)
+        self.assertFalse(row.validate())
+        self.assertEqual(len([o for o in objs if o.business_identity]), 1)  # UIA twin merged into the DOM row, not duplicated
+        trig = next(o for o in objs if o.accessible_name == "删除")
+        self.assertIn("dml", trig.sources)
+        self.assertEqual(trig.action_role, "trigger")
+
+    def test_visual_only_has_no_destructive_authority(self):
+        objs = self.fuse()
+        lone = next(o for o in objs if o.accessible_name == "Hello?")
+        self.assertTrue(lone.candidate_only)
+        self.assertLessEqual(lone.confidence, 0.85)
+        reg = ObjectRegistry()
+        reg.ingest(objs, 5)
+        self.assertFalse(reg.authorize(lone, destructive=True).ok)
+        with self.assertRaises(PermissionError):
+            reg.freeze([lone.object_id], 5)
+
+    def test_epoch_binding(self):
+        objs = self.fuse()
+        reg = ObjectRegistry()
+        reg.ingest(objs, 5)
+        row = next(o for o in objs if o.business_identity)
+        self.assertEqual(reg.require_current(row.object_id, 5).object_id, row.object_id)
+        with self.assertRaises(StaleSnapshotEpoch):
+            reg.require_current(row.object_id, 4)
+
+    def test_object_id_stable_across_epochs(self):
+        a = ObjectFusionEngine().fuse(snapshot_epoch=1, application_id="g", window_id=1, dom=[{"rect": [0, 0, 10, 10], "name": "x", "role": "row", "identity": "T1"}])
+        b = ObjectFusionEngine().fuse(snapshot_epoch=2, application_id="g", window_id=1, dom=[{"rect": [0, 50, 10, 10], "name": "x", "role": "row", "identity": "T1"}])
+        self.assertEqual(a[0].object_id, b[0].object_id)
+
+    def test_similarity_primitives(self):
+        self.assertGreater(iou((0, 0, 10, 10), (5, 0, 10, 10)), 0.3)
+        self.assertEqual(text_sim("老虎 不抓鼠", "老虎不抓鼠"), 1.0)
+
+
+# ------------------------------------------------------------------------------------------------------------------ P0-2
+class TestTargetTrigger(unittest.TestCase):
+    def setUp(self):
+        dom = [{"rect": [10, 100 + i * 40, 600, 36], "name": f"mail {i}", "role": "row", "identity": f"T{i}", "ref_id": f"r{i}", "state": {"selected": i in (0, 1)}} for i in range(5)]
+        dom.append({"rect": [100, 60, 40, 40], "name": "删除", "role": "button", "ref_id": "tb"})
+        self.objs = ObjectFusionEngine().fuse(snapshot_epoch=3, application_id="gmail", window_id=1, dom=dom)
+        self.reg = ObjectRegistry()
+        self.reg.ingest(self.objs, 3)
+        self.gate = TargetTriggerGate(self.reg)
+        self.row = {o.business_identity: o for o in self.objs if o.business_identity}
+        self.trig = next(o for o in self.objs if o.action_role == "trigger")
+
+    def test_trigger_released_when_frozen_targets_selected(self):
+        self.gate.freeze("delete", [self.row["T0"].object_id, self.row["T1"].object_id], 3)
+        v = self.gate.check(UnifiedActionRequest("click", self.trig.object_id, 3, (120, 80), "delete"))
+        self.assertTrue(v.allow, v)
+        self.assertEqual(v.code, "RELEASED_TRIGGER")
+        self.assertEqual(self.gate.stats["oib_avoided"], 1)
+
+    def test_trigger_refused_without_selected_or_with_stray(self):
+        self.gate.freeze("delete", [self.row["T0"].object_id], 3)  # T1 is selected too but NOT frozen
+        v = self.gate.check(UnifiedActionRequest("click", self.trig.object_id, 3, None, "delete"))
+        self.assertFalse(v.allow)
+        self.assertEqual(v.code, "SELECTED_OUTSIDE_FROZEN")
+
+    def test_nonfrozen_target_and_stale_epoch_refused(self):
+        self.gate.freeze("delete", [self.row["T0"].object_id], 3)
+        self.assertEqual(self.gate.check(UnifiedActionRequest("click", self.row["T4"].object_id, 3, None, "delete")).code, "TARGET_NOT_FROZEN")
+        self.assertEqual(self.gate.check(UnifiedActionRequest("click", self.trig.object_id, 2, None, "delete")).code, "STALE_EPOCH")
+
+    def test_click_off_the_object_is_refused(self):
+        self.gate.freeze("delete", [self.row["T0"].object_id, self.row["T1"].object_id], 3)
+        v = self.gate.check(UnifiedActionRequest("click", self.trig.object_id, 3, (300, 400), "delete"))
+        self.assertEqual(v.code, "COORD_NOT_ON_OBJECT")
+
+    def test_raw_coordinate_resolves_to_object_first(self):
+        self.gate.freeze("delete", [self.row["T0"].object_id, self.row["T1"].object_id], 3)
+        self.assertTrue(self.gate.check_point(120, 80, 3, "delete").allow)               # toolbar button
+        self.assertFalse(self.gate.check_point(5000, 5000, 3, "delete").allow)          # nothing there + destructive → refuse
+        self.assertFalse(self.gate.check_point(50, 100 + 4 * 40 + 5, 3, "delete").allow)  # lands on non-frozen row
+
+    def test_semantics(self):
+        self.assertTrue(trigger_semantics_ok("Move to Trash", "delete")[0])
+        self.assertFalse(trigger_semantics_ok("标记为已读", "delete")[0])
+
+
+# ------------------------------------------------------------------------------------------------------------------ P1-5
+class TestRecovery(unittest.TestCase):
+    def test_no_new_evidence_closes_path_immediately_on_failure(self):
+        s = WorldSnapshot(1, {"a": ("x", ())}, "c")
+        fb = EvidenceGatedFallback()
+        d = compute_world_diff(s, s)
+        self.assertTrue(d.empty)
+        dec = fb.after_action("click:p1,2", False, d)
+        self.assertEqual(dec.kind, "switch_strategy")
+        self.assertIsNotNone(fb.pre_check("click:p1,2"))   # refused with no model round trip
+        self.assertGreater(fb.stats["tokens_saved_est"], 0)
+
+    def test_new_evidence_continues(self):
+        a, b = WorldSnapshot(1, {"a": ("x", ())}, "c"), WorldSnapshot(2, {"a": ("x", ()), "dlg": ("弹窗", ())}, "c")
+        d = compute_world_diff(a, b)
+        self.assertEqual(d.added, ["dlg"])
+        self.assertIn("a", d.still_valid)
+        self.assertEqual(EvidenceGatedFallback().after_action("click:p1", True, d).kind, "continue")
+
+    def test_ok_but_unchanged_gets_one_more_look(self):
+        s = WorldSnapshot(1, {"a": ("x", ())}, "c")
+        fb = EvidenceGatedFallback(max_no_evidence=2)
+        self.assertEqual(fb.after_action("click:p", True, compute_world_diff(s, s)).kind, "continue")
+        self.assertNotEqual(fb.after_action("click:p", True, compute_world_diff(s, s)).kind, "continue")
+
+    def test_irreversible_never_replayed_and_ladder_ends_in_handoff(self):
+        fb = EvidenceGatedFallback()
+        fb.ledger.record("send:a:b", "bubble")
+        self.assertIn("绝不重放", fb.pre_check("key:enter", "send:a:b").reason)
+        s = WorldSnapshot(1, {}, "c")
+        kinds = [fb.after_action(f"p{i}", False, compute_world_diff(s, s)).kind for i in range(5)]
+        self.assertIn("handoff", kinds)
+
+    def test_mutation_detected(self):
+        a, b = WorldSnapshot(1, {"r": ("m", ())}, "c"), WorldSnapshot(2, {"r": ("m", (("checked", True),))}, "c")
+        self.assertEqual(len(compute_world_diff(a, b).mutated), 1)
+        self.assertTrue(IrreversibleLedger().assert_not_replay("k")[0])
+
+    def test_runtime_gate_on_live_style_elements(self):
+        from agent_brain.protocol import Element, Observation
+
+        def obs(epoch, names):
+            els = [Element(ref_id=f"@{epoch}:e{i}", role="button", name=n, rect=[0, 0, 5, 5], stable_key=f"k{n}") for i, n in enumerate(names)]
+            return Observation(id="o", ok=True, channel="uia", snapshot_epoch=epoch, hwnd=1, elements=els)
+        rt = V18Runtime(None)
+        a = {"action": "click", "x": 1100, "y": 1345}
+        rt.observe(obs(1, ["a", "b"]), 1)
+        self.assertIsNone(rt.pre(a, 1))
+        rt.after(a, False)
+        note = rt.observe(obs(2, ["a", "b"]), 2)   # same world → no new evidence
+        self.assertIn("证据门控", note)
+        self.assertIn("NO_NEW_EVIDENCE", rt.pre(a, 2) or "")
+        self.assertEqual(action_signature({"action": "click", "x": 1100, "y": 1345}), action_signature({"action": "click", "x": 1101, "y": 1346}))
+
+
+# ------------------------------------------------------------------------------------------------------------------ log defects
+class TestLogDefects(unittest.TestCase):
+    def test_recipient_prefix_stripped(self):
+        r = MS.parse_message_request("给联系人老虎不抓鼠发消息：你好")
+        self.assertEqual((r.recipient, r.body), ("老虎不抓鼠", "你好"))
+        r2 = MS.parse_message_request("打开微信，给联系人老虎不抓鼠发一条信息")
+        self.assertEqual(r2.recipient, "老虎不抓鼠")
+        self.assertEqual(MS.parse_message_request("给老虎不抓鼠发消息：晚上七点开会").recipient, "老虎不抓鼠")
+
+    def test_confirmation_parsing(self):
+        for yes in ("y", "Y", "yes", "是", "确认", "我说出了，是发给老虎不抓鼠、y", "y 对的"):
+            self.assertTrue(parse_confirmation(yes), yes)
+        for no in ("", "n", "N", "不", "取消", "算了 y", "no way", "随便"):
+            self.assertFalse(parse_confirmation(no), no)
+
+    def test_gmail_identity_unique_and_label_auditable(self):
+        rows = [{"thread_id": f"#thread-f:18{1000 + i}", "sender": f"s{i}", "subject": f"sub{i}"} for i in range(5)]
+        ids = [GS.row_business_identity(r) for r in rows]
+        self.assertEqual(len(set(ids)), 5)
+        self.assertEqual(len({GS.row_label(r, i) for r, i in zip(rows, ids)}), 5)
+        self.assertTrue(ids[0].endswith("1000"))  # FULL id kept
+
+
+# ------------------------------------------------------------------------------------------------------------------ P0-3
+def wechat(io, dry=True, body="DSCU-校准"):
+    sess = MS.MessageSession(MS.MessageRequest(recipient="老虎不抓鼠", body=body, raw="t"))
+    sk = WR.WeChatRealSkill(io, sess, None, dry_run=dry)
+    return run(sk.run()), sk, sess
+
+
+class TestWeChatReal(unittest.TestCase):
+    def test_dry_run_full_pipeline(self):
+        io = S.FakeWeChatIO()
+        res, sk, sess = wechat(io)
+        self.assertEqual(res.status, "dry_run_verified", res.reason)
+        self.assertEqual(io.sent, [])
+        self.assertEqual(io.editor, "")
+        self.assertEqual(io.clip, "orig-clip")           # clipboard restored
+        self.assertTrue(sess.contact_frozen and sess.single_chat and sess.draft_ok)
+        self.assertEqual(io.chat, "老虎不抓鼠")
+        self.assertTrue(sk.contact_obj and sk.contact_obj.business_identity == "wechat:contact:老虎不抓鼠")
+        self.assertEqual([s["step"] for s in sk.steps][:3], ["window", "calibrate_layout", "contact_frozen"])
+
+    def test_chat_already_open_short_circuit(self):
+        io = S.FakeWeChatIO(open_chat="老虎不抓鼠")
+        res, sk, _ = wechat(io)
+        self.assertEqual(res.status, "dry_run_verified", res.reason)
+        self.assertIn("contact_frozen+single_chat", [s["step"] for s in sk.steps])
+        self.assertEqual(io.search_text, "")
+
+    def test_dead_search_click_falls_back_by_evidence(self):
+        io = S.FakeWeChatIO(faults=("search_click_dead",))
+        res, sk, _ = wechat(io)
+        self.assertEqual(res.status, "dry_run_verified", res.reason)
+        self.assertEqual(sk.no_evidence_stops, 1)       # first strategy closed after producing no new evidence
+
+    def test_ime_eats_first_paste_is_repaired(self):
+        io = S.FakeWeChatIO(faults=("ime_eats_first_paste",))
+        res, _, sess = wechat(io)
+        self.assertEqual(res.status, "dry_run_verified", res.reason)
+        self.assertTrue(sess.draft_ok)
+
+    def test_lookalike_contact_is_refused(self):
+        io = S.FakeWeChatIO(contacts=("老虎不抓鼠的朋友",))
+        res, _, _ = wechat(io)
+        self.assertEqual(res.status, "fallback")
+        self.assertEqual(io.sent, [])
+
+    def test_production_send_with_hitl_and_bubble_proof(self):
+        io = S.FakeWeChatIO()
+        res, _, sess = wechat(io, dry=False, body="晚上七点开会")
+        self.assertEqual(res.status, "sent_verified", res.reason)
+        self.assertEqual(io.sent, [("老虎不抓鼠", "晚上七点开会")])
+        self.assertTrue(sess.hitl_confirmed and sess.bubble_verified)
+
+    def test_production_refused_by_human_sends_nothing(self):
+        io = S.FakeWeChatIO()
+        io.confirm_answer = False
+        res, _, _ = wechat(io, dry=False)
+        self.assertEqual(res.status, "aborted")
+        self.assertEqual((io.sent, io.editor), ([], ""))
+
+    def test_pure_calibration_helpers(self):
+        g = MS.WeChatGeometry(302, 175, 1273, 1235, 1.5)
+        items = [{"box": [400, 200, 300, 50], "text": "搜索", "cls": 0}]
+        self.assertEqual(WR.locate_search_box(items, g)[2], "ocr_anchor")
+        self.assertEqual(WR.locate_search_box([], g)[2], "geometry_fallback")
+        x, y, src = WR.locate_input_box([{"box": [650, 1100, 900, 250], "text": "", "cls": 1}], g)
+        self.assertEqual(src, "dml_box")
+        self.assertLess(y, 1100 + 250 * 0.5)                # upper-middle of the editor, never the bottom strip
+
+
+# ------------------------------------------------------------------------------------------------------------------ P1-4
+def gmail(f, b, faults=(), n=35, confirm=None):
+    gui = S.FakeGmailGui(n, faults)
+    ex = GS.GmailV18Executor(gui, None, confirm)
+    res = run(ex.run(f, b))
+    orig = [GS.row_business_identity({"thread_id": f"#thread-f:18{7000000000000000 + i * 7919}"}) for i in range(n)]
+    want = set(orig[:f] + (orig[n - b:] if b else []))
+    trash = {GS.row_business_identity(r) for r in gui.trash}
+    return res, gui, want, trash
+
+
+class TestGmailV18(unittest.TestCase):
+    def test_front3_back2_verified_each(self):
+        res, gui, want, trash = gmail(3, 2)
+        self.assertEqual(res.status, "verified", res.reason)
+        self.assertEqual(trash, want)
+        self.assertEqual(len(res.per_item), 5)
+        self.assertTrue(all(p["verified"] for p in res.per_item.values()))
+
+    def test_toolbar_missing_uses_keyboard_channel(self):
+        res, gui, want, trash = gmail(5, 0, ("toolbar_missing",))
+        self.assertEqual(res.status, "verified", res.reason)
+        self.assertEqual(trash, want)
+
+    def test_nothing_deleted_when_no_trigger_works(self):
+        res, gui, want, trash = gmail(2, 1, ("toolbar_missing", "keyboard_disabled"))
+        self.assertFalse(res.ok)
+        self.assertEqual(trash, set())
+        self.assertEqual(res.status, "aborted")
+
+    def test_virtualised_tail_never_deletes_wrong_rows(self):
+        res, gui, want, trash = gmail(3, 2, ("virtual_tail",))
+        self.assertTrue(trash <= want, "deleted something outside the frozen set")
+
+    def test_flaky_checkbox_repaired_by_alternate_method(self):
+        res, gui, want, trash = gmail(0, 2, ("flaky_checkbox",))
+        self.assertEqual(res.status, "verified", res.reason)
+        self.assertEqual(trash, want)
+
+    def test_confirm_refusal_and_wrong_page(self):
+        async def no(_l):
+            return False
+        res, gui, _w, trash = gmail(3, 2, confirm=no)
+        self.assertEqual((res.status, trash), ("aborted", set()))
+        gui = S.FakeGmailGui(10)
+
+        async def snap():
+            s = await S.FakeGmailGui.snapshot(gui)
+            s.url = "chrome://new-tab-page/"
+            return s
+        gui.snapshot = snap
+        r = run(GS.GmailV18Executor(gui).run(1, 0))
+        self.assertEqual(r.status, "refused")
+
+    def test_duplicate_identity_refused(self):
+        gui = S.FakeGmailGui(6)
+        for r in gui.rows:
+            r["thread_id"] = "#same"
+            r["sender"], r["subject"], r["time"] = "a", "b", "c"
+        self.assertEqual(run(GS.GmailV18Executor(gui).run(2, 0)).status, "refused")
+
+
+# ------------------------------------------------------------------------------------------------------------------ P1-6
+class TailPort:
+    def __init__(self, hang_every=0, hwnd=1):
+        self.n, self.hang, self.hwnd, self.clip, self.text, self.keys = 0, hang_every, hwnd, "", "", []
+
+    async def foreground(self): return self.hwnd
+    async def focus(self, h): return True
+    async def hit_root(self, x, y): return self.hwnd if x < 1000 else 7
+    async def move(self, x, y): return None
+
+    async def button(self, x, y, d=False):
+        self.n += 1
+        await asyncio.sleep(2.0 if (self.hang and self.n % self.hang == 0) else 0.001)
+
+    async def key(self, k):
+        self.keys.append(k)
+        if k == "ctrl+v":
+            self.text = self.clip
+        if k == "delete":
+            self.text = ""
+
+    async def type_text(self, t): self.text += t
+    async def clipboard_get(self): return self.clip
+    async def clipboard_set(self, t): self.clip = t
+    async def ime_open(self, h): return True
+    async def ime_close(self, h): return True
+    async def read_text(self, r=None): return self.text
+    async def frame_sig(self, r=None): return "s"
+    async def sleep(self, s): return None
+
+
+class TestRealtime(unittest.TestCase):
+    def test_min_jerk_ends_exactly_and_is_bounded(self):
+        p = min_jerk_path((0, 0), (800, 600), 100)
+        self.assertEqual((p[-1][0], p[-1][1]), (800, 600))
+        self.assertLessEqual(sum(x[2] for x in p), 100.5)
+        self.assertEqual(min_jerk_path((5, 5), (5, 5), 50), [(5, 5, 0.0)])
+
+    def test_hard_deadline_clamps_p99_tail(self):
+        port = TailPort(hang_every=10)
+        c = RealtimeController(port, Budget(hard_ms=120))
+        lat = []
+        for i in range(40):
+            import time
+            t0 = time.perf_counter()
+            run(c.click(100 + i, 100, 1))
+            lat.append((time.perf_counter() - t0) * 1000)
+        self.assertLess(max(lat), 700, "tail must be clamped far below the 2 s hang")
+        self.assertGreater(c.tel.counters["hard_timeouts"], 0)
+        self.assertEqual(c.tel.summary()["all"]["n"] > 0, True)
+
+    def test_hit_test_refuses_wrong_window(self):
+        with self.assertRaises(ControllerError) as cm:
+            run(RealtimeController(TailPort()).click(1500, 100, 1))
+        self.assertEqual(cm.exception.code, "OUTSIDE_TARGET")
+
+    def test_type_verified_uses_paste_for_cjk_with_ime_and_reads_back(self):
+        port = TailPort()
+        rep = run(RealtimeController(port).type_verified("你好，老虎", 1, clear_first=True))
+        self.assertTrue(rep.ok)
+        self.assertEqual(rep.method, "paste")
+        self.assertEqual(port.text, "你好，老虎")
+
+    def test_type_verified_fails_closed_when_readback_never_matches(self):
+        port = TailPort()
+
+        async def bad(r=None): return "garbage"
+        port.read_text = bad
+        self.assertFalse(run(RealtimeController(port).type_verified("abc", 1)).ok)
+
+    def test_percentiles(self):
+        t = Telemetry()
+        for v in range(1, 101):
+            t.record("x", float(v))
+        s = t.summary()["x"]
+        self.assertEqual((s["p50"], s["p95"], s["p99"]), (50.0, 95.0, 99.0))
+
+
+# ------------------------------------------------------------------------------------------------------------------ P2-7
+class TestSuite(unittest.TestCase):
+    def test_catalog_is_100_tasks_over_7_categories(self):
+        ts = S.build_tasks(100)
+        self.assertEqual(len(ts), 100)
+        self.assertEqual({t.category for t in ts}, {"file", "browser", "wechat", "gmail", "window", "scroll", "recovery"})
+        self.assertEqual(len({t.task_id for t in ts}), 100)
+        self.assertIn("evaluator", ts[0].as_osworld())
+        self.assertIn("instruction", ts[0].as_waa())
+
+    def test_mock_full_catalog_meets_hard_gates(self):
+        ts = S.build_tasks(100)
+        rs = run(S.run_mock(ts, 1, 18))
+        m = S.compute_metrics(rs, "mock", False)
+        self.assertEqual(m["unsafe_action_rate"], 0.0)
+        self.assertEqual(m["false_success_rate"], 0.0)
+        self.assertGreaterEqual(m["verified_success_rate"], 0.9, m["by_category"])
+        for k in ("verified_success_rate", "false_success_rate", "unsafe_action_rate", "recovery_success_rate", "unverified_rate", "human_handoff_rate", "e2e_ms", "token_per_verified_task"):
+            self.assertIn(k, m)
+        self.assertEqual(set(m["e2e_ms"]), {"p50", "p95", "p99"})
+        self.assertFalse(m["real_machine"])
+
+    def test_false_success_is_measured_not_assumed(self):
+        rs = [S.RunResult("a", "x", 0, True, False), S.RunResult("b", "x", 0, True, True)]
+        self.assertEqual(S.compute_metrics(rs, "mock", False)["false_success_rate"], 0.5)
+
+    def test_controller_tail_clamp_in_suite(self):
+        r = run(S.mock_controller(random.Random(1)))
+        self.assertLess(r["controller_click_ms"]["p99"], 1000)
+
+
+if __name__ == "__main__":
+    unittest.main()
+'@
+
 #endregion
 
 #region ===================== 引导器：校验 → 释放 → 构建 → 启动 =====================
@@ -27211,7 +30297,7 @@ function Expand-Dscu {
     if ($bad.Count -gt 0) {
         Write-Host "✖ 以下 $($bad.Count) 个文件 SHA-256 校验失败（粘贴被终端截断/改写）：" -ForegroundColor Red
         $bad | ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
-        Write-Host '  建议：用 Windows Terminal 粘贴；或在网页上点「下载 .ps1」后执行  pwsh -File .\computer-use-v17.1.ps1' -ForegroundColor Yellow
+        Write-Host '  建议：用 Windows Terminal 粘贴；或在网页上点「下载 .ps1」后执行  pwsh -File .\computer-use-v18.ps1' -ForegroundColor Yellow
         throw 'integrity check failed'
     }
     Write-Host ("  ✓ Monorepo 已就绪：{0} 个文件校验通过（本次写入 {1} 个）→ {2}" -f $script:Manifest.Count, $written, $script:Root) -ForegroundColor Green
@@ -27315,7 +30401,7 @@ function Invoke-DscuBuild([int]$Changed) {
     if ($LASTEXITCODE -ne 0 -and -not (Test-DscuBuilt)) { throw '构建失败，请查看上方输出。' }
 }
 
-Write-Host "DeepSeek Computer Use v$script:DscuVersion · Phase 12 治本收口（异步 OCR 修通 · WebActionGoal · WeChatSkill 5/5 · Gmail 同 Epoch 冻结 · Rust 激活） · v17.0 Qualitative Leap（真 Rust 驱动零 MSVC · 真训练 OmniParser DirectML@Radeon 780M · Target/Trigger 解耦门控 · 回收站 Shell COM 单文件技能 · Shell 窗口 Oracle） · v16.4 Critical Stabilization（WindowManager 点击/截图归属 · 意图完整性 · 强类型目标/选择器 · 预算熔断 · 驱动/DirectML 实证） · Step 3+ · v16.3 Phase2（No page found 透明自愈 · 统一坐标系 · 可验证滚动 · 故障注入验收 · Rust/DirectML 实证） · v16.2 Phase0/1（coverage=full 硬门槛 · 坐标身份反查 · WAL 崩溃恢复 · GmailSkill + DPAPI · MCP 锁版本） · v16.1 · Clean-Chrome 免风控 + PID 级 FG-Gate + AUTH_WALL 交接 + 官方 chrome-devtools-mcp + 极性验证器 + 强力破遮挡 + v16 三层评测" -ForegroundColor Cyan
+Write-Host "DeepSeek Computer Use v$script:DscuVersion · Unified Object Identity & Reliable Execution（UnifiedObjectRef 统一身份 · Target/Trigger 门控 · WorldStateDiff 证据门控 · 真实微信校准 · 实时控制环 · 8 维评测） · v17.1 Phase 12 治本收口（异步 OCR 修通 · WebActionGoal · WeChatSkill 5/5 · Gmail 同 Epoch 冻结 · Rust 激活） · v17.0 Qualitative Leap（真 Rust 驱动零 MSVC · 真训练 OmniParser DirectML@Radeon 780M · Target/Trigger 解耦门控 · 回收站 Shell COM 单文件技能 · Shell 窗口 Oracle） · v16.4 Critical Stabilization（WindowManager 点击/截图归属 · 意图完整性 · 强类型目标/选择器 · 预算熔断 · 驱动/DirectML 实证） · Step 3+ · v16.3 Phase2（No page found 透明自愈 · 统一坐标系 · 可验证滚动 · 故障注入验收 · Rust/DirectML 实证） · v16.2 Phase0/1（coverage=full 硬门槛 · 坐标身份反查 · WAL 崩溃恢复 · GmailSkill + DPAPI · MCP 锁版本） · v16.1 · Clean-Chrome 免风控 + PID 级 FG-Gate + AUTH_WALL 交接 + 官方 chrome-devtools-mcp + 极性验证器 + 强力破遮挡 + v16 三层评测" -ForegroundColor Cyan
 $changed = Expand-Dscu
 if ($script:DscuMode -eq 'extract') { Write-Host "仅释放模式完成：$script:Root"; return }
 
@@ -27323,14 +30409,14 @@ if (($env:DSCU_REBUILD -eq '1') -or (-not (Test-DscuBuilt)) -or ($changed -gt 0 
 
 Ensure-DscuMcp
 Ensure-DscuPptx
-if ($script:DscuMode -in @('run', 'verify163', 'verify164', 'dml', 'dml-init', 'accept171')) { Ensure-DscuDml }
+if ($script:DscuMode -in @('run', 'verify163', 'verify164', 'dml', 'dml-init', 'accept171', 'wechat-calibrate')) { Ensure-DscuDml }
 if ($script:DscuMode -in @('build-driver', 'bootstrap-rust')) { Ensure-DscuRust $true }
 elseif ($script:DscuMode -in @('run', 'verify163', 'verify164')) { Ensure-DscuRust $false }
 $vpy = Join-Path $script:Root '.venv/Scripts/python.exe'
 $env:DSCU_ROOT = $script:Root
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
-if ([string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY) -and ($script:DscuMode -notin @('verify162', 'verify163', 'verify164', 'regress8', 'gmail-auth', 'gmail-status', 'build-driver', 'bootstrap-rust', 'dml', 'dml-init', 'regress171', 'accept171'))) {
+if ([string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY) -and ($script:DscuMode -notin @('verify162', 'verify163', 'verify164', 'regress8', 'gmail-auth', 'gmail-status', 'build-driver', 'bootstrap-rust', 'dml', 'dml-init', 'regress171', 'accept171', 'regress18', 'eval18', 'wechat-calibrate'))) {
     while ($true) {
         $k = Read-Host '请输入 DeepSeek API Key（输入时不显示，直接粘贴后按回车）' -MaskInput
         if (-not [string]::IsNullOrWhiteSpace($k)) { $env:DEEPSEEK_API_KEY = $k.Trim(); break }
@@ -27350,6 +30436,9 @@ try {
         'regress171' { $env:PYTHONWARNINGS = 'error::RuntimeWarning'; & $vpy -W error::RuntimeWarning tests/test_v17_1_fixes.py; Remove-Item Env:PYTHONWARNINGS -ErrorAction SilentlyContinue }
         'accept171' { & (Join-Path $script:Root 'scripts/accept_v171.ps1') -Root $script:Root -Rounds $(if ($env:DSCU_ROUNDS) { [int]$env:DSCU_ROUNDS } else { 10 }) }
         'regress8' { & $vpy tests/regress_log8.py }
+        'regress18' { & $vpy -m unittest discover -s tests/unit -p 'test_v18.py' -v }
+        'eval18' { $va = @(); if ($env:DSCU_VERIFY_ARGS) { $va = @($env:DSCU_VERIFY_ARGS -split '\s+' | Where-Object { $_ }) }; & $vpy evals/suite_v18.py @va }
+        'wechat-calibrate' { if ([string]::IsNullOrWhiteSpace($env:DSCU_WECHAT_CONTACT)) { Write-Host '请先设置联系人昵称：$env:DSCU_WECHAT_CONTACT = "老虎不抓鼠"' -ForegroundColor Yellow } else { & $vpy -m agent_brain.skills.wechat_real --contact $env:DSCU_WECHAT_CONTACT --dry-run-no-send } }
         'verify163' { $va = @(); if ($env:DSCU_VERIFY_ARGS) { $va = @($env:DSCU_VERIFY_ARGS -split '\s+' | Where-Object { $_ }) }; & $vpy tests/verify_phase2.py @va }
         'bootstrap-rust' { Write-Host '  Rust 驱动激活流程已结束（见上方输出）；重新进入默认模式即可看到 驱动=rust-native' -ForegroundColor Green }
         'dml-init' { & $vpy -m sidecar.dml_detector --init; & $vpy -m sidecar.dml_detector --probe --n 60 }
